@@ -6,13 +6,14 @@ from fastapi.responses import RedirectResponse
 app = FastAPI(
     title="ClimaAR",
     description="Servicio meteorológico de ClimaAR",
-    version="0.2.0"
+    version="0.3.0"
 )
 
 RADAR_IMAGE_URL = (
     "https://estaticos.smn.gob.ar/vmsr/radar/"
     "RMA10_240_ZH_CMAX_20260928_091811Z.png"
 )
+
 
 @app.get("/")
 def inicio():
@@ -23,6 +24,7 @@ def inicio():
         "radar": "/radar"
     }
 
+
 @app.get("/health")
 def health():
     return {
@@ -30,6 +32,7 @@ def health():
         "servicio": "ClimaAR",
         "hora_utc": datetime.now(timezone.utc).isoformat()
     }
+
 
 @app.get("/radar")
 def radar():
@@ -41,6 +44,8 @@ def radar():
         "mensaje": "Imagen de radar de prueba del SMN."
     }
 
+
+@app.get("/radar/image")
 @app.get("/radar/imagen")
 def radar_imagen():
     return RedirectResponse(url=RADAR_IMAGE_URL)
