@@ -26,6 +26,7 @@ def health():
 @app.get("/radar")
 def radar():
     return {
-        "estado": "pendiente",
-        "mensaje": "Todavía no hay imágenes de radar conectadas automáticamente."
+        "estado": "prueba",
+        "radar": "Bahía Blanca",
+        "imagen_url": "https://estaticos.smn.gob.ar/vmsr/radar/RMA10_240_ZH_CMAX_20260928_091811Z.png"
     }
