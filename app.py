@@ -45,7 +45,6 @@ def radar():
     }
 
 
-@app.get("/radar/image")
 @app.get("/radar/imagen")
 def radar_imagen():
     return RedirectResponse(url=RADAR_IMAGE_URL)
