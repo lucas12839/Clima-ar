@@ -90,13 +90,14 @@ jobs:
               except ValueError:
                   continue
 
-              # La tabla tiene una sección de lluvia y luego otra de nieve.
-              # El segundo -32 marca el comienzo de la sección de nieve.
+              # La tabla tiene una sección de lluvia
+              # y después una sección de nieve.
+              # El segundo -32 marca el comienzo de nieve.
               if dbz == -32 and color_map:
                   break
 
-              # Los píxeles totalmente transparentes no representan
-              # precipitación visible y no deben interpretarse como dBZ.
+              # Transparente = ausencia de precipitación visible.
+              # No se agrega al mapa de colores.
               if len(rgba) != 4 or rgba[3] == 0:
                   continue
 
@@ -125,12 +126,6 @@ jobs:
                   for row in csv.DictReader(f):
 
                       if not row.get("frame_time"):
-                          continue
-
-                      # Las primeras 13 filas fueron generadas por
-                      # la versión anterior y tienen max_dbz = -11.
-                      # Se eliminan para recalcularlas correctamente.
-                      if row.get("max_dbz") == "-11":
                           continue
 
                       historico.append(row)
@@ -215,17 +210,29 @@ jobs:
                       if dbz >= 40:
                           pixels_ge_40 += 1
 
+              # IMPORTANTE:
+              # Un frame completamente transparente no es un error.
+              # Significa que no hay precipitación visible en el área.
+              # Lo conservamos para mantener continuidad temporal.
               if valid_pixels == 0:
                   print(
-                      "Frame sin píxeles radar válidos:",
+                      "Frame sin precipitación visible:",
                       frame_time
                   )
-                  continue
 
-              if max_dbz == -11:
-                  raise SystemExit(
-                      "Error: la decodificación volvió a producir -11 dBZ"
+                  mean_dbz = 0.0
+                  max_dbz = 0
+
+              else:
+                  mean_dbz = round(
+                      sum_dbz / valid_pixels,
+                      3
                   )
+
+                  if max_dbz == -11:
+                      raise SystemExit(
+                          "Error: la decodificación produjo -11 dBZ"
+                      )
 
               if centroid_count:
                   center_x = centroid_x / centroid_count
@@ -251,10 +258,7 @@ jobs:
                   "width": width,
                   "height": height,
                   "valid_pixels": valid_pixels,
-                  "mean_dbz": round(
-                      sum_dbz / valid_pixels,
-                      3
-                  ),
+                  "mean_dbz": mean_dbz,
                   "max_dbz": max_dbz,
                   "pixels_ge_10dbz": pixels_ge_10,
                   "pixels_ge_20dbz": pixels_ge_20,
@@ -331,5 +335,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Corregir histórico de radar"
+          git commit -m "Recolectar histórico de radar"
           git push
