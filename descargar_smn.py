@@ -1,214 +1,66 @@
-import argparse
-import csv
-import os
-import time
-from datetime import datetime, timedelta
+print()
+print("======================================")
+print("       ClimaAR - Datos horarios SMN")
+print("======================================")
+print(f"Desde: {desde}")
+print(f"Hasta: {hasta}")
+print(f"Salida: {args.salida}")
+print()
+print("Estaciones:")
 
-import requests
+for estacion in sorted(ESTACIONES):
+    print(f"  - {estacion}")
 
+print()
 
-BASE_URL = (
-    "https://ssl.smn.gob.ar/dpd/descarga_opendata.php"
-    "?file=observaciones/datohorario{fecha}.txt"
-)
+while fecha_actual <= hasta:
 
-# Estaciones verificadas en la red del SMN para la zona/región de interés.
-ESTACIONES = {
-    "BAHIA BLANCA AERO",
-    "PIGUE AERO",
-    "CORONEL SUAREZ AERO",
-    "TRES ARROYOS",
-    "RIO COLORADO",
-    "VIEDMA AERO",
-    "SAN ANTONIO OESTE AERO",
-}
+    registros, error = descargar_dia(fecha_actual)
 
-CAMPOS = [
-    "fecha",
-    "hora",
-    "temperatura",
-    "humedad",
-    "presion",
-    "direccion_viento",
-    "velocidad_viento",
-    "estacion",
-]
+    if error:
+        if error == "archivo_vacio":
+            dias_sin_datos += 1
+            print(f"[SIN DATOS] {fecha_actual}")
+        else:
+            errores += 1
+            print(f"[ERROR] {fecha_actual} | {error}")
 
-
-def descargar_dia(fecha):
-    fecha_txt = fecha.strftime("%Y%m%d")
-    url = BASE_URL.format(fecha=fecha_txt)
-
-    try:
-        r = requests.get(url, timeout=60)
-        r.raise_for_status()
-
-        if not r.content:
-            return [], "archivo_vacio"
-
-        texto = r.content.decode("latin-1", errors="replace")
-
-        if not texto.strip():
-            return [], "archivo_vacio"
-
-        registros = []
-
-        for linea in texto.splitlines():
-            linea = linea.strip()
-
-            if not linea:
-                continue
-
-            partes = linea.split()
-
-            # La estructura puede variar; ignoramos líneas que no
-            # tengan suficientes campos.
-            if len(partes) < 8:
-                continue
-
-            try:
-                estacion = " ".join(partes[7:]).strip()
-
-                # Algunos archivos pueden traer columnas adicionales.
-                # Buscamos solamente las estaciones que nos interesan.
-                estacion_encontrada = None
-
-                for nombre in ESTACIONES:
-                    if estacion == nombre or nombre in estacion:
-                        estacion_encontrada = nombre
-                        break
-
-                if estacion_encontrada is None:
-                    continue
-
-                registro = {
-                    "fecha": partes[0],
-                    "hora": partes[1],
-                    "temperatura": partes[2],
-                    "humedad": partes[3],
-                    "presion": partes[4],
-                    "direccion_viento": partes[5],
-                    "velocidad_viento": partes[6],
-                    "estacion": estacion_encontrada,
-                }
-
-                registros.append(registro)
-
-            except Exception:
-                continue
-
-        return registros, None
-
-    except Exception as e:
-        return [], str(e)
-
-
-def cargar_existentes(salida):
-    existentes = set()
-
-    if not os.path.exists(salida):
-        return existentes
-
-    try:
-        with open(salida, "r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-
-            for fila in reader:
-                clave = (
-                    fila.get("fecha", ""),
-                    fila.get("hora", ""),
-                    fila.get("estacion", ""),
-                )
-
-                existentes.add(clave)
-
-    except Exception:
-        pass
-
-    return existentes
-
-
-def preparar_archivo(salida):
-    if not os.path.exists(salida) or os.path.getsize(salida) == 0:
-        with open(salida, "w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=CAMPOS)
-            writer.writeheader()
-
-
-def guardar_registros(salida, registros, existentes):
-    nuevos = []
-
-    for registro in registros:
-        clave = (
-            registro["fecha"],
-            registro["hora"],
-            registro["estacion"],
+    elif registros:
+        nuevos = guardar_registros(
+            args.salida,
+            registros,
+            existentes,
         )
 
-        if clave not in existentes:
-            existentes.add(clave)
-            nuevos.append(registro)
+        dias_ok += 1
+        total_nuevos += nuevos
 
-    if not nuevos:
-        return 0
+        print(
+            f"[OK] {fecha_actual} | "
+            f"{len(registros)} registros encontrados | "
+            f"{nuevos} nuevos"
+        )
 
-    with open(salida, "a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CAMPOS)
+    else:
+        dias_sin_datos += 1
+        print(f"[SIN DATOS] {fecha_actual}")
 
-        for registro in nuevos:
-            writer.writerow(registro)
+    fecha_actual += timedelta(days=1)
 
-    return len(nuevos)
+    if fecha_actual <= hasta:
+        time.sleep(args.pausa)
+
+print()
+print("======================================")
+print("               RESUMEN")
+print("======================================")
+print(f"Días con datos: {dias_ok}")
+print(f"Días sin datos: {dias_sin_datos}")
+print(f"Errores: {errores}")
+print(f"Registros nuevos: {total_nuevos}")
+print(f"Salida: {os.path.abspath(args.salida)}")
+print("======================================")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Descarga datos horarios históricos del SMN."
-    )
-
-    parser.add_argument(
-        "--desde",
-        required=True,
-        help="Fecha inicial YYYY-MM-DD",
-    )
-
-    parser.add_argument(
-        "--hasta",
-        required=True,
-        help="Fecha final YYYY-MM-DD",
-    )
-
-    parser.add_argument(
-        "--salida",
-        default="climaar_smn.csv",
-        help="Archivo CSV de salida",
-    )
-
-    parser.add_argument(
-        "--pausa",
-        type=float,
-        default=1.0,
-        help="Pausa entre consultas en segundos",
-    )
-
-    args = parser.parse_args()
-
-    desde = datetime.strptime(args.desde, "%Y-%m-%d").date()
-    hasta = datetime.strptime(args.hasta, "%Y-%m-%d").date()
-
-    if hasta < desde:
-        raise ValueError("La fecha final no puede ser anterior a la inicial.")
-
-    preparar_archivo(args.salida)
-
-    existentes = cargar_existentes(args.salida)
-
-    total_nuevos = 0
-    dias_ok = 0
-    dias_sin_datos = 0
-    errores = 0
-
-    fecha_actual = desde
-
-    print("======================================")
-    print("      
+if __name__ == "__main__":
+    main()
