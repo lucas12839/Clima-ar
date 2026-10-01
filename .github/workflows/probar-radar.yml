@@ -8,23 +8,71 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Probar acceso a RMA10
+      - name: Probar API de RainViewer
         run: |
           python - <<'PY'
           import requests
 
-          https://data.rainviewer.com/images/RMA10/0_source.png
+          API_URL = "https://api.rainviewer.com/public/weather-maps.json"
 
-          print("Probando RMA10...")
-          r = requests.get(url, timeout=30)
+          print("Consultando Weather Maps API...")
+          
+          r = requests.get(API_URL, timeout=30)
 
           print("HTTP:", r.status_code)
           print("Contenido recibido:", len(r.content), "bytes")
 
           if r.status_code != 200:
-              raise SystemExit(
-                  "RMA10 no responde desde RainViewer"
-              )
+              raise SystemExit("RainViewer no responde correctamente")
 
-          print("ACCESO A RMA10 CONFIRMADO")
+          data = r.json()
+
+          if "radar" not in data:
+              raise SystemExit("La respuesta no contiene radar")
+
+          frames = data["radar"].get("past", [])
+
+          if not frames:
+              raise SystemExit("No hay frames de radar disponibles")
+
+          frame = frames[-1]
+
+          host = data["host"]
+          path = frame["path"]
+          timestamp = frame["time"]
+
+          print("API DE RADAR CONFIRMADA")
+          print("Frames disponibles:", len(frames))
+          print("Último frame:", timestamp)
+          print("Host:", host)
+          print("Path:", path)
+
+          # Bahía Blanca
+          lat = -38.7196
+          lon = -62.2724
+
+          # RainViewer: Universal Blue = 2
+          radar_url = (
+              f"{host}{path}/512/7/"
+              f"{lat}/{lon}/2/1_0.png"
+          )
+
+          print("")
+          print("URL DEL RADAR CENTRADO EN BAHÍA BLANCA:")
+          print(radar_url)
+
+          img = requests.get(radar_url, timeout=30)
+
+          print("")
+          print("HTTP imagen:", img.status_code)
+          print("Bytes imagen:", len(img.content))
+
+          if img.status_code != 200:
+              raise SystemExit("No se pudo obtener el tile de radar")
+
+          if not img.content.startswith(b"\x89PNG"):
+              raise SystemExit("La respuesta no parece ser una imagen PNG")
+
+          print("")
+          print("RADAR RAINVIEWER FUNCIONANDO")
           PY
