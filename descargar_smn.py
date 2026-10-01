@@ -1,89 +1,73 @@
 import argparse
 import csv
-import os
 import time
 from datetime import datetime, timedelta
-
 import requests
 
-
-BASE_URL = (
-    "https://ssl.smn.gob.ar/dpd/descarga_opendata.php"
-    "?file=observaciones/datohorario{fecha}.txt"
-)
-
+URL = "https://ssl.smn.gob.ar/dpd/descarga_opendata.php?file=observaciones/datohorario{}.txt"
 
 ESTACIONES = {
-    "BAHIA BLANCA AERO",
-    "PIGUE AERO",
-    "CORONEL SUAREZ AERO",
-    "TRES ARROYOS",
-    "RIO COLORADO",
-    "VIEDMA AERO",
-    "SAN ANTONIO OESTE AERO",
+    "BAHIA BLANCA AERO", "PIGUE AERO", "CORONEL SUAREZ AERO",
+    "TRES ARROYOS", "RIO COLORADO", "VIEDMA AERO",
+    "SAN ANTONIO OESTE AERO"
 }
 
+CAMPOS = ["fecha","hora","temperatura","humedad","presion",
+          "direccion_viento","velocidad_viento","estacion"]
 
-CAMPOS = [
-    "fecha",
-    "hora",
-    "temperatura",
-    "humedad",
-    "presion",
-    "direccion_viento",
-    "velocidad_viento",
-    "estacion",
-]
-
-
-def descargar_dia(fecha):
-    fecha_url = fecha.strftime("%Y%m%d")
-    url = BASE_URL.format(fecha=fecha_url)
-
+def obtener(fecha):
     try:
-        respuesta = requests.get(url, timeout=60)
-        respuesta.raise_for_status()
-
-        contenido = respuesta.content.decode(
-            "latin-1",
-            errors="replace"
-        )
-
-        if not contenido.strip():
-            return [], "archivo_vacio"
-
-        if "El archivo no existe." in contenido:
-            return [], "archivo_inexistente"
-
-        registros = []
-
-        for linea in contenido.splitlines():
-
-            linea = linea.strip()
-
-            if not linea:
+        u = URL.format(fecha.strftime("%Y%m%d"))
+        r = requests.get(u, timeout=60)
+        r.raise_for_status()
+        texto = r.content.decode("latin-1", errors="replace")
+        if not texto.strip() or "El archivo no existe." in texto:
+            return []
+        datos = []
+        for linea in texto.splitlines():
+            p = linea.strip().split()
+            if len(p) < 8:
                 continue
+            estacion = " ".join(p[7:])
+            if estacion in ESTACIONES:
+                datos.append(dict(zip(CAMPOS, p[:7] + [estacion])))
+        return datos
+    except Exception as e:
+        print("[ERROR]", fecha, e)
+        return []
 
-            partes = linea.split()
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--desde", required=True)
+    ap.add_argument("--hasta", required=True)
+    ap.add_argument("--salida", default="climaar_smn.csv")
+    ap.add_argument("--pausa", type=float, default=1)
+    a = ap.parse_args()
 
-            if len(partes) < 8:
-                continue
+    desde = datetime.strptime(a.desde, "%Y-%m-%d").date()
+    hasta = datetime.strptime(a.hasta, "%Y-%m-%d").date()
 
-            fecha_dato = partes[0]
-            hora = partes[1]
-            temperatura = partes[2]
-            humedad = partes[3]
-            presion = partes[4]
-            direccion = partes[5]
-            velocidad = partes[6]
+    with open(a.salida, "w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CAMPOS)
+        w.writeheader()
 
-            estacion = " ".join(partes[7:]).strip()
+        fecha = desde
+        total = 0
 
-            if estacion not in ESTACIONES:
-                continue
+        while fecha <= hasta:
+            datos = obtener(fecha)
+            for fila in datos:
+                w.writerow(fila)
+            total += len(datos)
+            print(f"[OK] {fecha} | {len(datos)} registros")
+            fecha += timedelta(days=1)
+            if fecha <= hasta:
+                time.sleep(a.pausa)
 
-            registros.append(
-                {
-                    "fecha": fecha_dato,
-                    "hora": hora,
-                    "temperatura": temperatura,
+    print("================================")
+    print("REGISTROS TOTALES:", total)
+    print("ARCHIVO:", a.salida)
+    print("================================")
+
+if __name__ == "__main__":
+    main()
