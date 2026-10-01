@@ -1,10 +1,10 @@
-name: Entrenar primer modelo ClimaAR
+name: Entrenar modelo ClimaAR
 
 on:
   workflow_dispatch:
 
 jobs:
-  entrenar-modelo:
+  entrenar:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,7 +19,7 @@ jobs:
       - name: Instalar dependencias
         run: pip install pandas scikit-learn joblib
 
-      - name: Preparar datos y entrenar modelo
+      - name: Entrenar modelo
         run: |
           python - <<'PY'
           import zipfile
@@ -32,22 +32,31 @@ jobs:
 
           ZIP = "climaar_smn_2017_2025_procesado.zip"
 
-          # =========================
-          # CARGAR HISTÓRICO
-          # =========================
-
-          with zipfile.ZipFile(ZIP, "r") as z:
+          with zipfile.ZipFile(ZIP) as z:
               csvs = [x for x in z.namelist() if x.endswith(".csv")]
-              csv = csvs[0]
+              if not csvs:
+                  raise SystemExit("No se encontró CSV dentro del ZIP")
 
-              with z.open(csv) as f:
+              with z.open(csvs[0]) as f:
                   df = pd.read_csv(f)
 
-          df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+          print("Columnas:", list(df.columns))
 
-          # =========================
-          # BAHÍA BLANCA
-          # =========================
+          if "fecha_hora" not in df.columns:
+              if "fecha" in df.columns and "hora" in df.columns:
+                  df["fecha_hora"] = pd.to_datetime(
+                      df["fecha"].astype(str) + " " + df["hora"].astype(str),
+                      errors="coerce"
+                  )
+              else:
+                  raise SystemExit("No se encontró fecha_hora")
+
+          df["fecha_hora"] = pd.to_datetime(
+              df["fecha_hora"],
+              errors="coerce"
+          )
+
+          df = df.dropna(subset=["fecha_hora"])
 
           df = df[
               df["estacion"]
@@ -56,126 +65,102 @@ jobs:
               .str.contains("BAHIA BLANCA", na=False)
           ].copy()
 
-          df = (
-              df.sort_values("fecha_hora")
-              .drop_duplicates("fecha_hora")
-              .reset_index(drop=True)
-          )
+          df = df.sort_values("fecha_hora")
+          df = df.drop_duplicates("fecha_hora")
+          df = df.reset_index(drop=True)
 
-          print("======================================")
-          print("CLIMAAR - ENTRENAMIENTO MODELO V1")
-          print("======================================")
-          print(f"Registros iniciales: {len(df):,}")
-
-          # =========================
-          # VARIABLES
-          # =========================
+          print("Registros Bahía Blanca:", len(df))
 
           variables = [
               "temperatura",
               "humedad",
               "presion",
               "direccion_viento",
-              "velocidad_viento",
-              "viento_u",
-              "viento_v",
-              "punto_rocio",
-              "hora_sin",
-              "hora_cos"
+              "velocidad_viento"
           ]
 
-          features = df[
-              ["fecha_hora"] + variables
-          ].copy()
+          variables = [
+              x for x in variables
+              if x in df.columns
+          ]
 
-          # =========================
-          # VARIABLES HISTÓRICAS
-          # =========================
+          for v in variables:
+              df[v] = pd.to_numeric(df[v], errors="coerce")
 
-          for variable in variables:
-              for horas in [1, 3, 6, 24]:
+          if "velocidad_viento" in df.columns and "direccion_viento" in df.columns:
+              import numpy as np
 
-                  historico = df[
-                      ["fecha_hora", variable]
-                  ].copy()
+              direccion = np.deg2rad(df["direccion_viento"])
 
-                  historico["fecha_hora"] = (
-                      historico["fecha_hora"]
-                      + pd.Timedelta(hours=horas)
-                  )
+              df["viento_u"] = (
+                  -df["velocidad_viento"] * np.sin(direccion)
+              )
 
-                  historico = historico.rename(
-                      columns={
-                          variable: f"{variable}_lag{horas}"
-                      }
-                  )
+              df["viento_v"] = (
+                  -df["velocidad_viento"] * np.cos(direccion)
+              )
 
-                  features = features.merge(
-                      historico,
-                      on="fecha_hora",
-                      how="left"
-                  )
+              variables += ["viento_u", "viento_v"]
 
-          # =========================
-          # OBJETIVO: TEMPERATURA +1 HORA
-          # =========================
+          if "humedad" in df.columns and "temperatura" in df.columns:
+              import numpy as np
 
-          objetivo = df[
-              ["fecha_hora", "temperatura"]
-          ].copy()
+              rh = df["humedad"].clip(1, 100)
+              t = df["temperatura"]
 
-          objetivo["fecha_hora"] = (
-              objetivo["fecha_hora"]
-              - pd.Timedelta(hours=1)
+              gamma = (
+                  np.log(rh / 100)
+                  + (17.625 * t) / (243.04 + t)
+              )
+
+              df["punto_rocio"] = (
+                  243.04 * gamma / (17.625 - gamma)
+              )
+
+              variables += ["punto_rocio"]
+
+          df["hora_sin"] = np.sin(
+              2 * np.pi * df["fecha_hora"].dt.hour / 24
           )
 
-          objetivo = objetivo.rename(
-              columns={
-                  "temperatura": "temperatura_objetivo"
-              }
+          df["hora_cos"] = np.cos(
+              2 * np.pi * df["fecha_hora"].dt.hour / 24
           )
 
-          features = features.merge(
-              objetivo,
-              on="fecha_hora",
-              how="left"
-          )
+          variables += ["hora_sin", "hora_cos"]
 
-          # =========================
-          # LIMPIAR
-          # =========================
+          if "temperatura" not in df.columns:
+              raise SystemExit("No existe temperatura")
 
-          features = features.dropna().reset_index(drop=True)
+          for horas in [1, 3, 6, 24]:
+              for v in variables:
+                  df[f"{v}_lag{horas}"] = df[v].shift(horas)
 
-          print(f"Registros utilizables: {len(features):,}")
+          df["temperatura_objetivo"] = df["temperatura"].shift(-1)
 
-          # =========================
-          # DIVISIÓN TEMPORAL
-          # =========================
+          features = [
+              x for x in df.columns
+              if "_lag" in x
+          ]
 
-          corte = int(len(features) * 0.80)
+          features += variables
 
-          train = features.iloc[:corte]
-          test = features.iloc[corte:]
+          train_df = df[
+              features + ["temperatura_objetivo"]
+          ].dropna().reset_index(drop=True)
 
-          X_train = train.drop(
-              columns=["fecha_hora", "temperatura_objetivo"]
-          )
+          print("Registros utilizables:", len(train_df))
 
+          corte = int(len(train_df) * 0.80)
+
+          train = train_df.iloc[:corte]
+          test = train_df.iloc[corte:]
+
+          X_train = train[features]
           y_train = train["temperatura_objetivo"]
 
-          X_test = test.drop(
-              columns=["fecha_hora", "temperatura_objetivo"]
-          )
-
+          X_test = test[features]
           y_test = test["temperatura_objetivo"]
-
-          print(f"Entrenamiento: {len(train):,}")
-          print(f"Prueba: {len(test):,}")
-
-          # =========================
-          # MODELO
-          # =========================
 
           modelo = HistGradientBoostingRegressor(
               max_iter=300,
@@ -186,10 +171,6 @@ jobs:
           )
 
           modelo.fit(X_train, y_train)
-
-          # =========================
-          # EVALUACIÓN
-          # =========================
 
           pred = modelo.predict(X_test)
 
@@ -204,43 +185,42 @@ jobs:
           print(f"R²:   {r2:.4f}")
           print("================================")
 
-          # =========================
-          # GUARDAR MODELO
-          # =========================
+          import os
+          os.makedirs("modelo", exist_ok=True)
 
           joblib.dump(
               modelo,
-              "climaar_modelo_temperatura_1h.joblib"
+              "modelo/climaar_modelo_temperatura_1h.joblib"
           )
 
           metricas = {
               "modelo": "HistGradientBoostingRegressor",
               "objetivo": "temperatura_1_hora_adelante",
-              "registros_iniciales": len(df),
-              "registros_utilizables": len(features),
-              "entrenamiento": len(train),
-              "prueba": len(test),
+              "registros": int(len(train_df)),
+              "entrenamiento": int(len(train)),
+              "prueba": int(len(test)),
               "MAE_C": float(mae),
               "RMSE_C": float(rmse),
-              "R2": float(r2),
-              "periodo_inicio": str(df["fecha_hora"].min()),
-              "periodo_fin": str(df["fecha_hora"].max())
+              "R2": float(r2)
           }
 
-          with open("metricas_modelo.json", "w") as f:
-              json.dump(metricas, f, indent=2)
+          with open(
+              "modelo/metricas_modelo.json",
+              "w"
+          ) as f:
+              json.dump(
+                  metricas,
+                  f,
+                  indent=2
+              )
 
           print("")
-          print("MODELO GUARDADO:")
-          print("climaar_modelo_temperatura_1h.joblib")
-          print("metricas_modelo.json")
+          print("MODELO GENERADO CORRECTAMENTE")
           PY
 
       - name: Guardar modelo
         uses: actions/upload-artifact@v4
         with:
           name: modelo-climaar-v1
-          path: |
-            climaar_modelo_temperatura_1h.joblib
-            metricas_modelo.json
+          path: modelo/
           retention-days: 90
