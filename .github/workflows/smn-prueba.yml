@@ -1,0 +1,34 @@
+name: Prueba datos SMN ClimaAR
+
+on:
+  workflow_dispatch:
+
+jobs:
+  descargar-smn:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Descargar datos SMN de prueba
+        run: |
+          python descargar_smn.py \
+            --desde 2024-03-04 \
+            --hasta 2024-03-06 \
+            --salida climaar_prueba_smn.csv \
+            --pausa 1
+
+      - name: Guardar resultado
+        uses: actions/upload-artifact@v4
+        with:
+          name: climaar-prueba-smn
+          path: climaar_prueba_smn.csv
