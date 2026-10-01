@@ -178,8 +178,7 @@ jobs:
           features += variables
 
           train_df = df[
-              features
-              + ["temperatura_objetivo"]
+              features + ["temperatura_objetivo"]
           ].dropna().reset_index(drop=True)
 
           print(
@@ -195,14 +194,10 @@ jobs:
           test = train_df.iloc[corte:]
 
           X_train = train[features]
-          y_train = train[
-              "temperatura_objetivo"
-          ]
+          y_train = train["temperatura_objetivo"]
 
           X_test = test[features]
-          y_test = test[
-              "temperatura_objetivo"
-          ]
+          y_test = test["temperatura_objetivo"]
 
           modelo = HistGradientBoostingRegressor(
               max_iter=300,
@@ -275,13 +270,10 @@ jobs:
                   indent=2
               )
 
-          print("")
-          print(
-              "MODELO GENERADO CORRECTAMENTE"
-          )
+          print("MODELO GENERADO CORRECTAMENTE")
           PY
 
-      - name: Guardar modelo
+      - name: Guardar modelo como artifact
         uses: actions/upload-artifact@v4
         with:
           name: modelo-climaar-v1
@@ -292,6 +284,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git pull --rebase origin main
 
           git add modelo/
 
