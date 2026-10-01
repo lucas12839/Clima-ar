@@ -1,200 +1,214 @@
-#!/usr/bin/env python3
-"""
-ClimaAR - Descargador de datos horarios del SMN
-
-Fuente:
-https://ssl.smn.gob.ar/dpd/descarga_opendata.php?file=observaciones/datohorarioAAAAMMDD.txt
-
-Uso:
-    python descargar_smn.py --desde 2024-01-01 --hasta 2024-12-31
-
-Por defecto procesa Bahía Blanca y estaciones cercanas.
-"""
-
 import argparse
 import csv
-import io
+import os
 import time
-from datetime import date, timedelta
-from pathlib import Path
+from datetime import datetime, timedelta
 
 import requests
 
+
 BASE_URL = (
     "https://ssl.smn.gob.ar/dpd/descarga_opendata.php"
-    "?file=observaciones/datohorario{date}.txt"
+    "?file=observaciones/datohorario{fecha}.txt"
 )
 
-# Primera zona piloto de ClimaAR.
-# Se puede ampliar sin tocar el resto del programa.
+# Estaciones verificadas en la red del SMN para la zona/región de interés.
 ESTACIONES = {
     "BAHIA BLANCA AERO",
-    "BAHIA BLANCA",
-    "TRES ARROYOS",
     "PIGUE AERO",
     "CORONEL SUAREZ AERO",
+    "TRES ARROYOS",
+    "RIO COLORADO",
     "VIEDMA AERO",
     "SAN ANTONIO OESTE AERO",
-    "NEUQUEN AERO",
 }
 
-COLUMNAS = [
+CAMPOS = [
     "fecha",
     "hora",
-    "temperatura_c",
-    "humedad_pct",
-    "presion_hpa",
-    "viento_direccion_grados",
-    "viento_kmh",
+    "temperatura",
+    "humedad",
+    "presion",
+    "direccion_viento",
+    "velocidad_viento",
     "estacion",
 ]
 
-def normalizar(linea):
-    """Convierte una línea de ancho fijo del SMN a campos."""
-    partes = linea.split()
-    if len(partes) < 8:
-        return None
 
-    # Los 7 primeros campos son fecha, hora, temp, humedad, presión,
-    # dirección y velocidad. El resto corresponde al nombre de estación.
-    fecha, hora, temp, hum, pres, direccion, velocidad = partes[:7]
-    estacion = " ".join(partes[7:]).strip()
+def descargar_dia(fecha):
+    fecha_txt = fecha.strftime("%Y%m%d")
+    url = BASE_URL.format(fecha=fecha_txt)
 
-    if not fecha.isdigit() or len(fecha) != 8:
-        return None
-    if not hora.isdigit():
-        return None
+    try:
+        r = requests.get(url, timeout=60)
+        r.raise_for_status()
 
-    return {
-        "fecha": fecha,
-        "hora": int(hora),
-        "temperatura_c": temp,
-        "humedad_pct": hum,
-        "presion_hpa": pres,
-        "viento_direccion_grados": direccion,
-        "viento_kmh": velocidad,
-        "estacion": estacion,
-    }
+        if not r.content:
+            return [], "archivo_vacio"
 
-def descargar_dia(session, dia):
-    fecha = dia.strftime("%Y%m%d")
-    url = BASE_URL.format(date=fecha)
+        texto = r.content.decode("latin-1", errors="replace")
 
-    r = session.get(url, timeout=30)
-    r.raise_for_status()
+        if not texto.strip():
+            return [], "archivo_vacio"
 
-    texto = r.content.decode("latin-1", errors="replace")
-    if not texto.strip():
-        return []
+        registros = []
 
-    filas = []
-    for linea in io.StringIO(texto):
-        fila = normalizar(linea)
-        if not fila:
-            continue
+        for linea in texto.splitlines():
+            linea = linea.strip()
 
-        if fila["estacion"] in ESTACIONES:
-            filas.append(fila)
+            if not linea:
+                continue
 
-    return filas
+            partes = linea.split()
+
+            # La estructura puede variar; ignoramos líneas que no
+            # tengan suficientes campos.
+            if len(partes) < 8:
+                continue
+
+            try:
+                estacion = " ".join(partes[7:]).strip()
+
+                # Algunos archivos pueden traer columnas adicionales.
+                # Buscamos solamente las estaciones que nos interesan.
+                estacion_encontrada = None
+
+                for nombre in ESTACIONES:
+                    if estacion == nombre or nombre in estacion:
+                        estacion_encontrada = nombre
+                        break
+
+                if estacion_encontrada is None:
+                    continue
+
+                registro = {
+                    "fecha": partes[0],
+                    "hora": partes[1],
+                    "temperatura": partes[2],
+                    "humedad": partes[3],
+                    "presion": partes[4],
+                    "direccion_viento": partes[5],
+                    "velocidad_viento": partes[6],
+                    "estacion": estacion_encontrada,
+                }
+
+                registros.append(registro)
+
+            except Exception:
+                continue
+
+        return registros, None
+
+    except Exception as e:
+        return [], str(e)
+
+
+def cargar_existentes(salida):
+    existentes = set()
+
+    if not os.path.exists(salida):
+        return existentes
+
+    try:
+        with open(salida, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+
+            for fila in reader:
+                clave = (
+                    fila.get("fecha", ""),
+                    fila.get("hora", ""),
+                    fila.get("estacion", ""),
+                )
+
+                existentes.add(clave)
+
+    except Exception:
+        pass
+
+    return existentes
+
+
+def preparar_archivo(salida):
+    if not os.path.exists(salida) or os.path.getsize(salida) == 0:
+        with open(salida, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CAMPOS)
+            writer.writeheader()
+
+
+def guardar_registros(salida, registros, existentes):
+    nuevos = []
+
+    for registro in registros:
+        clave = (
+            registro["fecha"],
+            registro["hora"],
+            registro["estacion"],
+        )
+
+        if clave not in existentes:
+            existentes.add(clave)
+            nuevos.append(registro)
+
+    if not nuevos:
+        return 0
+
+    with open(salida, "a", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CAMPOS)
+
+        for registro in nuevos:
+            writer.writerow(registro)
+
+    return len(nuevos)
+
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--desde", required=True, help="YYYY-MM-DD")
-    parser.add_argument("--hasta", required=True, help="YYYY-MM-DD")
+    parser = argparse.ArgumentParser(
+        description="Descarga datos horarios históricos del SMN."
+    )
+
+    parser.add_argument(
+        "--desde",
+        required=True,
+        help="Fecha inicial YYYY-MM-DD",
+    )
+
+    parser.add_argument(
+        "--hasta",
+        required=True,
+        help="Fecha final YYYY-MM-DD",
+    )
+
     parser.add_argument(
         "--salida",
-        default="climaar_historico_region.csv",
-        help="CSV de salida",
+        default="climaar_smn.csv",
+        help="Archivo CSV de salida",
     )
+
     parser.add_argument(
         "--pausa",
         type=float,
-        default=0.5,
-        help="segundos entre descargas",
+        default=1.0,
+        help="Pausa entre consultas en segundos",
     )
+
     args = parser.parse_args()
 
-    desde = date.fromisoformat(args.desde)
-    hasta = date.fromisoformat(args.hasta)
+    desde = datetime.strptime(args.desde, "%Y-%m-%d").date()
+    hasta = datetime.strptime(args.hasta, "%Y-%m-%d").date()
 
     if hasta < desde:
-        raise SystemExit("ERROR: --hasta no puede ser anterior a --desde")
+        raise ValueError("La fecha final no puede ser anterior a la inicial.")
 
-    salida = Path(args.salida)
+    preparar_archivo(args.salida)
 
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "ClimaAR/0.1 (proyecto meteorologico gratuito)"
-    })
+    existentes = cargar_existentes(args.salida)
 
-    # Reanuda: si el archivo ya existe, evita duplicar registros.
-    existentes = set()
-    if salida.exists():
-        with salida.open("r", encoding="utf-8", newline="") as f:
-            for row in csv.DictReader(f):
-                existentes.add(
-                    (row["fecha"], row["hora"], row["estacion"])
-                )
+    total_nuevos = 0
+    dias_ok = 0
+    dias_sin_datos = 0
+    errores = 0
 
-    escribir_cabecera = not salida.exists() or salida.stat().st_size == 0
+    fecha_actual = desde
 
-    with salida.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=COLUMNAS)
-        if escribir_cabecera:
-            writer.writeheader()
-
-        dia = desde
-        total = 0
-        dias_ok = 0
-        dias_vacios = 0
-        errores = 0
-
-        while dia <= hasta:
-            try:
-                filas = descargar_dia(session, dia)
-
-                nuevas = []
-                for fila in filas:
-                    clave = (
-                        fila["fecha"],
-                        fila["hora"],
-                        fila["estacion"],
-                    )
-                    if clave not in existentes:
-                        nuevas.append(fila)
-                        existentes.add(clave)
-
-                for fila in nuevas:
-                    writer.writerow(fila)
-
-                f.flush()
-
-                if filas:
-                    dias_ok += 1
-                    total += len(nuevas)
-                    print(
-                        f"[OK] {dia.isoformat()} | "
-                        f"{len(filas)} registros encontrados | "
-                        f"{len(nuevas)} nuevos"
-                    )
-                else:
-                    dias_vacios += 1
-                    print(f"[--] {dia.isoformat()} | sin datos de las estaciones")
-
-            except Exception as exc:
-                errores += 1
-                print(f"[ERROR] {dia.isoformat()} | {exc}")
-
-            dia += timedelta(days=1)
-            time.sleep(args.pausa)
-
-    print("\n--- RESUMEN ---")
-    print(f"Días con datos: {dias_ok}")
-    print(f"Días sin datos: {dias_vacios}")
-    print(f"Errores: {errores}")
-    print(f"Registros nuevos: {total}")
-    print(f"Salida: {salida.resolve()}")
-
-if __name__ == "__main__":
-    main()
+    print("======================================")
+    print("      
