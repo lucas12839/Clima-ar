@@ -1,0 +1,84 @@
+name: Procesar histórico ClimaAR
+
+on:
+  workflow_dispatch:
+
+jobs:
+  procesar-historico:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install pandas
+
+      - name: Procesar histórico
+        run: |
+          python - <<'PY'
+          import zipfile
+          import pandas as pd
+
+          archivo_zip = "climaar_smn_2017_2025_procesado.zip"
+
+          with zipfile.ZipFile(archivo_zip, "r") as z:
+              archivos = z.namelist()
+              csv = [x for x in archivos if x.endswith(".csv")][0]
+
+              with z.open(csv) as f:
+                  df = pd.read_csv(f)
+
+          print("================================")
+          print("CLIMAAR - HISTÓRICO METEOROLÓGICO")
+          print("================================")
+          print(f"Registros: {len(df):,}")
+          print(f"Estaciones: {df['estacion'].nunique()}")
+          print(f"Desde: {df['fecha_hora'].min()}")
+          print(f"Hasta: {df['fecha_hora'].max()}")
+
+          print("\nRegistros por estación:")
+          print(df["estacion"].value_counts())
+
+          bahia = df[
+              df["estacion"]
+              .astype(str)
+              .str.upper()
+              .str.contains("BAHIA BLANCA", na=False)
+          ].copy()
+
+          print("\nRegistros Bahía Blanca:")
+          print(f"{len(bahia):,}")
+
+          bahia.to_csv(
+              "climaar_bahia_blanca.csv",
+              index=False
+          )
+
+          resumen = pd.DataFrame({
+              "registros": [len(df)],
+              "estaciones": [df["estacion"].nunique()],
+              "inicio": [df["fecha_hora"].min()],
+              "fin": [df["fecha_hora"].max()],
+              "registros_bahia_blanca": [len(bahia)]
+          })
+
+          resumen.to_csv(
+              "resumen_historico.csv",
+              index=False
+          )
+          PY
+
+      - name: Guardar resultados
+        uses: actions/upload-artifact@v4
+        with:
+          name: resultados-climaar-historico
+          path: |
+            resumen_historico.csv
+            climaar_bahia_blanca.csv
+          retention-days: 30
