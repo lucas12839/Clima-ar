@@ -1,0 +1,28 @@
+name: Probar RMA10
+
+on:
+  workflow_dispatch:
+
+jobs:
+  prueba:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Probar acceso a RMA10
+        run: |
+          python - <<'PY'
+          import requests
+
+          url = "https://data.rainviewer.com/images/RMA10/"
+
+          print("Probando RMA10...")
+          r = requests.get(url, timeout=30)
+
+          print("HTTP:", r.status_code)
+          print("Contenido recibido:", len(r.content), "bytes")
+
+          if r.status_code != 200:
+              raise SystemExit("RMA10 no responde desde RainViewer")
+
+          print("ACCESO A RMA10 CONFIRMADO")
+          PY
