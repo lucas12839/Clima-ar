@@ -1,4 +1,4 @@
-name: Prueba datos SMN ClimaAR
+name: Descargar histórico SMN ClimaAR
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
 jobs:
   descargar-smn:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
 
     steps:
       - name: Descargar repositorio
@@ -19,16 +20,17 @@ jobs:
       - name: Instalar dependencias
         run: pip install requests
 
-      - name: Descargar datos SMN de prueba
+      - name: Descargar histórico SMN 2016-2025
         run: |
           python descargar_smn.py \
-            --desde 2024-03-04 \
-            --hasta 2024-03-10 \
-            --salida climaar_prueba_smn.csv \
+            --desde 2016-01-01 \
+            --hasta 2025-12-31 \
+            --salida climaar_smn_2016_2025.csv \
             --pausa 1
 
-      - name: Guardar resultado
+      - name: Guardar histórico
         uses: actions/upload-artifact@v4
         with:
-          name: climaar-prueba-smn
-          path: climaar_prueba_smn.csv
+          name: climaar-smn-2016-2025
+          path: climaar_smn_2016_2025.csv
+          retention-days: 7
