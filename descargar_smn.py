@@ -1,66 +1,89 @@
-print()
-print("======================================")
-print("       ClimaAR - Datos horarios SMN")
-print("======================================")
-print(f"Desde: {desde}")
-print(f"Hasta: {hasta}")
-print(f"Salida: {args.salida}")
-print()
-print("Estaciones:")
+import argparse
+import csv
+import os
+import time
+from datetime import datetime, timedelta
 
-for estacion in sorted(ESTACIONES):
-    print(f"  - {estacion}")
+import requests
 
-print()
 
-while fecha_actual <= hasta:
+BASE_URL = (
+    "https://ssl.smn.gob.ar/dpd/descarga_opendata.php"
+    "?file=observaciones/datohorario{fecha}.txt"
+)
 
-    registros, error = descargar_dia(fecha_actual)
 
-    if error:
-        if error == "archivo_vacio":
-            dias_sin_datos += 1
-            print(f"[SIN DATOS] {fecha_actual}")
-        else:
-            errores += 1
-            print(f"[ERROR] {fecha_actual} | {error}")
+ESTACIONES = {
+    "BAHIA BLANCA AERO",
+    "PIGUE AERO",
+    "CORONEL SUAREZ AERO",
+    "TRES ARROYOS",
+    "RIO COLORADO",
+    "VIEDMA AERO",
+    "SAN ANTONIO OESTE AERO",
+}
 
-    elif registros:
-        nuevos = guardar_registros(
-            args.salida,
-            registros,
-            existentes,
+
+CAMPOS = [
+    "fecha",
+    "hora",
+    "temperatura",
+    "humedad",
+    "presion",
+    "direccion_viento",
+    "velocidad_viento",
+    "estacion",
+]
+
+
+def descargar_dia(fecha):
+    fecha_url = fecha.strftime("%Y%m%d")
+    url = BASE_URL.format(fecha=fecha_url)
+
+    try:
+        respuesta = requests.get(url, timeout=60)
+        respuesta.raise_for_status()
+
+        contenido = respuesta.content.decode(
+            "latin-1",
+            errors="replace"
         )
 
-        dias_ok += 1
-        total_nuevos += nuevos
+        if not contenido.strip():
+            return [], "archivo_vacio"
 
-        print(
-            f"[OK] {fecha_actual} | "
-            f"{len(registros)} registros encontrados | "
-            f"{nuevos} nuevos"
-        )
+        if "El archivo no existe." in contenido:
+            return [], "archivo_inexistente"
 
-    else:
-        dias_sin_datos += 1
-        print(f"[SIN DATOS] {fecha_actual}")
+        registros = []
 
-    fecha_actual += timedelta(days=1)
+        for linea in contenido.splitlines():
 
-    if fecha_actual <= hasta:
-        time.sleep(args.pausa)
+            linea = linea.strip()
 
-print()
-print("======================================")
-print("               RESUMEN")
-print("======================================")
-print(f"Días con datos: {dias_ok}")
-print(f"Días sin datos: {dias_sin_datos}")
-print(f"Errores: {errores}")
-print(f"Registros nuevos: {total_nuevos}")
-print(f"Salida: {os.path.abspath(args.salida)}")
-print("======================================")
+            if not linea:
+                continue
 
+            partes = linea.split()
 
-if __name__ == "__main__":
-    main()
+            if len(partes) < 8:
+                continue
+
+            fecha_dato = partes[0]
+            hora = partes[1]
+            temperatura = partes[2]
+            humedad = partes[3]
+            presion = partes[4]
+            direccion = partes[5]
+            velocidad = partes[6]
+
+            estacion = " ".join(partes[7:]).strip()
+
+            if estacion not in ESTACIONES:
+                continue
+
+            registros.append(
+                {
+                    "fecha": fecha_dato,
+                    "hora": hora,
+                    "temperatura": temperatura,
