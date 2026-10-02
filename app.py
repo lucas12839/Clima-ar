@@ -28,13 +28,9 @@ RADAR_IMAGE_URL = (
     "RMA10_240_ZH_CMAX_20260928_091811Z.png"
 )
 
-RADAR_CSV = Path(
-    "data/radar/radar_features.csv"
-)
+RADAR_CSV = Path("data/radar/radar_features.csv")
 
-METRICAS = Path(
-    "modelo/metricas_modelo.json"
-)
+METRICAS = Path("modelo/metricas_modelo.json")
 
 MODELO = Path(
     "modelo/climaar_modelo_temperatura_1h.joblib"
@@ -99,7 +95,10 @@ def obtener_smn(fecha):
 
         respuesta = requests.get(
             url,
-            timeout=30
+            timeout=30,
+            headers={
+                "User-Agent": "ClimaAR/1.0"
+            }
         )
 
         respuesta.raise_for_status()
@@ -124,9 +123,11 @@ def obtener_smn(fecha):
             if len(partes) < 8:
                 continue
 
-            estacion = " ".join(partes[7:])
+            estacion = " ".join(
+                partes[7:]
+            ).strip()
 
-            if estacion != ESTACION:
+            if "BAHIA BLANCA" not in estacion.upper():
                 continue
 
             datos.append({
@@ -154,8 +155,6 @@ def obtener_datos_actuales():
 
     filas = []
 
-    # Pedimos ayer y hoy para poder construir
-    # las variables históricas necesarias.
     for dias in [1, 0]:
 
         filas.extend(
@@ -319,7 +318,6 @@ def analizar_tormenta():
             )
         }
 
-    # Últimos 12 frames.
     recientes = filas[-12:]
 
     ultimo = recientes[-1]
@@ -354,10 +352,6 @@ def analizar_tormenta():
         0
     )
 
-    # --------------------------------------------------------
-    # DETECCIÓN DE ACTIVIDAD
-    # --------------------------------------------------------
-
     if max_dbz < 20:
 
         return {
@@ -377,25 +371,14 @@ def analizar_tormenta():
             )
         }
 
-    # --------------------------------------------------------
-    # INTENSIDAD
-    # --------------------------------------------------------
-
     if max_dbz < 30:
         intensidad = "moderada"
-
     elif max_dbz < 40:
         intensidad = "fuerte"
-
     elif max_dbz < 50:
         intensidad = "muy_fuerte"
-
     else:
         intensidad = "extrema"
-
-    # --------------------------------------------------------
-    # TENDENCIA
-    # --------------------------------------------------------
 
     tendencia = "estable"
 
@@ -434,8 +417,7 @@ def analizar_tormenta():
             aumento_dbz >= 3
             or (
                 ge30_anterior > 0
-                and ge30
-                >= ge30_anterior * 1.20
+                and ge30 >= ge30_anterior * 1.20
             )
         ):
 
@@ -445,16 +427,11 @@ def analizar_tormenta():
             aumento_dbz <= -3
             or (
                 ge30_anterior > 0
-                and ge30
-                <= ge30_anterior * 0.80
+                and ge30 <= ge30_anterior * 0.80
             )
         ):
 
             tendencia = "debilitandose"
-
-    # --------------------------------------------------------
-    # MOVIMIENTO
-    # --------------------------------------------------------
 
     activos = []
 
@@ -579,10 +556,6 @@ def analizar_tormenta():
                     f"{eje_y}-{eje_x}"
                 )
 
-    # --------------------------------------------------------
-    # APROXIMACIÓN AL CENTRO DEL ÁREA
-    # --------------------------------------------------------
-
     aproximacion = "indeterminada"
 
     try:
@@ -646,34 +619,22 @@ def analizar_tormenta():
                 < distancia_anterior - 1
             ):
 
-                aproximacion = (
-                    "acercandose"
-                )
+                aproximacion = "acercandose"
 
             elif (
                 distancia_actual
                 > distancia_anterior + 1
             ):
 
-                aproximacion = (
-                    "alejandose"
-                )
+                aproximacion = "alejandose"
 
             else:
 
-                aproximacion = (
-                    "sin_cambio_claro"
-                )
+                aproximacion = "sin_cambio_claro"
 
     except Exception:
 
-        aproximacion = (
-            "indeterminada"
-        )
-
-    # --------------------------------------------------------
-    # NIVEL DE SITUACIÓN
-    # --------------------------------------------------------
+        aproximacion = "indeterminada"
 
     situacion = "normal"
 
@@ -692,42 +653,22 @@ def analizar_tormenta():
     return {
         "estado": "tormenta_detectada",
         "ubicacion": "Bahía Blanca",
-
         "intensidad": intensidad,
-
         "max_dbz": max_dbz,
         "mean_dbz": media_dbz,
-
         "pixels_ge_10dbz": int(ge10),
         "pixels_ge_20dbz": int(ge20),
         "pixels_ge_30dbz": int(ge30),
         "pixels_ge_40dbz": int(ge40),
-
         "tendencia_intensidad": tendencia,
-
         "movimiento": movimiento,
         "direccion_movimiento": direccion,
-        "velocidad_movimiento_px_h": (
-            velocidad_px_h
-        ),
-
-        "aproximacion_a_bahia_blanca": (
-            aproximacion
-        ),
-
+        "velocidad_movimiento_px_h": velocidad_px_h,
+        "aproximacion_a_bahia_blanca": aproximacion,
         "situacion": situacion,
-
-        "frames_analizados": len(
-            recientes
-        ),
-
-        "frames_con_reflectividad_ge_20dbz": (
-            len(activos)
-        ),
-
-        "hora_frame": ultimo.get(
-            "frame_utc"
-        )
+        "frames_analizados": len(recientes),
+        "frames_con_reflectividad_ge_20dbz": len(activos),
+        "hora_frame": ultimo.get("frame_utc")
     }
 
 
@@ -742,7 +683,6 @@ def inicio():
         "app": "ClimaAR",
         "version": "1.0.0",
         "estado": "activo",
-
         "radar": "/radar",
         "tormenta": "/tormenta",
         "prediccion": "/prediccion",
@@ -788,16 +728,9 @@ def radar():
     return {
         "estado": "ok",
         "radar": "Bahía Blanca",
-
-        "frames_guardados": len(
-            datos
-        ),
-
+        "frames_guardados": len(datos),
         "ultimo_frame": ultimo,
-
-        "imagen_smn": (
-            RADAR_IMAGE_URL
-        )
+        "imagen_smn": RADAR_IMAGE_URL
     }
 
 
@@ -933,33 +866,22 @@ def prediccion():
         )
 
         return {
-
             "estado": "ok",
-
-            "ubicacion": (
-                "Bahía Blanca"
-            ),
-
+            "ubicacion": "Bahía Blanca",
             "hora_dato": str(
                 fila["fecha_hora"]
             ),
-
-            "temperatura_actual": (
-                round(actual, 2)
+            "temperatura_actual": round(
+                actual,
+                2
             ),
-
-            "temperatura_1h": (
-                round(
-                    prediccion,
-                    2
-                )
+            "temperatura_1h": round(
+                prediccion,
+                2
             ),
-
-            "variacion_1h": (
-                round(
-                    prediccion - actual,
-                    2
-                )
+            "variacion_1h": round(
+                prediccion - actual,
+                2
             )
         }
 
@@ -983,30 +905,15 @@ def estado():
     tormenta_actual = analizar_tormenta()
 
     return {
-
         "climaar": "activo",
-
         "version": "1.0.0",
-
-        "radar_frames": len(
-            datos
-        ),
-
-        "modelo_disponible": (
-            MODELO.exists()
-        ),
-
-        "metricas_disponibles": (
-            METRICAS.exists()
-        ),
-
-        "analisis_tormenta": (
-            tormenta_actual
-        ),
-
+        "radar_frames": len(datos),
+        "modelo_disponible": MODELO.exists(),
+        "metricas_disponibles": METRICAS.exists(),
+        "analisis_tormenta": tormenta_actual,
         "hora_utc": (
             datetime.now(
                 timezone.utc
             ).isoformat()
         )
-        }
+    }
