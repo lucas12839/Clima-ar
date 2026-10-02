@@ -155,13 +155,16 @@ def obtener_datos_actuales():
 
     filas = []
 
-    for dias in [1, 0]:
+    # Intentar varios días para garantizar
+    # suficientes datos para los lags del modelo.
+    for dias in range(0, 4):
 
-        filas.extend(
-            obtener_smn(
-                hoy - timedelta(days=dias)
-            )
-        )
+        fecha = hoy - timedelta(days=dias)
+
+        datos = obtener_smn(fecha)
+
+        if datos:
+            filas.extend(datos)
 
     if not filas:
         return None
@@ -205,10 +208,7 @@ def obtener_datos_actuales():
     if df.empty:
         return None
 
-    # --------------------------------------------------------
-    # COMPONENTES DEL VIENTO
-    # --------------------------------------------------------
-
+    # Componentes del viento
     direccion = np.deg2rad(
         df["direccion_viento"]
     )
@@ -223,14 +223,8 @@ def obtener_datos_actuales():
         * np.cos(direccion)
     )
 
-    # --------------------------------------------------------
-    # PUNTO DE ROCÍO
-    # --------------------------------------------------------
-
-    rh = df["humedad"].clip(
-        1,
-        100
-    )
+    # Punto de rocío
+    rh = df["humedad"].clip(1, 100)
 
     temperatura = df["temperatura"]
 
@@ -249,32 +243,18 @@ def obtener_datos_actuales():
         / (17.625 - gamma)
     )
 
-    # --------------------------------------------------------
-    # HORA CÍCLICA
-    # --------------------------------------------------------
-
-    hora = df[
-        "fecha_hora"
-    ].dt.hour
+    # Hora cíclica
+    hora = df["fecha_hora"].dt.hour
 
     df["hora_sin"] = np.sin(
-        2
-        * np.pi
-        * hora
-        / 24
+        2 * np.pi * hora / 24
     )
 
     df["hora_cos"] = np.cos(
-        2
-        * np.pi
-        * hora
-        / 24
+        2 * np.pi * hora / 24
     )
 
-    # --------------------------------------------------------
-    # LAGS
-    # --------------------------------------------------------
-
+    # Lags
     variables = [
         "temperatura",
         "humedad",
@@ -294,9 +274,7 @@ def obtener_datos_actuales():
 
             df[
                 f"{variable}_lag{horas}"
-            ] = df[variable].shift(
-                horas
-            )
+            ] = df[variable].shift(horas)
 
     return df
 
@@ -916,4 +894,4 @@ def estado():
                 timezone.utc
             ).isoformat()
         )
-    }
+            }
