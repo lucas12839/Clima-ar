@@ -1,0 +1,35 @@
+name: Radar ClimaAR Legal
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Bajar código
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar librerias
+        run: pip install requests Pillow numpy opencv-python-headless
+
+      - name: Procesar radar
+        run: python scripts/radar_rainviewer.py
+
+      - name: Subir cambios
+        run: |
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.com.ar"
+          git add data/radar/
+          git commit -m "update radar RainViewer" || echo "sin cambios"
+          git push
