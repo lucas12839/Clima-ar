@@ -18,7 +18,7 @@ jobs:
       - name: Instalar herramientas
         run: |
           python -m pip install --upgrade pip
-          pip install awscli xarray netCDF4 pyproj matplotlib
+          pip install awscli xarray netCDF4 matplotlib
 
       - name: Buscar archivo GOES
         run: |
@@ -29,7 +29,8 @@ jobs:
             --no-sign-request \
             | grep 'C13_G16' \
             | head -1 \
-            | awk '{print $4}' > data/goes/prueba/file.txt
+            | awk '{print $4}' \
+            > data/goes/prueba/file.txt
 
           test -s data/goes/prueba/file.txt
 
@@ -45,26 +46,41 @@ jobs:
 
           test -s data/goes/prueba/goes.nc
 
-      - name: Recortar zona Bahia Blanca
+      - name: Recortar Bahia Blanca
         run: |
           python - <<'PY'
           import xarray as xr
           import numpy as np
-          from pyproj import Proj
           import matplotlib.pyplot as plt
 
-          src = "data/goes/prueba/goes.nc"
-          out = "data/goes/prueba/bahia_blanca_goes_c13.png"
+          archivo = "data/goes/prueba/goes.nc"
+          salida = "data/goes/prueba/bahia_blanca.png"
 
-          ds = xr.open_dataset(src)
-          cmi = ds["CMI"]
+          ds = xr.open_dataset(archivo)
 
-          p = ds.goes_imager_projection
+          x = ds["x"].values
+          y = ds["y"].values
 
-          proj = Proj(
-              proj="geos",
-              h=float(p.perspective_point_height),
-              lon_0=float(p.longitude_of_projection_origin),
-              sweep=str(p.sweep_angle_axis),
-              a=float(p.semi_major_axis),
-              b=float(p.se
+          print("Archivo abierto correctamente")
+          print("Dimensiones X:", len(x))
+          print("Dimensiones Y:", len(y))
+
+          # Coordenadas de Bahia Blanca
+          lat = -38.72
+          lon = -62.27
+
+          # Parámetros GOES
+          p = ds["goes_imager_projection"]
+
+          lon0 = float(p.longitude_of_projection_origin) * np.pi / 180.0
+          lat0 = float(p.latitude_of_projection_origin) * np.pi / 180.0
+
+          # Conversión lat/lon -> ángulos de la grilla GOES
+          lat_rad = lat * np.pi / 180.0
+          lon_rad = lon * np.pi / 180.0
+
+          req = float(p.semi_major_axis)
+          rpol = float(p.semi_minor_axis)
+          h = float(p.perspective_point_height)
+
+          e2 = 1.0 -
