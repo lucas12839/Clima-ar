@@ -1,0 +1,60 @@
+name: Descargar historico meteorologico
+
+on:
+  workflow_dispatch:
+
+jobs:
+  historico:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Descargar historico Open-Meteo
+        run: |
+          mkdir -p data/historico
+
+          curl -L --fail --retry 3 \
+          "https://archive-api.open-meteo.com/v1/archive?latitude=-38.71&longitude=-62.26&start_date=1980-01-01&end_date=2026-10-03&hourly=temperature_2m,relative_humidity_2m,dew_point_2m,pressure_msl,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m&timezone=America%2FArgentina%2FBuenos_Aires" \
+          -o data/historico/openmeteo_bahia_blanca_1980_2026.json
+
+      - name: Convertir JSON a CSV
+        run: |
+          python - <<'PY'
+          import json
+          import csv
+
+          src = "data/historico/openmeteo_bahia_blanca_1980_2026.json"
+          dst = "data/historico/clima_horario_1980_2026.csv"
+
+          with open(src, encoding="utf-8") as f:
+              data = json.load(f)
+
+          hourly = data["hourly"]
+          campos = list(hourly.keys())
+
+          with open(dst, "w", newline="", encoding="utf-8") as f:
+              writer = csv.writer(f)
+              writer.writerow(campos)
+
+              for fila in zip(*(hourly[c] for c in campos)):
+                  writer.writerow(fila)
+
+          print("CSV creado correctamente")
+          print("Registros:", len(hourly["time"]))
+          PY
+
+      - name: Guardar cambios
+        run: |
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.com.ar"
+
+          git add data/historico/
+
+          git commit -m "Agregar historico meteorologico Open-Meteo" || echo "sin cambios"
+
+          git push
