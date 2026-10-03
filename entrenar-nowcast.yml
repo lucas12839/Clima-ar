@@ -1,0 +1,48 @@
+name: Entrenar nowcast RMA10
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 3 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  entrenar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install --quiet pandas numpy scikit-learn joblib
+
+      - name: Entrenar primer modelo RMA10
+        id: train
+        continue-on-error: true
+        run: python scripts/entrenar_nowcast.py
+
+      - name: Guardar modelo
+        if: steps.train.outcome == 'success'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add modelo/climaar_nowcast_features.joblib modelo/metricas_nowcast.json
+          if git diff --cached --quiet; then
+            echo "No hay cambios."
+            exit 0
+          fi
+          git commit -m "model: actualizar nowcast RMA10"
+          git push
+
+      - name: Informar falta de datos
+        if: steps.train.outcome != 'success'
+        run: echo "Todavía no hay suficientes secuencias RMA10 para entrenar. Se reintentará en la próxima ejecución."
