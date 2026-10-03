@@ -23,9 +23,17 @@ jobs:
 
       - name: Instalar herramientas
         run: |
+          set -euo pipefail
+
           sudo apt-get update -qq
           sudo apt-get install -y -qq jq
-          python -m pip install --quiet playwright pillow numpy requests
+
+          python -m pip install --quiet \
+            playwright \
+            pillow \
+            numpy \
+            requests
+
           python -m playwright install --with-deps chromium
 
       - name: Obtener token desde el radar oficial del SMN
@@ -41,7 +49,12 @@ jobs:
               browser = p.chromium.launch(headless=True)
 
               context = browser.new_context(
-                  user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36"
+                  user_agent=(
+                      "Mozilla/5.0 (X11; Linux x86_64) "
+                      "AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) "
+                      "Chrome/140 Safari/537.36"
+                  )
               )
 
               page = context.new_page()
@@ -58,7 +71,228 @@ jobs:
                   "localStorage.getItem('token')"
               )
 
+              browser.close()
+
               if not token:
-                  browser.close()
                   raise SystemExit(
-                      "ERROR:
+                      "ERROR: el radar del SMN no entregó token."
+                  )
+
+              with open(
+                  "smn_token.txt",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  f.write(token)
+
+              print("Token SMN obtenido correctamente.")
+          PY
+
+          python /tmp/get_smn_token.py
+
+          test -s smn_token.txt
+
+          {
+            echo "SMN_TOKEN<<EOF"
+            cat smn_token.txt
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+          rm -f smn_token.txt
+
+      - name: Consultar RMA10 oficial
+        run: |
+          set -euo pipefail
+
+          curl -fsSL \
+            --retry 3 \
+            --retry-delay 2 \
+            -A "Mozilla/5.0 ClimaAR/2.0" \
+            -H "Authorization: JWT $SMN_TOKEN" \
+            "https://ws1.smn.gob.ar/v1/images/radar/RMA10_240" \
+            -o rma10.json
+
+          test -s rma10.json
+
+          echo "Respuesta RMA10 recibida."
+
+          jq empty rma10.json
+
+      - name: Encontrar última imagen RMA10
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          data = json.loads(
+              Path("rma10.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          values = []
+
+          def walk(value):
+              if isinstance(value, dict):
+                  for item in value.values():
+                      walk(item)
+
+              elif isinstance(value, list):
+                  for item in value:
+                      walk(item)
+
+              elif isinstance(value, str):
+                  values.append(value)
+
+          walk(data)
+
+          pattern = re.compile(
+              r"RMA10_240_ZH_CMAX_\d{8}_\d{6}Z\.png",
+              re.IGNORECASE
+          )
+
+          candidates = []
+
+          for value in values:
+              match = pattern.search(value)
+
+              if match:
+                  candidates.append(
+                      match.group(0)
+                  )
+
+          candidates = sorted(
+              set(candidates)
+          )
+
+          if not candidates:
+              raise SystemExit(
+                  "ERROR: no se encontró una imagen RMA10_240_ZH_CMAX."
+              )
+
+          filename = candidates[-1]
+
+          url = (
+              "https://estaticos.smn.gob.ar/"
+              "vmsr/radar/"
+              + filename
+          )
+
+          print("Última imagen encontrada:")
+          print(filename)
+
+          print("Fuente de imagen:")
+          print(url)
+
+          Path(
+              "rma10_image_url.txt"
+          ).write_text(
+              url,
+              encoding="utf-8"
+          )
+          PY
+
+          test -s rma10_image_url.txt
+
+      - name: Descargar RMA10
+        run: |
+          set -euo pipefail
+
+          mkdir -p data/radar/rma10
+          mkdir -p data/radar
+
+          IMG_URL="$(cat rma10_image_url.txt)"
+
+          curl -fsSL \
+            --retry 3 \
+            --retry-delay 2 \
+            -L \
+            -A "Mozilla/5.0 ClimaAR/2.0" \
+            "$IMG_URL" \
+            -o data/radar/rma10/latest.png
+
+          test -s data/radar/rma10/latest.png
+
+          cp \
+            data/radar/rma10/latest.png \
+            data/radar/latest.png
+
+          python - <<'PY'
+          from PIL import Image
+
+          paths = [
+              "data/radar/rma10/latest.png",
+              "data/radar/latest.png",
+          ]
+
+          for path in paths:
+              image = Image.open(path)
+              image.verify()
+              print(f"Imagen válida: {path}")
+          PY
+
+          cp \
+            data/radar/rma10/latest.png \
+            "data/radar/rma10/$(date -u +%Y%m%d%H%M)_RMA10.png"
+
+      - name: Procesar radar
+        run: |
+          set -euo pipefail
+
+          if [ ! -f scripts/procesar_radar.py ]; then
+            echo "ERROR: falta scripts/procesar_radar.py"
+            exit 1
+          fi
+
+          if [ ! -f config/rma10_palette.json ]; then
+            echo "ERROR: falta config/rma10_palette.json"
+            exit 1
+          fi
+
+          python scripts/procesar_radar.py
+
+          test -s data/radar/radar_features.csv
+
+          echo "Procesamiento RMA10 correcto."
+
+      - name: Validar archivos finales
+        run: |
+          set -euo pipefail
+
+          test -s data/radar/latest.png
+          test -s data/radar/rma10/latest.png
+          test -s data/radar/radar_features.csv
+
+          python -m py_compile \
+            scripts/procesar_radar.py \
+            app.py
+
+          echo "=================================="
+          echo "CLIMAAR RMA10 VALIDADO CORRECTAMENTE"
+          echo "=================================="
+
+      - name: Guardar captura y métricas
+        run: |
+          set -euo pipefail
+
+          git config user.name \
+            "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            data/radar/
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios nuevos."
+            exit 0
+          fi
+
+          git commit \
+            -m "data: capturar RMA10 Bahía Blanca"
+
+          git push
