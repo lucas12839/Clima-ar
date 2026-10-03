@@ -1,0 +1,59 @@
+name: Capturar RMA10 ClimaAR
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: climaar-rma10
+  cancel-in-progress: false
+
+jobs:
+  capturar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install --quiet requests pillow numpy
+
+      - name: Capturar RMA10 oficial
+        env:
+          SMN_RADAR_IMAGE_URL: ${{ secrets.SMN_RADAR_IMAGE_URL }}
+        run: python scraper/scraper_rma10.py
+
+      - name: Procesar RMA10
+        run: python scripts/procesar_radar.py
+
+      - name: Validar cambios
+        run: |
+          test -s data/radar/latest.png
+          test -s data/radar/radar_features.csv
+          python -m py_compile scraper/scraper_rma10.py scripts/procesar_radar.py app.py
+
+      - name: Guardar captura y métricas
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add data/radar/ config/rma10_palette.json scraper/ scripts/ app.py config.yaml requirements.txt
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios."
+            exit 0
+          fi
+
+          git commit -m "data: capturar RMA10 Bahía Blanca"
+          git push
