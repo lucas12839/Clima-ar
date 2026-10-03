@@ -1,4 +1,4 @@
-name: Probar RMA10
+name: Probar radar
 
 on:
   workflow_dispatch:
@@ -8,71 +8,100 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Probar API de RainViewer
+      - name: Instalar dependencias
+        run: python -m pip install --quiet requests pillow
+
+      - name: Analizar un frame real
         run: |
           python - <<'PY'
+          import io
+          from collections import Counter
+
           import requests
+          from PIL import Image
 
-          API_URL = "https://api.rainviewer.com/public/weather-maps.json"
+          API = "https://api.rainviewer.com/public/weather-maps.json"
 
-          print("Consultando Weather Maps API...")
-          
-          r = requests.get(API_URL, timeout=30)
+          LAT = -38.7196
+          LON = -62.2724
 
-          print("HTTP:", r.status_code)
-          print("Contenido recibido:", len(r.content), "bytes")
+          print("Consultando RainViewer...")
 
-          if r.status_code != 200:
-              raise SystemExit("RainViewer no responde correctamente")
+          r = requests.get(API, timeout=30)
+          r.raise_for_status()
 
           data = r.json()
 
-          if "radar" not in data:
-              raise SystemExit("La respuesta no contiene radar")
-
-          frames = data["radar"].get("past", [])
+          frames = data.get("radar", {}).get("past", [])
 
           if not frames:
-              raise SystemExit("No hay frames de radar disponibles")
+              raise SystemExit("ERROR: no hay frames disponibles")
 
           frame = frames[-1]
-
           host = data["host"]
           path = frame["path"]
-          timestamp = frame["time"]
 
-          print("API DE RADAR CONFIRMADA")
-          print("Frames disponibles:", len(frames))
-          print("Último frame:", timestamp)
-          print("Host:", host)
-          print("Path:", path)
-
-          # Bahía Blanca
-          lat = -38.7196
-          lon = -62.2724
-
-          # RainViewer: Universal Blue = 2
-          radar_url = (
+          url = (
               f"{host}{path}/512/7/"
-              f"{lat}/{lon}/2/1_0.png"
+              f"{LAT}/{LON}/2/0_0.png"
+          )
+
+          print("Frame:", frame["time"])
+          print("URL:", url)
+
+          img_r = requests.get(url, timeout=30)
+          img_r.raise_for_status()
+
+          print("HTTP:", img_r.status_code)
+          print(
+              "Content-Type:",
+              img_r.headers.get("content-type")
+          )
+          print(
+              "Bytes:",
+              len(img_r.content)
+          )
+
+          img = Image.open(
+              io.BytesIO(img_r.content)
+          )
+
+          print("Formato original:", img.format)
+          print("Modo original:", img.mode)
+          print("Tamaño:", img.size)
+
+          rgba = img.convert("RGBA")
+
+          colores = Counter(
+              rgba.getdata()
           )
 
           print("")
-          print("URL DEL RADAR CENTRADO EN BAHÍA BLANCA:")
-          print(radar_url)
+          print("Colores distintos:", len(colores))
 
-          img = requests.get(radar_url, timeout=30)
+          transparentes = sum(
+              cantidad
+              for color, cantidad in colores.items()
+              if color[3] == 0
+          )
+
+          visibles = sum(
+              cantidad
+              for color, cantidad in colores.items()
+              if color[3] > 0
+          )
+
+          print("Pixeles transparentes:", transparentes)
+          print("Pixeles visibles:", visibles)
 
           print("")
-          print("HTTP imagen:", img.status_code)
-          print("Bytes imagen:", len(img.content))
+          print("20 colores más frecuentes:")
 
-          if img.status_code != 200:
-              raise SystemExit("No se pudo obtener el tile de radar")
-
-          if not img.content.startswith(b"\x89PNG"):
-              raise SystemExit("La respuesta no parece ser una imagen PNG")
+          for color, cantidad in colores.most_common(20):
+              print(color, cantidad)
 
           print("")
-          print("RADAR RAINVIEWER FUNCIONANDO")
+          print("============================")
+          print("PRUEBA DE RADAR COMPLETADA")
+          print("============================")
           PY
