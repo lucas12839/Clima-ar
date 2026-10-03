@@ -23,26 +23,54 @@ jobs:
           python-version: "3.12"
 
       - name: Instalar dependencias
-        run: pip install --quiet pandas numpy scikit-learn joblib
+        run: |
+          pip install --quiet pandas numpy scikit-learn joblib
+
+      - name: Verificar datos RMA10
+        run: |
+          if [ ! -f data/radar/radar_features.csv ]; then
+            echo "ERROR: no existe data/radar/radar_features.csv"
+            exit 1
+          fi
+
+          echo "Frames disponibles:"
+          python - <<'PY'
+          import pandas as pd
+
+          path = "data/radar/radar_features.csv"
+          df = pd.read_csv(path)
+
+          print(f"Cantidad de frames: {len(df)}")
+
+          if len(df) < 50:
+              raise SystemExit(
+                  f"ERROR: hay {len(df)} frames. "
+                  "Se necesitan al menos 50 para entrenar."
+              )
+          PY
 
       - name: Entrenar primer modelo RMA10
-        id: train
-        continue-on-error: true
         run: python scripts/entrenar_nowcast.py
 
+      - name: Verificar modelo generado
+        run: |
+          test -s modelo/climaar_nowcast_features.joblib
+          test -s modelo/metricas_nowcast.json
+
+          echo "Modelo generado correctamente."
+          cat modelo/metricas_nowcast.json
+
       - name: Guardar modelo
-        if: steps.train.outcome == 'success'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add modelo/climaar_nowcast_features.joblib modelo/metricas_nowcast.json
+
           if git diff --cached --quiet; then
-            echo "No hay cambios."
+            echo "No hay cambios para guardar."
             exit 0
           fi
+
           git commit -m "model: actualizar nowcast RMA10"
           git push
-
-      - name: Informar falta de datos
-        if: steps.train.outcome != 'success'
-        run: echo "Todavía no hay suficientes secuencias RMA10 para entrenar. Se reintentará en la próxima ejecución."
