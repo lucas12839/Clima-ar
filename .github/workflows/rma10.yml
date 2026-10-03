@@ -1,4 +1,4 @@
-name: Capturar RMA10 ClimaAR
+name: ClimaAR - Captura RMA10 Auto
 
 on:
   workflow_dispatch:
@@ -21,39 +21,89 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Preparar Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Instalar dependencias
-        run: pip install --quiet requests pillow numpy
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq
+          python -m pip install --quiet requests pillow numpy
 
-      - name: Capturar RMA10 oficial
+      - name: Obtener token oficial del SMN
         env:
-          SMN_RADAR_IMAGE_URL: ${{ secrets.SMN_RADAR_IMAGE_URL }}
-        run: python scraper/scraper_rma10.py
-
-      - name: Procesar RMA10
-        run: python scripts/procesar_radar.py
-
-      - name: Validar cambios
+          SMN_HOME: https://www.smn.gob.ar/
         run: |
-          test -s data/radar/latest.png
-          test -s data/radar/radar_features.csv
-          python -m py_compile scraper/scraper_rma10.py scripts/procesar_radar.py app.py
+          set -e
 
-      - name: Guardar captura y métricas
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "Consultando SMN..."
+          HTML=$(curl -fsSL \
+            -A "Mozilla/5.0 ClimaAR/2.0" \
+            "$SMN_HOME")
 
-          git add data/radar/ config/rma10_palette.json scraper/ scripts/ app.py config.yaml requirements.txt
+          TOKEN=$(printf '%s' "$HTML" \
+            | grep -oP "localStorage\.setItem\(['\"]token['\"],\s*['\"]\K[^'\"]+" \
+            | tail -1 || true)
 
-          if git diff --cached --quiet; then
-            echo "No hay cambios."
-            exit 0
+          if [ -z "$TOKEN" ]; then
+            TOKEN=$(printf '%s' "$HTML" \
+              | grep -oP "eyJ[A-Za-z0-9._-]+" \
+              | head -1 || true)
           fi
 
-          git commit -m "data: capturar RMA10 Bahía Blanca"
-          git push
+          if [ -z "$TOKEN" ]; then
+            echo "ERROR: no se pudo obtener el token del SMN."
+            exit 1
+          fi
+
+          echo "Token obtenido correctamente."
+          echo "SMN_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Consultar radares oficiales
+        run: |
+          set -e
+
+          curl -fsSL \
+            -A "Mozilla/5.0 ClimaAR/2.0" \
+            -H "Authorization: JWT $SMN_TOKEN" \
+            "https://ws1.smn.gob.ar/v1/weather/radar" \
+            -o radar_list.json
+
+          echo "Respuesta recibida:"
+          jq . radar_list.json
+
+      - name: Localizar RMA10
+        run: |
+          set -e
+
+          jq '.. | objects
+            | select(
+                (.name? == "RMA10") or
+                (.id? == "RMA10") or
+                (.radar? == "RMA10")
+              )' radar_list.json > rma10_meta.json || true
+
+          if [ ! -s rma10_meta.json ]; then
+            echo "ERROR: RMA10 no apareció en la respuesta del SMN."
+            exit 1
+          fi
+
+          echo "RMA10 encontrado:"
+          cat rma10_meta.json
+
+      - name: Descargar imagen RMA10
+        run: |
+          set -e
+
+          mkdir -p data/radar/rma10
+
+          IMG_URL=$(jq -r '
+            .. | objects |
+            (.url? // .image_url? // .last_image? // empty)
+          ' rma10_meta.json | grep -E '^https?://' | head -1 || true)
+
+          if [ -z "$IMG_URL" ]; then
+            echo "ERROR: el SMN no entregó una URL de imagen RMA10."
+            exit 1
+          fi
+
+          echo "URL RMA10 encontrada."
+
+          curl -fsSL
