@@ -1,0 +1,106 @@
+name: Prueba GOES Bahia Blanca
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prueba-goes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar herramientas
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq awscli
+          python -m pip install --quiet xarray netCDF4 pyproj matplotlib
+
+      - name: Buscar archivo GOES
+        run: |
+          mkdir -p data/goes/prueba
+
+          aws s3 ls \
+            s3://noaa-goes16/ABI-L2-CMIPF/2022/001/10/ \
+            --no-sign-request \
+            | grep 'C13_G16' \
+            | head -1 \
+            | awk '{print $4}' > data/goes/prueba/file.txt
+
+          test -s data/goes/prueba/file.txt
+
+          FILE=$(cat data/goes/prueba/file.txt)
+
+          echo "Archivo encontrado:"
+          echo "$FILE"
+
+          aws s3 cp \
+            "s3://noaa-goes16/ABI-L2-CMIPF/2022/001/10/$FILE" \
+            data/goes/prueba/goes.nc \
+            --no-sign-request
+
+          test -s data/goes/prueba/goes.nc
+
+      - name: Recortar zona Bahia Blanca
+        run: |
+          python - <<'PY'
+          import xarray as xr
+          import numpy as np
+          from pyproj import Proj
+          import matplotlib.pyplot as plt
+
+          src = "data/goes/prueba/goes.nc"
+          out = "data/goes/prueba/bahia_blanca_goes_c13.png"
+
+          ds = xr.open_dataset(src)
+          cmi = ds["CMI"]
+
+          p = ds.goes_imager_projection
+
+          proj = Proj(
+              proj="geos",
+              h=float(p.perspective_point_height),
+              lon_0=float(p.longitude_of_projection_origin),
+              sweep=str(p.sweep_angle_axis),
+              a=float(p.semi_major_axis),
+              b=float(p.semi_minor_axis),
+          )
+
+          lon = -62.27
+          lat = -38.72
+
+          x_m, y_m = proj(lon, lat)
+
+          h = float(p.perspective_point_height)
+
+          x_target = x_m / h
+          y_target = y_m / h
+
+          x = ds["x"].values
+          y = ds["y"].values
+
+          ix = int(np.abs(x - x_target).argmin())
+          iy = int(np.abs(y - y_target).argmin())
+
+          radius = 150
+
+          x0 = max(0, ix - radius)
+          x1 = min(len(x), ix + radius)
+
+          y0 = max(0, iy - radius)
+          y1 = min(len(y), iy + radius)
+
+          crop = cmi.isel(
+              x=slice(x0, x1),
+              y=slice(y0, y1)
+          ).values
+
+          plt.figure(figsize=(8, 8))
+          plt.imshow(crop, cmap="gray_r")
+          plt.axis("off")
+          plt.tight
