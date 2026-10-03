@@ -15,95 +15,50 @@ concurrency:
 jobs:
   capturar:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Instalar dependencias
+      - name: Instalar herramientas
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq jq
-          python -m pip install --quiet requests pillow numpy
+          python -m pip install --quiet playwright pillow numpy requests
+          python -m playwright install --with-deps chromium
 
-      - name: Obtener token oficial del SMN
-        env:
-          SMN_HOME: https://www.smn.gob.ar/
+      - name: Obtener token desde el radar oficial del SMN
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "Consultando SMN..."
-          HTML=$(curl -fsSL \
-            -A "Mozilla/5.0 ClimaAR/2.0" \
-            "$SMN_HOME")
+          cat > /tmp/get_smn_token.py <<'PY'
+          from playwright.sync_api import sync_playwright
 
-          TOKEN=$(printf '%s' "$HTML" \
-            | grep -oP "localStorage\.setItem\(['\"]token['\"],\s*['\"]\K[^'\"]+" \
-            | tail -1 || true)
+          URL = "https://www.smn.gob.ar/radar"
 
-          if [ -z "$TOKEN" ]; then
-            TOKEN=$(printf '%s' "$HTML" \
-              | grep -oP "eyJ[A-Za-z0-9._-]+" \
-              | head -1 || true)
-          fi
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
 
-          if [ -z "$TOKEN" ]; then
-            echo "ERROR: no se pudo obtener el token del SMN."
-            exit 1
-          fi
+              context = browser.new_context(
+                  user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36"
+              )
 
-          echo "Token obtenido correctamente."
-          echo "SMN_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+              page = context.new_page()
 
-      - name: Consultar radares oficiales
-        run: |
-          set -e
+              page.goto(
+                  URL,
+                  wait_until="domcontentloaded",
+                  timeout=90000
+              )
 
-          curl -fsSL \
-            -A "Mozilla/5.0 ClimaAR/2.0" \
-            -H "Authorization: JWT $SMN_TOKEN" \
-            "https://ws1.smn.gob.ar/v1/weather/radar" \
-            -o radar_list.json
+              page.wait_for_timeout(10000)
 
-          echo "Respuesta recibida:"
-          jq . radar_list.json
+              token = page.evaluate(
+                  "localStorage.getItem('token')"
+              )
 
-      - name: Localizar RMA10
-        run: |
-          set -e
-
-          jq '.. | objects
-            | select(
-                (.name? == "RMA10") or
-                (.id? == "RMA10") or
-                (.radar? == "RMA10")
-              )' radar_list.json > rma10_meta.json || true
-
-          if [ ! -s rma10_meta.json ]; then
-            echo "ERROR: RMA10 no apareció en la respuesta del SMN."
-            exit 1
-          fi
-
-          echo "RMA10 encontrado:"
-          cat rma10_meta.json
-
-      - name: Descargar imagen RMA10
-        run: |
-          set -e
-
-          mkdir -p data/radar/rma10
-
-          IMG_URL=$(jq -r '
-            .. | objects |
-            (.url? // .image_url? // .last_image? // empty)
-          ' rma10_meta.json | grep -E '^https?://' | head -1 || true)
-
-          if [ -z "$IMG_URL" ]; then
-            echo "ERROR: el SMN no entregó una URL de imagen RMA10."
-            exit 1
-          fi
-
-          echo "URL RMA10 encontrada."
-
-          curl -fsSL
+              if not token:
+                  browser.close()
+                  raise SystemExit(
+                      "ERROR:
