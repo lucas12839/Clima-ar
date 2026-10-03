@@ -1,0 +1,30 @@
+app:
+  name: ClimaAR
+  version: "2.0.0"
+
+radar:
+  id: RMA10
+  product: ZH_MAX
+  page_url: "https://ws2.smn.gob.ar/radar"
+  latitude: -38.7342
+  longitude: -62.1654
+  interval_minutes: 10
+  raw_dir: "data/radar/raw"
+  features_path: "data/radar/radar_features.csv"
+  latest_path: "data/radar/latest.png"
+  palette_path: "config/rma10_palette.json"
+
+processing:
+  min_dbz: -15
+  max_dbz: 75
+  thresholds_dbz: [20, 30, 40, 45, 50, 55, 60]
+  crop:
+    left: 0.01
+    top: 0.113
+    right: 0.82
+    bottom: 0.748
+
+sequence:
+  input_frames: 4
+  input_minutes: [30, 20, 10, 0]
+  forecast_minutes: [10, 20, 30]
