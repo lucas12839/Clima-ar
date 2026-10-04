@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import math
+import csv
 from io import BytesIO
 from datetime import datetime, timezone
 
@@ -16,12 +17,16 @@ LON = -62.26
 ZOOM = 7
 
 DATA_DIR = "data/radar"
+HISTORY_DIR = os.path.join(DATA_DIR, "historico")
+FEATURES_CSV = os.path.join(DATA_DIR, "radar_features_rainviewer.csv")
+
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(HISTORY_DIR, exist_ok=True)
 
 API_URL = "https://api.rainviewer.com/public/weather-maps.json"
 
 HEADERS = {
-    "User-Agent": "ClimaAR/5.0",
+    "User-Agent": "ClimaAR/5.1",
     "Referer": "https://www.rainviewer.com/",
     "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
 }
@@ -29,18 +34,16 @@ HEADERS = {
 TILE_SIZE = 512
 GRID_RADIUS = 1
 MIN_TILE_BYTES = 200
+MAX_HISTORY_FRAMES = 144
 
 
 def latlon_to_tile(lat, lon, zoom):
     n = 2.0 ** zoom
-
     xtile = (lon + 180.0) / 360.0 * n
-
     lat_rad = math.radians(lat)
 
     ytile = (
-        1.0
-        - math.asinh(math.tan(lat_rad)) / math.pi
+        1.0 - math.asinh(math.tan(lat_rad)) / math.pi
     ) / 2.0 * n
 
     return int(xtile), int(ytile)
@@ -50,15 +53,11 @@ def pixels_per_km(lat, zoom, tile_size):
     world_km = 40075.016
 
     km_x = (
-        world_km
-        * math.cos(math.radians(lat))
+        world_km * math.cos(math.radians(lat))
         / ((2 ** zoom) * tile_size)
     )
 
-    km_y = (
-        world_km
-        / ((2 ** zoom) * tile_size)
-    )
+    km_y = world_km / ((2 ** zoom) * tile_size)
 
     return km_x, km_y
 
@@ -101,12 +100,7 @@ def fetch_rainviewer():
     return host, frames
 
 
-def download_frame(
-    host,
-    frame,
-    xt,
-    yt
-):
+def download_frame(host, frame, xt, yt):
     path = frame["path"]
     timestamp = int(frame["time"])
 
@@ -120,10 +114,14 @@ def download_frame(
 
     successful_tiles = 0
 
-    for dx in (-1, 0, 1):
-
-        for dy in (-1, 0, 1):
-
+    for dx in range(
+        -GRID_RADIUS,
+        GRID_RADIUS + 1
+    ):
+        for dy in range(
+            -GRID_RADIUS,
+            GRID_RADIUS + 1
+        ):
             url = (
                 f"{host}{path}"
                 f"/{TILE_SIZE}/{ZOOM}/"
@@ -131,7 +129,6 @@ def download_frame(
             )
 
             try:
-
                 response = requests.get(
                     url,
                     headers=HEADERS,
@@ -151,17 +148,15 @@ def download_frame(
                     continue
 
                 tile = Image.open(
-                    BytesIO(
-                        response.content
-                    )
+                    BytesIO(response.content)
                 ).convert("RGBA")
 
                 x = (
-                    dx + 1
+                    dx + GRID_RADIUS
                 ) * TILE_SIZE
 
                 y = (
-                    dy + 1
+                    dy + GRID_RADIUS
                 ) * TILE_SIZE
 
                 image.alpha_composite(
@@ -172,7 +167,6 @@ def download_frame(
                 successful_tiles += 1
 
             except Exception as exc:
-
                 print(
                     f"FAIL tile {url} -> {exc}"
                 )
@@ -186,7 +180,6 @@ def download_frame(
 
 
 def radar_mask(image):
-
     array = np.asarray(image)
 
     alpha = array[:, :, 3]
@@ -218,7 +211,6 @@ def radar_mask(image):
 
 
 def largest_component(mask):
-
     count, labels, stats, centers = (
         cv2.connectedComponentsWithStats(
             mask,
@@ -232,7 +224,6 @@ def largest_component(mask):
         1,
         count
     ):
-
         area = int(
             stats[
                 i,
@@ -295,7 +286,6 @@ def largest_component(mask):
 
 
 def distance_to_bahia(mask):
-
     ys, xs = np.where(
         mask > 0
     )
@@ -333,7 +323,6 @@ def distance_to_bahia(mask):
 
 
 def analyze_frame(image):
-
     mask = radar_mask(
         image
     )
@@ -364,7 +353,6 @@ def motion_between(
     previous,
     current
 ):
-
     if (
         previous is None
         or current is None
@@ -450,7 +438,6 @@ def motion_between(
 def direction_name(
     degrees
 ):
-
     names = [
         "N",
         "NE",
@@ -477,11 +464,10 @@ def calculate_speed(
     previous_timestamp,
     current_timestamp
 ):
-
-    if movement is None:
-        return None
-
-    if previous_timestamp is None:
+    if (
+        movement is None
+        or previous_timestamp is None
+    ):
         return None
 
     elapsed_minutes = (
@@ -513,10 +499,34 @@ def calculate_speed(
     }
 
 
+def strengthening_state(
+    previous_area,
+    current_area
+):
+    if (
+        previous_area <= 0
+        or current_area <= 0
+    ):
+        return "sin_datos"
+
+    change = (
+        current_area
+        / previous_area
+        - 1.0
+    ) * 100.0
+
+    if change >= 15:
+        return "fortaleciendose"
+
+    if change <= -15:
+        return "debilitandose"
+
+    return "estable"
+
+
 def analyze_sequence(
     results
 ):
-
     if not results:
         return None
 
@@ -574,12 +584,23 @@ def analyze_sequence(
 
         "estado":
             "sin_precipitacion",
+
+        "timestamp_frame":
+            current["timestamp"],
+
+        "frame_utc":
+            datetime.fromtimestamp(
+                current["timestamp"],
+                timezone.utc,
+            ).isoformat(),
+
+        "tiles":
+            current["tiles_ok"],
     }
 
     if current["area"] > 0:
-
         status["estado"] = (
-            "precipitacion detectada"
+            "precipitacion_detectada"
         )
 
     if len(results) < 2:
@@ -599,7 +620,6 @@ def analyze_sequence(
     )
 
     if speed is not None:
-
         status[
             "velocidad_kmh"
         ] = speed[
@@ -607,7 +627,6 @@ def analyze_sequence(
         ]
 
     if movement is not None:
-
         status[
             "direccion_grados"
         ] = movement[
@@ -622,39 +641,12 @@ def analyze_sequence(
             ]
         )
 
-    previous_area = (
-        previous["area"]
+    status[
+        "fortalecimiento"
+    ] = strengthening_state(
+        previous["area"],
+        current["area"],
     )
-
-    current_area = (
-        current["area"]
-    )
-
-    if previous_area > 0:
-
-        change = (
-            current_area
-            / previous_area
-            - 1.0
-        ) * 100.0
-
-        if change >= 15:
-
-            status[
-                "fortalecimiento"
-            ] = "fortaleciendose"
-
-        elif change <= -15:
-
-            status[
-                "fortalecimiento"
-            ] = "debilitandose"
-
-        else:
-
-            status[
-                "fortalecimiento"
-            ] = "estable"
 
     if (
         movement is not None
@@ -662,8 +654,7 @@ def analyze_sequence(
         and current["component"]
         is not None
     ):
-
-        confidence = 0.75
+        confidence = 0.60
 
         if current["area"] >= 100:
             confidence += 0.10
@@ -672,6 +663,15 @@ def analyze_sequence(
             speed["velocidad_kmh"]
             <= 120
         ):
+            confidence += 0.10
+
+        if (
+            movement["movimiento_km"]
+            >= 1
+        ):
+            confidence += 0.10
+
+        if len(results) >= 4:
             confidence += 0.10
 
         status[
@@ -687,10 +687,303 @@ def analyze_sequence(
     return status
 
 
+def save_features(
+    results
+):
+    rows = []
+
+    for item in results:
+        component = item[
+            "component"
+        ]
+
+        row = {
+            "frame_time":
+                item["timestamp"],
+
+            "frame_utc":
+                datetime.fromtimestamp(
+                    item["timestamp"],
+                    timezone.utc,
+                ).isoformat(),
+
+            "source":
+                "RainViewer",
+
+            "latitud":
+                LAT,
+
+            "longitud":
+                LON,
+
+            "area_px":
+                item["area"],
+
+            "distance_km":
+                (
+                    round(
+                        item["distance_km"],
+                        2,
+                    )
+                    if item["distance_km"]
+                    is not None
+                    else ""
+                ),
+
+            "tiles_ok":
+                item["tiles_ok"],
+
+            "centroid_x":
+                (
+                    round(
+                        component[
+                            "centroid_x"
+                        ],
+                        2,
+                    )
+                    if component
+                    is not None
+                    else ""
+                ),
+
+            "centroid_y":
+                (
+                    round(
+                        component[
+                            "centroid_y"
+                        ],
+                        2,
+                    )
+                    if component
+                    is not None
+                    else ""
+                ),
+
+            "bbox_x":
+                (
+                    component[
+                        "bbox"
+                    ][0]
+                    if component
+                    is not None
+                    else ""
+                ),
+
+            "bbox_y":
+                (
+                    component[
+                        "bbox"
+                    ][1]
+                    if component
+                    is not None
+                    else ""
+                ),
+
+            "bbox_width":
+                (
+                    component[
+                        "bbox"
+                    ][2]
+                    if component
+                    is not None
+                    else ""
+                ),
+
+            "bbox_height":
+                (
+                    component[
+                        "bbox"
+                    ][3]
+                    if component
+                    is not None
+                    else ""
+                ),
+        }
+
+        rows.append(
+            row
+        )
+
+    if not rows:
+        return
+
+    fieldnames = list(
+        rows[0].keys()
+    )
+
+    existing = []
+
+    if os.path.exists(
+        FEATURES_CSV
+    ):
+        try:
+            with open(
+                FEATURES_CSV,
+                "r",
+                encoding="utf-8",
+                newline="",
+            ) as file:
+                existing = list(
+                    csv.DictReader(
+                        file
+                    )
+                )
+
+        except Exception as exc:
+            print(
+                f"AVISO: no se pudo leer "
+                f"{FEATURES_CSV}: {exc}"
+            )
+
+    by_timestamp = {}
+
+    for row in existing:
+        timestamp = row.get(
+            "frame_time"
+        )
+
+        if timestamp:
+            by_timestamp[
+                str(timestamp)
+            ] = row
+
+    for row in rows:
+        by_timestamp[
+            str(row["frame_time"])
+        ] = row
+
+    combined = list(
+        by_timestamp.values()
+    )
+
+    combined.sort(
+        key=lambda row: int(
+            float(
+                row["frame_time"]
+            )
+        )
+    )
+
+    with open(
+        FEATURES_CSV,
+        "w",
+        encoding="utf-8",
+        newline="",
+    ) as file:
+
+        writer = csv.DictWriter(
+            file,
+            fieldnames=fieldnames,
+        )
+
+        writer.writeheader()
+        writer.writerows(
+            combined
+        )
+
+    print(
+        f"Features guardadas: "
+        f"{len(combined)} frames"
+    )
+
+
+def save_history_frame(
+    item
+):
+    timestamp = item[
+        "timestamp"
+    ]
+
+    filename = os.path.join(
+        HISTORY_DIR,
+        f"radar_{timestamp}.png",
+    )
+
+    if not os.path.exists(
+        filename
+    ):
+        item["image"].save(
+            filename,
+            optimize=True,
+        )
+
+        print(
+            f"Historico guardado: "
+            f"{filename}"
+        )
+
+    else:
+        print(
+            f"Historico ya existe: "
+            f"{filename}"
+        )
+
+
+def cleanup_history():
+    files = []
+
+    for filename in os.listdir(
+        HISTORY_DIR
+    ):
+        if not filename.startswith(
+            "radar_"
+        ):
+            continue
+
+        if not filename.endswith(
+            ".png"
+        ):
+            continue
+
+        path = os.path.join(
+            HISTORY_DIR,
+            filename,
+        )
+
+        try:
+            timestamp = int(
+                filename[
+                    len("radar_"):-4
+                ]
+            )
+
+        except ValueError:
+            continue
+
+        files.append(
+            (
+                timestamp,
+                path
+            )
+        )
+
+    files.sort(
+        key=lambda item: item[0]
+    )
+
+    while len(files) > MAX_HISTORY_FRAMES:
+        _, path = files.pop(0)
+
+        try:
+            os.remove(
+                path
+            )
+
+            print(
+                f"Historico eliminado: "
+                f"{path}"
+            )
+
+        except OSError as exc:
+            print(
+                f"AVISO: no se pudo eliminar "
+                f"{path}: {exc}"
+            )
+
+
 def save_status(
     status
 ):
-
     path = os.path.join(
         DATA_DIR,
         "status.json",
@@ -711,9 +1004,8 @@ def save_status(
 
 
 def main():
-
     print(
-        "=== CLIMAAR RAINVIEWER V5 ==="
+        "=== CLIMAAR RAINVIEWER V5.1 ==="
     )
 
     host, frames = (
@@ -779,19 +1071,28 @@ def main():
             image
         )
 
+        item = {
+            "timestamp":
+                timestamp,
+
+            "path":
+                path,
+
+            "image":
+                image,
+
+            "tiles_ok":
+                tiles_ok,
+
+            **analysis,
+        }
+
         results.append(
-            {
-                "timestamp":
-                    timestamp,
+            item
+        )
 
-                "path":
-                    path,
-
-                "image":
-                    image,
-
-                **analysis,
-            }
+        save_history_frame(
+            item
         )
 
     if not results:
@@ -804,6 +1105,11 @@ def main():
 
         sys.exit(1)
 
+    results.sort(
+        key=lambda item:
+            item["timestamp"]
+    )
+
     current = results[-1]
 
     actual_path = os.path.join(
@@ -812,27 +1118,29 @@ def main():
     )
 
     current["image"].save(
-        actual_path
+        actual_path,
+        optimize=True,
     )
+
+    save_features(
+        results
+    )
+
+    cleanup_history()
 
     status = analyze_sequence(
         results
     )
 
-    status[
-        "timestamp_frame"
-    ] = current[
-        "timestamp"
-    ]
+    if status is None:
 
-    status[
-        "frame_utc"
-    ] = datetime.fromtimestamp(
-        current["timestamp"],
-        timezone.utc,
-    ).isoformat()
+        print(
+            "ERROR CRITICO: "
+            "No se pudo generar "
+            "status."
+        )
 
-    status["tiles"] = 9
+        sys.exit(1)
 
     save_status(
         status
@@ -847,7 +1155,7 @@ def main():
     )
 
     print(
-        "=== V5 OK ==="
+        "=== CLIMAAR RAINVIEWER V5.1 OK ==="
     )
 
 
