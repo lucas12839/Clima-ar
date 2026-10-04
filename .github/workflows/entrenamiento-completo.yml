@@ -1,4 +1,4 @@
-name: ClimaAR - Entrenamiento Completo Diario
+name: ClimaAR - Firma Atmosferica Completa
 
 on:
   workflow_dispatch:
@@ -11,7 +11,6 @@ jobs:
       contents: write
 
     steps:
-
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
@@ -25,7 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy scikit-learn joblib
 
-      - name: Entrenar modelo completo
+      - name: Construir dataset y entrenar firma atmosferica
         run: |
           python - <<'PY'
           import os
@@ -34,18 +33,14 @@ jobs:
           import pandas as pd
           import joblib
 
-          from sklearn.ensemble import RandomForestClassifier
-          from sklearn.model_selection import StratifiedKFold
-          from sklearn.metrics import (
-              precision_score,
-              recall_score,
-              f1_score,
-              roc_auc_score,
-              confusion_matrix
-          )
+          from sklearn.ensemble import IsolationForest
+          from sklearn.preprocessing import RobustScaler
 
           CLIMA = "data/historico/clima_horario_1980_2026.csv"
           EVENTOS = "data/historico/eventos_severos.csv"
+          OUT = "modelo"
+
+          os.makedirs(OUT, exist_ok=True)
 
           if not os.path.exists(CLIMA):
               raise SystemExit(f"ERROR: no existe {CLIMA}")
@@ -53,25 +48,17 @@ jobs:
           if not os.path.exists(EVENTOS):
               raise SystemExit(f"ERROR: no existe {EVENTOS}")
 
-          os.makedirs("modelo", exist_ok=True)
-
-          print("=" * 60)
-          print("CLIMAAR - CARGA DEL HISTORICO COMPLETO")
-          print("=" * 60)
+          print("=" * 70)
+          print("CLIMAAR - FIRMA ATMOSFERICA COMPLETA")
+          print("=" * 70)
 
           clima = pd.read_csv(CLIMA)
           eventos = pd.read_csv(EVENTOS)
 
-          print(f"Registros meteorologicos: {len(clima):,}")
-          print(f"Eventos catalogados: {len(eventos)}")
+          print(f"Registros horarios: {len(clima):,}")
 
           clima["time"] = pd.to_datetime(
               clima["time"],
-              errors="coerce"
-          )
-
-          eventos["fecha"] = pd.to_datetime(
-              eventos["fecha"],
               errors="coerce"
           )
 
@@ -83,15 +70,22 @@ jobs:
               .reset_index(drop=True)
           )
 
+          eventos["fecha"] = pd.to_datetime(
+              eventos["fecha"],
+              errors="coerce"
+          )
+
+          eventos = eventos.dropna(subset=["fecha"])
+          eventos["fecha"] = eventos["fecha"].dt.normalize()
+
           eventos = (
               eventos
-              .dropna(subset=["fecha"])
-              .sort_values("fecha")
               .drop_duplicates(subset=["fecha"])
+              .sort_values("fecha")
               .reset_index(drop=True)
           )
 
-          columnas_numericas = [
+          numericas = [
               "temperature_2m",
               "relative_humidity_2m",
               "dew_point_2m",
@@ -102,230 +96,137 @@ jobs:
               "wind_gusts_10m"
           ]
 
-          for columna in columnas_numericas:
-              if columna in clima.columns:
-                  clima[columna] = pd.to_numeric(
-                      clima[columna],
-                      errors="coerce"
+          for columna in numericas:
+              if columna not in clima.columns:
+                  raise SystemExit(
+                      f"ERROR: falta columna {columna}"
                   )
 
-          clima["fecha"] = clima["time"].dt.floor("D")
-          clima["mes"] = clima["time"].dt.month
+              clima[columna] = pd.to_numeric(
+                  clima[columna],
+                  errors="coerce"
+              )
 
-          clima["diferencia_temp_rocio"] = (
-              clima["temperature_2m"]
-              - clima["dew_point_2m"]
-          )
+          clima["fecha"] = clima["time"].dt.normalize()
 
-          direccion_rad = np.deg2rad(
+          rad = np.deg2rad(
               clima["wind_direction_10m"]
           )
 
           clima["viento_u"] = (
               clima["wind_speed_10m"]
-              * np.sin(direccion_rad)
+              * np.sin(rad)
           )
 
           clima["viento_v"] = (
               clima["wind_speed_10m"]
-              * np.cos(direccion_rad)
+              * np.cos(rad)
           )
 
-          for horas in [3, 6, 12, 24]:
+          clima["temp_rocio_dif"] = (
+              clima["temperature_2m"]
+              - clima["dew_point_2m"]
+          )
 
-              clima[f"cambio_presion_{horas}h"] = (
-                  clima["pressure_msl"]
-                  - clima["pressure_msl"].shift(horas)
-              )
-
-              clima[f"cambio_temp_{horas}h"] = (
-                  clima["temperature_2m"]
-                  - clima["temperature_2m"].shift(horas)
-              )
-
-              clima[f"cambio_humedad_{horas}h"] = (
-                  clima["relative_humidity_2m"]
-                  - clima["relative_humidity_2m"].shift(horas)
-              )
-
-              clima[f"cambio_viento_{horas}h"] = (
-                  clima["wind_speed_10m"]
-                  - clima["wind_speed_10m"].shift(horas)
-              )
-
-          for horas in [3, 6, 12, 24]:
-
-              clima[f"lluvia_{horas}h"] = (
-                  clima["precipitation"]
-                  .rolling(horas, min_periods=1)
-                  .sum()
-              )
-
-              clima[f"rafaga_max_{horas}h"] = (
-                  clima["wind_gusts_10m"]
-                  .rolling(horas, min_periods=1)
-                  .max()
-              )
-
-              clima[f"viento_max_{horas}h"] = (
-                  clima["wind_speed_10m"]
-                  .rolling(horas, min_periods=1)
-                  .max()
-              )
-
-          clima["lluvia_1mm"] = (
-              clima["precipitation"] >= 1
-          ).astype(int)
-
-          clima["lluvia_10mm"] = (
-              clima["precipitation"] >= 10
-          ).astype(int)
-
-          clima["rafaga_80"] = (
-              clima["wind_gusts_10m"] >= 80
-          ).astype(int)
-
-          clima["rafaga_100"] = (
-              clima["wind_gusts_10m"] >= 100
-          ).astype(int)
-
-          print()
           print("Construyendo dataset diario...")
 
-          daily = clima.groupby("fecha").agg(
+          daily = (
+              clima
+              .groupby("fecha")
+              .agg(
+                  temperatura_media=(
+                      "temperature_2m",
+                      "mean"
+                  ),
+                  temperatura_min=(
+                      "temperature_2m",
+                      "min"
+                  ),
+                  temperatura_max=(
+                      "temperature_2m",
+                      "max"
+                  ),
+                  humedad_media=(
+                      "relative_humidity_2m",
+                      "mean"
+                  ),
+                  humedad_min=(
+                      "relative_humidity_2m",
+                      "min"
+                  ),
+                  humedad_max=(
+                      "relative_humidity_2m",
+                      "max"
+                  ),
+                  rocio_medio=(
+                      "dew_point_2m",
+                      "mean"
+                  ),
+                  rocio_min=(
+                      "dew_point_2m",
+                      "min"
+                  ),
+                  rocio_max=(
+                      "dew_point_2m",
+                      "max"
+                  ),
+                  presion_media=(
+                      "pressure_msl",
+                      "mean"
+                  ),
+                  presion_min=(
+                      "pressure_msl",
+                      "min"
+                  ),
+                  presion_max=(
+                      "pressure_msl",
+                      "max"
+                  ),
+                  precipitacion_total=(
+                      "precipitation",
+                      "sum"
+                  ),
+                  precipitacion_max_horaria=(
+                      "precipitation",
+                      "max"
+                  ),
+                  viento_medio=(
+                      "wind_speed_10m",
+                      "mean"
+                  ),
+                  viento_max=(
+                      "wind_speed_10m",
+                      "max"
+                  ),
+                  rafaga_media=(
+                      "wind_gusts_10m",
+                      "mean"
+                  ),
+                  rafaga_max=(
+                      "wind_gusts_10m",
+                      "max"
+                  ),
+                  viento_u_medio=(
+                      "viento_u",
+                      "mean"
+                  ),
+                  viento_v_medio=(
+                      "viento_v",
+                      "mean"
+                  ),
+                  temp_rocio_dif_media=(
+                      "temp_rocio_dif",
+                      "mean"
+                  )
+              )
+              .reset_index()
+          )
 
-              temperatura_media=("temperature_2m", "mean"),
-              temperatura_min=("temperature_2m", "min"),
-              temperatura_max=("temperature_2m", "max"),
-
-              humedad_media=("relative_humidity_2m", "mean"),
-              humedad_min=("relative_humidity_2m", "min"),
-              humedad_max=("relative_humidity_2m", "max"),
-
-              punto_rocio_medio=("dew_point_2m", "mean"),
-              punto_rocio_min=("dew_point_2m", "min"),
-              punto_rocio_max=("dew_point_2m", "max"),
-
-              presion_media=("pressure_msl", "mean"),
-              presion_min=("pressure_msl", "min"),
-              presion_max=("pressure_msl", "max"),
-
-              precipitacion_total=("precipitation", "sum"),
-              precipitacion_max_1h=("precipitation", "max"),
-
-              viento_medio=("wind_speed_10m", "mean"),
-              viento_max=("wind_speed_10m", "max"),
-
-              rafaga_media=("wind_gusts_10m", "mean"),
-              rafaga_max=("wind_gusts_10m", "max"),
-
-              viento_u_medio=("viento_u", "mean"),
-              viento_v_medio=("viento_v", "mean"),
-
-              diferencia_rocio_media=(
-                  "diferencia_temp_rocio",
-                  "mean"
-              ),
-
-              lluvia_3h_max=("lluvia_3h", "max"),
-              lluvia_6h_max=("lluvia_6h", "max"),
-              lluvia_12h_max=("lluvia_12h", "max"),
-              lluvia_24h_max=("lluvia_24h", "max"),
-
-              rafaga_max_3h=("rafaga_max_3h", "max"),
-              rafaga_max_6h=("rafaga_max_6h", "max"),
-              rafaga_max_12h=("rafaga_max_12h", "max"),
-              rafaga_max_24h=("rafaga_max_24h", "max"),
-
-              viento_max_3h=("viento_max_3h", "max"),
-              viento_max_6h=("viento_max_6h", "max"),
-              viento_max_12h=("viento_max_12h", "max"),
-              viento_max_24h=("viento_max_24h", "max"),
-
-              cambio_presion_3h_min=(
-                  "cambio_presion_3h",
-                  "min"
-              ),
-              cambio_presion_6h_min=(
-                  "cambio_presion_6h",
-                  "min"
-              ),
-              cambio_presion_12h_min=(
-                  "cambio_presion_12h",
-                  "min"
-              ),
-              cambio_presion_24h_min=(
-                  "cambio_presion_24h",
-                  "min"
-              ),
-              cambio_presion_3h_max=(
-                  "cambio_presion_3h",
-                  "max"
-              ),
-
-              cambio_temp_6h_min=("cambio_temp_6h", "min"),
-              cambio_temp_6h_max=("cambio_temp_6h", "max"),
-              cambio_temp_12h_min=("cambio_temp_12h", "min"),
-              cambio_temp_12h_max=("cambio_temp_12h", "max"),
-              cambio_temp_24h_min=("cambio_temp_24h", "min"),
-              cambio_temp_24h_max=("cambio_temp_24h", "max"),
-
-              cambio_humedad_6h_min=(
-                  "cambio_humedad_6h",
-                  "min"
-              ),
-              cambio_humedad_6h_max=(
-                  "cambio_humedad_6h",
-                  "max"
-              ),
-              cambio_humedad_12h_min=(
-                  "cambio_humedad_12h",
-                  "min"
-              ),
-              cambio_humedad_12h_max=(
-                  "cambio_humedad_12h",
-                  "max"
-              ),
-              cambio_humedad_24h_min=(
-                  "cambio_humedad_24h",
-                  "min"
-              ),
-              cambio_humedad_24h_max=(
-                  "cambio_humedad_24h",
-                  "max"
-              ),
-
-              cambio_viento_6h_min=(
-                  "cambio_viento_6h",
-                  "min"
-              ),
-              cambio_viento_6h_max=(
-                  "cambio_viento_6h",
-                  "max"
-              ),
-              cambio_viento_12h_min=(
-                  "cambio_viento_12h",
-                  "min"
-              ),
-              cambio_viento_12h_max=(
-                  "cambio_viento_12h",
-                  "max"
-              ),
-              cambio_viento_24h_min=(
-                  "cambio_viento_24h",
-                  "min"
-              ),
-              cambio_viento_24h_max=(
-                  "cambio_viento_24h",
-                  "max"
-              ),
-
-              horas_lluvia_1mm=("lluvia_1mm", "sum"),
-              horas_lluvia_10mm=("lluvia_10mm", "sum"),
-              horas_rafaga_80=("rafaga_80", "sum"),
-              horas_rafaga_100=("rafaga_100", "sum")
-
-          ).reset_index()
+          daily = (
+              daily
+              .sort_values("fecha")
+              .reset_index(drop=True)
+          )
 
           daily["temperatura_rango"] = (
               daily["temperatura_max"]
@@ -342,88 +243,114 @@ jobs:
               - daily["presion_min"]
           )
 
-          daily = (
-              daily
-              .sort_values("fecha")
-              .reset_index(drop=True)
-          )
+          for n in (3, 7):
 
-          daily["lluvia_3d"] = (
-              daily["precipitacion_total"]
-              .rolling(3, min_periods=1)
-              .sum()
-          )
+              daily[f"lluvia_{n}d_previa"] = (
+                  daily["precipitacion_total"]
+                  .shift(1)
+                  .rolling(
+                      n,
+                      min_periods=1
+                  )
+                  .sum()
+              )
 
-          daily["lluvia_7d"] = (
-              daily["precipitacion_total"]
-              .rolling(7, min_periods=1)
-              .sum()
-          )
+              daily[f"rafaga_max_{n}d_previa"] = (
+                  daily["rafaga_max"]
+                  .shift(1)
+                  .rolling(
+                      n,
+                      min_periods=1
+                  )
+                  .max()
+              )
 
-          daily["rafaga_max_3d"] = (
-              daily["rafaga_max"]
-              .rolling(3, min_periods=1)
-              .max()
-          )
+              daily[f"presion_media_{n}d_previa"] = (
+                  daily["presion_media"]
+                  .shift(1)
+                  .rolling(
+                      n,
+                      min_periods=1
+                  )
+                  .mean()
+              )
 
-          daily["rafaga_max_7d"] = (
-              daily["rafaga_max"]
-              .rolling(7, min_periods=1)
-              .max()
-          )
+              daily[f"temperatura_media_{n}d_previa"] = (
+                  daily["temperatura_media"]
+                  .shift(1)
+                  .rolling(
+                      n,
+                      min_periods=1
+                  )
+                  .mean()
+              )
 
-          daily["presion_media_3d"] = (
-              daily["presion_media"]
-              .rolling(3, min_periods=1)
-              .mean()
-          )
+              daily[f"humedad_media_{n}d_previa"] = (
+                  daily["humedad_media"]
+                  .shift(1)
+                  .rolling(
+                      n,
+                      min_periods=1
+                  )
+                  .mean()
+              )
 
-          daily["temperatura_media_3d"] = (
-              daily["temperatura_media"]
-              .rolling(3, min_periods=1)
-              .mean()
-          )
+          for columna in [
+              "temperatura_media",
+              "humedad_media",
+              "presion_media",
+              "viento_medio",
+              "rafaga_max",
+              "precipitacion_total"
+          ]:
 
-          daily["humedad_media_3d"] = (
-              daily["humedad_media"]
-              .rolling(3, min_periods=1)
-              .mean()
-          )
+              daily[
+                  f"cambio_{columna}_1d"
+              ] = (
+                  daily[columna]
+                  - daily[columna].shift(1)
+              )
 
-          daily["mes"] = daily["fecha"].dt.month
+          daily["mes"] = (
+              daily["fecha"].dt.month
+          )
 
           daily["mes_sin"] = np.sin(
-              2 * np.pi * daily["mes"] / 12
+              2 * np.pi * daily["mes"] / 12.0
           )
 
           daily["mes_cos"] = np.cos(
-              2 * np.pi * daily["mes"] / 12
+              2 * np.pi * daily["mes"] / 12.0
           )
 
-          periodo_clima = daily[
+          base = daily[
               (daily["fecha"] >= "1991-01-01")
               &
               (daily["fecha"] <= "2020-12-31")
           ].copy()
 
-          climatologia = (
-              periodo_clima
+          clim = (
+              base
               .groupby("mes")
               .agg(
-                  temp_clim_mean=(
+                  clim_temp=(
                       "temperatura_media",
                       "mean"
                   ),
-                  precip_clim_mean=(
-                      "precipitacion_total",
+                  clim_humedad=(
+                      "humedad_media",
                       "mean"
                   ),
-                  presion_clim_mean=(
+                  clim_presion=(
                       "presion_media",
                       "mean"
                   ),
-                  humedad_clim_mean=(
-                      "humedad_media",
+                  clim_precipitacion=(
+                      "precipitacion_total",
+                      "mean"
+                  ),
+                  clim_rafaga=(
+                      "rafaga_max",
                       "mean"
                   )
               )
@@ -431,38 +358,41 @@ jobs:
           )
 
           daily = daily.merge(
-              climatologia,
+              clim,
               on="mes",
               how="left"
           )
 
-          daily["anomalia_temperatura"] = (
+          daily["anomalia_temp"] = (
               daily["temperatura_media"]
-              - daily["temp_clim_mean"]
-          )
-
-          daily["anomalia_precipitacion"] = (
-              daily["precipitacion_total"]
-              - daily["precip_clim_mean"]
-          )
-
-          daily["anomalia_presion"] = (
-              daily["presion_media"]
-              - daily["presion_clim_mean"]
+              - daily["clim_temp"]
           )
 
           daily["anomalia_humedad"] = (
               daily["humedad_media"]
-              - daily["humedad_clim_mean"]
+              - daily["clim_humedad"]
+          )
+
+          daily["anomalia_presion"] = (
+              daily["presion_media"]
+              - daily["clim_presion"]
+          )
+
+          daily["anomalia_precipitacion"] = (
+              daily["precipitacion_total"]
+              - daily["clim_precipitacion"]
+          )
+
+          daily["anomalia_rafaga"] = (
+              daily["rafaga_max"]
+              - daily["clim_rafaga"]
           )
 
           fechas_eventos = set(
-              eventos["fecha"]
-              .dt.normalize()
-              .tolist()
+              eventos["fecha"].tolist()
           )
 
-          daily["dia_severo"] = (
+          daily["dia_referencia_smn"] = (
               daily["fecha"]
               .isin(fechas_eventos)
               .astype(int)
@@ -470,7 +400,7 @@ jobs:
 
           mapa_eventos = dict(
               zip(
-                  eventos["fecha"].dt.normalize(),
+                  eventos["fecha"],
                   eventos["evento"].astype(str)
               )
           )
@@ -481,162 +411,68 @@ jobs:
               .fillna("")
           )
 
-          total_dias = len(daily)
-
-          dias_severos = int(
-              daily["dia_severo"].sum()
-          )
-
-          dias_normales = int(
-              (daily["dia_severo"] == 0).sum()
-          )
-
-          print()
-          print("=" * 60)
-          print("RESUMEN")
-          print("=" * 60)
-
-          print(
-              f"Registros horarios utilizados: {len(clima):,}"
-          )
-          print(
-              f"Dias construidos: {total_dias:,}"
-          )
-          print(
-              f"Dias severos: {dias_severos}"
-          )
-          print(
-              f"Dias normales: {dias_normales:,}"
-          )
-
-          if dias_severos != len(eventos):
-              raise SystemExit(
-                  "ERROR: los dias severos no coinciden "
-                  "con los eventos catalogados."
-              )
-
           features = [
-
               "temperatura_media",
               "temperatura_min",
               "temperatura_max",
               "temperatura_rango",
-
               "humedad_media",
               "humedad_min",
               "humedad_max",
               "humedad_rango",
-
-              "punto_rocio_medio",
-              "punto_rocio_min",
-              "punto_rocio_max",
-              "diferencia_rocio_media",
-
+              "rocio_medio",
+              "rocio_min",
+              "rocio_max",
+              "temp_rocio_dif_media",
               "presion_media",
               "presion_min",
               "presion_max",
               "presion_rango",
-
               "precipitacion_total",
-              "precipitacion_max_1h",
-
-              "lluvia_3h_max",
-              "lluvia_6h_max",
-              "lluvia_12h_max",
-              "lluvia_24h_max",
-
+              "precipitacion_max_horaria",
               "viento_medio",
               "viento_max",
               "rafaga_media",
               "rafaga_max",
-
               "viento_u_medio",
               "viento_v_medio",
-
-              "rafaga_max_3h",
-              "rafaga_max_6h",
-              "rafaga_max_12h",
-              "rafaga_max_24h",
-
-              "viento_max_3h",
-              "viento_max_6h",
-              "viento_max_12h",
-              "viento_max_24h",
-
-              "cambio_presion_3h_min",
-              "cambio_presion_6h_min",
-              "cambio_presion_12h_min",
-              "cambio_presion_24h_min",
-              "cambio_presion_3h_max",
-
-              "cambio_temp_6h_min",
-              "cambio_temp_6h_max",
-              "cambio_temp_12h_min",
-              "cambio_temp_12h_max",
-              "cambio_temp_24h_min",
-              "cambio_temp_24h_max",
-
-              "cambio_humedad_6h_min",
-              "cambio_humedad_6h_max",
-              "cambio_humedad_12h_min",
-              "cambio_humedad_12h_max",
-              "cambio_humedad_24h_min",
-              "cambio_humedad_24h_max",
-
-              "cambio_viento_6h_min",
-              "cambio_viento_6h_max",
-              "cambio_viento_12h_min",
-              "cambio_viento_12h_max",
-              "cambio_viento_24h_min",
-              "cambio_viento_24h_max",
-
-              "horas_lluvia_1mm",
-              "horas_lluvia_10mm",
-
-              "horas_rafaga_80",
-              "horas_rafaga_100",
-
-              "lluvia_3d",
-              "lluvia_7d",
-
-              "rafaga_max_3d",
-              "rafaga_max_7d",
-
-              "presion_media_3d",
-              "temperatura_media_3d",
-              "humedad_media_3d",
-
+              "lluvia_3d_previa",
+              "lluvia_7d_previa",
+              "rafaga_max_3d_previa",
+              "rafaga_max_7d_previa",
+              "presion_media_3d_previa",
+              "presion_media_7d_previa",
+              "temperatura_media_3d_previa",
+              "temperatura_media_7d_previa",
+              "humedad_media_3d_previa",
+              "humedad_media_7d_previa",
+              "cambio_temperatura_media_1d",
+              "cambio_humedad_media_1d",
+              "cambio_presion_media_1d",
+              "cambio_viento_medio_1d",
+              "cambio_rafaga_max_1d",
+              "cambio_precipitacion_total_1d",
               "mes_sin",
               "mes_cos",
-
-              "temp_clim_mean",
-              "precip_clim_mean",
-              "presion_clim_mean",
-              "humedad_clim_mean",
-
-              "anomalia_temperatura",
-              "anomalia_precipitacion",
+              "clim_temp",
+              "clim_humedad",
+              "clim_presion",
+              "clim_precipitacion",
+              "clim_rafaga",
+              "anomalia_temp",
+              "anomalia_humedad",
               "anomalia_presion",
-              "anomalia_humedad"
+              "anomalia_precipitacion",
+              "anomalia_rafaga"
           ]
 
-          features = [
-              columna
-              for columna in features
-              if columna in daily.columns
-          ]
-
-          if len(features) < 20:
-              raise SystemExit(
-                  "ERROR: se generaron muy pocas variables."
+          X = (
+              daily[features]
+              .replace(
+                  [np.inf, -np.inf],
+                  np.nan
               )
-
-          X = daily[features].copy()
-          y = daily["dia_severo"].copy()
-
-          X = X.replace(
-              [np.inf, -np.inf],
-              np.nan
+              .copy()
           )
 
           for columna in X.columns:
@@ -650,407 +486,194 @@ jobs:
                   mediana
               )
 
-          print()
-          print("=" * 60)
-          print("VALIDACION CRUZADA")
-          print("=" * 60)
+          if len(daily) < 10000:
+              raise SystemExit(
+                  "ERROR: se generaron menos de 10.000 dias."
+              )
 
-          cv = StratifiedKFold(
-              n_splits=5,
-              shuffle=True,
-              random_state=42
+          if len(features) < 40:
+              raise SystemExit(
+                  "ERROR: faltan variables meteorologicas."
+              )
+
+          normales = (
+              daily["dia_referencia_smn"]
+              .eq(0)
+              .values
           )
 
-          resultados = []
+          X_norm = X.loc[normales]
 
-          oof_y = []
-          oof_prob = []
-
-          for numero_fold, (
-              train_idx,
-              test_idx
-          ) in enumerate(
-              cv.split(X, y),
-              start=1
-          ):
-
-              X_train = X.iloc[train_idx]
-              X_test = X.iloc[test_idx]
-
-              y_train = y.iloc[train_idx]
-              y_test = y.iloc[test_idx]
-
-              modelo = RandomForestClassifier(
-                  n_estimators=300,
-                  max_depth=14,
-                  min_samples_leaf=2,
-                  max_features="sqrt",
-                  class_weight="balanced_subsample",
-                  random_state=42,
-                  n_jobs=-1
-              )
-
-              modelo.fit(
-                  X_train,
-                  y_train
-              )
-
-              pred = modelo.predict(
-                  X_test
-              )
-
-              prob = modelo.predict_proba(
-                  X_test
-              )[:, 1]
-
-              oof_y.extend(
-                  y_test.tolist()
-              )
-
-              oof_prob.extend(
-                  prob.tolist()
-              )
-
-              precision = precision_score(
-                  y_test,
-                  pred,
-                  zero_division=0
-              )
-
-              recall = recall_score(
-                  y_test,
-                  pred,
-                  zero_division=0
-              )
-
-              f1 = f1_score(
-                  y_test,
-                  pred,
-                  zero_division=0
-              )
-
-              auc = roc_auc_score(
-                  y_test,
-                  prob
-              )
-
-              matriz = confusion_matrix(
-                  y_test,
-                  pred
-              )
-
-              resultados.append({
-                  "fold": numero_fold,
-                  "precision": float(precision),
-                  "recall": float(recall),
-                  "f1": float(f1),
-                  "roc_auc": float(auc),
-                  "matriz_confusion": matriz.tolist()
-              })
-
-              print(
-                  f"Fold {numero_fold}: "
-                  f"precision={precision:.4f} "
-                  f"recall={recall:.4f} "
-                  f"F1={f1:.4f} "
-                  f"ROC-AUC={auc:.4f}"
-              )
-
-          validacion = pd.DataFrame([
-              {
-                  "fold": r["fold"],
-                  "precision": r["precision"],
-                  "recall": r["recall"],
-                  "f1": r["f1"],
-                  "roc_auc": r["roc_auc"]
-              }
-              for r in resultados
-          ])
-
-          # ============================================================
-          # ANALISIS DE UMBRALES
-          # ============================================================
-
-          print()
-          print("=" * 60)
-          print("ANALISIS DE UMBRALES")
-          print("=" * 60)
-
-          y_oof = np.asarray(
-              oof_y,
-              dtype=int
+          print(
+              f"Dias totales: {len(daily):,}"
           )
 
-          p_oof = np.asarray(
-              oof_prob,
-              dtype=float
+          print(
+              f"Dias normales para ajuste: "
+              f"{len(X_norm):,}"
           )
 
-          filas_umbral = []
+          print(
+              f"Referencias SMN: "
+              f"{len(eventos)}"
+          )
 
-          for umbral in np.arange(
-              0.01,
-              1.00,
-              0.01
-          ):
+          scaler = RobustScaler()
 
-              pred_umbral = (
-                  p_oof >= umbral
-              ).astype(int)
+          X_norm_scaled = scaler.fit_transform(
+              X_norm
+          )
 
-              tn, fp, fn, tp = confusion_matrix(
-                  y_oof,
-                  pred_umbral,
-                  labels=[0, 1]
-              ).ravel()
+          modelo = IsolationForest(
+              n_estimators=300,
+              contamination="auto",
+              max_samples="auto",
+              random_state=42,
+              n_jobs=-1
+          )
 
-              precision_u = precision_score(
-                  y_oof,
-                  pred_umbral,
-                  zero_division=0
+          modelo.fit(
+              X_norm_scaled
+          )
+
+          X_all_scaled = scaler.transform(
+              X
+          )
+
+          decision = (
+              modelo
+              .decision_function(
+                  X_all_scaled
+              )
+          )
+
+          daily["anomalia_atmosferica"] = (
+              -decision
+          )
+
+          daily["percentil_anomalia"] = (
+              daily[
+                  "anomalia_atmosferica"
+              ]
+              .rank(
+                  pct=True,
+                  method="average"
+              )
+          )
+
+          referencias = daily[
+              daily["dia_referencia_smn"] == 1
+          ].copy()
+
+          if len(referencias) != len(eventos):
+              raise SystemExit(
+                  "ERROR: las fechas de referencia SMN no coinciden."
               )
 
-              recall_u = recall_score(
-                  y_oof,
-                  pred_umbral,
-                  zero_division=0
+          valores_normales = daily.loc[
+              normales,
+              "anomalia_atmosferica"
+          ]
+
+          umbrales = np.quantile(
+              valores_normales,
+              np.arange(
+                  0.90,
+                  1.00,
+                  0.01
+              )
+          )
+
+          filas = []
+
+          for umbral in umbrales:
+
+              marcado = (
+                  daily["anomalia_atmosferica"]
+                  >= umbral
               )
 
-              f1_u = f1_score(
-                  y_oof,
-                  pred_umbral,
-                  zero_division=0
+              tp = int(
+                  (
+                      marcado
+                      &
+                      daily[
+                          "dia_referencia_smn"
+                      ].eq(1)
+                  ).sum()
               )
 
-              beta = 2.0
+              fp = int(
+                  (
+                      marcado
+                      &
+                      daily[
+                          "dia_referencia_smn"
+                      ].eq(0)
+                  ).sum()
+              )
 
-              if (
-                  precision_u + recall_u
-              ) > 0:
+              fn = int(
+                  len(eventos) - tp
+              )
 
-                  f2_u = (
-                      (1 + beta ** 2)
-                      * precision_u
-                      * recall_u
-                      / (
-                          beta ** 2
-                          * precision_u
-                          + recall_u
-                      )
-                  )
-
-              else:
-
-                  f2_u = 0.0
-
-              fpr_u = (
-                  fp / (fp + tn)
-                  if (fp + tn) > 0
+              recall = (
+                  tp / len(eventos)
+                  if len(eventos)
                   else 0.0
               )
 
-              filas_umbral.append({
-                  "umbral": float(umbral),
-                  "precision": float(precision_u),
-                  "recall": float(recall_u),
-                  "f1": float(f1_u),
-                  "f2": float(f2_u),
-                  "fpr": float(fpr_u),
-                  "verdaderos_positivos": int(tp),
-                  "falsos_positivos": int(fp),
-                  "falsos_negativos": int(fn),
-                  "verdaderos_negativos": int(tn),
+              precision = (
+                  tp / (tp + fp)
+                  if (tp + fp)
+                  else 0.0
+              )
+
+              filas.append({
+                  "umbral_anomalia": float(
+                      umbral
+                  ),
+                  "tp_eventos_smn": tp,
+                  "fp_dias_normales": fp,
+                  "fn_eventos_smn": fn,
+                  "recall_referencias_smn": recall,
+                  "precision_referencias_smn": precision,
                   "dias_marcados": int(
-                      pred_umbral.sum()
+                      marcado.sum()
                   )
               })
 
-          analisis_umbrales = pd.DataFrame(
-              filas_umbral
+          calibracion = pd.DataFrame(
+              filas
           )
-
-          analisis_umbrales.to_csv(
-              "modelo/analisis_umbrales.csv",
-              index=False
-          )
-
-          candidatos = analisis_umbrales[
-              analisis_umbrales["recall"] >= 0.80
-          ].copy()
-
-          if candidatos.empty:
-
-              candidatos = analisis_umbrales[
-                  analisis_umbrales["recall"] >= 0.60
-              ].copy()
-
-          if candidatos.empty:
-
-              candidatos = analisis_umbrales.copy()
 
           recomendado = (
-              candidatos
+              calibracion
               .sort_values(
                   [
-                      "f2",
-                      "recall",
-                      "fpr",
-                      "umbral"
+                      "recall_referencias_smn",
+                      "fp_dias_normales"
                   ],
                   ascending=[
                       False,
-                      False,
-                      True,
-                      False
+                      True
                   ]
               )
               .iloc[0]
           )
 
-          umbral_info = {
-
-              "umbral_exploratorio":
-                  float(
-                      recomendado["umbral"]
-                  ),
-
-              "precision":
-                  float(
-                      recomendado["precision"]
-                  ),
-
-              "recall":
-                  float(
-                      recomendado["recall"]
-                  ),
-
-              "f1":
-                  float(
-                      recomendado["f1"]
-                  ),
-
-              "f2":
-                  float(
-                      recomendado["f2"]
-                  ),
-
-              "fpr":
-                  float(
-                      recomendado["fpr"]
-                  ),
-
-              "verdaderos_positivos":
-                  int(
-                      recomendado[
-                          "verdaderos_positivos"
-                      ]
-                  ),
-
-              "falsos_positivos":
-                  int(
-                      recomendado[
-                          "falsos_positivos"
-                      ]
-                  ),
-
-              "falsos_negativos":
-                  int(
-                      recomendado[
-                          "falsos_negativos"
-                      ]
-                  ),
-
-              "dias_marcados":
-                  int(
-                      recomendado[
-                          "dias_marcados"
-                      ]
-                  ),
-
-              "base":
-                  "predicciones_out_of_fold",
-
-              "finalidad":
-                  "analisis_exploratorio_no_produccion"
-          }
-
-          with open(
-              "modelo/umbral_operativo.json",
-              "w",
-              encoding="utf-8"
-          ) as archivo:
-
-              json.dump(
-                  umbral_info,
-                  archivo,
-                  indent=2,
-                  ensure_ascii=False
-              )
-
-          print(
-              f"Umbral exploratorio: "
-              f"{umbral_info['umbral_exploratorio']:.2f}"
+          umbral_exploratorio = float(
+              recomendado[
+                  "umbral_anomalia"
+              ]
           )
 
-          print(
-              f"Precision: "
-              f"{umbral_info['precision']:.4f}"
-          )
-
-          print(
-              f"Recall: "
-              f"{umbral_info['recall']:.4f}"
-          )
-
-          print(
-              f"F1: "
-              f"{umbral_info['f1']:.4f}"
-          )
-
-          print(
-              f"F2: "
-              f"{umbral_info['f2']:.4f}"
-          )
-
-          print(
-              f"FPR: "
-              f"{umbral_info['fpr']:.4f}"
-          )
-
-          print(
-              f"TP: "
-              f"{umbral_info['verdaderos_positivos']} | "
-              f"FP: "
-              f"{umbral_info['falsos_positivos']} | "
-              f"FN: "
-              f"{umbral_info['falsos_negativos']} | "
-              f"Dias marcados: "
-              f"{umbral_info['dias_marcados']}"
-          )
-
-          # ============================================================
-          # MODELO FINAL
-          # ============================================================
-
-          print()
-          print("=" * 60)
-          print("ENTRENAMIENTO DEL MODELO FINAL")
-          print("=" * 60)
-
-          modelo_final = RandomForestClassifier(
-              n_estimators=500,
-              max_depth=14,
-              min_samples_leaf=2,
-              max_features="sqrt",
-              class_weight="balanced_subsample",
-              random_state=42,
-              n_jobs=-1
-          )
-
-          modelo_final.fit(
-              X,
-              y
-          )
+          daily["marca_exploratoria"] = (
+              daily[
+                  "anomalia_atmosferica"
+              ]
+              >= umbral_exploratorio
+          ).astype(int)
 
           ruta_modelo = (
               "modelo/"
@@ -1059,109 +682,105 @@ jobs:
 
           joblib.dump(
               {
-                  "modelo": modelo_final,
+                  "modelo": modelo,
+                  "scaler": scaler,
                   "features": features,
-                  "tipo": "clasificador_dia_severo",
-                  "version": "1.1"
+                  "tipo":
+                      "firma_atmosferica_diaria_no_supervisada",
+                  "version": "2.0",
+                  "unidad": "dia",
+                  "referencias_smn": len(eventos),
+                  "nota":
+                      "Los eventos SMN se usan "
+                      "para calibracion y evaluacion. "
+                      "No se inventan etiquetas adicionales."
               },
               ruta_modelo,
               compress=3
           )
 
+          columnas_scores = [
+              "fecha",
+              "dia_referencia_smn",
+              "evento_referencia",
+              "anomalia_atmosferica",
+              "percentil_anomalia",
+              "marca_exploratoria"
+          ] + features
+
+          daily[
+              columnas_scores
+          ].to_csv(
+              "modelo/scores_diarios.csv",
+              index=False,
+              float_format="%.6g"
+          )
+
+          calibracion.to_csv(
+              "modelo/calibracion_smn.csv",
+              index=False,
+              float_format="%.6g"
+          )
+
           importancia = pd.DataFrame({
               "variable": features,
-              "importancia":
-                  modelo_final.feature_importances_
+              "importancia": 0.0
           })
-
-          importancia = (
-              importancia
-              .sort_values(
-                  "importancia",
-                  ascending=False
-              )
-              .reset_index(drop=True)
-          )
 
           importancia.to_csv(
               "modelo/importancia_variables.csv",
               index=False
           )
 
-          validacion.to_csv(
-              "modelo/validacion_diaria.csv",
-              index=False
-          )
-
           resumen = {
-
+              "version": "2.0",
               "tipo_modelo":
-                  "clasificador_dia_severo",
-
-              "version":
-                  "1.1",
-
-              "registros_horarios_utilizados":
+                  "firma_atmosferica_diaria_no_supervisada",
+              "registros_horarios":
                   int(len(clima)),
-
-              "dias_utilizados":
-                  int(total_dias),
-
-              "dias_severos":
-                  int(dias_severos),
-
-              "dias_normales":
-                  int(dias_normales),
-
-              "eventos_catalogados":
+              "dias_totales":
+                  int(len(daily)),
+              "dias_normales_usados_para_ajuste":
+                  int(normales.sum()),
+              "dias_referencia_smn":
                   int(len(eventos)),
-
-              "variables_modelo":
+              "variables":
                   int(len(features)),
-
-              "precision_media_cv":
-                  float(
-                      validacion[
-                          "precision"
-                      ].mean()
-                  ),
-
-              "recall_medio_cv":
-                  float(
-                      validacion[
-                          "recall"
-                      ].mean()
-                  ),
-
-              "f1_medio_cv":
-                  float(
-                      validacion[
-                          "f1"
-                      ].mean()
-                  ),
-
-              "roc_auc_medio_cv":
-                  float(
-                      validacion[
-                          "roc_auc"
-                      ].mean()
-                  ),
-
-              "hora_evento_utilizada":
-                  False,
-
-              "targets_artificiales_utilizados":
-                  False,
-
               "unidad_entrenamiento":
                   "dia",
-
+              "hora_del_evento_utilizada":
+                  False,
+              "targets_artificiales":
+                  False,
+              "negativos_artificiales":
+                  False,
+              "fuente_de_referencias":
+                  "SMN",
               "umbral_exploratorio":
+                  umbral_exploratorio,
+              "recall_referencias_smn":
                   float(
-                      umbral_info[
-                          "umbral_exploratorio"
+                      recomendado[
+                          "recall_referencias_smn"
                       ]
-                  )
+                  ),
+              "precision_referencias_smn":
+                  float(
+                      recomendado[
+                          "precision_referencias_smn"
+                      ]
+                  ),
+              "dias_marcados_umbral":
+                  int(
+                      recomendado[
+                          "dias_marcados"
+                      ]
+                  ),
+              "advertencia":
+                  "Resultado exploratorio: "
+                  "solo hay cinco dias de referencia "
+                  "SMN y no debe interpretarse "
+                  "como precision operativa."
           }
 
           with open(
@@ -1177,51 +796,21 @@ jobs:
                   ensure_ascii=False
               )
 
-          configuracion = {
-
-              "modelo":
-                  "RandomForestClassifier",
-
-              "n_estimators":
-                  500,
-
-              "max_depth":
-                  14,
-
-              "min_samples_leaf":
-                  2,
-
-              "max_features":
-                  "sqrt",
-
-              "class_weight":
-                  "balanced_subsample",
-
-              "random_state":
-                  42,
-
-              "unidad":
-                  "dia",
-
-              "features":
-                  features,
-
-              "umbral_exploratorio":
-                  float(
-                      umbral_info[
-                          "umbral_exploratorio"
-                      ]
-                  )
-          }
-
           with open(
-              "modelo/configuracion_modelo.json",
+              "modelo/umbral_operativo.json",
               "w",
               encoding="utf-8"
           ) as archivo:
 
               json.dump(
-                  configuracion,
+                  {
+                      "umbral_exploratorio":
+                          umbral_exploratorio,
+                      "base":
+                          "referencias_SMN",
+                      "uso":
+                          "exploratorio"
+                  },
                   archivo,
                   indent=2,
                   ensure_ascii=False
@@ -1234,11 +823,11 @@ jobs:
           ) as archivo:
 
               archivo.write(
-                  "CLIMAAR - MODELO DIARIO DE EVENTOS SEVEROS\n"
+                  "CLIMAAR - FIRMA ATMOSFERICA COMPLETA\n"
               )
 
               archivo.write(
-                  "============================================\n\n"
+                  "======================================\n\n"
               )
 
               archivo.write(
@@ -1250,77 +839,48 @@ jobs:
               )
 
               archivo.write(
-                  "\n\nVALIDACION\n"
+                  "\n\nCALIBRACION SMN\n"
               )
 
               archivo.write(
-                  validacion.to_string(
+                  calibracion.to_string(
                       index=False
                   )
               )
 
               archivo.write(
-                  "\n\nANALISIS DE UMBRAL\n"
+                  "\n\nREFERENCIAS\n"
               )
 
               archivo.write(
-                  json.dumps(
-                      umbral_info,
-                      indent=2,
-                      ensure_ascii=False
-                  )
-              )
-
-              archivo.write(
-                  "\n\nVARIABLES MAS IMPORTANTES\n"
-              )
-
-              archivo.write(
-                  importancia.head(30).to_string(
+                  referencias[
+                      [
+                          "fecha",
+                          "evento_referencia",
+                          "anomalia_atmosferica",
+                          "percentil_anomalia"
+                      ]
+                  ].to_string(
                       index=False
                   )
               )
 
-          columnas_a_guardar = [
-              "fecha",
-              "dia_severo",
-              "evento_referencia"
-          ] + features
-
-          daily[columnas_a_guardar].to_csv(
-              "modelo/dataset_diario_entrenamiento.csv",
-              index=False
-          )
-
-          # ============================================================
-          # CONTROL DE TAMANO
-          # ============================================================
-
-          print()
-          print("=" * 60)
-          print("CONTROL DE TAMANO")
-          print("=" * 60)
-
-          archivos_repo = [
-
-              "modelo/climaar_modelo_dia_severo.joblib",
-
+          archivos = [
+              ruta_modelo,
+              "modelo/scores_diarios.csv",
+              "modelo/calibracion_smn.csv",
               "modelo/importancia_variables.csv",
-
-              "modelo/validacion_diaria.csv",
-
               "modelo/resumen_modelo.json",
-
-              "modelo/configuracion_modelo.json",
-
-              "modelo/metricas.txt",
-
-              "modelo/analisis_umbrales.csv",
-
-              "modelo/umbral_operativo.json"
+              "modelo/umbral_operativo.json",
+              "modelo/metricas.txt"
           ]
 
-          for archivo in archivos_repo:
+          print()
+          print("=" * 70)
+          print("CONTROL DE ARCHIVOS")
+          print("=" * 70)
+
+          for archivo in archivos:
 
               if not os.path.exists(archivo):
                   raise SystemExit(
@@ -1337,43 +897,31 @@ jobs:
               )
 
               if tamano >= (
-                  90 * 1024 * 1024
+                  50 * 1024 * 1024
               ):
-
                   raise SystemExit(
                       f"ERROR: {archivo} "
-                      f"supera 90 MB."
+                      "supera 50 MB."
                   )
 
           print()
-          print(
-              "OK: ningun archivo del repositorio "
-              "supera 90 MB."
-          )
-
-          print()
-          print("=" * 60)
+          print("=" * 70)
           print("ENTRENAMIENTO TERMINADO")
-          print("=" * 60)
+          print("=" * 70)
 
           print(
-              f"Registros horarios: "
+              f"Horarios utilizados: "
               f"{len(clima):,}"
           )
 
           print(
-              f"Dias entrenados: "
-              f"{total_dias:,}"
+              f"Dias: "
+              f"{len(daily):,}"
           )
 
           print(
-              f"Dias severos: "
-              f"{dias_severos}"
-          )
-
-          print(
-              f"Dias normales: "
-              f"{dias_normales:,}"
+              f"Referencias SMN: "
+              f"{len(eventos)}"
           )
 
           print(
@@ -1382,93 +930,67 @@ jobs:
           )
 
           print(
-              f"ROC-AUC medio: "
-              f"{validacion['roc_auc'].mean():.4f}"
-          )
-
-          print(
-              f"Recall medio: "
-              f"{validacion['recall'].mean():.4f}"
-          )
-
-          print(
-              f"F1 medio: "
-              f"{validacion['f1'].mean():.4f}"
-          )
-
-          print(
               f"Umbral exploratorio: "
-              f"{umbral_info['umbral_exploratorio']:.2f}"
-          )
-
-          print(
-              f"Modelo: "
-              f"{ruta_modelo}"
+              f"{umbral_exploratorio:.6g}"
           )
 
           PY
 
       - name: Verificar resultados
         run: |
-          echo "=============================================="
-          echo "ARCHIVOS GENERADOS"
-          echo "=============================================="
+          set -e
 
-          ls -lh modelo/
+          test -s modelo/climaar_modelo_dia_severo.joblib
+          test -s modelo/scores_diarios.csv
+          test -s modelo/calibracion_smn.csv
+          test -s modelo/resumen_modelo.json
+          test -s modelo/umbral_operativo.json
 
-          echo ""
-          echo "=============================================="
-          echo "RESUMEN"
-          echo "=============================================="
+          python -m json.tool \
+            modelo/resumen_modelo.json \
+            >/dev/null
 
-          cat modelo/resumen_modelo.json
+          python -m json.tool \
+            modelo/umbral_operativo.json \
+            >/dev/null
 
-          echo ""
-          echo "=============================================="
-          echo "UMBRAL EXPLORATORIO"
-          echo "=============================================="
-
-          cat modelo/umbral_operativo.json
-
-          echo ""
-          echo "=============================================="
-          echo "VARIABLES MAS IMPORTANTES"
-          echo "=============================================="
-
-          head -31 modelo/importancia_variables.csv
+          echo "OK: resultados validos."
 
       - name: Subir resultados como artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: climaar-modelo-diario-completo
+          name: climaar-firma-atmosferica
           path: |
             modelo/climaar_modelo_dia_severo.joblib
-            modelo/validacion_diaria.csv
+            modelo/scores_diarios.csv
+            modelo/calibracion_smn.csv
             modelo/importancia_variables.csv
             modelo/resumen_modelo.json
-            modelo/configuracion_modelo.json
-            modelo/metricas.txt
-            modelo/analisis_umbrales.csv
             modelo/umbral_operativo.json
-            modelo/dataset_diario_entrenamiento.csv
+            modelo/metricas.txt
           retention-days: 30
 
-      - name: Guardar resultados en GitHub
+      - name: Guardar resultados pequenos en GitHub
         run: |
+          set -e
+
           git config user.name "climaar-bot"
           git config user.email "bot@climaar.com.ar"
 
           git add \
             modelo/climaar_modelo_dia_severo.joblib \
-            modelo/validacion_diaria.csv \
+            modelo/scores_diarios.csv \
+            modelo/calibracion_smn.csv \
             modelo/importancia_variables.csv \
             modelo/resumen_modelo.json \
-            modelo/configuracion_modelo.json \
-            modelo/metricas.txt \
-            modelo/analisis_umbrales.csv \
-            modelo/umbral_operativo.json
+            modelo/umbral_operativo.json \
+            modelo/metricas.txt
 
-          git diff --cached --quiet || git commit \
-            -m "Analisis de umbral modelo diario ClimaAR"
+          if git diff --cached --quiet; then
+            echo "Sin cambios para guardar."
+          else
+            git commit \
+              -m "Entrenamiento firma atmosferica ClimaAR"
 
-          git push
+            git push
+          fi
