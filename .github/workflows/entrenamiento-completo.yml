@@ -1,16 +1,17 @@
-name: ClimaAR - Firma Atmosferica Completa
+name: ClimaAR - Entrenamiento Historico
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   entrenamiento:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: write
-
     steps:
+
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
@@ -24,68 +25,91 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy scikit-learn joblib
 
-      - name: Construir dataset y entrenar firma atmosferica
+      - name: Entrenar modelo historico ClimaAR
         run: |
           python - <<'PY'
           import os
           import json
+          import warnings
           import numpy as np
           import pandas as pd
           import joblib
 
-          from sklearn.ensemble import IsolationForest
-          from sklearn.preprocessing import RobustScaler
+          from sklearn.ensemble import RandomForestClassifier
+          from sklearn.metrics import (
+              classification_report,
+              confusion_matrix,
+              roc_auc_score
+          )
+
+          warnings.filterwarnings("ignore")
+
+          # ============================================================
+          # CONFIGURACION
+          # ============================================================
 
           CLIMA = "data/historico/clima_horario_1980_2026.csv"
           EVENTOS = "data/historico/eventos_severos.csv"
-          OUT = "modelo"
 
-          os.makedirs(OUT, exist_ok=True)
+          OUT_DIR = "modelo"
+          MODEL_FILE = os.path.join(
+              OUT_DIR,
+              "climaar_modelo_historico.joblib"
+          )
+
+          METRICS_FILE = os.path.join(
+              OUT_DIR,
+              "climaar_modelo_historico_metricas.json"
+          )
+
+          DATASET_FILE = os.path.join(
+              OUT_DIR,
+              "climaar_entrenamiento_historico.csv"
+          )
+
+          os.makedirs(OUT_DIR, exist_ok=True)
+
+          # ============================================================
+          # VALIDAR ARCHIVOS
+          # ============================================================
 
           if not os.path.exists(CLIMA):
-              raise SystemExit(f"ERROR: no existe {CLIMA}")
+              raise SystemExit(
+                  f"ERROR: no existe {CLIMA}"
+              )
 
           if not os.path.exists(EVENTOS):
-              raise SystemExit(f"ERROR: no existe {EVENTOS}")
+              raise SystemExit(
+                  f"ERROR: no existe {EVENTOS}"
+              )
 
           print("=" * 70)
-          print("CLIMAAR - FIRMA ATMOSFERICA COMPLETA")
+          print("CLIMAAR - ENTRENAMIENTO HISTORICO")
           print("=" * 70)
+
+          # ============================================================
+          # CARGAR DATOS
+          # ============================================================
 
           clima = pd.read_csv(CLIMA)
           eventos = pd.read_csv(EVENTOS)
 
-          print(f"Registros horarios: {len(clima):,}")
-
-          clima["time"] = pd.to_datetime(
-              clima["time"],
-              errors="coerce"
+          print(
+              f"Registros meteorologicos originales: "
+              f"{len(clima):,}"
           )
 
-          clima = (
-              clima
-              .dropna(subset=["time"])
-              .sort_values("time")
-              .drop_duplicates(subset=["time"])
-              .reset_index(drop=True)
+          print(
+              f"Eventos historicos catalogados: "
+              f"{len(eventos):,}"
           )
 
-          eventos["fecha"] = pd.to_datetime(
-              eventos["fecha"],
-              errors="coerce"
-          )
+          # ============================================================
+          # COLUMNAS REQUERIDAS
+          # ============================================================
 
-          eventos = eventos.dropna(subset=["fecha"])
-          eventos["fecha"] = eventos["fecha"].dt.normalize()
-
-          eventos = (
-              eventos
-              .drop_duplicates(subset=["fecha"])
-              .sort_values("fecha")
-              .reset_index(drop=True)
-          )
-
-          numericas = [
+          columnas_requeridas = [
+              "time",
               "temperature_2m",
               "relative_humidity_2m",
               "dew_point_2m",
@@ -96,19 +120,119 @@ jobs:
               "wind_gusts_10m"
           ]
 
-          for columna in numericas:
+          for columna in columnas_requeridas:
+
               if columna not in clima.columns:
                   raise SystemExit(
-                      f"ERROR: falta columna {columna}"
+                      f"ERROR: falta columna meteorologica: "
+                      f"{columna}"
                   )
+
+          columnas_eventos = [
+              "fecha",
+              "tormenta_severa",
+              "viento_severo",
+              "precipitacion_extrema",
+              "inundacion",
+              "granizo",
+              "tornado"
+          ]
+
+          for columna in columnas_eventos:
+
+              if columna not in eventos.columns:
+                  raise SystemExit(
+                      f"ERROR: falta columna de eventos: "
+                      f"{columna}"
+                  )
+
+          # ============================================================
+          # LIMPIEZA
+          # ============================================================
+
+          clima["time"] = pd.to_datetime(
+              clima["time"],
+              errors="coerce"
+          )
+
+          clima = clima.dropna(
+              subset=["time"]
+          )
+
+          clima = (
+              clima
+              .sort_values("time")
+              .drop_duplicates(
+                  subset=["time"]
+              )
+              .reset_index(drop=True)
+          )
+
+          for columna in columnas_requeridas[1:]:
 
               clima[columna] = pd.to_numeric(
                   clima[columna],
                   errors="coerce"
               )
 
-          clima["fecha"] = clima["time"].dt.normalize()
+          eventos["fecha"] = pd.to_datetime(
+              eventos["fecha"],
+              errors="coerce"
+          )
 
+          eventos = eventos.dropna(
+              subset=["fecha"]
+          )
+
+          eventos["fecha"] = (
+              eventos["fecha"]
+              .dt.normalize()
+          )
+
+          eventos = (
+              eventos
+              .drop_duplicates(
+                  subset=["fecha"]
+              )
+              .sort_values("fecha")
+              .reset_index(drop=True)
+          )
+
+          # ============================================================
+          # VARIABLES TEMPORALES
+          # ============================================================
+
+          clima["fecha"] = (
+              clima["time"]
+              .dt.normalize()
+          )
+
+          clima["hora"] = (
+              clima["time"]
+              .dt.hour
+          )
+
+          clima["mes"] = (
+              clima["time"]
+              .dt.month
+          )
+
+          clima["dia_ano"] = (
+              clima["time"]
+              .dt.dayofyear
+          )
+
+          # ============================================================
+          # VARIABLES FISICAS
+          # ============================================================
+
+          # Diferencia temperatura - punto de rocio
+          clima["temp_rocio_dif"] = (
+              clima["temperature_2m"]
+              - clima["dew_point_2m"]
+          )
+
+          # Viento vectorial
           rad = np.deg2rad(
               clima["wind_direction_10m"]
           )
@@ -123,874 +247,541 @@ jobs:
               * np.cos(rad)
           )
 
-          clima["temp_rocio_dif"] = (
+          # ============================================================
+          # VARIABLES DE CAMBIO
+          # IMPORTANTE:
+          # diff() usa solamente informacion anterior.
+          # ============================================================
+
+          clima["cambio_presion_1h"] = (
+              clima["pressure_msl"]
+              .diff(1)
+          )
+
+          clima["cambio_presion_3h"] = (
+              clima["pressure_msl"]
+              .diff(3)
+          )
+
+          clima["cambio_temp_1h"] = (
               clima["temperature_2m"]
-              - clima["dew_point_2m"]
+              .diff(1)
           )
 
-          print("Construyendo dataset diario...")
+          clima["cambio_temp_3h"] = (
+              clima["temperature_2m"]
+              .diff(3)
+          )
 
-          daily = (
-              clima
-              .groupby("fecha")
-              .agg(
-                  temperatura_media=(
-                      "temperature_2m",
-                      "mean"
-                  ),
-                  temperatura_min=(
-                      "temperature_2m",
-                      "min"
-                  ),
-                  temperatura_max=(
-                      "temperature_2m",
-                      "max"
-                  ),
-                  humedad_media=(
-                      "relative_humidity_2m",
-                      "mean"
-                  ),
-                  humedad_min=(
-                      "relative_humidity_2m",
-                      "min"
-                  ),
-                  humedad_max=(
-                      "relative_humidity_2m",
-                      "max"
-                  ),
-                  rocio_medio=(
-                      "dew_point_2m",
-                      "mean"
-                  ),
-                  rocio_min=(
-                      "dew_point_2m",
-                      "min"
-                  ),
-                  rocio_max=(
-                      "dew_point_2m",
-                      "max"
-                  ),
-                  presion_media=(
-                      "pressure_msl",
-                      "mean"
-                  ),
-                  presion_min=(
-                      "pressure_msl",
-                      "min"
-                  ),
-                  presion_max=(
-                      "pressure_msl",
-                      "max"
-                  ),
-                  precipitacion_total=(
-                      "precipitation",
-                      "sum"
-                  ),
-                  precipitacion_max_horaria=(
-                      "precipitation",
-                      "max"
-                  ),
-                  viento_medio=(
-                      "wind_speed_10m",
-                      "mean"
-                  ),
-                  viento_max=(
-                      "wind_speed_10m",
-                      "max"
-                  ),
-                  rafaga_media=(
-                      "wind_gusts_10m",
-                      "mean"
-                  ),
-                  rafaga_max=(
-                      "wind_gusts_10m",
-                      "max"
-                  ),
-                  viento_u_medio=(
-                      "viento_u",
-                      "mean"
-                  ),
-                  viento_v_medio=(
-                      "viento_v",
-                      "mean"
-                  ),
-                  temp_rocio_dif_media=(
-                      "temp_rocio_dif",
-                      "mean"
-                  )
+          clima["cambio_humedad_1h"] = (
+              clima["relative_humidity_2m"]
+              .diff(1)
+          )
+
+          clima["cambio_viento_1h"] = (
+              clima["wind_speed_10m"]
+              .diff(1)
+          )
+
+          # ============================================================
+          # VENTANAS MOVILES
+          # SOLO PASADO
+          # ============================================================
+
+          clima["lluvia_1h"] = (
+              clima["precipitation"]
+              .rolling(
+                  window=1,
+                  min_periods=1
               )
-              .reset_index()
+              .sum()
           )
 
-          daily = (
-              daily
-              .sort_values("fecha")
-              .reset_index(drop=True)
-          )
-
-          daily["temperatura_rango"] = (
-              daily["temperatura_max"]
-              - daily["temperatura_min"]
-          )
-
-          daily["humedad_rango"] = (
-              daily["humedad_max"]
-              - daily["humedad_min"]
-          )
-
-          daily["presion_rango"] = (
-              daily["presion_max"]
-              - daily["presion_min"]
-          )
-
-          for n in (3, 7):
-
-              daily[f"lluvia_{n}d_previa"] = (
-                  daily["precipitacion_total"]
-                  .shift(1)
-                  .rolling(
-                      n,
-                      min_periods=1
-                  )
-                  .sum()
+          clima["lluvia_3h"] = (
+              clima["precipitation"]
+              .rolling(
+                  window=3,
+                  min_periods=1
               )
+              .sum()
+          )
 
-              daily[f"rafaga_max_{n}d_previa"] = (
-                  daily["rafaga_max"]
-                  .shift(1)
-                  .rolling(
-                      n,
-                      min_periods=1
-                  )
-                  .max()
+          clima["lluvia_6h"] = (
+              clima["precipitation"]
+              .rolling(
+                  window=6,
+                  min_periods=3
               )
+              .sum()
+          )
 
-              daily[f"presion_media_{n}d_previa"] = (
-                  daily["presion_media"]
-                  .shift(1)
-                  .rolling(
-                      n,
-                      min_periods=1
-                  )
-                  .mean()
+          clima["lluvia_12h"] = (
+              clima["precipitation"]
+              .rolling(
+                  window=12,
+                  min_periods=6
               )
+              .sum()
+          )
 
-              daily[f"temperatura_media_{n}d_previa"] = (
-                  daily["temperatura_media"]
-                  .shift(1)
-                  .rolling(
-                      n,
-                      min_periods=1
-                  )
-                  .mean()
+          clima["rafaga_max_3h"] = (
+              clima["wind_gusts_10m"]
+              .rolling(
+                  window=3,
+                  min_periods=1
               )
+              .max()
+          )
 
-              daily[f"humedad_media_{n}d_previa"] = (
-                  daily["humedad_media"]
-                  .shift(1)
-                  .rolling(
-                      n,
-                      min_periods=1
-                  )
-                  .mean()
+          clima["rafaga_max_6h"] = (
+              clima["wind_gusts_10m"]
+              .rolling(
+                  window=6,
+                  min_periods=3
               )
+              .max()
+          )
 
-          for columna in [
-              "temperatura_media",
-              "humedad_media",
-              "presion_media",
-              "viento_medio",
-              "rafaga_max",
-              "precipitacion_total"
-          ]:
-
-              daily[
-                  f"cambio_{columna}_1d"
-              ] = (
-                  daily[columna]
-                  - daily[columna].shift(1)
+          clima["viento_max_3h"] = (
+              clima["wind_speed_10m"]
+              .rolling(
+                  window=3,
+                  min_periods=1
               )
-
-          daily["mes"] = (
-              daily["fecha"].dt.month
+              .max()
           )
 
-          daily["mes_sin"] = np.sin(
-              2 * np.pi * daily["mes"] / 12.0
-          )
-
-          daily["mes_cos"] = np.cos(
-              2 * np.pi * daily["mes"] / 12.0
-          )
-
-          base = daily[
-              (daily["fecha"] >= "1991-01-01")
-              &
-              (daily["fecha"] <= "2020-12-31")
-          ].copy()
-
-          clim = (
-              base
-              .groupby("mes")
-              .agg(
-                  clim_temp=(
-                      "temperatura_media",
-                      "mean"
-                  ),
-                  clim_humedad=(
-                      "humedad_media",
-                      "mean"
-                  ),
-                  clim_presion=(
-                      "presion_media",
-                      "mean"
-                  ),
-                  clim_precipitacion=(
-                      "precipitacion_total",
-                      "mean"
-                  ),
-                  clim_rafaga=(
-                      "rafaga_max",
-                      "mean"
-                  )
+          clima["presion_min_6h"] = (
+              clima["pressure_msl"]
+              .rolling(
+                  window=6,
+                  min_periods=3
               )
-              .reset_index()
+              .min()
           )
 
-          daily = daily.merge(
-              clim,
-              on="mes",
-              how="left"
+          clima["presion_max_6h"] = (
+              clima["pressure_msl"]
+              .rolling(
+                  window=6,
+                  min_periods=3
+              )
+              .max()
           )
 
-          daily["anomalia_temp"] = (
-              daily["temperatura_media"]
-              - daily["clim_temp"]
+          clima["humedad_max_6h"] = (
+              clima["relative_humidity_2m"]
+              .rolling(
+                  window=6,
+                  min_periods=3
+              )
+              .max()
           )
 
-          daily["anomalia_humedad"] = (
-              daily["humedad_media"]
-              - daily["clim_humedad"]
+          clima["humedad_min_6h"] = (
+              clima["relative_humidity_2m"]
+              .rolling(
+                  window=6,
+                  min_periods=3
+              )
+              .min()
           )
 
-          daily["anomalia_presion"] = (
-              daily["presion_media"]
-              - daily["clim_presion"]
-          )
+          # ============================================================
+          # ETIQUETAS
+          # ============================================================
 
-          daily["anomalia_precipitacion"] = (
-              daily["precipitacion_total"]
-              - daily["clim_precipitacion"]
-          )
-
-          daily["anomalia_rafaga"] = (
-              daily["rafaga_max"]
-              - daily["clim_rafaga"]
-          )
+          eventos["evento_severo"] = (
+              (
+                  eventos["tormenta_severa"].fillna(0)
+                  + eventos["viento_severo"].fillna(0)
+                  + eventos["precipitacion_extrema"].fillna(0)
+                  + eventos["inundacion"].fillna(0)
+                  + eventos["granizo"].fillna(0)
+                  + eventos["tornado"].fillna(0)
+              ) > 0
+          ).astype(int)
 
           fechas_eventos = set(
-              eventos["fecha"].tolist()
+              eventos.loc[
+                  eventos["evento_severo"] == 1,
+                  "fecha"
+              ]
+              .dt.strftime("%Y-%m-%d")
           )
 
-          daily["dia_referencia_smn"] = (
-              daily["fecha"]
+          clima["target_evento_severo"] = (
+              clima["fecha"]
+              .dt.strftime("%Y-%m-%d")
               .isin(fechas_eventos)
               .astype(int)
           )
 
-          mapa_eventos = dict(
-              zip(
-                  eventos["fecha"],
-                  eventos["evento"].astype(str)
-              )
-          )
-
-          daily["evento_referencia"] = (
-              daily["fecha"]
-              .map(mapa_eventos)
-              .fillna("")
-          )
+          # ============================================================
+          # ELIMINAR FILAS INCOMPLETAS
+          # ============================================================
 
           features = [
-              "temperatura_media",
-              "temperatura_min",
-              "temperatura_max",
-              "temperatura_rango",
-              "humedad_media",
-              "humedad_min",
-              "humedad_max",
-              "humedad_rango",
-              "rocio_medio",
-              "rocio_min",
-              "rocio_max",
-              "temp_rocio_dif_media",
-              "presion_media",
-              "presion_min",
-              "presion_max",
-              "presion_rango",
-              "precipitacion_total",
-              "precipitacion_max_horaria",
-              "viento_medio",
-              "viento_max",
-              "rafaga_media",
-              "rafaga_max",
-              "viento_u_medio",
-              "viento_v_medio",
-              "lluvia_3d_previa",
-              "lluvia_7d_previa",
-              "rafaga_max_3d_previa",
-              "rafaga_max_7d_previa",
-              "presion_media_3d_previa",
-              "presion_media_7d_previa",
-              "temperatura_media_3d_previa",
-              "temperatura_media_7d_previa",
-              "humedad_media_3d_previa",
-              "humedad_media_7d_previa",
-              "cambio_temperatura_media_1d",
-              "cambio_humedad_media_1d",
-              "cambio_presion_media_1d",
-              "cambio_viento_medio_1d",
-              "cambio_rafaga_max_1d",
-              "cambio_precipitacion_total_1d",
-              "mes_sin",
-              "mes_cos",
-              "clim_temp",
-              "clim_humedad",
-              "clim_presion",
-              "clim_precipitacion",
-              "clim_rafaga",
-              "anomalia_temp",
-              "anomalia_humedad",
-              "anomalia_presion",
-              "anomalia_precipitacion",
-              "anomalia_rafaga"
+              "temperature_2m",
+              "relative_humidity_2m",
+              "dew_point_2m",
+              "pressure_msl",
+              "precipitation",
+              "wind_speed_10m",
+              "wind_direction_10m",
+              "wind_gusts_10m",
+              "hora",
+              "mes",
+              "dia_ano",
+              "temp_rocio_dif",
+              "viento_u",
+              "viento_v",
+              "cambio_presion_1h",
+              "cambio_presion_3h",
+              "cambio_temp_1h",
+              "cambio_temp_3h",
+              "cambio_humedad_1h",
+              "cambio_viento_1h",
+              "lluvia_1h",
+              "lluvia_3h",
+              "lluvia_6h",
+              "lluvia_12h",
+              "rafaga_max_3h",
+              "rafaga_max_6h",
+              "viento_max_3h",
+              "presion_min_6h",
+              "presion_max_6h",
+              "humedad_max_6h",
+              "humedad_min_6h"
           ]
 
-          X = (
-              daily[features]
-              .replace(
-                  [np.inf, -np.inf],
-                  np.nan
-              )
-              .copy()
+          dataset = clima[
+              ["time", "fecha"]
+              + features
+              + ["target_evento_severo"]
+          ].copy()
+
+          dataset = dataset.replace(
+              [np.inf, -np.inf],
+              np.nan
           )
 
-          for columna in X.columns:
+          dataset = dataset.dropna(
+              subset=features
+          ).reset_index(drop=True)
 
-              mediana = X[columna].median()
+          print(
+              f"Registros utilizables: "
+              f"{len(dataset):,}"
+          )
 
-              if pd.isna(mediana):
-                  mediana = 0
+          positivos = int(
+              dataset["target_evento_severo"].sum()
+          )
 
-              X[columna] = X[columna].fillna(
-                  mediana
-              )
+          negativos = int(
+              len(dataset) - positivos
+          )
 
-          if len(daily) < 10000:
+          print(
+              f"Registros positivos: {positivos:,}"
+          )
+
+          print(
+              f"Registros negativos: {negativos:,}"
+          )
+
+          if positivos == 0:
               raise SystemExit(
-                  "ERROR: se generaron menos de 10.000 dias."
+                  "ERROR: no se encontraron eventos positivos."
               )
 
-          if len(features) < 40:
-              raise SystemExit(
-                  "ERROR: faltan variables meteorologicas."
-              )
+          # ============================================================
+          # ORDEN CRONOLOGICO
+          # ============================================================
 
-          normales = (
-              daily["dia_referencia_smn"]
-              .eq(0)
-              .values
+          dataset = dataset.sort_values(
+              "time"
+          ).reset_index(drop=True)
+
+          # ============================================================
+          # DIVISION TEMPORAL
+          #
+          # 80% inicial -> entrenamiento
+          # 20% final   -> validacion
+          #
+          # No usamos random split porque produciria fuga temporal.
+          # ============================================================
+
+          corte = int(
+              len(dataset) * 0.80
           )
 
-          X_norm = X.loc[normales]
+          train = dataset.iloc[
+              :corte
+          ].copy()
+
+          test = dataset.iloc[
+              corte:
+          ].copy()
+
+          X_train = train[features]
+          y_train = train["target_evento_severo"]
+
+          X_test = test[features]
+          y_test = test["target_evento_severo"]
 
           print(
-              f"Dias totales: {len(daily):,}"
+              f"Entrenamiento: {len(train):,}"
           )
 
           print(
-              f"Dias normales para ajuste: "
-              f"{len(X_norm):,}"
+              f"Validacion: {len(test):,}"
           )
 
           print(
-              f"Referencias SMN: "
-              f"{len(eventos)}"
+              f"Positivos entrenamiento: "
+              f"{int(y_train.sum()):,}"
           )
 
-          scaler = RobustScaler()
-
-          X_norm_scaled = scaler.fit_transform(
-              X_norm
+          print(
+              f"Positivos validacion: "
+              f"{int(y_test.sum()):,}"
           )
 
-          modelo = IsolationForest(
-              n_estimators=300,
-              contamination="auto",
-              max_samples="auto",
+          # ============================================================
+          # MODELO
+          # ============================================================
+
+          modelo = RandomForestClassifier(
+              n_estimators=400,
+              max_depth=16,
+              min_samples_leaf=3,
+              class_weight="balanced_subsample",
               random_state=42,
               n_jobs=-1
           )
 
+          print("Entrenando Random Forest...")
+
           modelo.fit(
-              X_norm_scaled
+              X_train,
+              y_train
           )
 
-          X_all_scaled = scaler.transform(
-              X
+          # ============================================================
+          # PREDICCIONES
+          # ============================================================
+
+          pred = modelo.predict(
+              X_test
           )
 
-          decision = (
-              modelo
-              .decision_function(
-                  X_all_scaled
-              )
+          prob = modelo.predict_proba(
+              X_test
+          )[:, 1]
+
+          # ============================================================
+          # METRICAS
+          # ============================================================
+
+          matriz = confusion_matrix(
+              y_test,
+              pred,
+              labels=[0, 1]
           )
 
-          daily["anomalia_atmosferica"] = (
-              -decision
+          reporte = classification_report(
+              y_test,
+              pred,
+              labels=[0, 1],
+              target_names=[
+                  "sin_evento",
+                  "evento_severo"
+              ],
+              output_dict=True,
+              zero_division=0
           )
 
-          daily["percentil_anomalia"] = (
-              daily[
-                  "anomalia_atmosferica"
-              ]
-              .rank(
-                  pct=True,
-                  method="average"
-              )
-          )
+          if len(
+              np.unique(y_test)
+          ) == 2:
 
-          referencias = daily[
-              daily["dia_referencia_smn"] == 1
-          ].copy()
-
-          if len(referencias) != len(eventos):
-              raise SystemExit(
-                  "ERROR: las fechas de referencia SMN no coinciden."
-              )
-
-          valores_normales = daily.loc[
-              normales,
-              "anomalia_atmosferica"
-          ]
-
-          umbrales = np.quantile(
-              valores_normales,
-              np.arange(
-                  0.90,
-                  1.00,
-                  0.01
-              )
-          )
-
-          filas = []
-
-          for umbral in umbrales:
-
-              marcado = (
-                  daily["anomalia_atmosferica"]
-                  >= umbral
-              )
-
-              tp = int(
-                  (
-                      marcado
-                      &
-                      daily[
-                          "dia_referencia_smn"
-                      ].eq(1)
-                  ).sum()
-              )
-
-              fp = int(
-                  (
-                      marcado
-                      &
-                      daily[
-                          "dia_referencia_smn"
-                      ].eq(0)
-                  ).sum()
-              )
-
-              fn = int(
-                  len(eventos) - tp
-              )
-
-              recall = (
-                  tp / len(eventos)
-                  if len(eventos)
-                  else 0.0
-              )
-
-              precision = (
-                  tp / (tp + fp)
-                  if (tp + fp)
-                  else 0.0
-              )
-
-              filas.append({
-                  "umbral_anomalia": float(
-                      umbral
-                  ),
-                  "tp_eventos_smn": tp,
-                  "fp_dias_normales": fp,
-                  "fn_eventos_smn": fn,
-                  "recall_referencias_smn": recall,
-                  "precision_referencias_smn": precision,
-                  "dias_marcados": int(
-                      marcado.sum()
+              auc = float(
+                  roc_auc_score(
+                      y_test,
+                      prob
                   )
-              })
-
-          calibracion = pd.DataFrame(
-              filas
-          )
-
-          recomendado = (
-              calibracion
-              .sort_values(
-                  [
-                      "recall_referencias_smn",
-                      "fp_dias_normales"
-                  ],
-                  ascending=[
-                      False,
-                      True
-                  ]
               )
-              .iloc[0]
+
+          else:
+
+              auc = None
+
+          metricas = {
+              "modelo": "RandomForestClassifier",
+              "version": "1.0",
+              "fuente_meteorologica": (
+                  "clima_horario_1980_2026.csv"
+              ),
+              "fuente_eventos": (
+                  "eventos_severos.csv"
+              ),
+              "registros_totales": int(
+                  len(dataset)
+              ),
+              "registros_entrenamiento": int(
+                  len(train)
+              ),
+              "registros_validacion": int(
+                  len(test)
+              ),
+              "positivos_totales": positivos,
+              "negativos_totales": negativos,
+              "positivos_entrenamiento": int(
+                  y_train.sum()
+              ),
+              "positivos_validacion": int(
+                  y_test.sum()
+              ),
+              "roc_auc": auc,
+              "accuracy": float(
+                  reporte["accuracy"]
+              ),
+              "precision_evento": float(
+                  reporte["evento_severo"]["precision"]
+              ),
+              "recall_evento": float(
+                  reporte["evento_severo"]["recall"]
+              ),
+              "f1_evento": float(
+                  reporte["evento_severo"]["f1-score"]
+              ),
+              "matriz_confusion": matriz.tolist(),
+              "features": features,
+              "eventos_usados": (
+                  eventos[
+                      [
+                          "fecha",
+                          "evento"
+                      ]
+                  ]
+                  .astype(str)
+                  .to_dict(
+                      orient="records"
+                  )
+              )
+          }
+
+          print("=" * 70)
+          print("RESULTADO DEL ENTRENAMIENTO")
+          print("=" * 70)
+
+          print(
+              json.dumps(
+                  metricas,
+                  indent=2,
+                  ensure_ascii=False
+              )
           )
 
-          umbral_exploratorio = float(
-              recomendado[
-                  "umbral_anomalia"
-              ]
-          )
-
-          daily["marca_exploratoria"] = (
-              daily[
-                  "anomalia_atmosferica"
-              ]
-              >= umbral_exploratorio
-          ).astype(int)
-
-          ruta_modelo = (
-              "modelo/"
-              "climaar_modelo_dia_severo.joblib"
-          )
-
-          joblib.dump(
-              {
-                  "modelo": modelo,
-                  "scaler": scaler,
-                  "features": features,
-                  "tipo":
-                      "firma_atmosferica_diaria_no_supervisada",
-                  "version": "2.0",
-                  "unidad": "dia",
-                  "referencias_smn": len(eventos),
-                  "nota":
-                      "Los eventos SMN se usan "
-                      "para calibracion y evaluacion. "
-                      "No se inventan etiquetas adicionales."
-              },
-              ruta_modelo,
-              compress=3
-          )
-
-          columnas_scores = [
-              "fecha",
-              "dia_referencia_smn",
-              "evento_referencia",
-              "anomalia_atmosferica",
-              "percentil_anomalia",
-              "marca_exploratoria"
-          ] + features
-
-          daily[
-              columnas_scores
-          ].to_csv(
-              "modelo/scores_diarios.csv",
-              index=False,
-              float_format="%.6g"
-          )
-
-          calibracion.to_csv(
-              "modelo/calibracion_smn.csv",
-              index=False,
-              float_format="%.6g"
-          )
+          # ============================================================
+          # IMPORTANCIA DE VARIABLES
+          # ============================================================
 
           importancia = pd.DataFrame({
-              "variable": features,
-              "importancia": 0.0
-          })
+              "feature": features,
+              "importance": modelo.feature_importances_
+          }).sort_values(
+              "importance",
+              ascending=False
+          )
 
-          importancia.to_csv(
-              "modelo/importancia_variables.csv",
+          print("=" * 70)
+          print("VARIABLES MAS IMPORTANTES")
+          print("=" * 70)
+
+          print(
+              importancia.head(15).to_string(
+                  index=False
+              )
+          )
+
+          # ============================================================
+          # GUARDAR MODELO
+          # ============================================================
+
+          paquete_modelo = {
+              "modelo": modelo,
+              "features": features,
+              "version": "1.0",
+              "tipo": "riesgo_evento_severo",
+              "fuente": "Bahia Blanca",
+              "periodo": "1980-2026"
+          }
+
+          joblib.dump(
+              paquete_modelo,
+              MODEL_FILE
+          )
+
+          # ============================================================
+          # GUARDAR METRICAS
+          # ============================================================
+
+          with open(
+              METRICS_FILE,
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              json.dump(
+                  metricas,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          # ============================================================
+          # GUARDAR DATASET DE ENTRENAMIENTO
+          # ============================================================
+
+          dataset.to_csv(
+              DATASET_FILE,
               index=False
           )
 
-          resumen = {
-              "version": "2.0",
-              "tipo_modelo":
-                  "firma_atmosferica_diaria_no_supervisada",
-              "registros_horarios":
-                  int(len(clima)),
-              "dias_totales":
-                  int(len(daily)),
-              "dias_normales_usados_para_ajuste":
-                  int(normales.sum()),
-              "dias_referencia_smn":
-                  int(len(eventos)),
-              "variables":
-                  int(len(features)),
-              "unidad_entrenamiento":
-                  "dia",
-              "hora_del_evento_utilizada":
-                  False,
-              "targets_artificiales":
-                  False,
-              "negativos_artificiales":
-                  False,
-              "fuente_de_referencias":
-                  "SMN",
-              "umbral_exploratorio":
-                  umbral_exploratorio,
-              "recall_referencias_smn":
-                  float(
-                      recomendado[
-                          "recall_referencias_smn"
-                      ]
-                  ),
-              "precision_referencias_smn":
-                  float(
-                      recomendado[
-                          "precision_referencias_smn"
-                      ]
-                  ),
-              "dias_marcados_umbral":
-                  int(
-                      recomendado[
-                          "dias_marcados"
-                      ]
-                  ),
-              "advertencia":
-                  "Resultado exploratorio: "
-                  "solo hay cinco dias de referencia "
-                  "SMN y no debe interpretarse "
-                  "como precision operativa."
-          }
-
-          with open(
-              "modelo/resumen_modelo.json",
-              "w",
-              encoding="utf-8"
-          ) as archivo:
-
-              json.dump(
-                  resumen,
-                  archivo,
-                  indent=2,
-                  ensure_ascii=False
-              )
-
-          with open(
-              "modelo/umbral_operativo.json",
-              "w",
-              encoding="utf-8"
-          ) as archivo:
-
-              json.dump(
-                  {
-                      "umbral_exploratorio":
-                          umbral_exploratorio,
-                      "base":
-                          "referencias_SMN",
-                      "uso":
-                          "exploratorio"
-                  },
-                  archivo,
-                  indent=2,
-                  ensure_ascii=False
-              )
-
-          with open(
-              "modelo/metricas.txt",
-              "w",
-              encoding="utf-8"
-          ) as archivo:
-
-              archivo.write(
-                  "CLIMAAR - FIRMA ATMOSFERICA COMPLETA\n"
-              )
-
-              archivo.write(
-                  "======================================\n\n"
-              )
-
-              archivo.write(
-                  json.dumps(
-                      resumen,
-                      indent=2,
-                      ensure_ascii=False
-                  )
-              )
-
-              archivo.write(
-                  "\n\nCALIBRACION SMN\n"
-              )
-
-              archivo.write(
-                  calibracion.to_string(
-                      index=False
-                  )
-              )
-
-              archivo.write(
-                  "\n\nREFERENCIAS\n"
-              )
-
-              archivo.write(
-                  referencias[
-                      [
-                          "fecha",
-                          "evento_referencia",
-                          "anomalia_atmosferica",
-                          "percentil_anomalia"
-                      ]
-                  ].to_string(
-                      index=False
-                  )
-              )
-
-          archivos = [
-              ruta_modelo,
-              "modelo/scores_diarios.csv",
-              "modelo/calibracion_smn.csv",
-              "modelo/importancia_variables.csv",
-              "modelo/resumen_modelo.json",
-              "modelo/umbral_operativo.json",
-              "modelo/metricas.txt"
-          ]
-
-          print()
           print("=" * 70)
-          print("CONTROL DE ARCHIVOS")
+          print("ARCHIVOS GENERADOS")
           print("=" * 70)
 
-          for archivo in archivos:
+          print(MODEL_FILE)
+          print(METRICS_FILE)
+          print(DATASET_FILE)
 
-              if not os.path.exists(archivo):
-                  raise SystemExit(
-                      f"ERROR: falta {archivo}"
-                  )
-
-              tamano = os.path.getsize(
-                  archivo
-              )
-
-              print(
-                  f"{archivo}: "
-                  f"{tamano / 1024 / 1024:.2f} MB"
-              )
-
-              if tamano >= (
-                  50 * 1024 * 1024
-              ):
-                  raise SystemExit(
-                      f"ERROR: {archivo} "
-                      "supera 50 MB."
-                  )
-
-          print()
           print("=" * 70)
-          print("ENTRENAMIENTO TERMINADO")
+          print("ENTRENAMIENTO FINALIZADO")
           print("=" * 70)
-
-          print(
-              f"Horarios utilizados: "
-              f"{len(clima):,}"
-          )
-
-          print(
-              f"Dias: "
-              f"{len(daily):,}"
-          )
-
-          print(
-              f"Referencias SMN: "
-              f"{len(eventos)}"
-          )
-
-          print(
-              f"Variables: "
-              f"{len(features)}"
-          )
-
-          print(
-              f"Umbral exploratorio: "
-              f"{umbral_exploratorio:.6g}"
-          )
 
           PY
 
-      - name: Verificar resultados
+      - name: Mostrar archivos generados
         run: |
-          set -e
+          echo "Contenido de modelo:"
+          ls -lh modelo/
 
-          test -s modelo/climaar_modelo_dia_severo.joblib
-          test -s modelo/scores_diarios.csv
-          test -s modelo/calibracion_smn.csv
-          test -s modelo/resumen_modelo.json
-          test -s modelo/umbral_operativo.json
-
-          python -m json.tool \
-            modelo/resumen_modelo.json \
-            >/dev/null
-
-          python -m json.tool \
-            modelo/umbral_operativo.json \
-            >/dev/null
-
-          echo "OK: resultados validos."
-
-      - name: Subir resultados como artefacto
-        uses: actions/upload-artifact@v4
-        with:
-          name: climaar-firma-atmosferica
-          path: |
-            modelo/climaar_modelo_dia_severo.joblib
-            modelo/scores_diarios.csv
-            modelo/calibracion_smn.csv
-            modelo/importancia_variables.csv
-            modelo/resumen_modelo.json
-            modelo/umbral_operativo.json
-            modelo/metricas.txt
-          retention-days: 30
-
-      - name: Guardar resultados pequenos en GitHub
+      - name: Guardar modelo en GitHub
         run: |
-          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git config user.name "climaar-bot"
-          git config user.email "bot@climaar.com.ar"
-
-          git add \
-            modelo/climaar_modelo_dia_severo.joblib \
-            modelo/scores_diarios.csv \
-            modelo/calibracion_smn.csv \
-            modelo/importancia_variables.csv \
-            modelo/resumen_modelo.json \
-            modelo/umbral_operativo.json \
-            modelo/metricas.txt
+          git add modelo/climaar_modelo_historico.joblib
+          git add modelo/climaar_modelo_historico_metricas.json
+          git add modelo/climaar_entrenamiento_historico.csv
 
           if git diff --cached --quiet; then
-            echo "Sin cambios para guardar."
+            echo "No hay cambios para guardar."
           else
-            git commit \
-              -m "Entrenamiento firma atmosferica ClimaAR"
-
+            git commit -m "Entrenamiento historico ClimaAR"
             git push
           fi
