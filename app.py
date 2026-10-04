@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import math
 from datetime import datetime, timezone
-from io import BytesIO
 from pathlib import Path
+from io import BytesIO
 
 import requests
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 
 try:
     import joblib
@@ -24,65 +24,32 @@ except Exception:
 app = FastAPI(
     title="ClimaAR",
     description="Seguimiento operativo de precipitacion para Bahia Blanca.",
-    version="3.0.0",
+    version="3.2.0",
 )
-
-
-# ============================================================
-# CONFIGURACION
-# ============================================================
 
 LAT = -38.71
 LON = -62.26
 ZOOM = 7
 
-RAINVIEWER_API = (
-    "https://api.rainviewer.com/public/weather-maps.json"
-)
-
-RAINVIEWER_DEFAULT_HOST = (
-    "https://tilecache.rainviewer.com"
-)
+RAINVIEWER_API = "https://api.rainviewer.com/public/weather-maps.json"
+RAINVIEWER_DEFAULT_HOST = "https://tilecache.rainviewer.com"
 
 DATA_DIR = Path("data/radar")
-
 RADAR_IMAGE = DATA_DIR / "actual.png"
 RADAR_STATUS = DATA_DIR / "status.json"
+OBS_STATUS = Path("data/sazb/status.json")
 
-OBS_STATUS = Path(
-    "data/sazb/status.json"
-)
-
-DATA_DIR.mkdir(
-    parents=True,
-    exist_ok=True
-)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 _session = requests.Session()
+_session.headers.update({"User-Agent": "ClimaAR/3.2"})
 
-_session.headers.update(
-    {
-        "User-Agent": "ClimaAR/3.0"
-    }
-)
-
-
-# ============================================================
-# FUNCIONES GENERALES
-# ============================================================
 
 def now_utc() -> str:
-    return datetime.now(
-        timezone.utc
-    ).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
-def latlon_to_tile(
-    lat: float,
-    lon: float,
-    zoom: int
-) -> tuple[int, int]:
-
+def latlon_to_tile(lat: float, lon: float, zoom: int) -> tuple[int, int]:
     n = 2.0 ** zoom
 
     x = int(
@@ -107,10 +74,6 @@ def latlon_to_tile(
 
     return x, y
 
-
-# ============================================================
-# OBSERVACION SAZB
-# ============================================================
 
 def leer_observacion_sazb() -> dict:
 
@@ -139,15 +102,9 @@ def leer_observacion_sazb() -> dict:
             "observacion_valida": False,
             "fuente": "Aviation Weather Center",
             "estacion": "SAZB",
-            "error": (
-                f"status SAZB invalido: {exc}"
-            ),
+            "error": f"status SAZB invalido: {exc}",
         }
 
-
-# ============================================================
-# RAINVIEWER - ULTIMO FRAME
-# ============================================================
 
 def rainviewer_latest() -> dict:
 
@@ -164,10 +121,9 @@ def rainviewer_latest() -> dict:
         "radar"
     ) or {}
 
-    frames = (
-        radar.get("past")
-        or []
-    )
+    frames = radar.get(
+        "past"
+    ) or []
 
     if not frames:
 
@@ -188,9 +144,6 @@ def rainviewer_latest() -> dict:
         "path"
     )
 
-    # IMPORTANTE:
-    # RainViewer entrega host en el objeto raiz,
-    # no dentro del frame.
     host = (
         data.get("host")
         or RAINVIEWER_DEFAULT_HOST
@@ -250,10 +203,6 @@ def rainviewer_latest() -> dict:
     }
 
 
-# ============================================================
-# DESCARGA Y ARMADO DEL RADAR
-# ============================================================
-
 def descargar_radar() -> dict:
 
     if Image is None:
@@ -270,7 +219,6 @@ def descargar_radar() -> dict:
         ZOOM
     )
 
-    # 3 x 3 teselas de 512 px
     image = Image.new(
         "RGBA",
         (
@@ -278,10 +226,10 @@ def descargar_radar() -> dict:
             1536
         ),
         (
-            0,
-            0,
-            0,
-            0
+            245,
+            245,
+            245,
+            255
         )
     )
 
@@ -291,8 +239,6 @@ def descargar_radar() -> dict:
 
         for dy in (-1, 0, 1):
 
-            # Formato actual de RainViewer:
-            # host + path + /size/z/x/y/color/options.png
             url = (
                 f"{info['host']}"
                 f"{info['path']}"
@@ -341,17 +287,17 @@ def descargar_radar() -> dict:
     if tiles_ok == 0:
 
         raise RuntimeError(
-            "No se pudo descargar ninguna "
-            "tesela de RainViewer."
+            "No se pudo descargar ninguna tesela de RainViewer."
         )
 
     image.save(
-        RADAR_IMAGE
+        RADAR_IMAGE,
+        "PNG"
     )
 
     estado = {
 
-        "version": "3.1",
+        "version": "3.2",
 
         "actualizado_utc": now_utc(),
 
@@ -374,7 +320,9 @@ def descargar_radar() -> dict:
 
             "tiles_total": 9,
 
-            "imagen": "/radar",
+            "imagen": "/radar.png",
+
+            "visor": "/radar",
         },
 
         "observacion_sazb":
@@ -400,10 +348,6 @@ def descargar_radar() -> dict:
 
     return estado
 
-
-# ============================================================
-# ESTADO GUARDADO
-# ============================================================
 
 def leer_estado_guardado() -> dict:
 
@@ -444,10 +388,6 @@ def leer_estado_guardado() -> dict:
         }
 
 
-# ============================================================
-# ESTADO RADAR EN VIVO
-# ============================================================
-
 def radar_status_live() -> dict:
 
     try:
@@ -464,10 +404,6 @@ def radar_status_live() -> dict:
 
         return saved
 
-
-# ============================================================
-# MODELO IA
-# ============================================================
 
 def modelo_info() -> dict:
 
@@ -549,10 +485,6 @@ def modelo_info() -> dict:
     return result
 
 
-# ============================================================
-# INICIO
-# ============================================================
-
 @app.get("/")
 def inicio():
 
@@ -576,6 +508,8 @@ def inicio():
 
             "radar": "/radar",
 
+            "radar_png": "/radar.png",
+
             "radar_status":
                 "/radar/status",
 
@@ -590,10 +524,6 @@ def inicio():
         },
     }
 
-
-# ============================================================
-# HEALTH
-# ============================================================
 
 @app.get("/health")
 def health():
@@ -621,10 +551,6 @@ def health():
             now_utc(),
     }
 
-
-# ============================================================
-# RADAR STATUS
-# ============================================================
 
 @app.get("/radar/status")
 def radar_status():
@@ -656,12 +582,8 @@ def radar_status():
         )
 
 
-# ============================================================
-# RADAR
-# ============================================================
-
-@app.get("/radar")
-def radar():
+@app.get("/radar.png")
+def radar_png():
 
     try:
 
@@ -695,24 +617,180 @@ def radar():
         RADAR_IMAGE,
 
         media_type="image/png",
-
-        filename="climaar-radar.png",
     )
 
 
-# ============================================================
-# OBSERVACION
-# ============================================================
+@app.get(
+    "/radar",
+    response_class=HTMLResponse
+)
+def radar():
+
+    try:
+
+        info = descargar_radar()
+
+    except Exception:
+
+        info = leer_estado_guardado().get(
+            "radar",
+            {}
+        )
+
+        if not info.get(
+            "timestamp"
+        ):
+
+            info = radar_status_live()
+
+    timestamp = info.get(
+        "timestamp"
+    )
+
+    timestamp_text = info.get(
+        "timestamp_utc",
+        "sin datos"
+    )
+
+    html = f"""<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport"
+content="width=device-width,initial-scale=1">
+<title>ClimaAR — Radar Bahía Blanca</title>
+
+<link rel="stylesheet"
+href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+<style>
+
+html,
+body,
+#map {{
+    height: 100%;
+    margin: 0;
+}}
+
+#info {{
+    position: absolute;
+    z-index: 1000;
+    top: 10px;
+    left: 10px;
+    background: rgba(255,255,255,.94);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font: 14px Arial,sans-serif;
+    box-shadow:
+        0 1px 5px rgba(0,0,0,.25);
+}}
+
+</style>
+</head>
+
+<body>
+
+<div id="info">
+
+<b>ClimaAR — Radar Bahía Blanca</b>
+
+<br>
+
+Fuente: RainViewer
+
+<br>
+
+Frame: {timestamp_text}
+
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+</script>
+
+<script>
+
+const lat = {LAT};
+
+const lon = {LON};
+
+const radarPath =
+{json.dumps(info.get("path", ""))};
+
+const radarHost =
+{json.dumps(
+    info.get(
+        "host",
+        RAINVIEWER_DEFAULT_HOST
+    )
+)};
+
+const radarTime =
+{int(timestamp or 0)};
+
+const map =
+L.map('map').setView(
+    [lat, lon],
+    8
+);
+
+L.tileLayer(
+    'https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
+    {{
+        maxZoom: 19,
+        attribution:
+            '&copy; OpenStreetMap contributors'
+    }}
+).addTo(map);
+
+if (
+    radarPath
+    && radarTime
+) {{
+
+    const radarUrl =
+        radarHost
+        + radarPath
+        + '/256/{{z}}/{{x}}/{{y}}/2/1_1.png';
+
+    L.tileLayer(
+        radarUrl,
+        {{
+            opacity: 0.72,
+            maxZoom: 7,
+            minZoom: 0,
+            tileSize: 256,
+            attribution: 'RainViewer'
+        }}
+    ).addTo(map);
+}}
+
+L.marker(
+    [lat, lon]
+).addTo(map)
+
+.bindPopup(
+    'Bahía Blanca'
+)
+
+.openPopup();
+
+</script>
+
+</body>
+</html>"""
+
+    return HTMLResponse(
+        content=html
+    )
+
 
 @app.get("/observacion")
 def observacion():
 
     return leer_observacion_sazb()
 
-
-# ============================================================
-# ESTADO GENERAL
-# ============================================================
 
 @app.get("/estado")
 def estado():
@@ -755,19 +833,11 @@ def estado():
     }
 
 
-# ============================================================
-# MODELO
-# ============================================================
-
 @app.get("/modelo")
 def modelo():
 
     return modelo_info()
 
-
-# ============================================================
-# TORMENTA
-# ============================================================
 
 @app.get("/tormenta")
 def tormenta():
@@ -822,10 +892,6 @@ def tormenta():
     }
 
 
-# ============================================================
-# NOWCAST
-# ============================================================
-
 @app.get("/nowcast")
 def nowcast():
 
@@ -838,44 +904,16 @@ def nowcast():
         "estado":
             "experimental",
 
-        "fuente_radar":
-            "RainViewer",
-
         "radar":
             radar,
-
-        "horizonte_minutos":
-            10,
-
-        "modelo_disponible":
-            info.get(
-                "disponible",
-                False
-            ),
 
         "modelo":
             info,
 
-        "nota": (
-            "El nowcast propio de ClimaAR "
-            "requiere validacion historica "
-            "antes de considerarse una "
-            "prediccion meteorologica "
-            "calibrada."
+        "mensaje": (
+            "La prediccion de evolucion "
+            "de tormentas aun es experimental. "
+            "No debe interpretarse como "
+            "alerta oficial."
         ),
     }
-
-
-# ============================================================
-# EJECUCION LOCAL
-# ============================================================
-
-if __name__ == "__main__":
-
-    import uvicorn
-
-    uvicorn.run(
-        "app:app",
-        host="0.0.0.0",
-        port=8000
-    )
