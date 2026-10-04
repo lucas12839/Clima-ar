@@ -1,6 +1,6 @@
 {
-  "version": "3.0",
-  "actualizado_utc": "2026-10-04T23:32:17.793365+00:00",
+  "version": "5.0",
+  "actualizado_utc": "2026-10-04T23:39:00.319431+00:00",
   "ubicacion": {
     "ciudad": "Bahia Blanca",
     "latitud": -38.71,
@@ -11,28 +11,40 @@
     "fuente": "RainViewer",
     "timestamp": 1791156600,
     "tiles_ok": 9,
+    "frame_path": "/v2/radar/04081c9eb934",
     "actividad": false,
     "area_px": 0,
     "distancia_aprox_km": null,
     "estado": "sin_precipitacion_detectada"
   },
-  "atmosfera_smn": {
-    "disponible": false,
-    "motivo": "Sin observaciones SMN suficientes."
-  },
-  "modelo_atmosferico": {
+  "observacion_sazb": {
     "disponible": true,
-    "tipo": "firma_atmosferica_diaria_no_supervisada",
-    "version": "2.0",
-    "umbral_exploratorio": 0.029555562297573303,
-    "dias_entrenamiento": 17078,
-    "referencias_smn": 5,
-    "estado": "modelo_cargado"
+    "fuente": "Aviation Weather Center",
+    "estacion": "SAZB",
+    "estacion_nombre": "Bahia Blanca Aero",
+    "obsTime_utc": "2026-10-04T23:00:00+00:00",
+    "edad_minutos": 30.6,
+    "temperatura_c": 14.0,
+    "punto_rocio_c": 3.0,
+    "viento_kt": 6.0,
+    "direccion_viento": 330.0,
+    "presion_hpa": 1012.0,
+    "visibilidad_millas": "6+"
   },
-  "criterios_meteorologicos": "Las clasificaciones meteorologicas operativas deben verificarse contra criterios oficiales del SMN.",
+  "modelo_historico": {
+    "disponible": false,
+    "motivo": "No se pudo evaluar la firma historica: 'DataFrame' object has no attribute 'to_frame'"
+  },
+  "motor_operativo": {
+    "radar": "RainViewer",
+    "observacion": "SAZB",
+    "contexto_historico": "RandomForest historico ClimaAR",
+    "nowcast_radar_ia": false
+  },
   "limitaciones": [
-    "El modelo atmosferico actual es exploratorio.",
-    "Las cinco referencias SMN no permiten interpretar el score como probabilidad calibrada.",
-    "La distancia radar es aproximada hasta completar la georreferenciacion precisa."
+    "El score historico es exploratorio y no esta calibrado como probabilidad.",
+    "El modelo historico fue entrenado con firmas diarias de eventos catalogados.",
+    "La prediccion de movimiento de celulas y ETA requiere la secuencia temporal del radar.",
+    "La distancia radar actual es aproximada."
   ]
 }
