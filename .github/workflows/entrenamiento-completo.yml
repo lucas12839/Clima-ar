@@ -6,10 +6,12 @@ on:
 jobs:
   entrenamiento:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
     steps:
+
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
@@ -41,14 +43,21 @@ jobs:
           )
 
           BASE = "data/historico"
+
           CLIMA = f"{BASE}/clima_horario_1980_2026.csv"
           EVENTOS = f"{BASE}/eventos_severos.csv"
 
           if not os.path.exists(CLIMA):
-              raise SystemExit(f"No existe {CLIMA}")
+              raise SystemExit(
+                  f"No existe {CLIMA}"
+              )
 
           if not os.path.exists(EVENTOS):
-              raise SystemExit(f"No existe {EVENTOS}")
+              raise SystemExit(
+                  f"No existe {EVENTOS}"
+              )
+
+          print("Cargando datos...")
 
           clima = pd.read_csv(CLIMA)
           eventos = pd.read_csv(EVENTOS)
@@ -77,16 +86,25 @@ jobs:
               .reset_index(drop=True)
           )
 
-          print("Registros meteorologicos:", len(clima))
-          print("Eventos severos catalogados:", len(eventos))
+          print(
+              "Registros meteorologicos:",
+              len(clima)
+          )
 
-          # ==========================================
+          print(
+              "Eventos catalogados:",
+              len(eventos)
+          )
+
+          # ==================================================
           # VARIABLES TEMPORALES
-          # ==========================================
+          # ==================================================
 
           clima["hora"] = clima["time"].dt.hour
           clima["mes"] = clima["time"].dt.month
-          clima["dia_anio"] = clima["time"].dt.dayofyear
+          clima["dia_anio"] = (
+              clima["time"].dt.dayofyear
+          )
 
           clima["hora_sin"] = np.sin(
               2 * np.pi * clima["hora"] / 24
@@ -104,9 +122,9 @@ jobs:
               2 * np.pi * clima["mes"] / 12
           )
 
-          # ==========================================
-          # LLUVIA
-          # ==========================================
+          # ==================================================
+          # LLUVIA ACUMULADA
+          # ==================================================
 
           for h in [1, 3, 6, 12, 24]:
 
@@ -119,9 +137,9 @@ jobs:
                   .sum()
               )
 
-          # ==========================================
+          # ==================================================
           # VIENTO
-          # ==========================================
+          # ==================================================
 
           for h in [3, 6, 12, 24]:
 
@@ -143,9 +161,9 @@ jobs:
                   .max()
               )
 
-          # ==========================================
+          # ==================================================
           # CAMBIOS METEOROLOGICOS
-          # ==========================================
+          # ==================================================
 
           for h in [1, 3, 6, 12, 24]:
 
@@ -169,9 +187,9 @@ jobs:
                   - clima["wind_speed_10m"].shift(h)
               )
 
-          # ==========================================
+          # ==================================================
           # INDICADORES
-          # ==========================================
+          # ==================================================
 
           clima["diferencia_temp_rocio"] = (
               clima["temperature_2m"]
@@ -202,55 +220,61 @@ jobs:
               clima["wind_gusts_10m"] >= 100
           ).astype(int)
 
-          # ==========================================
+          # ==================================================
           # MUESTRAS POSITIVAS
           #
-          # SOLO 24 HORAS ANTES DEL EVENTO.
-          # NO SE USAN HORAS POSTERIORES.
-          # ==========================================
+          # SOLO LAS 24 HORAS ANTERIORES
+          # A CADA EVENTO.
+          # ==================================================
 
           positivos = []
 
-          for _, ev in eventos.iterrows():
+          for _, evento in eventos.iterrows():
 
               inicio = (
-                  ev["fecha"]
+                  evento["fecha"]
                   - pd.Timedelta(hours=24)
               )
 
               fin = (
-                  ev["fecha"]
+                  evento["fecha"]
                   - pd.Timedelta(hours=1)
               )
 
               ventana = clima[
-                  (clima["time"] >= inicio) &
+                  (clima["time"] >= inicio)
+                  &
                   (clima["time"] <= fin)
               ].copy()
 
               if ventana.empty:
+
                   print(
-                      "Sin datos pre-evento:",
-                      ev["fecha"].date()
+                      "Sin datos para evento:",
+                      evento["fecha"]
                   )
+
                   continue
 
               ventana["target"] = 1
 
               ventana["evento_id"] = (
-                  ev["fecha"].strftime("%Y-%m-%d")
+                  evento["fecha"]
+                  .strftime("%Y-%m-%d")
               )
 
               ventana["evento_nombre"] = (
-                  str(ev["evento"])
+                  str(evento["evento"])
               )
 
-              positivos.append(ventana)
+              positivos.append(
+                  ventana
+              )
 
           if not positivos:
 
               raise SystemExit(
-                  "No se pudieron construir "
+                  "No se pudieron crear "
                   "muestras positivas."
               )
 
@@ -259,26 +283,32 @@ jobs:
               ignore_index=True
           )
 
-          # ==========================================
-          # EXCLUIR PERIODOS CERCANOS A EVENTOS
-          # PARA LOS NEGATIVOS
-          # ==========================================
+          # ==================================================
+          # EXCLUIR PERIODOS CERCANOS
+          # A LOS EVENTOS PARA LOS NEGATIVOS
+          # ==================================================
 
           excluir = np.zeros(
               len(clima),
               dtype=bool
           )
 
-          for _, ev in eventos.iterrows():
+          for _, evento in eventos.iterrows():
+
+              inicio = (
+                  evento["fecha"]
+                  - pd.Timedelta(hours=72)
+              )
+
+              fin = (
+                  evento["fecha"]
+                  + pd.Timedelta(hours=72)
+              )
 
               excluir |= (
-                  (clima["time"] >=
-                   ev["fecha"] -
-                   pd.Timedelta(hours=72))
+                  (clima["time"] >= inicio)
                   &
-                  (clima["time"] <=
-                   ev["fecha"] +
-                   pd.Timedelta(hours=72))
+                  (clima["time"] <= fin)
               )
 
           disponibles = clima.loc[
@@ -297,29 +327,33 @@ jobs:
               ]
           )
 
-          # ==========================================
+          # ==================================================
           # MUESTRAS NEGATIVAS
-          # MISMO MES QUE CADA EVENTO
-          # ==========================================
+          # MISMO MES QUE EL EVENTO
+          # ==================================================
 
           rng = np.random.RandomState(42)
 
-          negativos_por_evento = []
+          negativos_lista = []
 
-          for _, ev in eventos.iterrows():
+          for _, evento in eventos.iterrows():
 
               candidatos = disponibles[
                   disponibles["mes"]
-                  .eq(ev["fecha"].month)
+                  == evento["fecha"].month
               ].copy()
 
               if len(candidatos) < 24:
+
                   candidatos = disponibles.copy()
 
               cantidad = min(
                   24,
                   len(candidatos)
               )
+
+              if cantidad == 0:
+                  continue
 
               muestra = candidatos.sample(
                   n=cantidad,
@@ -329,23 +363,33 @@ jobs:
               muestra["target"] = 0
 
               muestra["evento_id"] = (
-                  ev["fecha"].strftime("%Y-%m-%d")
+                  evento["fecha"]
+                  .strftime("%Y-%m-%d")
               )
 
-              muestra["evento_nombre"] = "normal"
+              muestra["evento_nombre"] = (
+                  "normal"
+              )
 
-              negativos_por_evento.append(
+              negativos_lista.append(
                   muestra
               )
 
+          if not negativos_lista:
+
+              raise SystemExit(
+                  "No se pudieron crear "
+                  "muestras negativas."
+              )
+
           negativos = pd.concat(
-              negativos_por_evento,
+              negativos_lista,
               ignore_index=True
           )
 
-          # ==========================================
+          # ==================================================
           # DATASET DE ENTRENAMIENTO
-          # ==========================================
+          # ==================================================
 
           datos = pd.concat(
               [
@@ -361,6 +405,7 @@ jobs:
               .reset_index(drop=True)
           )
 
+          print()
           print(
               "Muestras positivas:",
               int(
@@ -380,9 +425,9 @@ jobs:
               positivos["evento_id"].nunique()
           )
 
-          # ==========================================
+          # ==================================================
           # VARIABLES DEL MODELO
-          # ==========================================
+          # ==================================================
 
           features = [
 
@@ -464,9 +509,9 @@ jobs:
               .fillna(0)
           )
 
-          # ==========================================
+          # ==================================================
           # VALIDACION LEAVE-ONE-EVENT-OUT
-          # ==========================================
+          # ==================================================
 
           resultados = []
           matrices = []
@@ -481,11 +526,13 @@ jobs:
           for test_event in ids_eventos:
 
               train = datos[
-                  datos["evento_id"] != test_event
+                  datos["evento_id"]
+                  != test_event
               ].copy()
 
               test = datos[
-                  datos["evento_id"] == test_event
+                  datos["evento_id"]
+                  == test_event
               ].copy()
 
               if train["target"].nunique() < 2:
@@ -523,6 +570,11 @@ jobs:
                   .predict_proba(
                       test[features]
                   )[:, 1]
+              )
+
+              matriz = confusion_matrix(
+                  test["target"],
+                  pred
               )
 
               resultados.append({
@@ -564,22 +616,22 @@ jobs:
 
                   "negativos_test":
                       int(
-                          (test["target"] == 0).sum()
+                          (
+                              test["target"] == 0
+                          ).sum()
                       )
               })
 
-              matrices.append(
-                  f"{test_event}: "
-                  f"{confusion_matrix("
-                  f"test['target'], pred"
-                  f").tolist()}"
-              )
+              matrices.append({
+                  "evento": test_event,
+                  "matriz": matriz.tolist()
+              })
 
           if not resultados:
 
               raise SystemExit(
                   "No fue posible completar "
-                  "la validacion por evento."
+                  "la validacion."
               )
 
           validacion = pd.DataFrame(
@@ -606,7 +658,9 @@ jobs:
           )
 
           print()
-          print("PROMEDIOS:")
+          print(
+              "PROMEDIOS:"
+          )
 
           print(
               validacion[
@@ -619,9 +673,9 @@ jobs:
               ].mean()
           )
 
-          # ==========================================
+          # ==================================================
           # MODELO FINAL
-          # ==========================================
+          # ==================================================
 
           modelo_final = RandomForestClassifier(
 
@@ -648,9 +702,9 @@ jobs:
               exist_ok=True
           )
 
-          # ==========================================
+          # ==================================================
           # GUARDAR MODELO
-          # ==========================================
+          # ==================================================
 
           joblib.dump(
               modelo_final,
@@ -658,9 +712,9 @@ jobs:
               "climaar_modelo_pre_evento.joblib"
           )
 
-          # ==========================================
-          # VALIDACION
-          # ==========================================
+          # ==================================================
+          # GUARDAR VALIDACION
+          # ==================================================
 
           validacion.to_csv(
               "modelo/"
@@ -668,9 +722,9 @@ jobs:
               index=False
           )
 
-          # ==========================================
+          # ==================================================
           # IMPORTANCIA DE VARIABLES
-          # ==========================================
+          # ==================================================
 
           importancia = pd.DataFrame({
 
@@ -697,9 +751,9 @@ jobs:
               index=False
           )
 
-          # ==========================================
+          # ==================================================
           # RESUMEN
-          # ==========================================
+          # ==================================================
 
           resumen = {
 
@@ -714,14 +768,16 @@ jobs:
 
               "muestras_positivas":
                   int(
-                      (datos["target"] == 1)
-                      .sum()
+                      (
+                          datos["target"] == 1
+                      ).sum()
                   ),
 
               "muestras_negativas":
                   int(
-                      (datos["target"] == 0)
-                      .sum()
+                      (
+                          datos["target"] == 0
+                      ).sum()
                   ),
 
               "precision_media":
@@ -762,34 +818,34 @@ jobs:
               "modelo/resumen_modelo.json",
               "w",
               encoding="utf-8"
-          ) as f:
+          ) as archivo:
 
               json.dump(
                   resumen,
-                  f,
+                  archivo,
                   indent=2,
                   ensure_ascii=False
               )
 
-          # ==========================================
+          # ==================================================
           # METRICAS
-          # ==========================================
+          # ==================================================
 
           with open(
               "modelo/metricas.txt",
               "w",
               encoding="utf-8"
-          ) as f:
+          ) as archivo:
 
-              f.write(
+              archivo.write(
                   "CLIMAAR - MODELO PRE-EVENTO\n"
               )
 
-              f.write(
+              archivo.write(
                   "============================\n\n"
               )
 
-              f.write(
+              archivo.write(
                   json.dumps(
                       resumen,
                       indent=2,
@@ -797,19 +853,32 @@ jobs:
                   )
               )
 
-              f.write(
+              archivo.write(
                   "\n\nMATRICES POR EVENTO\n"
               )
 
-              for matriz in matrices:
+              for elemento in matrices:
 
-                  f.write(
-                      matriz + "\n"
+                  archivo.write(
+                      elemento["evento"]
+                      + ": "
+                      + str(
+                          elemento["matriz"]
+                      )
+                      + "\n"
                   )
 
           print()
           print(
-              "Modelo final guardado."
+              "===================================="
+          )
+
+          print(
+              "MODELO FINAL GUARDADO"
+          )
+
+          print(
+              "===================================="
           )
 
           print(
