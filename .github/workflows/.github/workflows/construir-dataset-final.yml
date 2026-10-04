@@ -1,0 +1,56 @@
+name: ClimaAR - Construir Dataset Final
+
+on:
+  workflow_dispatch:
+
+jobs:
+  construir-dataset:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Verificar archivos necesarios
+        run: |
+          echo "=== ARCHIVOS HISTORICOS ==="
+          ls -lh data/historico/
+          echo ""
+          echo "=== SCRIPT ==="
+          ls -lh scripts/build_dataset_final.py
+
+      - name: Construir dataset final
+        run: |
+          python scripts/build_dataset_final.py
+
+      - name: Verificar resultados
+        run: |
+          echo "=== RESULTADOS ==="
+          ls -lh data/final/
+          echo ""
+          echo "=== RESUMEN ==="
+          cat data/final/resumen_dataset_final.csv
+
+      - name: Guardar resultados
+        run: |
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.com.ar"
+
+          git add data/final/
+
+          git diff --cached --quiet || git commit -m "Construir dataset final ClimaAR"
+
+          git push
