@@ -1,19 +1,211 @@
 {
-  "actualizado": "2026-10-04T23:53:30.881615+00:00",
-  "fuente": "RainViewer",
-  "latitud": -38.71,
-  "longitud": -62.26,
-  "frames_analizados": 12,
-  "area_px": 0,
-  "distancia_km": null,
-  "fortalecimiento": "sin_datos",
-  "velocidad_kmh": null,
-  "direccion": null,
-  "direccion_grados": null,
-  "eta_minutos": null,
-  "confianza_movimiento": 0.0,
-  "estado": "sin_precipitacion",
-  "timestamp_frame": 1791157800,
-  "frame_utc": "2026-10-04T23:50:00+00:00",
-  "tiles": 9
+  "version": "5.0.1",
+  "app": "ClimaAR",
+  "ubicacion": {
+    "latitud": -38.71,
+    "longitud": -62.26,
+    "ciudad": "Bahia Blanca"
+  },
+  "fuentes": {
+    "radar": "RainViewer",
+    "observacion": "SAZB",
+    "meteorologia": "Open-Meteo",
+    "modelo": "historico ClimaAR"
+  },
+  "radar": {
+    "timestamp": 1791157800,
+    "tiles_ok": 9,
+    "frame_path": "/v2/radar/666c8e305ae4",
+    "actividad": false,
+    "area_px": 0,
+    "distancia_aprox_km": null,
+    "estado": "sin_precipitacion_detectada"
+  },
+  "sazb": {
+    "disponible": true,
+    "fuente": "Aviation Weather Center",
+    "estacion": "SAZB",
+    "estacion_nombre": "Bahia Blanca Aero",
+    "obsTime_utc": "2026-10-04T23:00:00+00:00",
+    "edad_minutos": 58.5,
+    "temperatura_c": 14.0,
+    "punto_rocio_c": 3.0,
+    "viento_kt": 6.0,
+    "direccion_viento": 330.0,
+    "presion_hpa": 1012.0,
+    "visibilidad_millas": null
+  },
+  "meteorologia": {
+    "disponible": true,
+    "registros": 72,
+    "ultimo_dato_utc": "2026-10-03T23:00:00+00:00"
+  },
+  "modelo_historico": {
+    "disponible": true,
+    "modelo": "2.0",
+    "tipo": "firma_atmosferica_evento_severo",
+    "features_utilizadas": 52,
+    "probabilidad_clase_0": 0.994352,
+    "probabilidad_clase_1": 0.005648,
+    "score_evento_historico": 0.005648,
+    "clasificacion_historica": 0,
+    "advertencia": "Firma atmosferica historica exploratoria. No es una probabilidad calibrada de tormenta inmediata."
+  },
+  "metricas_modelo": {
+    "modelo": "RandomForestClassifier",
+    "version": "2.0",
+    "tipo": "firma_atmosferica_evento_severo",
+    "periodo": "1980-2026",
+    "dias_totales": 17078,
+    "eventos_severos_reales": 5,
+    "dias_no_severos": 17073,
+    "metodo_validacion": "leave_one_event_out",
+    "resultados_eventos": [
+      {
+        "fecha": "1981-03-14",
+        "probabilidad": 0.0
+      },
+      {
+        "fecha": "1982-02-13",
+        "probabilidad": 0.001999056158565361
+      },
+      {
+        "fecha": "2019-12-30",
+        "probabilidad": 0.3818235787974991
+      },
+      {
+        "fecha": "2023-12-16",
+        "probabilidad": 0.18747119362975093
+      },
+      {
+        "fecha": "2025-03-07",
+        "probabilidad": 0.0516707535830759
+      }
+    ],
+    "umbral_referencia": 0.0015992449268522888,
+    "variables_mas_importantes": [
+      {
+        "feature": "cambio_viento_1h_max",
+        "importance": 0.11700455731865897
+      },
+      {
+        "feature": "cambio_humedad_1h_min",
+        "importance": 0.1130438361245218
+      },
+      {
+        "feature": "pressure_msl_mean",
+        "importance": 0.10677615873926015
+      },
+      {
+        "feature": "precipitation_max",
+        "importance": 0.07060558840669348
+      },
+      {
+        "feature": "lluvia_3h_max",
+        "importance": 0.05656181725931911
+      },
+      {
+        "feature": "cambio_temp_1h_mean",
+        "importance": 0.056445537741096195
+      },
+      {
+        "feature": "cambio_temp_3h_mean",
+        "importance": 0.049099379541664226
+      },
+      {
+        "feature": "lluvia_6h_max",
+        "importance": 0.0454614374825252
+      },
+      {
+        "feature": "pressure_msl_min",
+        "importance": 0.03810919193994789
+      },
+      {
+        "feature": "precipitation_sum",
+        "importance": 0.036538661126547765
+      },
+      {
+        "feature": "presion_max_6h_max",
+        "importance": 0.028572358036413954
+      },
+      {
+        "feature": "temperature_2m_min",
+        "importance": 0.0248382372045116
+      },
+      {
+        "feature": "lluvia_12h_max",
+        "importance": 0.02417022702064296
+      },
+      {
+        "feature": "presion_min_6h_min",
+        "importance": 0.023361773521997357
+      },
+      {
+        "feature": "dew_point_2m_max",
+        "importance": 0.01982120781932042
+      },
+      {
+        "feature": "pressure_msl_max",
+        "importance": 0.01707850183085326
+      },
+      {
+        "feature": "viento_u_min",
+        "importance": 0.0129491866626828
+      },
+      {
+        "feature": "cambio_viento_1h_mean",
+        "importance": 0.011934946897021818
+      },
+      {
+        "feature": "wind_gusts_10m_max",
+        "importance": 0.011873426693107628
+      },
+      {
+        "feature": "temperature_2m_mean",
+        "importance": 0.011872048643317349
+      }
+    ],
+    "eventos_utilizados": [
+      {
+        "fecha": "1981-03-14",
+        "evento": "Temporal grave",
+        "rafaga_kmh": "110.0",
+        "lluvia_mm": "85.0",
+        "tornado": "0"
+      },
+      {
+        "fecha": "1982-02-13",
+        "evento": "Tornado temporal Chile Pedro Pico",
+        "rafaga_kmh": "170.0",
+        "lluvia_mm": NaN,
+        "tornado": "1"
+      },
+      {
+        "fecha": "2019-12-30",
+        "evento": "Tornado F0 Paso Piedras",
+        "rafaga_kmh": "115.0",
+        "lluvia_mm": "100.0",
+        "tornado": "1"
+      },
+      {
+        "fecha": "2023-12-16",
+        "evento": "Temporal destructivo",
+        "rafaga_kmh": "189.0",
+        "lluvia_mm": "45.0",
+        "tornado": "0"
+      },
+      {
+        "fecha": "2025-03-07",
+        "evento": "Inundacion historica",
+        "rafaga_kmh": NaN,
+        "lluvia_mm": "290.0",
+        "tornado": "0"
+      }
+    ],
+    "advertencia": "Este modelo aprende firmas atmosfericas de los eventos historicos catalogados. No representa por si solo un nowcast de 1 hora. El nowcast operacional se construira combinando este modelo con RainViewer."
+  },
+  "nowcast_radar_ia": false,
+  "modelo_historico_es_calibrado": false,
+  "estado": "operativo",
+  "ultima_actualizacion_utc": "2026-10-04T23:59:42.206638+00:00"
 }
