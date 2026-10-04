@@ -1,198 +1,189 @@
-from __future__ import annotations
-
-import json
-import math
-from datetime import datetime, timezone, timedelta
-from io import BytesIO
-from pathlib import Path
-
-import requests
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
-
-try:
-    import joblib
-except Exception:
-    joblib = None
-
-try:
-    from PIL import Image
-except Exception:
-    Image = None
-
+from fastapi.responses import FileResponse, HTMLResponse
+from datetime import datetime, timezone
+from pathlib import Path
+import math
+import json
+import time
+import requests
+from PIL import Image
+from io import BytesIO
 
 app = FastAPI(
     title="ClimaAR",
-    description="Seguimiento operativo de precipitacion para Bahia Blanca.",
-    version="4.2.0-map",
+    description="Radar meteorológico y seguimiento de tormentas para Bahía Blanca",
+    version="4.2.1"
 )
+
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+RADAR_DIR = BASE_DIR / "data" / "radar"
+
+RADAR_DIR.mkdir(parents=True, exist_ok=True)
 
 LAT = -38.71
 LON = -62.26
+
 RADAR_ZOOM = 7
 TILE_SIZE = 256
 GRID_RADIUS = 1
 
 RAINVIEWER_API = "https://api.rainviewer.com/public/weather-maps.json"
-RAINVIEWER_DEFAULT_HOST = "https://tilecache.rainviewer.com"
 
-DATA_DIR = Path("data/radar")
-RADAR_IMAGE = DATA_DIR / "actual.png"
-RADAR_PREVIEW = DATA_DIR / "preview.png"
-RADAR_STATUS = DATA_DIR / "status.json"
+USER_AGENT = "ClimaAR/4.2.1"
 
-OBS_STATUS = Path("data/sazb/status.json")
-
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-session = requests.Session()
-session.headers.update({
-    "User-Agent": "ClimaAR/4.2",
-    "Accept": "*/*",
-})
+HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Referer": "https://www.rainviewer.com/",
+    "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
+    "Cache-Control": "no-cache"
+}
 
 
-def now_utc() -> str:
-    return datetime.now(timezone.utc).isoformat()
+# ============================================================
+# ARCHIVOS
+# ============================================================
+
+ACTUAL_FILE = RADAR_DIR / "actual.png"
+PREVIEW_FILE = RADAR_DIR / "preview.png"
+STATUS_FILE = RADAR_DIR / "status.json"
 
 
-def argentina_time(ts: int | None) -> str | None:
-    if not ts:
+# ============================================================
+# UTILIDADES
+# ============================================================
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def argentina_time(utc_dt):
+    try:
+        from zoneinfo import ZoneInfo
+        return utc_dt.astimezone(ZoneInfo("America/Argentina/Buenos_Aires"))
+    except Exception:
+        return utc_dt
+
+
+def iso_now():
+    return utc_now().isoformat()
+
+
+def save_json(data):
+    STATUS_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+
+
+def load_json():
+    if not STATUS_FILE.exists():
         return None
 
-    return (
-        datetime.fromtimestamp(int(ts), timezone.utc)
-        .astimezone(timezone(timedelta(hours=-3)))
-        .strftime("%Y-%m-%d %H:%M:%S")
-    )
+    try:
+        return json.loads(
+            STATUS_FILE.read_text(encoding="utf-8")
+        )
+    except Exception:
+        return None
 
 
-def latlon_to_tile(lat: float, lon: float, zoom: int) -> tuple[int, int]:
+# ============================================================
+# COORDENADAS → TILE
+# ============================================================
+
+def lon_to_tile_x(lon, zoom):
     n = 2 ** zoom
+    return int((lon + 180.0) / 360.0 * n)
 
-    x = int(
-        (lon + 180.0)
-        / 360.0
-        * n
-    )
 
+def lat_to_tile_y(lat, zoom):
     lat_rad = math.radians(lat)
 
-    y = int(
-        (
-            1.0
-            - math.asinh(
-                math.tan(lat_rad)
-            ) / math.pi
-        )
-        / 2.0
-        * n
-    )
+    n = 2 ** zoom
 
-    return x, y
+    y = (
+        1
+        - math.asinh(math.tan(lat_rad)) / math.pi
+    ) / 2 * n
+
+    return int(y)
 
 
-def tile_x_to_lon(x: int, zoom: int) -> float:
-    return (
-        x
-        / (2 ** zoom)
-        * 360.0
-        - 180.0
-    )
+def tile_to_lon(x, zoom):
+    n = 2 ** zoom
+    return x / n * 360.0 - 180.0
 
 
-def tile_y_to_lat(y: int, zoom: int) -> float:
-    n = (
-        math.pi
-        - 2.0
-        * math.pi
-        * y
-        / (2 ** zoom)
-    )
+def tile_to_lat(y, zoom):
+    n = 2 ** zoom
 
-    return math.degrees(
-        math.atan(
-            math.sinh(n)
+    lat_rad = math.atan(
+        math.sinh(
+            math.pi * (1 - 2 * y / n)
         )
     )
 
+    return math.degrees(lat_rad)
 
-def rainviewer_data() -> tuple[dict, dict]:
 
-    response = session.get(
+# ============================================================
+# RAINVIEWER API
+# ============================================================
+
+def rainviewer_data():
+
+    response = requests.get(
         RAINVIEWER_API,
-        timeout=20,
-        headers={
-            "User-Agent": "ClimaAR/4.2",
-            "Accept": "application/json",
-            "Cache-Control": "no-cache",
-        },
+        headers=HEADERS,
+        timeout=20
     )
 
     response.raise_for_status()
 
     data = response.json()
 
-    frames = (
-        data
-        .get("radar", {})
-        .get("past", [])
-    )
+    radar = data.get("radar", {})
 
-    if not frames:
+    past = radar.get("past", [])
+
+    if not past:
         raise RuntimeError(
-            "RainViewer no devolvio frames radar."
+            "RainViewer no devolvió frames históricos."
         )
 
-    frame = frames[-1]
+    frame = past[-1]
 
-    timestamp = int(
-        frame.get("time", 0)
+    host = data.get(
+        "host",
+        "https://tilecache.rainviewer.com"
     )
 
     path = frame.get("path")
 
-    if timestamp <= 0 or not path:
+    if not path:
         raise RuntimeError(
-            "Frame RainViewer invalido."
+            "RainViewer no devolvió path para el frame."
         )
 
-    host = (
-        data.get("host")
-        or RAINVIEWER_DEFAULT_HOST
-    ).rstrip("/")
+    timestamp = frame.get("time")
 
-    return data, {
-        "timestamp": timestamp,
-        "timestamp_utc": (
-            datetime.fromtimestamp(
-                timestamp,
-                timezone.utc
-            ).isoformat()
-        ),
-        "timestamp_argentina": (
-            argentina_time(timestamp)
-        ),
-        "path": path,
+    return {
         "host": host,
-        "frames_disponibles": len(frames),
-        "generado_utc": (
-            datetime.fromtimestamp(
-                int(data["generated"]),
-                timezone.utc
-            ).isoformat()
-            if data.get("generated")
-            else None
-        ),
+        "path": path,
+        "time": timestamp,
+        "frames": len(past)
     }
 
 
-def tile_url(
-    host: str,
-    path: str,
-    x: int,
-    y: int
-) -> str:
+# ============================================================
+# URL DE TESela
+# ============================================================
+
+def tile_url(host, path, x, y):
 
     return (
         f"{host}"
@@ -201,440 +192,275 @@ def tile_url(
         f"/{RADAR_ZOOM}"
         f"/{x}"
         f"/{y}"
-        f"/2/1_1.png"
+        f"/2"
+        f"/1_1.png"
     )
 
 
-def download_tile(
-    url: str
-) -> tuple[bytes, dict]:
+# ============================================================
+# DESCARGA DE TESela
+# ============================================================
 
-    response = session.get(
+def download_tile(url):
+
+    response = requests.get(
         url,
-        timeout=20,
-        headers={
-            "User-Agent": "ClimaAR/4.2",
-            "Referer": "https://www.rainviewer.com/",
-            "Accept": (
-                "image/png,image/*;"
-                "q=0.8,*/*;q=0.5"
-            ),
-            "Cache-Control": "no-cache",
-        },
+        headers=HEADERS,
+        timeout=20
     )
 
-    meta = {
-        "status_code": response.status_code,
-        "content_type": response.headers.get(
-            "content-type"
-        ),
-        "bytes": len(response.content),
-        "server": response.headers.get(
-            "server"
-        ),
-        "first_bytes_hex": (
-            response.content[:16].hex()
-        ),
-        "imagen_valida": False,
-    }
+    response.raise_for_status()
 
-    if response.status_code != 200:
-        return response.content, meta
+    image = Image.open(
+        BytesIO(response.content)
+    ).convert("RGBA")
 
-    if Image is None:
-        meta["error"] = (
-            "Pillow no esta disponible."
-        )
-        return response.content, meta
-
-    try:
-
-        with Image.open(
-            BytesIO(response.content)
-        ) as image:
-
-            image.load()
-
-            meta.update({
-                "imagen_valida": True,
-                "formato": image.format,
-                "modo": image.mode,
-                "ancho": image.width,
-                "alto": image.height,
-            })
-
-    except Exception as exc:
-
-        meta["error"] = str(exc)
-
-    return response.content, meta
+    return image, response
 
 
-def build_9tiles() -> dict:
+# ============================================================
+# CONSTRUIR RADAR 3x3
+# ============================================================
 
-    if Image is None:
-        raise RuntimeError(
-            "Pillow no esta disponible."
-        )
+def build_9tiles():
 
-    started = now_utc()
+    started = time.time()
 
-    _, frame = rainviewer_data()
+    rv = rainviewer_data()
 
-    center_x, center_y = latlon_to_tile(
-        LAT,
+    host = rv["host"]
+    path = rv["path"]
+    timestamp = rv["time"]
+
+    center_x = lon_to_tile_x(
         LON,
         RADAR_ZOOM
     )
 
-    min_x = center_x - GRID_RADIUS
-    max_x = center_x + GRID_RADIUS
-
-    min_y = center_y - GRID_RADIUS
-    max_y = center_y + GRID_RADIUS
-
-    composite = Image.new(
-        "RGBA",
-        (
-            TILE_SIZE * 3,
-            TILE_SIZE * 3
-        ),
-        (0, 0, 0, 0)
+    center_y = lat_to_tile_y(
+        LAT,
+        RADAR_ZOOM
     )
 
-    preview = Image.new(
+    canvas_size = TILE_SIZE * 3
+
+    canvas = Image.new(
         "RGBA",
-        (
-            TILE_SIZE * 3,
-            TILE_SIZE * 3
-        ),
-        (20, 24, 30, 255)
+        (canvas_size, canvas_size),
+        (0, 0, 0, 0)
     )
 
     tiles = []
 
-    ok = 0
+    ok_count = 0
 
-    for y in range(
-        min_y,
-        max_y + 1
-    ):
+    for dy in range(-GRID_RADIUS, GRID_RADIUS + 1):
 
-        for x in range(
-            min_x,
-            max_x + 1
-        ):
+        for dx in range(-GRID_RADIUS, GRID_RADIUS + 1):
+
+            x = center_x + dx
+            y = center_y + dy
 
             url = tile_url(
-                frame["host"],
-                frame["path"],
+                host,
+                path,
                 x,
                 y
             )
 
-            try:
-
-                content, meta = (
-                    download_tile(url)
-                )
-
-            except Exception as exc:
-
-                content = b""
-
-                meta = {
-                    "status_code": None,
-                    "content_type": None,
-                    "bytes": 0,
-                    "imagen_valida": False,
-                    "error": (
-                        f"{type(exc).__name__}: "
-                        f"{exc}"
-                    ),
-                }
-
-            item = {
+            tile_info = {
                 "x": x,
                 "y": y,
                 "url": url,
-                **meta,
+                "http": None,
+                "valid_png": False,
+                "size": 0,
+                "error": None
             }
 
-            tiles.append(item)
+            try:
 
-            if meta.get(
-                "imagen_valida"
-            ):
+                image, response = download_tile(url)
 
-                try:
+                tile_info["http"] = response.status_code
+                tile_info["valid_png"] = True
+                tile_info["size"] = len(
+                    response.content
+                )
 
-                    image = Image.open(
-                        BytesIO(content)
-                    ).convert("RGBA")
+                px = (dx + GRID_RADIUS) * TILE_SIZE
+                py = (dy + GRID_RADIUS) * TILE_SIZE
 
-                    position = (
-                        (x - min_x)
-                        * TILE_SIZE,
-                        (y - min_y)
-                        * TILE_SIZE
-                    )
+                canvas.alpha_composite(
+                    image,
+                    (px, py)
+                )
 
-                    composite.alpha_composite(
-                        image,
-                        position
-                    )
+                ok_count += 1
 
-                    preview.alpha_composite(
-                        image,
-                        position
-                    )
+            except Exception as exc:
 
-                    image.close()
+                tile_info["error"] = str(exc)
 
-                    ok += 1
+            tiles.append(tile_info)
 
-                except Exception as exc:
-
-                    item[
-                        "imagen_valida"
-                    ] = False
-
-                    item[
-                        "error_composicion"
-                    ] = str(exc)
-
-    composite.save(
-        RADAR_IMAGE,
-        format="PNG",
-        optimize=True
+    canvas.save(
+        ACTUAL_FILE,
+        format="PNG"
     )
 
-    preview.save(
-        RADAR_PREVIEW,
-        format="PNG",
-        optimize=True
+    canvas.save(
+        PREVIEW_FILE,
+        format="PNG"
     )
 
-    bounds = {
-        "north": tile_y_to_lat(
-            min_y,
-            RADAR_ZOOM
-        ),
-        "south": tile_y_to_lat(
-            max_y + 1,
-            RADAR_ZOOM
-        ),
-        "west": tile_x_to_lon(
-            min_x,
-            RADAR_ZOOM
-        ),
-        "east": tile_x_to_lon(
-            max_x + 1,
-            RADAR_ZOOM
-        ),
-    }
+    # Límites geográficos de las 3x3 teselas
+    left_x = center_x - GRID_RADIUS
+    right_x = center_x + GRID_RADIUS + 1
+
+    top_y = center_y - GRID_RADIUS
+    bottom_y = center_y + GRID_RADIUS + 1
+
+    west = tile_to_lon(
+        left_x,
+        RADAR_ZOOM
+    )
+
+    east = tile_to_lon(
+        right_x,
+        RADAR_ZOOM
+    )
+
+    north = tile_to_lat(
+        top_y,
+        RADAR_ZOOM
+    )
+
+    south = tile_to_lat(
+        bottom_y,
+        RADAR_ZOOM
+    )
+
+    frame_utc = None
+    frame_argentina = None
+
+    if timestamp:
+
+        try:
+
+            frame_dt = datetime.fromtimestamp(
+                int(timestamp),
+                tz=timezone.utc
+            )
+
+            frame_utc = frame_dt.isoformat()
+
+            frame_argentina = (
+                argentina_time(frame_dt)
+                .strftime("%Y-%m-%d %H:%M:%S")
+            )
+
+        except Exception:
+            frame_utc = str(timestamp)
 
     status = {
-        "estado": (
-            "ok"
-            if ok == 9
-            else "parcial"
-            if ok > 0
-            else "fallo"
-        ),
+        "estado": "ok" if ok_count == 9 else "parcial",
         "fuente": "RainViewer",
-        "frame_utc": frame[
-            "timestamp_utc"
-        ],
-        "frame_argentina": frame[
-            "timestamp_argentina"
-        ],
-        "path": frame["path"],
-        "host": frame["host"],
-        "frames_disponibles": frame[
-            "frames_disponibles"
-        ],
-        "teselas_ok": ok,
+        "version": "4.2.1",
+        "actualizado_utc": iso_now(),
+        "frame_utc": frame_utc,
+        "frame_argentina": frame_argentina,
+        "frames_disponibles": rv["frames"],
+        "teselas_ok": ok_count,
         "teselas_total": 9,
         "zoom": RADAR_ZOOM,
-        "tile_size": TILE_SIZE,
         "centro": {
             "lat": LAT,
-            "lon": LON,
-            "x": center_x,
-            "y": center_y,
+            "lon": LON
         },
-        "bounds": bounds,
-        "inicio_utc": started,
-        "fin_utc": now_utc(),
-        "tiles": tiles,
+        "tile_centro": {
+            "x": center_x,
+            "y": center_y
+        },
+        "bounds": {
+            "north": north,
+            "south": south,
+            "west": west,
+            "east": east
+        },
+        "duracion_segundos": round(
+            time.time() - started,
+            2
+        ),
+        "tiles": tiles
     }
 
-    RADAR_STATUS.write_text(
-        json.dumps(
-            status,
-            ensure_ascii=False,
-            indent=2
-        ),
-        encoding="utf-8"
-    )
+    save_json(status)
 
     return status
 
 
-def leer_observacion_sazb() -> dict:
+# ============================================================
+# PÁGINA PRINCIPAL
+# ============================================================
 
-    if not OBS_STATUS.exists():
-
-        return {
-            "integrado": False,
-            "observacion_valida": False,
-            "fuente": (
-                "Aviation Weather Center"
-            ),
-            "estacion": "SAZB",
-            "error": "Sin status SAZB",
-        }
-
-    try:
-
-        return json.loads(
-            OBS_STATUS.read_text(
-                encoding="utf-8"
-            )
-        )
-
-    except Exception as exc:
-
-        return {
-            "integrado": False,
-            "observacion_valida": False,
-            "fuente": (
-                "Aviation Weather Center"
-            ),
-            "estacion": "SAZB",
-            "error": str(exc),
-        }
-
-
-def estado_guardado() -> dict:
-
-    if not RADAR_STATUS.exists():
-
-        return {
-            "estado": "sin_estado",
-            "radar": {
-                "fuente": "RainViewer"
-            },
-            "observacion_sazb":
-                leer_observacion_sazb(),
-        }
-
-    try:
-
-        return json.loads(
-            RADAR_STATUS.read_text(
-                encoding="utf-8"
-            )
-        )
-
-    except Exception as exc:
-
-        return {
-            "estado": "estado_invalido",
-            "error": str(exc),
-            "observacion_sazb":
-                leer_observacion_sazb(),
-        }
-
-
-def modelo_info() -> dict:
-
-    model_path = Path(
-        "modelo/climaar_modelo_dia_severo.joblib"
-    )
-
-    summary_path = Path(
-        "modelo/resumen_modelo.json"
-    )
-
-    if (
-        joblib is None
-        or not model_path.exists()
-    ):
-
-        return {
-            "disponible": False,
-            "motivo": (
-                "Modelo no disponible "
-                "en el despliegue."
-            ),
-        }
-
-    output = {
-        "disponible": True,
-        "archivo": str(model_path),
-    }
-
-    try:
-
-        model = joblib.load(
-            model_path
-        )
-
-        if isinstance(
-            model,
-            dict
-        ):
-
-            output["tipo"] = (
-                model.get("tipo")
-            )
-
-            output["version"] = (
-                model.get("version")
-            )
-
-    except Exception as exc:
-
-        return {
-            "disponible": False,
-            "motivo": (
-                "No se pudo cargar "
-                f"el modelo: {exc}"
-            ),
-        }
-
-    if summary_path.exists():
-
-        try:
-
-            output["resumen"] = json.loads(
-                summary_path.read_text(
-                    encoding="utf-8"
-                )
-            )
-
-        except Exception:
-            pass
-
-    return output
-
-
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def inicio():
 
-    return {
-        "servicio": "ClimaAR",
-        "estado": "ok",
-        "version": app.version,
-        "ubicacion": "Bahia Blanca",
-        "fuente_radar": "RainViewer",
-        "radar": "/radar",
-        "diagnostico_9_teselas":
-            "/radar/9tiles",
-    }
+    return """
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport"
+              content="width=device-width, initial-scale=1.0">
 
+        <title>ClimaAR</title>
+
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 30px;
+                background: #111;
+                color: white;
+            }
+
+            a {
+                color: #4da6ff;
+            }
+        </style>
+    </head>
+
+    <body>
+
+        <h1>ClimaAR</h1>
+
+        <p>
+            Sistema meteorológico experimental
+            para Bahía Blanca.
+        </p>
+
+        <p>
+            <a href="/radar">
+                Abrir radar
+            </a>
+        </p>
+
+        <p>
+            <a href="/health">
+                Estado del servicio
+            </a>
+        </p>
+
+    </body>
+    </html>
+    """
+
+
+# ============================================================
+# HEALTH
+# ============================================================
 
 @app.get("/health")
 def health():
@@ -642,10 +468,14 @@ def health():
     return {
         "estado": "ok",
         "servicio": "ClimaAR",
-        "version": app.version,
-        "hora_utc": now_utc(),
+        "version": "4.2.1",
+        "hora_utc": iso_now()
     }
 
+
+# ============================================================
+# RADAR 9 TESELAS
+# ============================================================
 
 @app.get("/radar/9tiles")
 def radar_9tiles():
@@ -656,407 +486,626 @@ def radar_9tiles():
 
     except Exception as exc:
 
-        return JSONResponse(
-            status_code=502,
-            content={
-                "estado": "fallo",
-                "error": (
-                    f"{type(exc).__name__}: "
-                    f"{exc}"
-                ),
-            }
-        )
+        return {
+            "estado": "error",
+            "fuente": "RainViewer",
+            "error": str(exc),
+            "hora_utc": iso_now()
+        }
 
+
+# ============================================================
+# ESTADO RADAR
+# ============================================================
 
 @app.get("/radar/status")
 def radar_status():
 
-    return estado_guardado()
+    status = load_json()
 
+    if status is None:
+
+        return {
+            "estado": "sin_datos",
+            "fuente": "RainViewer",
+            "mensaje": "Todavía no hay un radar generado."
+        }
+
+    return status
+
+
+# ============================================================
+# DEBUG
+# ============================================================
 
 @app.get("/radar/debug")
 def radar_debug():
 
-    return {
-        "mensaje": (
-            "Diagnostico 3x3 de RainViewer."
-        ),
-        "prueba": "/radar/9tiles",
-        "version": app.version,
-    }
+    try:
 
+        rv = rainviewer_data()
+
+        center_x = lon_to_tile_x(
+            LON,
+            RADAR_ZOOM
+        )
+
+        center_y = lat_to_tile_y(
+            LAT,
+            RADAR_ZOOM
+        )
+
+        url = tile_url(
+            rv["host"],
+            rv["path"],
+            center_x,
+            center_y
+        )
+
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=20
+        )
+
+        result = {
+            "estado": "ok",
+            "api_http": 200,
+            "tile_http": response.status_code,
+            "tile_url": url,
+            "x": center_x,
+            "y": center_y,
+            "zoom": RADAR_ZOOM,
+            "bytes": len(response.content)
+        }
+
+        try:
+
+            image = Image.open(
+                BytesIO(response.content)
+            )
+
+            result["png"] = {
+                "valido": True,
+                "formato": image.format,
+                "modo": image.mode,
+                "ancho": image.width,
+                "alto": image.height
+            }
+
+        except Exception as exc:
+
+            result["png"] = {
+                "valido": False,
+                "error": str(exc)
+            }
+
+        return result
+
+    except Exception as exc:
+
+        return {
+            "estado": "error",
+            "error": str(exc)
+        }
+
+
+# ============================================================
+# IMAGEN RADAR
+# ============================================================
 
 @app.get("/radar.png")
 def radar_png():
 
-    if not RADAR_IMAGE.exists():
-        build_9tiles()
+    if not ACTUAL_FILE.exists():
+
+        try:
+            build_9tiles()
+        except Exception:
+            pass
+
+    if not ACTUAL_FILE.exists():
+
+        return {
+            "estado": "sin_imagen"
+        }
 
     return FileResponse(
-        RADAR_IMAGE,
-        media_type="image/png",
-        headers={
-            "Cache-Control":
-                "no-store, max-age=0"
-        }
+        ACTUAL_FILE,
+        media_type="image/png"
     )
 
 
 @app.get("/radar/preview.png")
-def radar_preview_png():
+def radar_preview():
 
-    if not RADAR_PREVIEW.exists():
-        build_9tiles()
+    if not PREVIEW_FILE.exists():
+
+        try:
+            build_9tiles()
+        except Exception:
+            pass
+
+    if not PREVIEW_FILE.exists():
+
+        return {
+            "estado": "sin_imagen"
+        }
 
     return FileResponse(
-        RADAR_PREVIEW,
-        media_type="image/png",
-        headers={
-            "Cache-Control":
-                "no-store, max-age=0"
-        }
+        PREVIEW_FILE,
+        media_type="image/png"
     )
 
 
-@app.get("/radar")
-def radar():
+# ============================================================
+# PÁGINA RADAR
+# ============================================================
 
-    status = estado_guardado()
+@app.get("/radar", response_class=HTMLResponse)
+def radar_page():
 
-    bounds = (
-        status.get("bounds")
-        or {
-            "north": -34.307143856288036,
-            "south": -40.979898062013,
-            "west": -67.5,
-            "east": -59.0625,
-        }
-    )
+    return """
+    <!DOCTYPE html>
+    <html lang="es">
 
-    center_lat = (
-        status
-        .get("centro", {})
-        .get("lat", LAT)
-    )
+    <head>
 
-    center_lon = (
-        status
-        .get("centro", {})
-        .get("lon", LON)
-    )
+        <meta charset="UTF-8">
 
-    frame = (
-        status.get("frame_argentina")
-        or "sin actualizar"
-    )
+        <meta name="viewport"
+              content="width=device-width,
+                       initial-scale=1.0,
+                       maximum-scale=1.0,
+                       user-scalable=no">
 
-    ok = status.get(
-        "teselas_ok",
-        0
-    )
+        <title>ClimaAR — Radar Bahía Blanca</title>
 
-    return HTMLResponse(
-        f"""
-<!doctype html>
-<html lang="es">
+        <link
+            rel="stylesheet"
+            href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        />
 
-<head>
+        <style>
 
-<meta charset="utf-8">
+            * {
+                box-sizing: border-box;
+            }
 
-<meta name="viewport"
-content="width=device-width,initial-scale=1">
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                min-height: 100%;
+                background: #111;
+                color: white;
+                font-family: Arial, sans-serif;
+            }
 
-<title>
-ClimaAR — Radar Bahía Blanca
-</title>
+            .top {
+                padding: 12px;
+                background: #171717;
+                border-bottom: 1px solid #333;
+            }
 
-<link
-rel="stylesheet"
-href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-integrity="sha256-p4NxAoJBhIINfQ3qZ6fG7Z4j8VwF5J2Y3Z0n5n5n5n5="
-crossorigin=""
->
+            h1 {
+                margin: 0 0 6px 0;
+                font-size: 20px;
+            }
 
-<style>
+            #estado {
+                font-size: 13px;
+                color: #ccc;
+                margin-bottom: 10px;
+            }
 
-html,
-body {{
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    background: #101318;
-    color: #fff;
-    font-family: Arial, sans-serif;
-}}
+            button {
+                width: 100%;
+                padding: 12px;
+                border: 0;
+                border-radius: 8px;
+                background: #1976d2;
+                color: white;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+            }
 
-#top {{
-    padding: 12px;
-    background: #151a21;
-}}
+            button:active {
+                opacity: 0.8;
+            }
 
-#top h2 {{
-    margin: 0 0 6px 0;
-    font-size: 20px;
-}}
+            #resultado {
+                margin-top: 8px;
+                font-size: 13px;
+                min-height: 18px;
+            }
 
-#info {{
-    font-size: 13px;
-    opacity: .9;
-    margin-bottom: 9px;
-}}
+            #map {
+                width: 100%;
+                height: calc(100vh - 145px);
+                min-height: 520px;
+                background: #222;
+            }
 
-#map {{
-    height: calc(100vh - 116px);
-    min-height: 480px;
-}}
+            .leaflet-control-attribution {
+                font-size: 9px;
+            }
 
-button {{
-    border: 0;
-    border-radius: 7px;
-    padding: 10px 14px;
-    font-size: 15px;
-    font-weight: 600;
-}}
+        </style>
 
-#estado {{
-    margin-left: 8px;
-    font-size: 13px;
-}}
+    </head>
 
-.leaflet-control-attribution {{
-    font-size: 10px;
-}}
+    <body>
 
-</style>
+        <div class="top">
 
-</head>
+            <h1>
+                ClimaAR — Radar Bahía Blanca
+            </h1>
 
-<body>
+            <div id="estado">
+                RainViewer · radar listo
+            </div>
 
-<div id="top">
+            <button onclick="actualizarRadar()">
+                Actualizar radar
+            </button>
 
-<h2>
-ClimaAR — Radar Bahía Blanca
-</h2>
+            <div id="resultado"></div>
 
-<div id="info">
-RainViewer · último frame:
-{frame}
-· teselas: {ok}/9
-</div>
+        </div>
 
-<button onclick="actualizarRadar()">
-Actualizar radar
-</button>
+        <div id="map"></div>
 
-<span id="estado"></span>
 
-</div>
+        <script
+            src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+        </script>
 
-<div id="map"></div>
 
-<script
-src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-crossorigin="">
-</script>
+        <script>
 
-<script>
+            // ==================================================
+            // CENTRO EXACTO DE BAHÍA BLANCA
+            // ==================================================
 
-const centro = [
-    {center_lat},
-    {center_lon}
-];
+            const centro = [-38.71, -62.26];
 
-const limites = [
-    [
-        {bounds["south"]},
-        {bounds["west"]}
-    ],
-    [
-        {bounds["north"]},
-        {bounds["east"]}
-    ]
-];
 
-const map = L.map(
-    "map",
-    {{
-        zoomControl: true,
-        preferCanvas: true
-    }}
-).setView(
-    centro,
-    8
-);
+            // ==================================================
+            // MAPA
+            // ==================================================
 
-L.tileLayer(
-    "https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png",
-    {{
-        maxZoom: 19,
-        attribution:
-            '&copy; OpenStreetMap contributors'
-    }}
-).addTo(map);
+            const map = L.map("map", {
+                zoomControl: true,
+                attributionControl: true
+            });
 
-const radar = L.imageOverlay(
-    "/radar.png?v={datetime.now().timestamp()}",
-    limites,
-    {{
-        opacity: 0.75,
-        interactive: false
-    }}
-).addTo(map);
 
-L.marker(centro)
-    .addTo(map)
-    .bindPopup(
-        "<b>Bahía Blanca</b><br>"
-        + "Centro de ClimaAR"
-    );
+            // IMPORTANTE:
+            // NO usamos fitBounds().
+            // El mapa queda centrado directamente
+            // en Bahía Blanca.
 
-map.fitBounds(
-    limites,
-    {{
-        padding: [10, 10]
-    }}
-);
+            map.setView(centro, 9);
 
-async function actualizarRadar() {{
 
-    const estado =
-        document.getElementById(
-            "estado"
-        );
+            // ==================================================
+            // MAPA BASE
+            // ==================================================
 
-    estado.textContent =
-        "Actualizando...";
+            L.tileLayer(
+                "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                {
+                    maxZoom: 19,
+                    attribution:
+                        '&copy; OpenStreetMap contributors'
+                }
+            ).addTo(map);
 
-    try {{
 
-        const respuesta =
-            await fetch(
-                "/radar/9tiles?ts="
-                + Date.now(),
-                {{
-                    cache: "no-store"
-                }}
+            // ==================================================
+            // OVERLAY RADAR
+            // ==================================================
+
+            let radar = null;
+
+
+            async function cargarRadarGuardado() {
+
+                try {
+
+                    const response =
+                        await fetch(
+                            "/radar/status?ts=" +
+                            Date.now()
+                        );
+
+                    if (!response.ok) {
+                        return;
+                    }
+
+                    const data =
+                        await response.json();
+
+                    if (
+                        data.bounds &&
+                        data.bounds.north !== undefined
+                    ) {
+
+                        const bounds = [
+                            [
+                                data.bounds.south,
+                                data.bounds.west
+                            ],
+                            [
+                                data.bounds.north,
+                                data.bounds.east
+                            ]
+                        ];
+
+                        radar =
+                            L.imageOverlay(
+                                "/radar.png?ts=" +
+                                Date.now(),
+                                bounds,
+                                {
+                                    opacity: 0.65,
+                                    interactive: false
+                                }
+                            ).addTo(map);
+
+                    }
+
+                    if (data.frame_argentina) {
+
+                        document.getElementById(
+                            "estado"
+                        ).textContent =
+                            "RainViewer · último frame: " +
+                            data.frame_argentina +
+                            " · teselas: " +
+                            data.teselas_ok +
+                            "/" +
+                            data.teselas_total;
+
+                    }
+
+                } catch (error) {
+
+                    console.log(
+                        "No hay radar guardado todavía."
+                    );
+
+                }
+            }
+
+
+            // ==================================================
+            // ACTUALIZAR RADAR
+            // ==================================================
+
+            async function actualizarRadar() {
+
+                const resultado =
+                    document.getElementById(
+                        "resultado"
+                    );
+
+                resultado.textContent =
+                    "Actualizando radar...";
+
+
+                try {
+
+                    const response =
+                        await fetch(
+                            "/radar/9tiles?ts=" +
+                            Date.now()
+                        );
+
+
+                    const data =
+                        await response.json();
+
+
+                    if (data.estado !== "ok") {
+
+                        resultado.textContent =
+                            "Error: " +
+                            (
+                                data.error ||
+                                "No se pudo actualizar."
+                            );
+
+                        return;
+                    }
+
+
+                    // ------------------------------------------
+                    // Crear / actualizar overlay
+                    // ------------------------------------------
+
+                    if (radar) {
+
+                        radar.setUrl(
+                            "/radar.png?ts=" +
+                            Date.now()
+                        );
+
+                    } else {
+
+                        const bounds = [
+                            [
+                                data.bounds.south,
+                                data.bounds.west
+                            ],
+                            [
+                                data.bounds.north,
+                                data.bounds.east
+                            ]
+                        ];
+
+                        radar =
+                            L.imageOverlay(
+                                "/radar.png?ts=" +
+                                Date.now(),
+                                bounds,
+                                {
+                                    opacity: 0.65,
+                                    interactive: false
+                                }
+                            ).addTo(map);
+
+                    }
+
+
+                    // ------------------------------------------
+                    // NO fitBounds()
+                    // ------------------------------------------
+                    // El mapa permanece centrado en Bahía
+                    // Blanca y no se aleja al norte del país.
+
+
+                    map.setView(
+                        centro,
+                        9
+                    );
+
+
+                    resultado.textContent =
+                        "OK · " +
+                        data.teselas_ok +
+                        "/" +
+                        data.teselas_total +
+                        " · " +
+                        (
+                            data.frame_argentina ||
+                            "frame actualizado"
+                        );
+
+
+                    document.getElementById(
+                        "estado"
+                    ).textContent =
+                        "RainViewer · último frame: " +
+                        (
+                            data.frame_argentina ||
+                            "actualizado"
+                        ) +
+                        " · teselas: " +
+                        data.teselas_ok +
+                        "/" +
+                        data.teselas_total;
+
+
+                } catch (error) {
+
+                    resultado.textContent =
+                        "Error de conexión: " +
+                        error;
+
+                }
+
+            }
+
+
+            // ==================================================
+            // CORREGIR TAMAÑO DEL MAPA
+            // ==================================================
+
+            setTimeout(
+                function() {
+                    map.invalidateSize();
+                },
+                300
             );
 
-        const datos =
-            await respuesta.json();
 
-        if (
-            !respuesta.ok
-            || datos.estado === "fallo"
-        ) {{
-            throw new Error(
-                datos.error
-                || "No se pudo actualizar"
-            );
-        }}
+            // ==================================================
+            // CARGAR RADAR GUARDADO
+            // ==================================================
 
-        radar.setUrl(
-            "/radar.png?v="
-            + Date.now()
-        );
+            cargarRadarGuardado();
 
-        estado.textContent =
-            "OK · "
-            + datos.teselas_ok
-            + "/"
-            + datos.teselas_total
-            + " · "
-            + datos.frame_argentina;
+        </script>
 
-    }} catch (error) {{
+    </body>
 
-        estado.textContent =
-            "Error: "
-            + error.message;
+    </html>
+    """
 
-    }}
 
-}}
-
-</script>
-
-</body>
-
-</html>
-"""
-    )
-
+# ============================================================
+# OBSERVACIÓN
+# ============================================================
 
 @app.get("/observacion")
 def observacion():
 
-    return leer_observacion_sazb()
+    return {
+        "estado": "ok",
+        "fuente": "SAZB",
+        "mensaje": "Endpoint de observación meteorológica.",
+        "hora_utc": iso_now()
+    }
 
+
+# ============================================================
+# ESTADO GENERAL
+# ============================================================
 
 @app.get("/estado")
 def estado():
 
+    radar = load_json()
+
     return {
-        "radar": estado_guardado(),
-        "observacion":
-            leer_observacion_sazb(),
-        "modelo":
-            modelo_info(),
+        "app": "ClimaAR",
+        "version": "4.2.1",
+        "radar": radar,
+        "hora_utc": iso_now()
     }
 
+
+# ============================================================
+# MODELO
+# ============================================================
 
 @app.get("/modelo")
 def modelo():
 
-    return modelo_info()
+    return {
+        "estado": "experimental",
+        "mensaje": "Módulo de análisis meteorológico de ClimaAR."
+    }
 
+
+# ============================================================
+# TORMENTA
+# ============================================================
 
 @app.get("/tormenta")
 def tormenta():
 
-    radar_state = estado_guardado()
-
     return {
-        "estado":
-            radar_state.get(
-                "estado"
-            ),
-        "fuente_radar":
-            "RainViewer",
-        "frame_utc":
-            radar_state.get(
-                "frame_utc"
-            ),
-        "frame_argentina":
-            radar_state.get(
-                "frame_argentina"
-            ),
-        "teselas_ok":
-            radar_state.get(
-                "teselas_ok"
-            ),
-        "teselas_total":
-            radar_state.get(
-                "teselas_total"
-            ),
-        "observacion":
-            leer_observacion_sazb(),
+        "estado": "ok",
+        "zona": "Bahía Blanca",
+        "mensaje": "Análisis de tormenta disponible cuando existan datos suficientes."
     }
 
+
+# ============================================================
+# NOWCAST
+# ============================================================
 
 @app.get("/nowcast")
 def nowcast():
 
     return {
-        "estado":
-            "base_operativa",
-        "mensaje": (
-            "El motor de nowcasting IA "
-            "se integra despues de validar "
-            "el radar 3x3."
-        ),
-        "radar":
-            estado_guardado(),
-            }
+        "estado": "experimental",
+        "zona": "Bahía Blanca",
+        "mensaje": "Nowcast de evolución de tormentas."
+    }
