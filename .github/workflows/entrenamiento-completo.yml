@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
@@ -36,77 +35,34 @@ jobs:
           import joblib
 
           from sklearn.ensemble import RandomForestClassifier
-          from sklearn.metrics import (
-              classification_report,
-              confusion_matrix,
-              roc_auc_score
-          )
+          from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 
           warnings.filterwarnings("ignore")
-
-          # ============================================================
-          # CONFIGURACION
-          # ============================================================
 
           CLIMA = "data/historico/clima_horario_1980_2026.csv"
           EVENTOS = "data/historico/eventos_severos.csv"
 
           OUT_DIR = "modelo"
-          MODEL_FILE = os.path.join(
-              OUT_DIR,
-              "climaar_modelo_historico.joblib"
-          )
-
-          METRICS_FILE = os.path.join(
-              OUT_DIR,
-              "climaar_modelo_historico_metricas.json"
-          )
-
-          DATASET_FILE = os.path.join(
-              OUT_DIR,
-              "climaar_entrenamiento_historico.csv"
-          )
+          MODEL_FILE = os.path.join(OUT_DIR, "climaar_modelo_historico.joblib")
+          METRICS_FILE = os.path.join(OUT_DIR, "climaar_modelo_historico_metricas.json")
 
           os.makedirs(OUT_DIR, exist_ok=True)
 
-          # ============================================================
-          # VALIDAR ARCHIVOS
-          # ============================================================
-
           if not os.path.exists(CLIMA):
-              raise SystemExit(
-                  f"ERROR: no existe {CLIMA}"
-              )
+              raise SystemExit(f"ERROR: no existe {CLIMA}")
 
           if not os.path.exists(EVENTOS):
-              raise SystemExit(
-                  f"ERROR: no existe {EVENTOS}"
-              )
+              raise SystemExit(f"ERROR: no existe {EVENTOS}")
 
           print("=" * 70)
           print("CLIMAAR - ENTRENAMIENTO HISTORICO")
           print("=" * 70)
 
-          # ============================================================
-          # CARGAR DATOS
-          # ============================================================
-
           clima = pd.read_csv(CLIMA)
           eventos = pd.read_csv(EVENTOS)
 
-          print(
-              f"Registros meteorologicos originales: "
-              f"{len(clima):,}"
-          )
-
-          print(
-              f"Eventos historicos catalogados: "
-              f"{len(eventos):,}"
-          )
-
-          # ============================================================
-          # COLUMNAS REQUERIDAS
-          # ============================================================
+          print(f"Registros meteorologicos originales: {len(clima):,}")
+          print(f"Eventos historicos catalogados: {len(eventos):,}")
 
           columnas_requeridas = [
               "time",
@@ -121,11 +77,9 @@ jobs:
           ]
 
           for columna in columnas_requeridas:
-
               if columna not in clima.columns:
                   raise SystemExit(
-                      f"ERROR: falta columna meteorologica: "
-                      f"{columna}"
+                      f"ERROR: falta columna meteorologica: {columna}"
                   )
 
           columnas_eventos = [
@@ -139,16 +93,10 @@ jobs:
           ]
 
           for columna in columnas_eventos:
-
               if columna not in eventos.columns:
                   raise SystemExit(
-                      f"ERROR: falta columna de eventos: "
-                      f"{columna}"
+                      f"ERROR: falta columna de eventos: {columna}"
                   )
-
-          # ============================================================
-          # LIMPIEZA
-          # ============================================================
 
           clima["time"] = pd.to_datetime(
               clima["time"],
@@ -162,14 +110,11 @@ jobs:
           clima = (
               clima
               .sort_values("time")
-              .drop_duplicates(
-                  subset=["time"]
-              )
+              .drop_duplicates(subset=["time"])
               .reset_index(drop=True)
           )
 
           for columna in columnas_requeridas[1:]:
-
               clima[columna] = pd.to_numeric(
                   clima[columna],
                   errors="coerce"
@@ -191,16 +136,10 @@ jobs:
 
           eventos = (
               eventos
-              .drop_duplicates(
-                  subset=["fecha"]
-              )
+              .drop_duplicates(subset=["fecha"])
               .sort_values("fecha")
               .reset_index(drop=True)
           )
-
-          # ============================================================
-          # VARIABLES TEMPORALES
-          # ============================================================
 
           clima["fecha"] = (
               clima["time"]
@@ -222,17 +161,11 @@ jobs:
               .dt.dayofyear
           )
 
-          # ============================================================
-          # VARIABLES FISICAS
-          # ============================================================
-
-          # Diferencia temperatura - punto de rocio
           clima["temp_rocio_dif"] = (
               clima["temperature_2m"]
               - clima["dew_point_2m"]
           )
 
-          # Viento vectorial
           rad = np.deg2rad(
               clima["wind_direction_10m"]
           )
@@ -246,12 +179,6 @@ jobs:
               clima["wind_speed_10m"]
               * np.cos(rad)
           )
-
-          # ============================================================
-          # VARIABLES DE CAMBIO
-          # IMPORTANTE:
-          # diff() usa solamente informacion anterior.
-          # ============================================================
 
           clima["cambio_presion_1h"] = (
               clima["pressure_msl"]
@@ -282,11 +209,6 @@ jobs:
               clima["wind_speed_10m"]
               .diff(1)
           )
-
-          # ============================================================
-          # VENTANAS MOVILES
-          # SOLO PASADO
-          # ============================================================
 
           clima["lluvia_1h"] = (
               clima["precipitation"]
@@ -387,19 +309,14 @@ jobs:
               .min()
           )
 
-          # ============================================================
-          # ETIQUETAS
-          # ============================================================
-
           eventos["evento_severo"] = (
-              (
-                  eventos["tormenta_severa"].fillna(0)
-                  + eventos["viento_severo"].fillna(0)
-                  + eventos["precipitacion_extrema"].fillna(0)
-                  + eventos["inundacion"].fillna(0)
-                  + eventos["granizo"].fillna(0)
-                  + eventos["tornado"].fillna(0)
-              ) > 0
+              eventos["tormenta_severa"].fillna(0)
+              + eventos["viento_severo"].fillna(0)
+              + eventos["precipitacion_extrema"].fillna(0)
+              + eventos["inundacion"].fillna(0)
+              + eventos["granizo"].fillna(0)
+              + eventos["tornado"].fillna(0)
+              > 0
           ).astype(int)
 
           fechas_eventos = set(
@@ -416,10 +333,6 @@ jobs:
               .isin(fechas_eventos)
               .astype(int)
           )
-
-          # ============================================================
-          # ELIMINAR FILAS INCOMPLETAS
-          # ============================================================
 
           features = [
               "temperature_2m",
@@ -466,13 +379,11 @@ jobs:
               np.nan
           )
 
-          dataset = dataset.dropna(
-              subset=features
-          ).reset_index(drop=True)
-
-          print(
-              f"Registros utilizables: "
-              f"{len(dataset):,}"
+          dataset = (
+              dataset
+              .dropna(subset=features)
+              .sort_values("time")
+              .reset_index(drop=True)
           )
 
           positivos = int(
@@ -481,6 +392,10 @@ jobs:
 
           negativos = int(
               len(dataset) - positivos
+          )
+
+          print(
+              f"Registros utilizables: {len(dataset):,}"
           )
 
           print(
@@ -495,23 +410,6 @@ jobs:
               raise SystemExit(
                   "ERROR: no se encontraron eventos positivos."
               )
-
-          # ============================================================
-          # ORDEN CRONOLOGICO
-          # ============================================================
-
-          dataset = dataset.sort_values(
-              "time"
-          ).reset_index(drop=True)
-
-          # ============================================================
-          # DIVISION TEMPORAL
-          #
-          # 80% inicial -> entrenamiento
-          # 20% final   -> validacion
-          #
-          # No usamos random split porque produciria fuga temporal.
-          # ============================================================
 
           corte = int(
               len(dataset) * 0.80
@@ -549,9 +447,11 @@ jobs:
               f"{int(y_test.sum()):,}"
           )
 
-          # ============================================================
-          # MODELO
-          # ============================================================
+          if y_train.nunique() < 2:
+              raise SystemExit(
+                  "ERROR: el bloque de entrenamiento "
+                  "contiene una sola clase."
+              )
 
           modelo = RandomForestClassifier(
               n_estimators=400,
@@ -569,10 +469,6 @@ jobs:
               y_train
           )
 
-          # ============================================================
-          # PREDICCIONES
-          # ============================================================
-
           pred = modelo.predict(
               X_test
           )
@@ -580,10 +476,6 @@ jobs:
           prob = modelo.predict_proba(
               X_test
           )[:, 1]
-
-          # ============================================================
-          # METRICAS
-          # ============================================================
 
           matriz = confusion_matrix(
               y_test,
@@ -603,10 +495,11 @@ jobs:
               zero_division=0
           )
 
+          auc = None
+
           if len(
               np.unique(y_test)
           ) == 2:
-
               auc = float(
                   roc_auc_score(
                       y_test,
@@ -614,13 +507,18 @@ jobs:
                   )
               )
 
-          else:
-
-              auc = None
+          importancia = pd.DataFrame({
+              "feature": features,
+              "importance": modelo.feature_importances_
+          }).sort_values(
+              "importance",
+              ascending=False
+          )
 
           metricas = {
               "modelo": "RandomForestClassifier",
-              "version": "1.0",
+              "version": "1.1",
+              "tipo": "riesgo_evento_severo_historico",
               "fuente_meteorologica": (
                   "clima_horario_1980_2026.csv"
               ),
@@ -659,12 +557,14 @@ jobs:
               ),
               "matriz_confusion": matriz.tolist(),
               "features": features,
+              "variables_mas_importantes": (
+                  importancia
+                  .head(15)
+                  .to_dict(orient="records")
+              ),
               "eventos_usados": (
                   eventos[
-                      [
-                          "fecha",
-                          "evento"
-                      ]
+                      ["fecha", "evento"]
                   ]
                   .astype(str)
                   .to_dict(
@@ -685,49 +585,22 @@ jobs:
               )
           )
 
-          # ============================================================
-          # IMPORTANCIA DE VARIABLES
-          # ============================================================
-
-          importancia = pd.DataFrame({
-              "feature": features,
-              "importance": modelo.feature_importances_
-          }).sort_values(
-              "importance",
-              ascending=False
-          )
-
-          print("=" * 70)
-          print("VARIABLES MAS IMPORTANTES")
-          print("=" * 70)
-
-          print(
-              importancia.head(15).to_string(
-                  index=False
-              )
-          )
-
-          # ============================================================
-          # GUARDAR MODELO
-          # ============================================================
-
           paquete_modelo = {
               "modelo": modelo,
               "features": features,
-              "version": "1.0",
-              "tipo": "riesgo_evento_severo",
+              "version": "1.1",
+              "tipo": "riesgo_evento_severo_historico",
               "fuente": "Bahia Blanca",
               "periodo": "1980-2026"
           }
 
+          print("Guardando modelo comprimido...")
+
           joblib.dump(
               paquete_modelo,
-              MODEL_FILE
+              MODEL_FILE,
+              compress=3
           )
-
-          # ============================================================
-          # GUARDAR METRICAS
-          # ============================================================
 
           with open(
               METRICS_FILE,
@@ -742,33 +615,31 @@ jobs:
                   ensure_ascii=False
               )
 
-          # ============================================================
-          # GUARDAR DATASET DE ENTRENAMIENTO
-          # ============================================================
-
-          dataset.to_csv(
-              DATASET_FILE,
-              index=False
-          )
-
           print("=" * 70)
           print("ARCHIVOS GENERADOS")
-          print("=" * 70)
-
           print(MODEL_FILE)
           print(METRICS_FILE)
-          print(DATASET_FILE)
-
           print("=" * 70)
           print("ENTRENAMIENTO FINALIZADO")
           print("=" * 70)
 
           PY
 
-      - name: Mostrar archivos generados
+      - name: Verificar archivos generados
         run: |
           echo "Contenido de modelo:"
           ls -lh modelo/
+
+          MODEL_SIZE=$(stat -c%s modelo/climaar_modelo_historico.joblib)
+          METRICS_SIZE=$(stat -c%s modelo/climaar_modelo_historico_metricas.json)
+
+          echo "Modelo: ${MODEL_SIZE} bytes"
+          echo "Metricas: ${METRICS_SIZE} bytes"
+
+          if [ "$MODEL_SIZE" -ge 95000000 ]; then
+            echo "ERROR: el modelo supera 95 MB."
+            exit 1
+          fi
 
       - name: Guardar modelo en GitHub
         run: |
@@ -777,7 +648,6 @@ jobs:
 
           git add modelo/climaar_modelo_historico.joblib
           git add modelo/climaar_modelo_historico_metricas.json
-          git add modelo/climaar_entrenamiento_historico.csv
 
           if git diff --cached --quiet; then
             echo "No hay cambios para guardar."
