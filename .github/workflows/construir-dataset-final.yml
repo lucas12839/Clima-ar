@@ -44,13 +44,22 @@ jobs:
           echo "=== RESUMEN ==="
           cat data/final/resumen_dataset_final.csv
 
-      - name: Guardar resultados
+      - name: Subir dataset grande como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: climaar-dataset-final-1980-2026
+          path: data/final/climaar_dataset_completo_1980_2026.csv
+          compression-level: 0
+          retention-days: 30
+
+      - name: Guardar archivos pequeños en GitHub
         run: |
           git config user.name "climaar-bot"
           git config user.email "bot@climaar.com.ar"
 
-          git add data/final/
+          git add data/final/resumen_dataset_final.csv
+          git add data/final/catalogo_historico_documental.csv
 
-          git diff --cached --quiet || git commit -m "Construir dataset final ClimaAR"
+          git diff --cached --quiet || git commit -m "Guardar resultados dataset final ClimaAR"
 
           git push
