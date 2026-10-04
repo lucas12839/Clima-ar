@@ -1,17 +1,15 @@
-name: ClimaAR - Dataset y Modelo Maestro
+name: ClimaAR - Entrenamiento Nowcasting Corregido
 
 on:
   workflow_dispatch:
 
 jobs:
-  maestro:
+  entrenamiento:
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
 
     steps:
-
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
@@ -24,23 +22,25 @@ jobs:
         run: |
           pip install pandas numpy scikit-learn joblib
 
-      - name: Construir dataset y entrenar modelo
+      - name: Construir muestras pre-evento y validar
         run: |
           python - <<'PY'
-          import pandas as pd
-          import numpy as np
           import os
+          import json
+          import numpy as np
+          import pandas as pd
           import joblib
 
           from sklearn.ensemble import RandomForestClassifier
           from sklearn.metrics import (
-              classification_report,
-              confusion_matrix,
-              roc_auc_score
+              precision_score,
+              recall_score,
+              f1_score,
+              roc_auc_score,
+              confusion_matrix
           )
 
           BASE = "data/historico"
-
           CLIMA = f"{BASE}/clima_horario_1980_2026.csv"
           EVENTOS = f"{BASE}/eventos_severos.csv"
 
@@ -49,8 +49,6 @@ jobs:
 
           if not os.path.exists(EVENTOS):
               raise SystemExit(f"No existe {EVENTOS}")
-
-          print("Cargando datos meteorologicos...")
 
           clima = pd.read_csv(CLIMA)
           eventos = pd.read_csv(EVENTOS)
@@ -65,20 +63,22 @@ jobs:
               errors="coerce"
           )
 
-          clima = clima.dropna(
-              subset=["time"]
+          clima = (
+              clima
+              .dropna(subset=["time"])
+              .sort_values("time")
+              .reset_index(drop=True)
           )
 
-          eventos = eventos.dropna(
-              subset=["fecha"]
+          eventos = (
+              eventos
+              .dropna(subset=["fecha"])
+              .sort_values("fecha")
+              .reset_index(drop=True)
           )
-
-          clima = clima.sort_values(
-              "time"
-          ).reset_index(drop=True)
 
           print("Registros meteorologicos:", len(clima))
-          print("Eventos:", len(eventos))
+          print("Eventos severos catalogados:", len(eventos))
 
           # ==========================================
           # VARIABLES TEMPORALES
@@ -105,16 +105,16 @@ jobs:
           )
 
           # ==========================================
-          # LLUVIA ACUMULADA
+          # LLUVIA
           # ==========================================
 
-          for horas in [1, 3, 6, 12, 24]:
+          for h in [1, 3, 6, 12, 24]:
 
-              clima[f"lluvia_{horas}h"] = (
+              clima[f"lluvia_{h}h"] = (
                   clima["precipitation"]
                   .rolling(
-                      horas,
-                      min_periods=1
+                      h,
+                      min_periods=h
                   )
                   .sum()
               )
@@ -123,22 +123,22 @@ jobs:
           # VIENTO
           # ==========================================
 
-          for horas in [3, 6, 12, 24]:
+          for h in [3, 6, 12, 24]:
 
-              clima[f"rafaga_max_{horas}h"] = (
+              clima[f"rafaga_max_{h}h"] = (
                   clima["wind_gusts_10m"]
                   .rolling(
-                      horas,
-                      min_periods=1
+                      h,
+                      min_periods=h
                   )
                   .max()
               )
 
-              clima[f"viento_max_{horas}h"] = (
+              clima[f"viento_max_{h}h"] = (
                   clima["wind_speed_10m"]
                   .rolling(
-                      horas,
-                      min_periods=1
+                      h,
+                      min_periods=h
                   )
                   .max()
               )
@@ -147,44 +147,36 @@ jobs:
           # CAMBIOS METEOROLOGICOS
           # ==========================================
 
-          for horas in [1, 3, 6, 12, 24]:
+          for h in [1, 3, 6, 12, 24]:
 
-              clima[f"cambio_presion_{horas}h"] = (
+              clima[f"cambio_presion_{h}h"] = (
                   clima["pressure_msl"]
-                  - clima["pressure_msl"].shift(horas)
+                  - clima["pressure_msl"].shift(h)
               )
 
-              clima[f"cambio_temp_{horas}h"] = (
+              clima[f"cambio_temp_{h}h"] = (
                   clima["temperature_2m"]
-                  - clima["temperature_2m"].shift(horas)
+                  - clima["temperature_2m"].shift(h)
               )
 
-              clima[f"cambio_humedad_{horas}h"] = (
+              clima[f"cambio_humedad_{h}h"] = (
                   clima["relative_humidity_2m"]
-                  - clima["relative_humidity_2m"].shift(horas)
+                  - clima["relative_humidity_2m"].shift(h)
               )
 
-              clima[f"cambio_viento_{horas}h"] = (
+              clima[f"cambio_viento_{h}h"] = (
                   clima["wind_speed_10m"]
-                  - clima["wind_speed_10m"].shift(horas)
+                  - clima["wind_speed_10m"].shift(h)
               )
 
           # ==========================================
-          # HUMEDAD / PUNTO DE ROCIO
+          # INDICADORES
           # ==========================================
-
-          clima["punto_rocio"] = (
-              clima["dew_point_2m"]
-          )
 
           clima["diferencia_temp_rocio"] = (
               clima["temperature_2m"]
               - clima["dew_point_2m"]
           )
-
-          # ==========================================
-          # INDICADORES
-          # ==========================================
 
           clima["presion_descenso_6h"] = (
               clima["cambio_presion_6h"] < -3
@@ -211,135 +203,195 @@ jobs:
           ).astype(int)
 
           # ==========================================
-          # ETIQUETAS DE EVENTOS
+          # MUESTRAS POSITIVAS
+          #
+          # SOLO 24 HORAS ANTES DEL EVENTO.
+          # NO SE USAN HORAS POSTERIORES.
           # ==========================================
 
-          etiquetas = [
-              "tormenta_severa",
-              "viento_severo",
-              "precipitacion_extrema",
-              "inundacion",
-              "granizo",
-              "tornado"
-          ]
+          positivos = []
 
-          for etiqueta in etiquetas:
-              clima[etiqueta] = 0
-
-          clima["evento"] = ""
-          clima["evento_fecha"] = pd.NaT
-
-          for _, evento in eventos.iterrows():
-
-              fecha = evento["fecha"]
+          for _, ev in eventos.iterrows():
 
               inicio = (
-                  fecha -
-                  pd.Timedelta(hours=24)
+                  ev["fecha"]
+                  - pd.Timedelta(hours=24)
               )
 
               fin = (
-                  fecha +
-                  pd.Timedelta(hours=23)
+                  ev["fecha"]
+                  - pd.Timedelta(hours=1)
               )
 
-              mask = (
+              ventana = clima[
                   (clima["time"] >= inicio) &
                   (clima["time"] <= fin)
+              ].copy()
+
+              if ventana.empty:
+                  print(
+                      "Sin datos pre-evento:",
+                      ev["fecha"].date()
+                  )
+                  continue
+
+              ventana["target"] = 1
+
+              ventana["evento_id"] = (
+                  ev["fecha"].strftime("%Y-%m-%d")
               )
 
-              for etiqueta in etiquetas:
+              ventana["evento_nombre"] = (
+                  str(ev["evento"])
+              )
 
-                  if etiqueta in evento.index:
+              positivos.append(ventana)
 
-                      valor = evento[etiqueta]
+          if not positivos:
 
-                      if pd.notna(valor):
+              raise SystemExit(
+                  "No se pudieron construir "
+                  "muestras positivas."
+              )
 
-                          clima.loc[
-                              mask,
-                              etiqueta
-                          ] = int(valor)
-
-              clima.loc[
-                  mask,
-                  "evento"
-              ] = str(evento["evento"])
-
-              clima.loc[
-                  mask,
-                  "evento_fecha"
-              ] = fecha
-
-          clima["evento_severo"] = (
-              clima[etiquetas]
-              .max(axis=1)
-              .astype(int)
+          positivos = pd.concat(
+              positivos,
+              ignore_index=True
           )
 
           # ==========================================
-          # LIMPIEZA
+          # EXCLUIR PERIODOS CERCANOS A EVENTOS
+          # PARA LOS NEGATIVOS
           # ==========================================
 
-          clima = clima.replace(
-              [np.inf, -np.inf],
-              np.nan
+          excluir = np.zeros(
+              len(clima),
+              dtype=bool
           )
 
-          columnas_base = [
-              "temperature_2m",
-              "relative_humidity_2m",
-              "dew_point_2m",
-              "pressure_msl",
-              "precipitation",
-              "wind_speed_10m",
-              "wind_direction_10m",
-              "wind_gusts_10m"
-          ]
+          for _, ev in eventos.iterrows():
 
-          clima = clima.dropna(
-              subset=columnas_base
-          )
+              excluir |= (
+                  (clima["time"] >=
+                   ev["fecha"] -
+                   pd.Timedelta(hours=72))
+                  &
+                  (clima["time"] <=
+                   ev["fecha"] +
+                   pd.Timedelta(hours=72))
+              )
 
-          # ==========================================
-          # TRAIN / TEST TEMPORAL
-          # ==========================================
-
-          corte = pd.Timestamp(
-              "2018-01-01"
-          )
-
-          train = clima[
-              clima["time"] < corte
+          disponibles = clima.loc[
+              ~excluir
           ].copy()
 
-          test = clima[
-              clima["time"] >= corte
-          ].copy()
+          disponibles = disponibles.dropna(
+              subset=[
+                  "temperature_2m",
+                  "relative_humidity_2m",
+                  "dew_point_2m",
+                  "pressure_msl",
+                  "precipitation",
+                  "wind_speed_10m",
+                  "wind_gusts_10m"
+              ]
+          )
 
-          print("TRAIN:", len(train))
-          print("TEST:", len(test))
+          # ==========================================
+          # MUESTRAS NEGATIVAS
+          # MISMO MES QUE CADA EVENTO
+          # ==========================================
 
-          print(
-              "EVENTOS TRAIN:",
-              int(train["evento_severo"].sum())
+          rng = np.random.RandomState(42)
+
+          negativos_por_evento = []
+
+          for _, ev in eventos.iterrows():
+
+              candidatos = disponibles[
+                  disponibles["mes"]
+                  .eq(ev["fecha"].month)
+              ].copy()
+
+              if len(candidatos) < 24:
+                  candidatos = disponibles.copy()
+
+              cantidad = min(
+                  24,
+                  len(candidatos)
+              )
+
+              muestra = candidatos.sample(
+                  n=cantidad,
+                  random_state=rng
+              ).copy()
+
+              muestra["target"] = 0
+
+              muestra["evento_id"] = (
+                  ev["fecha"].strftime("%Y-%m-%d")
+              )
+
+              muestra["evento_nombre"] = "normal"
+
+              negativos_por_evento.append(
+                  muestra
+              )
+
+          negativos = pd.concat(
+              negativos_por_evento,
+              ignore_index=True
+          )
+
+          # ==========================================
+          # DATASET DE ENTRENAMIENTO
+          # ==========================================
+
+          datos = pd.concat(
+              [
+                  positivos,
+                  negativos
+              ],
+              ignore_index=True
+          )
+
+          datos = (
+              datos
+              .sort_values("time")
+              .reset_index(drop=True)
           )
 
           print(
-              "EVENTOS TEST:",
-              int(test["evento_severo"].sum())
+              "Muestras positivas:",
+              int(
+                  (datos["target"] == 1).sum()
+              )
+          )
+
+          print(
+              "Muestras negativas:",
+              int(
+                  (datos["target"] == 0).sum()
+              )
+          )
+
+          print(
+              "Eventos positivos:",
+              positivos["evento_id"].nunique()
           )
 
           # ==========================================
           # VARIABLES DEL MODELO
           # ==========================================
 
-          columnas = [
+          features = [
+
               "temperature_2m",
               "relative_humidity_2m",
               "dew_point_2m",
               "pressure_msl",
               "precipitation",
+
               "wind_speed_10m",
               "wind_direction_10m",
               "wind_gusts_10m",
@@ -397,13 +449,14 @@ jobs:
               "viento_muy_fuerte"
           ]
 
-          columnas = [
-              c for c in columnas
-              if c in train.columns
+          features = [
+              c
+              for c in features
+              if c in datos.columns
           ]
 
-          X_train = (
-              train[columnas]
+          datos[features] = (
+              datos[features]
               .replace(
                   [np.inf, -np.inf],
                   np.nan
@@ -411,90 +464,184 @@ jobs:
               .fillna(0)
           )
 
-          y_train = (
-              train["evento_severo"]
-              .astype(int)
-          )
-
-          X_test = (
-              test[columnas]
-              .replace(
-                  [np.inf, -np.inf],
-                  np.nan
-              )
-              .fillna(0)
-          )
-
-          y_test = (
-              test["evento_severo"]
-              .astype(int)
-          )
-
-          if y_train.nunique() < 2:
-              raise SystemExit(
-                  "ERROR: TRAIN no contiene "
-                  "las dos clases necesarias."
-              )
-
-          if len(X_test) == 0:
-              raise SystemExit(
-                  "ERROR: TEST esta vacio."
-              )
-
           # ==========================================
-          # ENTRENAMIENTO
+          # VALIDACION LEAVE-ONE-EVENT-OUT
           # ==========================================
+
+          resultados = []
+          matrices = []
+
+          ids_eventos = (
+              eventos["fecha"]
+              .dt
+              .strftime("%Y-%m-%d")
+              .tolist()
+          )
+
+          for test_event in ids_eventos:
+
+              train = datos[
+                  datos["evento_id"] != test_event
+              ].copy()
+
+              test = datos[
+                  datos["evento_id"] == test_event
+              ].copy()
+
+              if train["target"].nunique() < 2:
+                  continue
+
+              if test["target"].nunique() < 2:
+                  continue
+
+              modelo = RandomForestClassifier(
+
+                  n_estimators=300,
+
+                  max_depth=10,
+
+                  min_samples_leaf=2,
+
+                  class_weight="balanced",
+
+                  random_state=42,
+
+                  n_jobs=-1
+              )
+
+              modelo.fit(
+                  train[features],
+                  train["target"]
+              )
+
+              pred = modelo.predict(
+                  test[features]
+              )
+
+              prob = (
+                  modelo
+                  .predict_proba(
+                      test[features]
+                  )[:, 1]
+              )
+
+              resultados.append({
+
+                  "evento_test":
+                      test_event,
+
+                  "precision":
+                      precision_score(
+                          test["target"],
+                          pred,
+                          zero_division=0
+                      ),
+
+                  "recall":
+                      recall_score(
+                          test["target"],
+                          pred,
+                          zero_division=0
+                      ),
+
+                  "f1":
+                      f1_score(
+                          test["target"],
+                          pred,
+                          zero_division=0
+                      ),
+
+                  "roc_auc":
+                      roc_auc_score(
+                          test["target"],
+                          prob
+                      ),
+
+                  "positivos_test":
+                      int(
+                          test["target"].sum()
+                      ),
+
+                  "negativos_test":
+                      int(
+                          (test["target"] == 0).sum()
+                      )
+              })
+
+              matrices.append(
+                  f"{test_event}: "
+                  f"{confusion_matrix("
+                  f"test['target'], pred"
+                  f").tolist()}"
+              )
+
+          if not resultados:
+
+              raise SystemExit(
+                  "No fue posible completar "
+                  "la validacion por evento."
+              )
+
+          validacion = pd.DataFrame(
+              resultados
+          )
 
           print()
-          print("====================================")
-          print("ENTRENANDO RANDOM FOREST")
-          print("====================================")
+          print(
+              "===================================="
+          )
 
-          modelo = RandomForestClassifier(
-              n_estimators=300,
-              max_depth=16,
-              min_samples_leaf=3,
+          print(
+              "VALIDACION REAL POR EVENTO"
+          )
+
+          print(
+              "===================================="
+          )
+
+          print(
+              validacion.to_string(
+                  index=False
+              )
+          )
+
+          print()
+          print("PROMEDIOS:")
+
+          print(
+              validacion[
+                  [
+                      "precision",
+                      "recall",
+                      "f1",
+                      "roc_auc"
+                  ]
+              ].mean()
+          )
+
+          # ==========================================
+          # MODELO FINAL
+          # ==========================================
+
+          modelo_final = RandomForestClassifier(
+
+              n_estimators=400,
+
+              max_depth=10,
+
+              min_samples_leaf=2,
+
               class_weight="balanced",
+
               random_state=42,
+
               n_jobs=-1
           )
 
-          modelo.fit(
-              X_train,
-              y_train
+          modelo_final.fit(
+              datos[features],
+              datos["target"]
           )
-
-          pred = modelo.predict(
-              X_test
-          )
-
-          prob = modelo.predict_proba(
-              X_test
-          )[:, 1]
-
-          # ==========================================
-          # RESULTADOS
-          # ==========================================
-
-          reporte = classification_report(
-              y_test,
-              pred,
-              zero_division=0
-          )
-
-          matriz = confusion_matrix(
-              y_test,
-              pred
-          )
-
-          auc = None
-
-          if y_test.nunique() == 2:
-
-              auc = roc_auc_score(
-                  y_test,
-                  prob
-              )
 
           os.makedirs(
               "modelo",
@@ -506,12 +653,126 @@ jobs:
           # ==========================================
 
           joblib.dump(
-              modelo,
-              "modelo/climaar_randomforest.joblib"
+              modelo_final,
+              "modelo/"
+              "climaar_modelo_pre_evento.joblib"
           )
 
           # ==========================================
-          # GUARDAR METRICAS
+          # VALIDACION
+          # ==========================================
+
+          validacion.to_csv(
+              "modelo/"
+              "validacion_por_evento.csv",
+              index=False
+          )
+
+          # ==========================================
+          # IMPORTANCIA DE VARIABLES
+          # ==========================================
+
+          importancia = pd.DataFrame({
+
+              "variable":
+                  features,
+
+              "importancia":
+                  modelo_final
+                  .feature_importances_
+
+          })
+
+          importancia = (
+              importancia
+              .sort_values(
+                  "importancia",
+                  ascending=False
+              )
+          )
+
+          importancia.to_csv(
+              "modelo/"
+              "importancia_variables.csv",
+              index=False
+          )
+
+          # ==========================================
+          # RESUMEN
+          # ==========================================
+
+          resumen = {
+
+              "tipo":
+                  "modelo_pre_evento",
+
+              "ventana_pre_evento_horas":
+                  24,
+
+              "eventos_catalogados":
+                  int(len(eventos)),
+
+              "muestras_positivas":
+                  int(
+                      (datos["target"] == 1)
+                      .sum()
+                  ),
+
+              "muestras_negativas":
+                  int(
+                      (datos["target"] == 0)
+                      .sum()
+                  ),
+
+              "precision_media":
+                  float(
+                      validacion[
+                          "precision"
+                      ].mean()
+                  ),
+
+              "recall_medio":
+                  float(
+                      validacion[
+                          "recall"
+                      ].mean()
+                  ),
+
+              "f1_medio":
+                  float(
+                      validacion[
+                          "f1"
+                      ].mean()
+                  ),
+
+              "roc_auc_medio":
+                  float(
+                      validacion[
+                          "roc_auc"
+                      ].mean()
+                  ),
+
+              "nota":
+                  "Validacion leave-one-event-out. "
+                  "No representa todavia el rendimiento "
+                  "final del nowcasting por radar."
+          }
+
+          with open(
+              "modelo/resumen_modelo.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              json.dump(
+                  resumen,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          # ==========================================
+          # METRICAS
           # ==========================================
 
           with open(
@@ -521,139 +782,56 @@ jobs:
           ) as f:
 
               f.write(
-                  "CLIMAAR - MODELO BASE\n"
+                  "CLIMAAR - MODELO PRE-EVENTO\n"
               )
 
               f.write(
-                  "====================\n\n"
+                  "============================\n\n"
               )
 
               f.write(
-                  f"TRAIN: {len(train)}\n"
-              )
-
-              f.write(
-                  f"TEST: {len(test)}\n"
-              )
-
-              f.write(
-                  f"EVENTOS TRAIN: "
-                  f"{int(y_train.sum())}\n"
-              )
-
-              f.write(
-                  f"EVENTOS TEST: "
-                  f"{int(y_test.sum())}\n\n"
-              )
-
-              f.write(
-                  "VARIABLES UTILIZADAS:\n"
-              )
-
-              for c in columnas:
-                  f.write(
-                      f"- {c}\n"
+                  json.dumps(
+                      resumen,
+                      indent=2,
+                      ensure_ascii=False
                   )
-
-              f.write(
-                  "\nREPORTE\n\n"
-              )
-
-              f.write(reporte)
-
-              f.write(
-                  "\nMATRIZ DE CONFUSION\n"
               )
 
               f.write(
-                  str(matriz)
+                  "\n\nMATRICES POR EVENTO\n"
               )
 
-              if auc is not None:
+              for matriz in matrices:
 
                   f.write(
-                      "\n\nROC-AUC: "
-                      + str(auc)
+                      matriz + "\n"
                   )
-
-          # ==========================================
-          # IMPORTANCIA DE VARIABLES
-          # ==========================================
-
-          importancia = pd.DataFrame({
-              "variable": columnas,
-              "importancia": modelo.feature_importances_
-          })
-
-          importancia = importancia.sort_values(
-              "importancia",
-              ascending=False
-          )
-
-          importancia.to_csv(
-              "modelo/importancia_variables.csv",
-              index=False
-          )
-
-          # ==========================================
-          # RESUMEN PEQUEÑO
-          # ==========================================
-
-          resumen = pd.DataFrame([{
-              "train_registros": len(train),
-              "test_registros": len(test),
-              "eventos_train": int(y_train.sum()),
-              "eventos_test": int(y_test.sum()),
-              "variables": len(columnas),
-              "roc_auc": auc
-          }])
-
-          resumen.to_csv(
-              "modelo/resumen_modelo.csv",
-              index=False
-          )
-
-          print()
-          print("====================================")
-          print("RESULTADO")
-          print("====================================")
-          print(reporte)
-          print("Matriz:")
-          print(matriz)
-
-          if auc is not None:
-              print("ROC-AUC:", auc)
-          else:
-              print(
-                  "ROC-AUC no calculable: "
-                  "TEST tiene una sola clase."
-              )
 
           print()
           print(
-              "Modelo guardado correctamente."
+              "Modelo final guardado."
           )
 
           print(
-              "NO se guardan train.csv, "
-              "test.csv ni dataset_maestro.csv."
+              "No se guardan datasets grandes."
           )
 
           PY
 
-      - name: Guardar resultados pequenos
+      - name: Guardar resultados
         run: |
           git config user.name "climaar-bot"
           git config user.email "bot@climaar.com.ar"
 
           git add \
-            modelo/climaar_randomforest.joblib \
-            modelo/metricas.txt \
+            modelo/climaar_modelo_pre_evento.joblib \
+            modelo/validacion_por_evento.csv \
             modelo/importancia_variables.csv \
-            modelo/resumen_modelo.csv
+            modelo/resumen_modelo.json \
+            modelo/metricas.txt
 
           git commit \
-            -m "Entrenar modelo base ClimaAR" \
+            -m "Corregir entrenamiento pre-evento ClimaAR" \
             || echo "sin cambios"
 
           git push
