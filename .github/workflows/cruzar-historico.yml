@@ -1,0 +1,166 @@
+name: Cruzar historico ClimaAR
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cruzar:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Preparar carpetas
+        run: |
+          mkdir -p data/historico
+
+      - name: Crear catalogo de eventos
+        run: |
+          cat > data/historico/eventos_severos.csv <<'CSV'
+fecha,evento,tormenta_severa,viento_severo,precipitacion_extrema,inundacion,granizo,tornado,rafaga_kmh,lluvia_mm,ventana_lluvia_h,estado_verificacion
+1981-03-14,Temporal grave,1,1,1,0,0,0,110,85,,pendiente_verificacion
+1982-02-13,Tornado temporal Chile Pedro Pico,1,1,0,0,0,1,170,,,pendiente_verificacion
+2019-12-30,Tornado F0 Paso Piedras,1,1,1,0,0,1,115,100,1,parcialmente_verificado
+2023-12-16,Temporal destructivo,1,1,1,0,0,0,189,45,,parcialmente_verificado
+2025-03-07,Inundacion historica,1,0,1,1,0,0,,290,12,verificado
+CSV
+
+      - name: Instalar dependencias
+        run: |
+          pip install pandas numpy
+
+      - name: Crear ventanas historicas
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          import numpy as np
+
+          clima = pd.read_csv(
+              "data/historico/clima_horario_1980_2026.csv"
+          )
+
+          eventos = pd.read_csv(
+              "data/historico/eventos_severos.csv"
+          )
+
+          clima["time"] = pd.to_datetime(
+              clima["time"],
+              errors="coerce"
+          )
+
+          eventos["fecha"] = pd.to_datetime(
+              eventos["fecha"],
+              errors="coerce"
+          )
+
+          clima = clima.dropna(subset=["time"])
+          eventos = eventos.dropna(subset=["fecha"])
+
+          filas = []
+
+          for _, evento in eventos.iterrows():
+
+              fecha = evento["fecha"]
+
+              inicio = fecha - pd.Timedelta(hours=24)
+              fin = fecha
+
+              ventana = clima[
+                  (clima["time"] >= inicio) &
+                  (clima["time"] <= fin)
+              ].copy()
+
+              if ventana.empty:
+                  continue
+
+              ventana["evento_fecha"] = fecha
+              ventana["evento"] = evento["evento"]
+
+              for columna in [
+                  "tormenta_severa",
+                  "viento_severo",
+                  "precipitacion_extrema",
+                  "inundacion",
+                  "granizo",
+                  "tornado"
+              ]:
+                  ventana[columna] = evento[columna]
+
+              filas.append(ventana)
+
+          if not filas:
+              raise SystemExit(
+                  "ERROR: no se encontraron ventanas."
+              )
+
+          resultado = pd.concat(
+              filas,
+              ignore_index=True
+          )
+
+          resultado.to_csv(
+              "data/historico/ventanas_eventos_24h.csv",
+              index=False
+          )
+
+          print(
+              "Ventanas creadas:",
+              len(resultado)
+          )
+
+          print(
+              "Eventos:",
+              resultado["evento_fecha"].nunique()
+          )
+          PY
+
+      - name: Crear estadisticas historicas
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          df = pd.read_csv(
+              "data/historico/ventanas_eventos_24h.csv"
+          )
+
+          columnas = [
+              c for c in [
+                  "temperature_2m",
+                  "relative_humidity_2m",
+                  "pressure_msl",
+                  "precipitation",
+                  "wind_speed_10m",
+                  "wind_gusts_10m"
+              ]
+              if c in df.columns
+          ]
+
+          resumen = df[columnas].describe()
+
+          resumen.to_csv(
+              "data/historico/resumen_ventanas.csv"
+          )
+
+          print(resumen)
+          PY
+
+      - name: Guardar resultados
+        run: |
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.com.ar"
+
+          git add data/historico/
+
+          git commit -m "Crear ventanas historicas para ClimaAR" \
+            || echo "sin cambios"
+
+          git push
