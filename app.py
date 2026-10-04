@@ -26,10 +26,36 @@ RADAR_RAW = Path("data/radar/raw")
 METRICAS = Path("modelo/metricas_modelo.json")
 MODELO = Path("modelo/climaar_modelo_temperatura_1h.joblib")
 
+OBS_STATUS = Path("data/sazb/status.json")
+
 SMN_URL = (
     "https://ssl.smn.gob.ar/dpd/descarga_opendata.php"
     "?file=observaciones/datohorario{}.txt"
 )
+
+
+def leer_observacion_sazb():
+    if not OBS_STATUS.exists():
+        return {
+            "integrado": False,
+            "observacion_valida": False,
+            "fuente": "Aviation Weather Center",
+            "estacion": "SAZB",
+            "error": "Sin status SAZB",
+        }
+
+    try:
+        return json.loads(
+            OBS_STATUS.read_text(encoding="utf-8")
+        )
+    except Exception as exc:
+        return {
+            "integrado": False,
+            "observacion_valida": False,
+            "fuente": "Aviation Weather Center",
+            "estacion": "SAZB",
+            "error": f"status SAZB invalido: {exc}",
+        }
 
 
 def numero(value, default=0.0):
@@ -42,11 +68,24 @@ def numero(value, default=0.0):
 def leer_radar() -> list[dict]:
     if not RADAR_CSV.exists():
         return []
+
     try:
-        with RADAR_CSV.open("r", encoding="utf-8", newline="") as f:
+        with RADAR_CSV.open(
+            "r",
+            encoding="utf-8",
+            newline=""
+        ) as f:
             rows = list(csv.DictReader(f))
-        rows.sort(key=lambda r: numero(r.get("frame_time"), 0))
+
+        rows.sort(
+            key=lambda r: numero(
+                r.get("frame_time"),
+                0
+            )
+        )
+
         return rows
+
     except Exception:
         return []
 
@@ -54,6 +93,7 @@ def leer_radar() -> list[dict]:
 def cargar_modelo():
     if not MODELO.exists():
         return None
+
     try:
         return joblib.load(MODELO)
     except Exception:
@@ -62,25 +102,49 @@ def cargar_modelo():
 
 def obtener_smn(fecha):
     try:
-        url = SMN_URL.format(fecha.strftime("%Y%m%d"))
+        url = SMN_URL.format(
+            fecha.strftime("%Y%m%d")
+        )
+
         r = requests.get(
             url,
             timeout=30,
-            headers={"User-Agent": "ClimaAR/2.0"},
+            headers={
+                "User-Agent": "ClimaAR/2.0"
+            },
         )
+
         r.raise_for_status()
-        text = r.content.decode("latin-1", errors="replace")
-        if not text.strip() or "El archivo no existe." in text:
+
+        text = r.content.decode(
+            "latin-1",
+            errors="replace"
+        )
+
+        if (
+            not text.strip()
+            or "El archivo no existe." in text
+        ):
             return []
 
         rows = []
+
         for line in text.splitlines():
             parts = line.strip().split()
+
             if len(parts) < 8:
                 continue
-            station = " ".join(parts[7:]).strip()
-            if "BAHIA BLANCA" not in station.upper():
+
+            station = " ".join(
+                parts[7:]
+            ).strip()
+
+            if (
+                "BAHIA BLANCA"
+                not in station.upper()
+            ):
                 continue
+
             rows.append(
                 {
                     "fecha": parts[0],
@@ -93,25 +157,39 @@ def obtener_smn(fecha):
                     "estacion": station,
                 }
             )
+
         return rows
+
     except Exception:
         return []
 
 
 def obtener_datos_actuales():
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(
+        timezone.utc
+    ).date()
+
     rows = []
+
     for days in range(4):
-        rows.extend(obtener_smn(today - timedelta(days=days)))
+        rows.extend(
+            obtener_smn(
+                today - timedelta(days=days)
+            )
+        )
 
     if not rows:
         return None
 
     df = pd.DataFrame(rows)
+
     df["fecha_hora"] = pd.to_datetime(
-        df["fecha"].astype(str) + " " + df["hora"].astype(str),
+        df["fecha"].astype(str)
+        + " "
+        + df["hora"].astype(str),
         errors="coerce",
     )
+
     numeric = [
         "temperatura",
         "humedad",
@@ -119,30 +197,69 @@ def obtener_datos_actuales():
         "direccion_viento",
         "velocidad_viento",
     ]
+
     for col in numeric:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce"
+        )
 
     df = (
-        df.dropna(subset=["fecha_hora"])
+        df.dropna(
+            subset=["fecha_hora"]
+        )
         .sort_values("fecha_hora")
-        .drop_duplicates("fecha_hora")
+        .drop_duplicates(
+            "fecha_hora"
+        )
         .reset_index(drop=True)
     )
+
     if df.empty:
         return None
 
-    direction = np.deg2rad(df["direccion_viento"])
-    df["viento_u"] = -df["velocidad_viento"] * np.sin(direction)
-    df["viento_v"] = -df["velocidad_viento"] * np.cos(direction)
+    direction = np.deg2rad(
+        df["direccion_viento"]
+    )
 
-    rh = df["humedad"].clip(1, 100)
+    df["viento_u"] = (
+        -df["velocidad_viento"]
+        * np.sin(direction)
+    )
+
+    df["viento_v"] = (
+        -df["velocidad_viento"]
+        * np.cos(direction)
+    )
+
+    rh = df["humedad"].clip(
+        1,
+        100
+    )
+
     t = df["temperatura"]
-    gamma = np.log(rh / 100) + (17.625 * t) / (243.04 + t)
-    df["punto_rocio"] = 243.04 * gamma / (17.625 - gamma)
+
+    gamma = (
+        np.log(rh / 100)
+        + (17.625 * t)
+        / (243.04 + t)
+    )
+
+    df["punto_rocio"] = (
+        243.04
+        * gamma
+        / (17.625 - gamma)
+    )
 
     hour = df["fecha_hora"].dt.hour
-    df["hora_sin"] = np.sin(2 * np.pi * hour / 24)
-    df["hora_cos"] = np.cos(2 * np.pi * hour / 24)
+
+    df["hora_sin"] = np.sin(
+        2 * np.pi * hour / 24
+    )
+
+    df["hora_cos"] = np.cos(
+        2 * np.pi * hour / 24
+    )
 
     variables = [
         "temperatura",
@@ -156,9 +273,13 @@ def obtener_datos_actuales():
         "hora_sin",
         "hora_cos",
     ]
+
     for lag in [1, 3, 6, 24]:
         for var in variables:
-            df[f"{var}_lag{lag}"] = df[var].shift(lag)
+            df[
+                f"{var}_lag{lag}"
+            ] = df[var].shift(lag)
+
     return df
 
 
@@ -169,43 +290,113 @@ def ultimos_frames(n=4):
 
 def tendencia_lineal(rows, key):
     pairs = []
+
     for row in rows:
         value = row.get(key)
-        time = numero(row.get("frame_time"), math.nan)
-        value = numero(value, math.nan)
-        if math.isfinite(time) and math.isfinite(value):
-            pairs.append((time, value))
+
+        time = numero(
+            row.get("frame_time"),
+            math.nan
+        )
+
+        value = numero(
+            value,
+            math.nan
+        )
+
+        if (
+            math.isfinite(time)
+            and math.isfinite(value)
+        ):
+            pairs.append(
+                (time, value)
+            )
+
     if len(pairs) < 2:
         return None
 
     t0 = pairs[0][0]
-    x = np.array([(t - t0) / 60.0 for t, _ in pairs], dtype=float)
-    y = np.array([v for _, v in pairs], dtype=float)
-    slope, intercept = np.polyfit(x, y, 1)
-    return float(slope), float(intercept), float(x[-1]), float(y[-1])
+
+    x = np.array(
+        [
+            (t - t0) / 60.0
+            for t, _ in pairs
+        ],
+        dtype=float,
+    )
+
+    y = np.array(
+        [
+            v
+            for _, v in pairs
+        ],
+        dtype=float,
+    )
+
+    slope, intercept = np.polyfit(
+        x,
+        y,
+        1
+    )
+
+    return (
+        float(slope),
+        float(intercept),
+        float(x[-1]),
+        float(y[-1]),
+    )
 
 
 def analizar_tormenta():
     rows = leer_radar()
+
     if not rows:
         return {
             "estado": "sin_datos",
             "fuente": "SMN RMA10 ZH_MAX",
-            "mensaje": "Todavía no hay frames RMA10 procesados.",
+            "mensaje": (
+                "Todavía no hay frames "
+                "RMA10 procesados."
+            ),
         }
 
     recent = rows[-12:]
     last = recent[-1]
-    max_dbz = numero(last.get("max_dbz"), 0)
-    mean_dbz = numero(last.get("mean_dbz"), 0)
+
+    max_dbz = numero(
+        last.get("max_dbz"),
+        0
+    )
+
+    mean_dbz = numero(
+        last.get("mean_dbz"),
+        0
+    )
 
     ge = {
-        str(t): int(numero(last.get(f"pixels_ge_{t}dbz"), 0))
-        for t in [20, 30, 40, 45, 50, 55, 60]
+        str(t): int(
+            numero(
+                last.get(
+                    f"pixels_ge_{t}dbz"
+                ),
+                0
+            )
+        )
+        for t in [
+            20,
+            30,
+            40,
+            45,
+            50,
+            55,
+            60,
+        ]
     }
 
     if max_dbz < 20:
-        intensity = "sin_reflectividad_significativa"
+        intensity = (
+            "sin_reflectividad_significativa"
+        )
     elif max_dbz < 30:
         intensity = "débil"
     elif max_dbz < 40:
@@ -215,13 +406,22 @@ def analizar_tormenta():
     else:
         intensity = "muy_alta"
 
-    slope = tendencia_lineal(recent[-4:], "max_dbz")
+    slope = tendencia_lineal(
+        recent[-4:],
+        "max_dbz"
+    )
+
     if slope is None:
         trend = "indeterminada"
         slope_dbz_10m = None
     else:
         slope_dbz_min = slope[0]
-        slope_dbz_10m = round(slope_dbz_min * 10, 2)
+
+        slope_dbz_10m = round(
+            slope_dbz_min * 10,
+            2
+        )
+
         if slope_dbz_10m >= 1.0:
             trend = "fortaleciendose"
         elif slope_dbz_10m <= -1.0:
@@ -233,29 +433,92 @@ def analizar_tormenta():
     speed_px_h = None
     direction = None
     active = []
+
     for row in recent:
-        x = row.get("centroid_x_ge_40dbz")
-        y = row.get("centroid_y_ge_40dbz")
-        if x not in ("", None) and y not in ("", None):
+        x = row.get(
+            "centroid_x_ge_40dbz"
+        )
+
+        y = row.get(
+            "centroid_y_ge_40dbz"
+        )
+
+        if (
+            x not in ("", None)
+            and y not in ("", None)
+        ):
             active.append(row)
 
     if len(active) >= 2:
         a, b = active[-2], active[-1]
-        ax, ay = numero(a.get("centroid_x_ge_40dbz")), numero(a.get("centroid_y_ge_40dbz"))
-        bx, by = numero(b.get("centroid_x_ge_40dbz")), numero(b.get("centroid_y_ge_40dbz"))
-        dt = (numero(b.get("frame_time")) - numero(a.get("frame_time"))) / 60
-        dx, dy = bx - ax, by - ay
-        dist = math.hypot(dx, dy)
+
+        ax = numero(
+            a.get(
+                "centroid_x_ge_40dbz"
+            )
+        )
+
+        ay = numero(
+            a.get(
+                "centroid_y_ge_40dbz"
+            )
+        )
+
+        bx = numero(
+            b.get(
+                "centroid_x_ge_40dbz"
+            )
+        )
+
+        by = numero(
+            b.get(
+                "centroid_y_ge_40dbz"
+            )
+        )
+
+        dt = (
+            numero(
+                b.get("frame_time")
+            )
+            - numero(
+                a.get("frame_time")
+            )
+        ) / 60
+
+        dx = bx - ax
+        dy = by - ay
+
+        dist = math.hypot(
+            dx,
+            dy
+        )
+
         if dt > 0:
-            speed_px_h = round(dist / dt * 60, 2)
+            speed_px_h = round(
+                dist / dt * 60,
+                2
+            )
+
         if dist >= 1:
             movement = "en_movimiento"
+
             if abs(dx) >= abs(dy):
-                direction = "este" if dx > 0 else "oeste"
+                direction = (
+                    "este"
+                    if dx > 0
+                    else "oeste"
+                )
             else:
-                direction = "sur" if dy > 0 else "norte"
+                direction = (
+                    "sur"
+                    if dy > 0
+                    else "norte"
+                )
+
     else:
-        movement = "sin_seguimiento_suficiente"
+        movement = (
+            "sin_seguimiento_suficiente"
+        )
 
     return {
         "estado": "datos_radar_disponibles",
@@ -266,19 +529,32 @@ def analizar_tormenta():
         "mean_dbz": mean_dbz,
         "pixeles_por_umbral_dbz": ge,
         "tendencia_max_dbz": trend,
-        "cambio_max_dbz_por_10min": slope_dbz_10m,
+        "cambio_max_dbz_por_10min": (
+            slope_dbz_10m
+        ),
         "movimiento_celda_ge_40dbz": movement,
         "direccion_movimiento": direction,
-        "velocidad_movimiento_px_h": speed_px_h,
-        "frames_analizados": len(recent),
-        "ultimo_frame_utc": last.get("frame_utc"),
+        "velocidad_movimiento_px_h": (
+            speed_px_h
+        ),
+        "frames_analizados": len(
+            recent
+        ),
+        "ultimo_frame_utc": (
+            last.get("frame_utc")
+        ),
     }
 
 
 def cargar_nowcast():
-    path = Path("modelo/climaar_nowcast_features.joblib")
+    path = Path(
+        "modelo/"
+        "climaar_nowcast_features.joblib"
+    )
+
     if not path.exists():
         return None
+
     try:
         return joblib.load(path)
     except Exception:
@@ -287,7 +563,11 @@ def cargar_nowcast():
 
 def prediccion_nowcast_ia(rows):
     artifact = cargar_nowcast()
-    if artifact is None or len(rows) < 4:
+
+    if (
+        artifact is None
+        or len(rows) < 4
+    ):
         return None
 
     try:
@@ -304,63 +584,144 @@ def prediccion_nowcast_ia(rows):
             "centroid_x_ge_40dbz",
             "centroid_y_ge_40dbz",
         ]
+
         values = []
+
         for row in rows[-4:]:
             for col in base:
-                value = numero(row.get(col), 0)
+                value = numero(
+                    row.get(col),
+                    0
+                )
+
                 values.append(value)
 
-        X = pd.DataFrame([values], columns=artifact["features"])
-        max_model = artifact["models"]["target_max_dbz"]
-        area_model = artifact["models"]["target_pixels_ge_40dbz"]
+        X = pd.DataFrame(
+            [values],
+            columns=artifact["features"]
+        )
 
-        max_pred = float(np.clip(max_model.predict(X)[0], -15, 75))
-        area_pred = max(0.0, float(area_model.predict(X)[0]))
+        max_model = (
+            artifact["models"]
+            ["target_max_dbz"]
+        )
+
+        area_model = (
+            artifact["models"]
+            ["target_pixels_ge_40dbz"]
+        )
+
+        max_pred = float(
+            np.clip(
+                max_model.predict(X)[0],
+                -15,
+                75
+            )
+        )
+
+        area_pred = max(
+            0.0,
+            float(
+                area_model.predict(X)[0]
+            )
+        )
 
         return {
             "tipo": "modelo_ia_rma10",
             "horizonte_minutos": 10,
-            "max_dbz_t_plus_10": round(max_pred, 1),
-            "pixels_ge_40dbz_t_plus_10": round(area_pred, 1),
+            "max_dbz_t_plus_10": round(
+                max_pred,
+                1
+            ),
+            "pixels_ge_40dbz_t_plus_10": round(
+                area_pred,
+                1
+            ),
             "modelo_disponible": True,
-            "nota": "Predicción del primer modelo entrenado con secuencias RMA10 propias.",
+            "nota": (
+                "Predicción del primer "
+                "modelo entrenado con "
+                "secuencias RMA10 propias."
+            ),
         }
+
     except Exception:
         return None
 
 
 def nowcast_baseline():
     rows = ultimos_frames(4)
+
     if len(rows) < 2:
         return {
             "estado": "pendiente",
             "tipo": "baseline_experimental",
-            "mensaje": "Se necesitan al menos 2 frames RMA10 para calcular tendencia.",
-            "frames_disponibles": len(rows),
+            "mensaje": (
+                "Se necesitan al menos "
+                "2 frames RMA10 para "
+                "calcular tendencia."
+            ),
+            "frames_disponibles": len(
+                rows
+            ),
         }
 
-    ia = prediccion_nowcast_ia(rows)
+    ia = prediccion_nowcast_ia(
+        rows
+    )
+
     if ia is not None:
         return {
             "estado": "ok",
             "tipo": "modelo_ia_rma10",
             "frames_utilizados": 4,
             "prediccion_10min": ia,
-            "baseline": "disponible_en_codigo_si_se_necesita_comparacion",
+            "baseline": (
+                "disponible_en_codigo_si_"
+                "se_necesita_comparacion"
+            ),
         }
 
-    slope = tendencia_lineal(rows, "max_dbz")
-    if slope is None:
-        return {"estado": "pendiente", "mensaje": "Sin suficientes datos numéricos."}
+    slope = tendencia_lineal(
+        rows,
+        "max_dbz"
+    )
 
-    slope_dbz_min, _, _, last_y = slope
+    if slope is None:
+        return {
+            "estado": "pendiente",
+            "mensaje": (
+                "Sin suficientes datos "
+                "numéricos."
+            ),
+        }
+
+    slope_dbz_min = slope[0]
+    last_y = slope[3]
+
     forecasts = []
-    for minutes in [10, 20, 30]:
-        predicted = float(np.clip(last_y + slope_dbz_min * minutes, -15, 75))
+
+    for minutes in [
+        10,
+        20,
+        30
+    ]:
+        predicted = float(
+            np.clip(
+                last_y
+                + slope_dbz_min * minutes,
+                -15,
+                75
+            )
+        )
+
         forecasts.append(
             {
                 "minutos": minutes,
-                "max_dbz_estimado": round(predicted, 1),
+                "max_dbz_estimado": round(
+                    predicted,
+                    1
+                ),
                 "tendencia": (
                     "fortalecimiento"
                     if slope_dbz_min > 0.1
@@ -371,15 +732,35 @@ def nowcast_baseline():
             }
         )
 
-    confidence = round(0.45 + 0.45 * min(1.0, len(rows) / 4.0), 2)
+    confidence = round(
+        0.45
+        + 0.45
+        * min(
+            1.0,
+            len(rows) / 4.0
+        ),
+        2
+    )
+
     return {
         "estado": "ok",
         "tipo": "baseline_experimental",
-        "nota": "Extrapolación temporal; será reemplazada/contrastada por el modelo de IA cuando haya suficientes secuencias.",
+        "nota": (
+            "Extrapolación temporal; "
+            "será reemplazada/contrastada "
+            "por el modelo de IA cuando "
+            "haya suficientes secuencias."
+        ),
         "confianza_baseline": confidence,
         "frames_utilizados": len(rows),
-        "ultimo_max_dbz": round(last_y, 1),
-        "cambio_dbz_por_10min": round(slope_dbz_min * 10, 2),
+        "ultimo_max_dbz": round(
+            last_y,
+            1
+        ),
+        "cambio_dbz_por_10min": round(
+            slope_dbz_min * 10,
+            2
+        ),
         "pronostico": forecasts,
     }
 
@@ -392,6 +773,7 @@ def inicio():
         "estado": "activo",
         "radar": "/radar",
         "radar_imagen": "/radar/imagen",
+        "observacion": "/observacion",
         "tormenta": "/tormenta",
         "nowcast": "/nowcast",
         "secuencia": "/secuencia",
@@ -405,27 +787,51 @@ def inicio():
 @app.get("/health")
 def health():
     rows = leer_radar()
+
     return {
         "estado": "ok",
         "servicio": "ClimaAR",
         "fuente_radar": "SMN RMA10 ZH_MAX",
         "frames_procesados": len(rows),
-        "ultimo_frame_utc": rows[-1].get("frame_utc") if rows else None,
-        "hora_utc": datetime.now(timezone.utc).isoformat(),
+        "ultimo_frame_utc": (
+            rows[-1].get("frame_utc")
+            if rows
+            else None
+        ),
+        "observacion_sazb": (
+            leer_observacion_sazb()
+        ),
+        "hora_utc": (
+            datetime.now(
+                timezone.utc
+            ).isoformat()
+        ),
     }
+
+
+@app.get("/observacion")
+def observacion():
+    return leer_observacion_sazb()
 
 
 @app.get("/radar")
 def radar():
     rows = leer_radar()
+
     return {
         "estado": "ok",
         "radar": "RMA10 Bahía Blanca",
         "producto": "ZH_MAX",
         "fuente_oficial": RADAR_PAGE_URL,
         "frames_guardados": len(rows),
-        "ultimo_frame": rows[-1] if rows else None,
-        "imagen_local_disponible": RADAR_LATEST.exists(),
+        "ultimo_frame": (
+            rows[-1]
+            if rows
+            else None
+        ),
+        "imagen_local_disponible": (
+            RADAR_LATEST.exists()
+        ),
     }
 
 
@@ -437,7 +843,10 @@ def radar_imagen():
             media_type="image/png",
             filename="RMA10_ZH_MAX_latest.png",
         )
-    return RedirectResponse(url=RADAR_PAGE_URL)
+
+    return RedirectResponse(
+        url=RADAR_PAGE_URL
+    )
 
 
 @app.get("/secuencia")
@@ -466,83 +875,177 @@ def modelo():
         return {
             "estado": "pendiente",
             "tipo": "baseline_ambiental",
-            "mensaje": "Métricas del modelo no disponibles.",
+            "mensaje": (
+                "Métricas del modelo "
+                "no disponibles."
+            ),
         }
+
     try:
         return {
             "estado": "entrenado",
             "tipo": "baseline_ambiental",
-            "modelo": json.loads(METRICAS.read_text(encoding="utf-8")),
+            "modelo": json.loads(
+                METRICAS.read_text(
+                    encoding="utf-8"
+                )
+            ),
         }
+
     except Exception as exc:
-        return {"estado": "error", "mensaje": str(exc)}
+        return {
+            "estado": "error",
+            "mensaje": str(exc)
+        }
 
 
 @app.get("/modelo/nowcast")
 def modelo_nowcast():
-    path = Path("modelo/metricas_nowcast.json")
+    path = Path(
+        "modelo/metricas_nowcast.json"
+    )
+
     if not path.exists():
         return {
             "estado": "pendiente",
-            "mensaje": "El primer modelo RMA10 todavía no tiene suficientes secuencias para entrenarse.",
+            "mensaje": (
+                "El primer modelo RMA10 "
+                "todavía no tiene suficientes "
+                "secuencias para entrenarse."
+            ),
         }
+
     try:
         return {
             "estado": "entrenado",
-            "modelo": json.loads(path.read_text(encoding="utf-8")),
+            "modelo": json.loads(
+                path.read_text(
+                    encoding="utf-8"
+                )
+            ),
         }
+
     except Exception as exc:
-        return {"estado": "error", "mensaje": str(exc)}
+        return {
+            "estado": "error",
+            "mensaje": str(exc)
+        }
 
 
 @app.get("/prediccion")
 def prediccion():
     model = cargar_modelo()
+
     if model is None:
-        return {"estado": "pendiente", "mensaje": "Modelo ambiental no disponible."}
+        return {
+            "estado": "pendiente",
+            "mensaje": (
+                "Modelo ambiental "
+                "no disponible."
+            ),
+        }
 
     df = obtener_datos_actuales()
+
     if df is None:
-        return {"estado": "sin_datos", "mensaje": "No se pudieron obtener datos actuales del SMN."}
+        return {
+            "estado": "sin_datos",
+            "mensaje": (
+                "No se pudieron obtener "
+                "datos actuales del SMN."
+            ),
+        }
 
     row = df.iloc[-1]
+
     try:
-        columns = list(model.feature_names_in_)
+        columns = list(
+            model.feature_names_in_
+        )
+
         X = pd.DataFrame(
-            [[row.get(column, np.nan) for column in columns]],
+            [[
+                row.get(
+                    column,
+                    np.nan
+                )
+                for column in columns
+            ]],
             columns=columns,
         )
+
         if X.isna().any().any():
             return {
-                "estado": "sin_datos_suficientes",
-                "faltantes": list(X.columns[X.isna().iloc[0]]),
+                "estado": (
+                    "sin_datos_suficientes"
+                ),
+                "faltantes": list(
+                    X.columns[
+                        X.isna().iloc[0]
+                    ]
+                ),
             }
 
-        predicted = float(model.predict(X)[0])
-        current = float(row["temperatura"])
+        predicted = float(
+            model.predict(X)[0]
+        )
+
+        current = float(
+            row["temperatura"]
+        )
+
         return {
             "estado": "ok",
             "tipo": "baseline_ambiental",
             "ubicacion": "Bahía Blanca",
-            "hora_dato": str(row["fecha_hora"]),
-            "temperatura_actual": round(current, 2),
-            "temperatura_1h": round(predicted, 2),
-            "variacion_1h": round(predicted - current, 2),
+            "hora_dato": str(
+                row["fecha_hora"]
+            ),
+            "temperatura_actual": round(
+                current,
+                2
+            ),
+            "temperatura_1h": round(
+                predicted,
+                2
+            ),
+            "variacion_1h": round(
+                predicted - current,
+                2
+            ),
         }
+
     except Exception as exc:
-        return {"estado": "error", "mensaje": str(exc)}
+        return {
+            "estado": "error",
+            "mensaje": str(exc)
+        }
 
 
 @app.get("/estado")
 def estado():
     rows = leer_radar()
+
     return {
         "climaar": "activo",
         "version": "2.0.0",
         "fuente_radar": "SMN RMA10 ZH_MAX",
         "radar_frames": len(rows),
-        "modelo_ambiental_disponible": MODELO.exists(),
-        "nowcast_baseline": nowcast_baseline(),
-        "analisis_tormenta": analizar_tormenta(),
-        "hora_utc": datetime.now(timezone.utc).isoformat(),
-    }
+        "modelo_ambiental_disponible": (
+            MODELO.exists()
+        ),
+        "nowcast_baseline": (
+            nowcast_baseline()
+        ),
+        "analisis_tormenta": (
+            analizar_tormenta()
+        ),
+        "observacion_sazb": (
+            leer_observacion_sazb()
+        ),
+        "hora_utc": (
+            datetime.now(
+                timezone.utc
+            ).isoformat()
+        ),
+                        }
