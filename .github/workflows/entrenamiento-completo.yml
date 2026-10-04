@@ -1,0 +1,646 @@
+name: ClimaAR - Dataset y Modelo Maestro
+
+on:
+  workflow_dispatch:
+
+jobs:
+  maestro:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          pip install pandas numpy scikit-learn joblib
+
+      - name: Construir dataset meteorologico
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          import numpy as np
+          import os
+
+          BASE = "data/historico"
+          CLIMA = f"{BASE}/clima_horario_1980_2026.csv"
+          EVENTOS = f"{BASE}/eventos_severos.csv"
+
+          if not os.path.exists(CLIMA):
+              raise SystemExit(f"No existe {CLIMA}")
+
+          if not os.path.exists(EVENTOS):
+              raise SystemExit(f"No existe {EVENTOS}")
+
+          clima = pd.read_csv(CLIMA)
+          eventos = pd.read_csv(EVENTOS)
+
+          clima["time"] = pd.to_datetime(
+              clima["time"],
+              errors="coerce"
+          )
+
+          eventos["fecha"] = pd.to_datetime(
+              eventos["fecha"],
+              errors="coerce"
+          )
+
+          clima = clima.dropna(subset=["time"])
+          eventos = eventos.dropna(subset=["fecha"])
+
+          clima = clima.sort_values("time").reset_index(drop=True)
+
+          # --------------------------------------------------
+          # VARIABLES TEMPORALES
+          # --------------------------------------------------
+
+          clima["hora"] = clima["time"].dt.hour
+          clima["mes"] = clima["time"].dt.month
+          clima["dia_anio"] = clima["time"].dt.dayofyear
+
+          clima["hora_sin"] = np.sin(
+              2 * np.pi * clima["hora"] / 24
+          )
+
+          clima["hora_cos"] = np.cos(
+              2 * np.pi * clima["hora"] / 24
+          )
+
+          clima["mes_sin"] = np.sin(
+              2 * np.pi * clima["mes"] / 12
+          )
+
+          clima["mes_cos"] = np.cos(
+              2 * np.pi * clima["mes"] / 12
+          )
+
+          # --------------------------------------------------
+          # LLUVIA ACUMULADA
+          # --------------------------------------------------
+
+          for horas in [1, 3, 6, 12, 24]:
+              clima[f"lluvia_{horas}h"] = (
+                  clima["precipitation"]
+                  .rolling(
+                      horas,
+                      min_periods=1
+                  )
+                  .sum()
+              )
+
+          # --------------------------------------------------
+          # MAXIMOS DE VIENTO Y RAFAGA
+          # --------------------------------------------------
+
+          for horas in [3, 6, 12, 24]:
+              clima[f"rafaga_max_{horas}h"] = (
+                  clima["wind_gusts_10m"]
+                  .rolling(
+                      horas,
+                      min_periods=1
+                  )
+                  .max()
+              )
+
+              clima[f"viento_max_{horas}h"] = (
+                  clima["wind_speed_10m"]
+                  .rolling(
+                      horas,
+                      min_periods=1
+                  )
+                  .max()
+              )
+
+          # --------------------------------------------------
+          # CAMBIOS METEOROLOGICOS
+          # --------------------------------------------------
+
+          for horas in [1, 3, 6, 12, 24]:
+
+              clima[f"cambio_presion_{horas}h"] = (
+                  clima["pressure_msl"]
+                  - clima["pressure_msl"].shift(horas)
+              )
+
+              clima[f"cambio_temp_{horas}h"] = (
+                  clima["temperature_2m"]
+                  - clima["temperature_2m"].shift(horas)
+              )
+
+              clima[f"cambio_humedad_{horas}h"] = (
+                  clima["relative_humidity_2m"]
+                  - clima["relative_humidity_2m"].shift(horas)
+              )
+
+              clima[f"cambio_viento_{horas}h"] = (
+                  clima["wind_speed_10m"]
+                  - clima["wind_speed_10m"].shift(horas)
+              )
+
+          # --------------------------------------------------
+          # INDICES FISICOS SIMPLES
+          # --------------------------------------------------
+
+          clima["punto_rocio"] = clima[
+              "dew_point_2m"
+          ]
+
+          clima["diferencia_temp_rocio"] = (
+              clima["temperature_2m"]
+              - clima["dew_point_2m"]
+          )
+
+          clima["presion_descenso_6h"] = (
+              clima["cambio_presion_6h"] < -3
+          ).astype(int)
+
+          clima["presion_descenso_12h"] = (
+              clima["cambio_presion_12h"] < -5
+          ).astype(int)
+
+          clima["lluvia_intensa_1h"] = (
+              clima["lluvia_1h"] >= 20
+          ).astype(int)
+
+          clima["lluvia_extrema_6h"] = (
+              clima["lluvia_6h"] >= 50
+          ).astype(int)
+
+          clima["viento_fuerte"] = (
+              clima["wind_gusts_10m"] >= 80
+          ).astype(int)
+
+          clima["viento_muy_fuerte"] = (
+              clima["wind_gusts_10m"] >= 100
+          ).astype(int)
+
+          # --------------------------------------------------
+          # ETIQUETAS
+          # --------------------------------------------------
+
+          etiquetas = [
+              "tormenta_severa",
+              "viento_severo",
+              "precipitacion_extrema",
+              "inundacion",
+              "granizo",
+              "tornado"
+          ]
+
+          for etiqueta in etiquetas:
+              clima[etiqueta] = 0
+
+          clima["evento"] = ""
+          clima["evento_fecha"] = pd.NaT
+
+          # --------------------------------------------------
+          # ASIGNAR EVENTOS
+          #
+          # Se considera la ventana de 24 h previa.
+          # El evento real queda identificado por su fecha.
+          # --------------------------------------------------
+
+          for _, evento in eventos.iterrows():
+
+              fecha = evento["fecha"]
+
+              inicio = fecha - pd.Timedelta(hours=24)
+              fin = fecha + pd.Timedelta(hours=23)
+
+              mask = (
+                  (clima["time"] >= inicio) &
+                  (clima["time"] <= fin)
+              )
+
+              for etiqueta in etiquetas:
+
+                  if etiqueta in evento.index:
+
+                      valor = evento[etiqueta]
+
+                      if pd.notna(valor):
+                          clima.loc[
+                              mask,
+                              etiqueta
+                          ] = int(valor)
+
+              clima.loc[
+                  mask,
+                  "evento"
+              ] = str(evento["evento"])
+
+              clima.loc[
+                  mask,
+                  "evento_fecha"
+              ] = fecha
+
+          # --------------------------------------------------
+          # OBJETIVO PRINCIPAL
+          # --------------------------------------------------
+
+          clima["evento_severo"] = (
+              clima[etiquetas]
+              .max(axis=1)
+              .astype(int)
+          )
+
+          # --------------------------------------------------
+          # LIMPIEZA
+          # --------------------------------------------------
+
+          clima = clima.replace(
+              [np.inf, -np.inf],
+              np.nan
+          )
+
+          clima = clima.dropna(
+              subset=[
+                  "temperature_2m",
+                  "relative_humidity_2m",
+                  "dew_point_2m",
+                  "pressure_msl",
+                  "precipitation",
+                  "wind_speed_10m",
+                  "wind_gusts_10m"
+              ]
+          )
+
+          salida = (
+              f"{BASE}/dataset_maestro.csv"
+          )
+
+          clima.to_csv(
+              salida,
+              index=False
+          )
+
+          print()
+          print("====================================")
+          print("DATASET MAESTRO CLIMAAR")
+          print("====================================")
+          print("Filas:", len(clima))
+          print("Columnas:", len(clima.columns))
+          print("Desde:", clima["time"].min())
+          print("Hasta:", clima["time"].max())
+          print(
+              "Horas etiquetadas:",
+              int(clima["evento_severo"].sum())
+          )
+          print(
+              "Eventos:",
+              clima["evento_fecha"].dropna().nunique()
+          )
+          print("====================================")
+          PY
+
+      - name: Crear resumen climatologico
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          archivo = (
+              "data/historico/dataset_maestro.csv"
+          )
+
+          df = pd.read_csv(archivo)
+
+          df["time"] = pd.to_datetime(
+              df["time"]
+          )
+
+          variables = [
+              "temperature_2m",
+              "relative_humidity_2m",
+              "dew_point_2m",
+              "pressure_msl",
+              "precipitation",
+              "wind_speed_10m",
+              "wind_gusts_10m",
+              "lluvia_1h",
+              "lluvia_3h",
+              "lluvia_6h",
+              "lluvia_12h",
+              "lluvia_24h",
+              "cambio_presion_1h",
+              "cambio_presion_3h",
+              "cambio_presion_6h",
+              "cambio_presion_12h",
+              "cambio_presion_24h"
+          ]
+
+          variables = [
+              x for x in variables
+              if x in df.columns
+          ]
+
+          resumen = df[variables].describe()
+
+          resumen.to_csv(
+              "data/historico/"
+              "resumen_climatologico_maestro.csv"
+          )
+
+          mensual = (
+              df.groupby("mes")[variables]
+              .mean()
+          )
+
+          mensual.to_csv(
+              "data/historico/"
+              "climatologia_mensual_calculada.csv"
+          )
+
+          print(resumen)
+          PY
+
+      - name: Crear train y test temporal
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          df = pd.read_csv(
+              "data/historico/dataset_maestro.csv"
+          )
+
+          df["time"] = pd.to_datetime(
+              df["time"]
+          )
+
+          df = df.sort_values("time")
+
+          # No se mezclan fechas.
+          # El futuro siempre queda fuera del entrenamiento.
+
+          corte = pd.Timestamp(
+              "2018-01-01"
+          )
+
+          train = df[
+              df["time"] < corte
+          ].copy()
+
+          test = df[
+              df["time"] >= corte
+          ].copy()
+
+          train.to_csv(
+              "data/historico/train.csv",
+              index=False
+          )
+
+          test.to_csv(
+              "data/historico/test.csv",
+              index=False
+          )
+
+          print("TRAIN:", len(train))
+          print("TEST:", len(test))
+
+          print(
+              "EVENTOS TRAIN:",
+              train["evento_severo"].sum()
+          )
+
+          print(
+              "EVENTOS TEST:",
+              test["evento_severo"].sum()
+          )
+          PY
+
+      - name: Entrenar modelo base
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          import numpy as np
+          import os
+          import joblib
+
+          from sklearn.ensemble import RandomForestClassifier
+          from sklearn.metrics import (
+              classification_report,
+              confusion_matrix,
+              roc_auc_score
+          )
+
+          train = pd.read_csv(
+              "data/historico/train.csv"
+          )
+
+          test = pd.read_csv(
+              "data/historico/test.csv"
+          )
+
+          columnas = [
+              "temperature_2m",
+              "relative_humidity_2m",
+              "dew_point_2m",
+              "pressure_msl",
+              "precipitation",
+              "wind_speed_10m",
+              "wind_direction_10m",
+              "wind_gusts_10m",
+              "hora",
+              "mes",
+              "dia_anio",
+              "hora_sin",
+              "hora_cos",
+              "mes_sin",
+              "mes_cos",
+              "lluvia_1h",
+              "lluvia_3h",
+              "lluvia_6h",
+              "lluvia_12h",
+              "lluvia_24h",
+              "rafaga_max_3h",
+              "rafaga_max_6h",
+              "rafaga_max_12h",
+              "rafaga_max_24h",
+              "viento_max_3h",
+              "viento_max_6h",
+              "viento_max_12h",
+              "viento_max_24h",
+              "cambio_presion_1h",
+              "cambio_presion_3h",
+              "cambio_presion_6h",
+              "cambio_presion_12h",
+              "cambio_presion_24h",
+              "cambio_temp_1h",
+              "cambio_temp_3h",
+              "cambio_temp_6h",
+              "cambio_humedad_1h",
+              "cambio_humedad_3h",
+              "cambio_humedad_6h",
+              "cambio_viento_1h",
+              "cambio_viento_3h",
+              "cambio_viento_6h",
+              "presion_descenso_6h",
+              "presion_descenso_12h",
+              "lluvia_intensa_1h",
+              "lluvia_extrema_6h",
+              "viento_fuerte",
+              "viento_muy_fuerte"
+          ]
+
+          columnas = [
+              c for c in columnas
+              if c in train.columns
+          ]
+
+          X_train = (
+              train[columnas]
+              .replace([np.inf, -np.inf], np.nan)
+              .fillna(0)
+          )
+
+          y_train = train[
+              "evento_severo"
+          ].astype(int)
+
+          X_test = (
+              test[columnas]
+              .replace([np.inf, -np.inf], np.nan)
+              .fillna(0)
+          )
+
+          y_test = test[
+              "evento_severo"
+          ].astype(int)
+
+          if y_train.nunique() < 2:
+              print(
+                  "No hay suficientes clases "
+                  "para entrenar el modelo."
+              )
+              raise SystemExit(0)
+
+          modelo = RandomForestClassifier(
+              n_estimators=300,
+              max_depth=16,
+              min_samples_leaf=3,
+              class_weight="balanced",
+              random_state=42,
+              n_jobs=-1
+          )
+
+          modelo.fit(
+              X_train,
+              y_train
+          )
+
+          pred = modelo.predict(X_test)
+          prob = modelo.predict_proba(X_test)[:, 1]
+
+          os.makedirs(
+              "modelo",
+              exist_ok=True
+          )
+
+          joblib.dump(
+              modelo,
+              "modelo/climaar_randomforest.joblib"
+          )
+
+          reporte = classification_report(
+              y_test,
+              pred,
+              zero_division=0
+          )
+
+          matriz = confusion_matrix(
+              y_test,
+              pred
+          )
+
+          with open(
+              "modelo/metricas.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              f.write(
+                  "CLIMAAR - MODELO BASE\n"
+              )
+
+              f.write(
+                  "====================\n\n"
+              )
+
+              f.write(
+                  "Variables utilizadas:\n"
+              )
+
+              for c in columnas:
+                  f.write(f"- {c}\n")
+
+              f.write(
+                  "\nREPORTE\n\n"
+              )
+
+              f.write(reporte)
+
+              f.write(
+                  "\nMATRIZ DE CONFUSION\n"
+              )
+
+              f.write(
+                  str(matriz)
+              )
+
+              if y_test.nunique() == 2:
+
+                  auc = roc_auc_score(
+                      y_test,
+                      prob
+                  )
+
+                  f.write(
+                      "\n\nROC-AUC: "
+                      + str(auc)
+                  )
+
+          print(reporte)
+          print("Matriz:")
+          print(matriz)
+
+          if y_test.nunique() == 2:
+              print(
+                  "ROC-AUC:",
+                  roc_auc_score(
+                      y_test,
+                      prob
+                  )
+              )
+          else:
+              print(
+                  "ROC-AUC no calculable: "
+                  "el TEST tiene una sola clase."
+              )
+
+          print(
+              "Modelo guardado correctamente."
+          )
+          PY
+
+      - name: Guardar todo
+        run: |
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.com.ar"
+
+          git add \
+            data/historico/ \
+            modelo/
+
+          git commit \
+            -m "Construir dataset maestro ClimaAR" \
+            || echo "sin cambios"
+
+          git push
