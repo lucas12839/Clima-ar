@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import sys
-from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -16,13 +14,12 @@ from PIL import Image
 
 
 # ============================================================
-# CLIMAAR 5.0 - MOTOR OPERATIVO
+# CLIMAAR 5.0.1 - MOTOR OPERATIVO
 #
 # RainViewer + SAZB + modelo historico
 #
-# IMPORTANTE:
-# El modelo historico se usa solamente como contexto
-# exploratorio. NO se presenta como probabilidad calibrada.
+# El modelo historico es una firma atmosferica de contexto.
+# NO se presenta como probabilidad meteorologica calibrada.
 # ============================================================
 
 LAT = -38.71
@@ -40,20 +37,9 @@ STATUS_FILE = DATA_DIR / "status.json"
 
 SAZB_FILE = Path("data/sazb/status.json")
 
-MODEL_FILE = (
-    MODEL_DIR /
-    "climaar_modelo_historico.joblib"
-)
-
-FEATURES_FILE = (
-    MODEL_DIR /
-    "climaar_features.json"
-)
-
-METRICS_FILE = (
-    MODEL_DIR /
-    "climaar_modelo_historico_metricas.json"
-)
+MODEL_FILE = MODEL_DIR / "climaar_modelo_historico.joblib"
+FEATURES_FILE = MODEL_DIR / "climaar_features.json"
+METRICS_FILE = MODEL_DIR / "climaar_modelo_historico_metricas.json"
 
 RAINVIEWER_API = (
     "https://api.rainviewer.com/public/weather-maps.json"
@@ -69,21 +55,30 @@ OPEN_METEO_API = (
 # ============================================================
 
 def numero(valor, default=None):
-
     try:
         x = float(valor)
-
         if math.isfinite(x):
             return x
-
     except (TypeError, ValueError):
         pass
 
     return default
 
 
-def latlon_to_tile(lat, lon, zoom):
+def guardar_status(data):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+    STATUS_FILE.write_text(
+        json.dumps(
+            data,
+            ensure_ascii=False,
+            indent=2
+        ),
+        encoding="utf-8"
+    )
+
+
+def latlon_to_tile(lat, lon, zoom):
     n = 2.0 ** zoom
 
     x = int(
@@ -99,8 +94,7 @@ def latlon_to_tile(lat, lon, zoom):
             1.0
             - math.asinh(
                 math.tan(lat_rad)
-            )
-            / math.pi
+            ) / math.pi
         )
         / 2.0
         * n
@@ -123,7 +117,7 @@ def descargar_radar():
         RAINVIEWER_API,
         timeout=30,
         headers={
-            "User-Agent": "ClimaAR/5.0"
+            "User-Agent": "ClimaAR/5.0.1"
         }
     )
 
@@ -166,14 +160,13 @@ def descargar_radar():
         ZOOM
     )
 
-    size = (
-        TILE_SIZE
-        * (GRID_RADIUS * 2 + 1)
-    )
+    grid = GRID_RADIUS * 2 + 1
+
+    image_size = TILE_SIZE * grid
 
     image = Image.new(
         "RGBA",
-        (size, size),
+        (image_size, image_size),
         (0, 0, 0, 0)
     )
 
@@ -189,13 +182,16 @@ def descargar_radar():
             GRID_RADIUS + 1
         ):
 
+            tile_x = xt + dx
+            tile_y = yt + dy
+
             url = (
                 f"{host}"
                 f"{path}"
                 f"/{TILE_SIZE}"
                 f"/{ZOOM}"
-                f"/{xt + dx}"
-                f"/{yt + dy}"
+                f"/{tile_x}"
+                f"/{tile_y}"
                 f"/2/1_1.png"
             )
 
@@ -208,16 +204,14 @@ def descargar_radar():
 
                 if (
                     r.status_code != 200
-                    or len(r.content) < 200
+                    or len(r.content) < 100
                 ):
                     continue
 
                 tile = (
                     Image
                     .open(
-                        BytesIO(
-                            r.content
-                        )
+                        BytesIO(r.content)
                     )
                     .convert("RGBA")
                 )
@@ -227,7 +221,6 @@ def descargar_radar():
                     (
                         (dx + GRID_RADIUS)
                         * TILE_SIZE,
-
                         (dy + GRID_RADIUS)
                         * TILE_SIZE
                     ),
@@ -236,13 +229,15 @@ def descargar_radar():
 
                 tiles_ok += 1
 
-            except Exception:
-                continue
+            except Exception as exc:
+
+                print(
+                    f"Error tile {tile_x}/{tile_y}: {exc}"
+                )
 
     if tiles_ok == 0:
         raise RuntimeError(
-            "No se pudo descargar ninguna "
-            "tesela radar."
+            "No se pudo descargar ninguna tesela radar."
         )
 
     DATA_DIR.mkdir(
@@ -250,9 +245,7 @@ def descargar_radar():
         exist_ok=True
     )
 
-    image.save(
-        RADAR_IMAGE
-    )
+    image.save(RADAR_IMAGE)
 
     print(
         f"Radar guardado: {RADAR_IMAGE}"
@@ -289,11 +282,9 @@ def analizar_radar():
         image.ndim == 3
         and image.shape[2] >= 4
     ):
-
         alpha = image[:, :, 3]
 
     else:
-
         gray = cv2.cvtColor(
             image,
             cv2.COLOR_BGR2GRAY
@@ -317,8 +308,7 @@ def analizar_radar():
             "actividad": False,
             "area_px": 0,
             "distancia_aprox_km": None,
-            "estado":
-                "sin_precipitacion_detectada"
+            "estado": "sin_precipitacion_detectada"
         }
 
     ys, xs = np.where(
@@ -341,8 +331,8 @@ def analizar_radar():
     )
 
     # Aproximacion operacional.
-    # No es distancia georreferenciada
-    # de precision meteorologica.
+    # No es distancia meteorologica
+    # georreferenciada de precision.
 
     distance_km = round(
         distance_px * 0.85,
@@ -352,15 +342,13 @@ def analizar_radar():
     return {
         "actividad": True,
         "area_px": area,
-        "distancia_aprox_km":
-            distance_km,
-        "estado":
-            "precipitacion_detectada"
+        "distancia_aprox_km": distance_km,
+        "estado": "precipitacion_detectada"
     }
 
 
 # ============================================================
-# OBSERVACION SAZB
+# SAZB
 # ============================================================
 
 def cargar_sazb():
@@ -370,8 +358,7 @@ def cargar_sazb():
         return {
             "disponible": False,
             "motivo":
-                "No existe "
-                "data/sazb/status.json."
+                "No existe data/sazb/status.json."
         }
 
     try:
@@ -382,12 +369,10 @@ def cargar_sazb():
             )
         )
 
-        # Compatibilidad con respuestas
-        # que puedan venir envueltas en "content".
-
         if (
             isinstance(raw, dict)
             and "content" in raw
+            and isinstance(raw["content"], str)
         ):
 
             raw = json.loads(
@@ -395,14 +380,14 @@ def cargar_sazb():
             )
 
         if not raw.get(
-            "observacion_valida"
+            "observacion_valida",
+            False
         ):
 
             return {
                 "disponible": False,
                 "motivo":
-                    "La observacion SAZB "
-                    "no es valida."
+                    "La observacion SAZB no es valida."
             }
 
         return {
@@ -466,8 +451,10 @@ def cargar_sazb():
                 ),
 
             "visibilidad_millas":
-                raw.get(
-                    "visibilidad_millas"
+                numero(
+                    raw.get(
+                        "visibilidad_millas"
+                    )
                 )
         }
 
@@ -481,7 +468,7 @@ def cargar_sazb():
 
 
 # ============================================================
-# MODELO HISTORICO
+# MODELO
 # ============================================================
 
 def cargar_modelo():
@@ -510,7 +497,12 @@ def cargar_modelo():
 
         return paquete
 
-    except Exception:
+    except Exception as exc:
+
+        print(
+            f"Error cargando modelo: {exc}"
+        )
+
         return None
 
 
@@ -533,18 +525,36 @@ def cargar_features():
         ):
             return data
 
-    except Exception:
-        pass
+        if isinstance(
+            data,
+            dict
+        ):
+
+            for key in (
+                "features",
+                "columnas",
+                "feature_names"
+            ):
+
+                value = data.get(key)
+
+                if isinstance(
+                    value,
+                    list
+                ):
+                    return value
+
+    except Exception as exc:
+
+        print(
+            f"Error leyendo features: {exc}"
+        )
 
     return None
 
 
 # ============================================================
 # OPEN-METEO
-#
-# Se utiliza porque el modelo historico fue entrenado
-# con variables meteorologicas equivalentes.
-# SAZB sigue siendo la observacion operacional.
 # ============================================================
 
 def obtener_openmeteo_horario():
@@ -586,8 +596,7 @@ def obtener_openmeteo_horario():
         params=params,
         timeout=30,
         headers={
-            "User-Agent":
-                "ClimaAR/5.0"
+            "User-Agent": "ClimaAR/5.0.1"
         }
     )
 
@@ -595,9 +604,7 @@ def obtener_openmeteo_horario():
 
     data = response.json()
 
-    hourly = data.get(
-        "hourly"
-    )
+    hourly = data.get("hourly")
 
     if (
         not hourly
@@ -605,8 +612,7 @@ def obtener_openmeteo_horario():
     ):
 
         raise RuntimeError(
-            "Open-Meteo no devolvio "
-            "datos horarios."
+            "Open-Meteo no devolvio datos horarios."
         )
 
     df = pd.DataFrame(
@@ -625,9 +631,7 @@ def obtener_openmeteo_horario():
             subset=["time"]
         )
         .sort_values("time")
-        .reset_index(
-            drop=True
-        )
+        .reset_index(drop=True)
     )
 
     numeric = [
@@ -660,16 +664,10 @@ def obtener_openmeteo_horario():
 
 
 # ============================================================
-# CONSTRUIR FIRMA DIARIA
+# FEATURES HORARIAS
 # ============================================================
 
-def construir_features_dia(df):
-
-    if df.empty:
-
-        raise RuntimeError(
-            "No hay datos meteorologicos."
-        )
+def preparar_features_horarias(df):
 
     df = df.copy()
 
@@ -679,18 +677,18 @@ def construir_features_dia(df):
         df["dew_point_2m"]
     )
 
-    rad = np.deg2rad(
+    direccion = np.deg2rad(
         df["wind_direction_10m"]
     )
 
     df["viento_u"] = (
         df["wind_speed_10m"]
-        * np.sin(rad)
+        * np.sin(direccion)
     )
 
     df["viento_v"] = (
         df["wind_speed_10m"]
-        * np.cos(rad)
+        * np.cos(direccion)
     )
 
     df["cambio_presion_1h"] = (
@@ -727,7 +725,7 @@ def construir_features_dia(df):
         df["precipitation"]
         .rolling(
             3,
-            min_periods=3
+            min_periods=1
         )
         .sum()
     )
@@ -736,7 +734,7 @@ def construir_features_dia(df):
         df["precipitation"]
         .rolling(
             6,
-            min_periods=6
+            min_periods=1
         )
         .sum()
     )
@@ -745,7 +743,7 @@ def construir_features_dia(df):
         df["precipitation"]
         .rolling(
             12,
-            min_periods=12
+            min_periods=1
         )
         .sum()
     )
@@ -754,7 +752,7 @@ def construir_features_dia(df):
         df["wind_gusts_10m"]
         .rolling(
             3,
-            min_periods=3
+            min_periods=1
         )
         .max()
     )
@@ -763,7 +761,7 @@ def construir_features_dia(df):
         df["wind_gusts_10m"]
         .rolling(
             6,
-            min_periods=6
+            min_periods=1
         )
         .max()
     )
@@ -772,7 +770,7 @@ def construir_features_dia(df):
         df["wind_speed_10m"]
         .rolling(
             6,
-            min_periods=6
+            min_periods=1
         )
         .max()
     )
@@ -781,7 +779,7 @@ def construir_features_dia(df):
         df["pressure_msl"]
         .rolling(
             6,
-            min_periods=6
+            min_periods=1
         )
         .min()
     )
@@ -790,7 +788,7 @@ def construir_features_dia(df):
         df["pressure_msl"]
         .rolling(
             6,
-            min_periods=6
+            min_periods=1
         )
         .max()
     )
@@ -799,7 +797,7 @@ def construir_features_dia(df):
         df["relative_humidity_2m"]
         .rolling(
             6,
-            min_periods=6
+            min_periods=1
         )
         .max()
     )
@@ -808,32 +806,34 @@ def construir_features_dia(df):
         df["relative_humidity_2m"]
         .rolling(
             6,
-            min_periods=6
+            min_periods=1
         )
         .min()
     )
 
-    df["fecha"] = (
-        df["time"]
-        .dt.normalize()
+    return df
+
+
+# ============================================================
+# CONSTRUIR FIRMA DIARIA
+# ============================================================
+
+def construir_features_dia(df):
+
+    if df.empty:
+        raise RuntimeError(
+            "No hay datos meteorologicos."
+        )
+
+    df = preparar_features_horarias(
+        df
     )
 
-    fecha_actual = df[
-        "fecha"
-    ].max()
-
-    dia = df[
-        df["fecha"]
-        ==
-        fecha_actual
-    ].copy()
-
-    if len(dia) < 12:
-
-        raise RuntimeError(
-            "Hay menos de 12 horas disponibles "
-            "para evaluar la firma."
-        )
+    df["fecha"] = (
+        df["time"]
+        .dt
+        .date
+    )
 
     agregaciones = {
 
@@ -966,279 +966,335 @@ def construir_features_dia(df):
         ]
     }
 
+    # ========================================================
+    # CORRECCION IMPORTANTE:
+    #
+    # dia.agg(...) devuelve DataFrame.
+    # NO se debe llamar .to_frame() despues.
+    # ========================================================
+
+    fecha_actual = df["fecha"].max()
+
+    dia = df[
+        df["fecha"] == fecha_actual
+    ].copy()
+
+    if len(dia) < 12:
+
+        raise RuntimeError(
+            "Todavia no hay suficientes "
+            "horas para construir la firma diaria."
+        )
+
     out = (
         dia
         .agg(agregaciones)
-        .to_frame()
         .T
     )
 
-    out.columns = [
-        "_".join(
-            map(
-                str,
-                c
+    # El DataFrame anterior tiene
+    # una fila por variable y columnas
+    # mean/max/min. Lo convertimos
+    # a una sola fila correctamente.
+
+    valores = {}
+
+    for variable, funciones in agregaciones.items():
+
+        if variable not in out.index:
+            continue
+
+        for funcion in funciones:
+
+            nombre = (
+                f"{variable}_{funcion}"
             )
+
+            if funcion in out.columns:
+
+                valores[nombre] = numero(
+                    out.loc[
+                        variable,
+                        funcion
+                    ]
+                )
+
+    resultado = pd.DataFrame(
+        [valores]
+    )
+
+    # ========================================================
+    # Caracteristicas calendario
+    # ========================================================
+
+    fecha_timestamp = pd.Timestamp(
+        fecha_actual
+    )
+
+    resultado["mes"] = (
+        fecha_timestamp.month
+    )
+
+    resultado["dia_ano"] = (
+        fecha_timestamp.dayofyear
+    )
+
+    return resultado
+
+
+# ============================================================
+# NORMALIZAR NOMBRES
+# ============================================================
+
+def construir_vector_modelo(
+    features,
+    df_features
+):
+
+    if not features:
+
+        raise RuntimeError(
+            "No se encontro la lista de features del modelo."
         )
-        for c in out.columns
-    ]
 
-    out["mes"] = int(
-        fecha_actual.month
+    fila = df_features.iloc[0]
+
+    valores = {}
+
+    faltantes = []
+
+    for feature in features:
+
+        if feature in df_features.columns:
+
+            valor = numero(
+                fila[feature]
+            )
+
+            if valor is None:
+                faltantes.append(feature)
+            else:
+                valores[feature] = valor
+
+        else:
+
+            faltantes.append(feature)
+
+    if faltantes:
+
+        raise RuntimeError(
+            "Faltan features del modelo: "
+            + ", ".join(faltantes)
+        )
+
+    vector = pd.DataFrame(
+        [
+            [
+                valores[f]
+                for f in features
+            ]
+        ],
+        columns=features
     )
 
-    out["dia_ano"] = int(
-        fecha_actual.dayofyear
-    )
-
-    return out
+    return vector
 
 
 # ============================================================
 # EVALUAR MODELO HISTORICO
 # ============================================================
 
-def evaluar_firma_historica():
+def evaluar_modelo_historico(
+    df_horario
+):
 
     paquete = cargar_modelo()
-    features = cargar_features()
 
-    if (
-        paquete is None
-        or not features
-    ):
+    if paquete is None:
 
         return {
             "disponible": False,
             "motivo":
-                "Modelo historico o "
-                "features no disponibles."
+                "No se pudo cargar "
+                "climaar_modelo_historico.joblib"
+        }
+
+    features = cargar_features()
+
+    if features is None:
+
+        features = paquete.get(
+            "features"
+        )
+
+    if not features:
+
+        return {
+            "disponible": False,
+            "motivo":
+                "El modelo no contiene "
+                "la lista de features."
         }
 
     try:
 
-        df = (
-            obtener_openmeteo_horario()
+        df_features = construir_features_dia(
+            df_horario
         )
 
-        fila = (
-            construir_features_dia(df)
+        vector = construir_vector_modelo(
+            features,
+            df_features
         )
 
-        faltantes = [
-            f
-            for f in features
-            if f not in fila.columns
-        ]
+        modelo = paquete["modelo"]
+        scaler = paquete["scaler"]
 
-        if faltantes:
-
-            return {
-                "disponible": False,
-                "motivo":
-                    "Faltan features: "
-                    +
-                    ", ".join(
-                        faltantes
-                    )
-            }
-
-        X = (
-            fila[features]
-            .replace(
-                [np.inf, -np.inf],
-                np.nan
-            )
+        X = scaler.transform(
+            vector
         )
 
-        if X.isna().any().any():
-
-            return {
-                "disponible": False,
-                "motivo":
-                    "La firma actual contiene "
-                    "valores faltantes."
-            }
-
-        scaler = (
-            paquete["scaler"]
-        )
-
-        modelo = (
-            paquete["modelo"]
-        )
-
-        X_scaled = (
-            scaler.transform(X)
-        )
-
-        probabilidad = float(
-            modelo.predict_proba(
-                X_scaled
-            )[0, 1]
-        )
-
-        metricas = {}
-
-        if METRICS_FILE.exists():
-
-            try:
-
-                metricas = json.loads(
-                    METRICS_FILE.read_text(
-                        encoding="utf-8"
-                    )
-                )
-
-            except Exception:
-                metricas = {}
-
-        fecha_evaluada = (
-            df["fecha"]
-            .max()
-            .date()
-        )
-
-        horas = int(
-            len(
-                df[
-                    df["fecha"]
-                    ==
-                    df["fecha"].max()
-                ]
-            )
-        )
-
-        return {
-
+        resultado = {
             "disponible": True,
-
-            "tipo":
-                "firma_atmosferica_historica_exploratoria",
-
-            "fecha_evaluada_utc":
-                str(
-                    fecha_evaluada
-                ),
-
-            "horas_disponibles":
-                horas,
-
-            "score_exploratorio":
-                round(
-                    probabilidad,
-                    4
-                ),
-
-            "umbral_referencia":
-                metricas.get(
-                    "umbral_referencia"
-                ),
-
-            "dias_entrenamiento":
-                metricas.get(
-                    "dias_totales"
-                ),
-
-            "eventos_entrenamiento":
-                metricas.get(
-                    "eventos_severos_reales"
-                ),
-
-            "interpretacion":
-                "No es una probabilidad calibrada "
-                "ni una alerta. Es una similitud "
-                "exploratoria con firmas historicas."
+            "modelo": paquete.get(
+                "version",
+                "historico"
+            ),
+            "tipo": paquete.get(
+                "tipo",
+                "firma_atmosferica"
+            ),
+            "features_utilizadas": len(
+                features
+            )
         }
+
+        if hasattr(
+            modelo,
+            "predict_proba"
+        ):
+
+            probabilidades = (
+                modelo
+                .predict_proba(X)[0]
+            )
+
+            clases = getattr(
+                modelo,
+                "classes_",
+                None
+            )
+
+            if clases is not None:
+
+                for clase, prob in zip(
+                    clases,
+                    probabilidades
+                ):
+
+                    try:
+                        clase_int = int(clase)
+                    except Exception:
+                        clase_int = str(clase)
+
+                    resultado[
+                        f"probabilidad_clase_{clase_int}"
+                    ] = round(
+                        float(prob),
+                        6
+                    )
+
+                if 1 in list(clases):
+
+                    indice = list(
+                        clases
+                    ).index(1)
+
+                    resultado[
+                        "score_evento_historico"
+                    ] = round(
+                        float(
+                            probabilidades[
+                                indice
+                            ]
+                        ),
+                        6
+                    )
+
+        prediccion = modelo.predict(X)
+
+        resultado[
+            "clasificacion_historica"
+        ] = int(
+            prediccion[0]
+        )
+
+        resultado[
+            "advertencia"
+        ] = (
+            "Firma atmosferica historica "
+            "exploratoria. No es una probabilidad "
+            "calibrada de tormenta inmediata."
+        )
+
+        return resultado
 
     except Exception as exc:
 
         return {
             "disponible": False,
             "motivo":
-                "No se pudo evaluar la "
-                f"firma historica: {exc}"
+                f"No se pudo evaluar "
+                f"la firma historica: {exc}"
         }
 
 
 # ============================================================
-# GENERAR ESTADO
+# METRICAS DEL MODELO
 # ============================================================
 
-def generar_estado():
+def cargar_metricas():
 
-    DATA_DIR.mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    if not METRICS_FILE.exists():
+        return None
 
-    radar = descargar_radar()
+    try:
 
-    radar_analisis = (
-        analizar_radar()
-    )
-
-    sazb = cargar_sazb()
-
-    historico = (
-        evaluar_firma_historica()
-    )
-
-    if radar_analisis[
-        "actividad"
-    ]:
-
-        estado = (
-            "precipitacion_detectada"
+        return json.loads(
+            METRICS_FILE.read_text(
+                encoding="utf-8"
+            )
         )
 
-    else:
+    except Exception:
+        return None
 
-        estado = (
-            "sin_actividad_radar"
-        )
 
-    resultado = {
+# ============================================================
+# MAIN
+# ============================================================
 
-        "version": "5.0",
+def main():
 
-        "actualizado_utc":
-            datetime.now(
-                timezone.utc
-            ).isoformat(),
+    status = {
+
+        "version":
+            "5.0.1",
+
+        "app":
+            "ClimaAR",
 
         "ubicacion": {
 
+            "latitud": LAT,
+
+            "longitud": LON,
+
             "ciudad":
-                "Bahia Blanca",
-
-            "latitud":
-                LAT,
-
-            "longitud":
-                LON
+                "Bahia Blanca"
         },
 
-        "estado":
-            estado,
-
-        "radar": {
-
-            "fuente":
-                "RainViewer",
-
-            **radar,
-
-            **radar_analisis
-        },
-
-        "observacion_sazb":
-            sazb,
-
-        "modelo_historico":
-            historico,
-
-        "motor_operativo": {
+        "fuentes": {
 
             "radar":
                 "RainViewer",
@@ -1246,69 +1302,160 @@ def generar_estado():
             "observacion":
                 "SAZB",
 
-            "contexto_historico":
-                "RandomForest historico ClimaAR",
+            "meteorologia":
+                "Open-Meteo",
 
-            "nowcast_radar_ia":
-                False
-        },
-
-        "limitaciones": [
-
-            "El score historico es exploratorio "
-            "y no esta calibrado como probabilidad.",
-
-            "El modelo historico fue entrenado "
-            "con firmas diarias de eventos catalogados.",
-
-            "La prediccion de movimiento de celulas "
-            "y ETA requiere la secuencia temporal "
-            "del radar.",
-
-            "La distancia radar actual es aproximada."
-        ]
+            "modelo":
+                "historico ClimaAR"
+        }
     }
 
-    STATUS_FILE.write_text(
-
-        json.dumps(
-            resultado,
-            indent=2,
-            ensure_ascii=False
-        ),
-
-        encoding="utf-8"
-    )
-
-    print(
-        json.dumps(
-            resultado,
-            indent=2,
-            ensure_ascii=False
-        )
-    )
-
-    print("=" * 70)
-    print(
-        "CLIMAAR OPERATIVO 5.0: OK"
-    )
-    print("=" * 70)
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
-if __name__ == "__main__":
+    # ========================================================
+    # RADAR
+    # ========================================================
 
     try:
 
-        generar_estado()
+        radar_info = descargar_radar()
+
+        radar_analisis = analizar_radar()
+
+        status["radar"] = {
+            **radar_info,
+            **radar_analisis
+        }
 
     except Exception as exc:
 
-        print(
-            f"ERROR OPERATIVO: {exc}"
+        status["radar"] = {
+
+            "disponible": False,
+
+            "error": str(exc)
+        }
+
+    # ========================================================
+    # SAZB
+    # ========================================================
+
+    try:
+
+        status["sazb"] = cargar_sazb()
+
+    except Exception as exc:
+
+        status["sazb"] = {
+
+            "disponible": False,
+
+            "motivo": str(exc)
+        }
+
+    # ========================================================
+    # OPEN-METEO + MODELO
+    # ========================================================
+
+    try:
+
+        df_horario = (
+            obtener_openmeteo_horario()
         )
 
-        sys.exit(1)
+        status["meteorologia"] = {
+
+            "disponible": True,
+
+            "registros": int(
+                len(df_horario)
+            ),
+
+            "ultimo_dato_utc":
+                df_horario["time"]
+                .max()
+                .isoformat()
+        }
+
+        status[
+            "modelo_historico"
+        ] = evaluar_modelo_historico(
+            df_horario
+        )
+
+    except Exception as exc:
+
+        status["meteorologia"] = {
+
+            "disponible": False,
+
+            "error": str(exc)
+        }
+
+        status[
+            "modelo_historico"
+        ] = {
+
+            "disponible": False,
+
+            "motivo":
+                f"No se pudo obtener "
+                f"meteorologia/modelo: {exc}"
+        }
+
+    # ========================================================
+    # METRICAS
+    # ========================================================
+
+    metricas = cargar_metricas()
+
+    if metricas is not None:
+
+        status[
+            "metricas_modelo"
+        ] = metricas
+
+    # ========================================================
+    # ESTADO GENERAL
+    # ========================================================
+
+    status[
+        "nowcast_radar_ia"
+    ] = False
+
+    status[
+        "modelo_historico_es_calibrado"
+    ] = False
+
+    status[
+        "estado"
+    ] = "operativo"
+
+    status[
+        "ultima_actualizacion_utc"
+    ] = pd.Timestamp.now(
+        tz="UTC"
+    ).isoformat()
+
+    guardar_status(
+        status
+    )
+
+    print("=" * 70)
+    print("CLIMAAR - RESULTADO")
+    print("=" * 70)
+
+    print(
+        json.dumps(
+            status,
+            ensure_ascii=False,
+            indent=2
+        )
+    )
+
+    print("=" * 70)
+    print("STATUS GUARDADO EN:")
+    print(STATUS_FILE)
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()
