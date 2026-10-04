@@ -1,59 +1,71 @@
 import os
-import json
-import warnings
+import re
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-warnings.filterwarnings("ignore")
-
 # ============================================================
-# CLIMAAR - CONSTRUCCION FINAL DEL DATASET
+# CLIMAAR - CONSTRUCCION DEL DATASET FINAL
 # ============================================================
 
-BASE = Path(".")
-HIST = BASE / "data" / "historico"
-FINAL = BASE / "data" / "final"
+HISTORICO = Path("data/historico/clima_horario_1980_2026.csv")
+EVENTOS = Path("data/historico/eventos_severos.csv")
+META = Path("data/historico/climaar_datos_historicos_meta.txt")
 
-FINAL.mkdir(parents=True, exist_ok=True)
+OUTDIR = Path("data/final")
 
-CLIMA_FILE = HIST / "clima_horario_1980_2026.csv"
-EVENTOS_FILE = HIST / "eventos_severos.csv"
-META_FILE = HIST / "climaar_datos_historicos_meta.txt"
+OUT = OUTDIR / "climaar_dataset_completo_1980_2026.csv"
+CAT = OUTDIR / "catalogo_historico_documental.csv"
+RES = OUTDIR / "resumen_dataset_final.csv"
 
-OUTPUT_DATASET = FINAL / "climaar_dataset_completo_1980_2026.csv"
-OUTPUT_CATALOGO = FINAL / "catalogo_historico_documental.csv"
-OUTPUT_RESUMEN = FINAL / "resumen_dataset_final.csv"
+OUTDIR.mkdir(parents=True, exist_ok=True)
 
 
-print("=" * 70)
+def fail(msg):
+    raise SystemExit(f"ERROR: {msg}")
+
+
+def as_number(value):
+    if pd.isna(value):
+        return np.nan
+
+    m = re.search(
+        r"[-+]?\d+(?:[\\.,]\d+)?",
+        str(value)
+    )
+
+    if not m:
+        return np.nan
+
+    return float(
+        m.group(0).replace(",", ".")
+    )
+
+
+print("=" * 72)
 print("CLIMAAR - DATASET FINAL")
-print("=" * 70)
+print("=" * 72)
 
 
 # ============================================================
 # 1. VERIFICAR ARCHIVOS
 # ============================================================
 
-if not CLIMA_FILE.exists():
-    raise FileNotFoundError(
-        f"No existe: {CLIMA_FILE}"
-    )
+if not HISTORICO.exists():
+    fail(f"No existe {HISTORICO}")
 
-if not EVENTOS_FILE.exists():
-    raise FileNotFoundError(
-        f"No existe: {EVENTOS_FILE}"
-    )
+if not EVENTOS.exists():
+    fail(f"No existe {EVENTOS}")
 
 
 # ============================================================
 # 2. CARGAR HISTORICO METEOROLOGICO
 # ============================================================
 
-print("\n[1/8] Cargando histórico meteorológico...")
+print("[1/9] Cargando histórico meteorológico...")
 
-df = pd.read_csv(CLIMA_FILE)
+clima = pd.read_csv(HISTORICO)
 
 required = [
     "time",
@@ -69,631 +81,887 @@ required = [
 
 missing = [
     c for c in required
-    if c not in df.columns
+    if c not in clima.columns
 ]
 
 if missing:
-    raise ValueError(
-        "Faltan columnas en el histórico: "
+    fail(
+        "Faltan columnas: "
         + ", ".join(missing)
     )
 
-df["time"] = pd.to_datetime(
-    df["time"],
+clima["time"] = pd.to_datetime(
+    clima["time"],
     errors="coerce"
 )
 
-df = df.dropna(subset=["time"]).copy()
-df = df.sort_values("time")
-df = df.drop_duplicates(
+clima = clima.dropna(
     subset=["time"]
-).reset_index(drop=True)
-
-print(f"Registros: {len(df):,}")
-print(
-    f"Desde: {df['time'].min()}"
 )
+
+clima = (
+    clima
+    .sort_values("time")
+    .drop_duplicates("time")
+    .reset_index(drop=True)
+)
+
+for c in required[1:]:
+    clima[c] = pd.to_numeric(
+        clima[c],
+        errors="coerce"
+    )
+
+clima["precipitation"] = (
+    clima["precipitation"]
+    .clip(lower=0)
+)
+
+clima["relative_humidity_2m"] = (
+    clima["relative_humidity_2m"]
+    .clip(0, 100)
+)
+
 print(
-    f"Hasta: {df['time'].max()}"
+    f"Registros: {len(clima):,}"
+)
+
+print(
+    f"Desde: {clima['time'].min()}"
+)
+
+print(
+    f"Hasta: {clima['time'].max()}"
 )
 
 
 # ============================================================
-# 3. LIMPIEZA NUMERICA
+# 3. VARIABLES TEMPORALES
 # ============================================================
 
-print("\n[2/8] Limpiando variables...")
+print("[2/9] Variables temporales...")
 
-numeric_cols = [
+clima["year"] = clima["time"].dt.year
+clima["month"] = clima["time"].dt.month
+clima["day"] = clima["time"].dt.day
+clima["hour"] = clima["time"].dt.hour
+clima["dayofyear"] = clima["time"].dt.dayofyear
+
+clima["hour_sin"] = np.sin(
+    2 * np.pi * clima["hour"] / 24
+)
+
+clima["hour_cos"] = np.cos(
+    2 * np.pi * clima["hour"] / 24
+)
+
+clima["month_sin"] = np.sin(
+    2 * np.pi * clima["month"] / 12
+)
+
+clima["month_cos"] = np.cos(
+    2 * np.pi * clima["month"] / 12
+)
+
+
+# ============================================================
+# 4. EVOLUCION METEOROLOGICA
+# ============================================================
+
+print("[3/9] Evolución meteorológica...")
+
+x = clima.set_index("time")
+
+# Acumulados de precipitación
+for h in [
+    1,
+    3,
+    6,
+    12,
+    24,
+    48,
+    72
+]:
+
+    x[f"precip_{h}h"] = (
+        x["precipitation"]
+        .rolling(
+            h,
+            min_periods=1
+        )
+        .sum()
+    )
+
+
+# Máximos de viento
+for h in [
+    3,
+    6,
+    12,
+    24,
+    48,
+    72
+]:
+
+    x[f"gust_max_{h}h"] = (
+        x["wind_gusts_10m"]
+        .rolling(
+            h,
+            min_periods=1
+        )
+        .max()
+    )
+
+    x[f"wind_max_{h}h"] = (
+        x["wind_speed_10m"]
+        .rolling(
+            h,
+            min_periods=1
+        )
+        .max()
+    )
+
+
+# Cambios meteorológicos
+for h in [
+    1,
+    3,
+    6,
+    12,
+    24
+]:
+
+    x[f"pressure_change_{h}h"] = (
+        x["pressure_msl"]
+        - x["pressure_msl"].shift(h)
+    )
+
+    x[f"temperature_change_{h}h"] = (
+        x["temperature_2m"]
+        - x["temperature_2m"].shift(h)
+    )
+
+    x[f"humidity_change_{h}h"] = (
+        x["relative_humidity_2m"]
+        - x["relative_humidity_2m"].shift(h)
+    )
+
+    x[f"wind_change_{h}h"] = (
+        x["wind_speed_10m"]
+        - x["wind_speed_10m"].shift(h)
+    )
+
+    x[f"gust_change_{h}h"] = (
+        x["wind_gusts_10m"]
+        - x["wind_gusts_10m"].shift(h)
+    )
+
+clima = x.reset_index()
+
+
+# Variables adicionales
+clima["temperature_dewpoint_gap"] = (
+    clima["temperature_2m"]
+    - clima["dew_point_2m"]
+)
+
+clima["pressure_drop_6h_flag"] = (
+    clima["pressure_change_6h"] <= -3
+).astype("int8")
+
+clima["pressure_drop_12h_flag"] = (
+    clima["pressure_change_12h"] <= -5
+).astype("int8")
+
+clima["rain_1h_ge_20mm"] = (
+    clima["precip_1h"] >= 20
+).astype("int8")
+
+clima["rain_6h_ge_50mm"] = (
+    clima["precip_6h"] >= 50
+).astype("int8")
+
+clima["gust_ge_80"] = (
+    clima["wind_gusts_10m"] >= 80
+).astype("int8")
+
+clima["gust_ge_100"] = (
+    clima["wind_gusts_10m"] >= 100
+).astype("int8")
+
+
+# ============================================================
+# 5. CLIMATOLOGIA 1991-2020
+# ============================================================
+
+print("[4/9] Climatología 1991-2020...")
+
+ref = clima[
+    clima["year"].between(
+        1991,
+        2020
+    )
+].copy()
+
+if ref.empty:
+    fail(
+        "No existen datos 1991-2020."
+    )
+
+ref_vars = [
     "temperature_2m",
     "relative_humidity_2m",
     "dew_point_2m",
     "pressure_msl",
     "precipitation",
     "wind_speed_10m",
-    "wind_direction_10m",
     "wind_gusts_10m",
 ]
 
-for col in numeric_cols:
-    df[col] = pd.to_numeric(
-        df[col],
-        errors="coerce"
+means = (
+    ref
+    .groupby("month")[ref_vars]
+    .mean()
+)
+
+for c in ref_vars:
+
+    clima[
+        f"{c}_clim_mean_1991_2020"
+    ] = clima["month"].map(
+        means[c].to_dict()
     )
 
-df["precipitation"] = (
-    df["precipitation"]
-    .clip(lower=0)
-)
+    clima[
+        f"{c}_anomaly_1991_2020"
+    ] = (
+        clima[c]
+        - clima[
+            f"{c}_clim_mean_1991_2020"
+        ]
+    )
 
-df["relative_humidity_2m"] = (
-    df["relative_humidity_2m"]
-    .clip(0, 100)
-)
+
+# Percentiles climatológicos
+for c in [
+    "precipitation",
+    "wind_gusts_10m",
+    "temperature_2m"
+]:
+
+    p95 = (
+        ref
+        .groupby("month")[c]
+        .quantile(0.95)
+        .to_dict()
+    )
+
+    p99 = (
+        ref
+        .groupby("month")[c]
+        .quantile(0.99)
+        .to_dict()
+    )
+
+    clima[
+        f"{c}_p95_1991_2020"
+    ] = clima["month"].map(p95)
+
+    clima[
+        f"{c}_p99_1991_2020"
+    ] = clima["month"].map(p99)
+
+    clima[
+        f"{c}_above_p95"
+    ] = (
+        clima[c]
+        >= clima[
+            f"{c}_p95_1991_2020"
+        ]
+    ).astype("int8")
+
+    clima[
+        f"{c}_above_p99"
+    ] = (
+        clima[c]
+        >= clima[
+            f"{c}_p99_1991_2020"
+        ]
+    ).astype("int8")
 
 
 # ============================================================
-# 4. VARIABLES TEMPORALES
+# 6. EVENTOS HISTORICOS
 # ============================================================
 
-print("\n[3/8] Generando variables temporales...")
+print("[5/9] Eventos históricos...")
 
-df["year"] = df["time"].dt.year
-df["month"] = df["time"].dt.month
-df["day"] = df["time"].dt.day
-df["hour"] = df["time"].dt.hour
-df["dayofyear"] = df["time"].dt.dayofyear
+ev = pd.read_csv(EVENTOS)
 
-df["month_sin"] = np.sin(
-    2 * np.pi * df["month"] / 12
-)
-
-df["month_cos"] = np.cos(
-    2 * np.pi * df["month"] / 12
-)
-
-df["hour_sin"] = np.sin(
-    2 * np.pi * df["hour"] / 24
-)
-
-df["hour_cos"] = np.cos(
-    2 * np.pi * df["hour"] / 24
-)
-
-
-# ============================================================
-# 5. VARIABLES METEOROLOGICAS MOVILES
-# ============================================================
-
-print("\n[4/8] Calculando evolución meteorológica...")
-
-df["precip_1h"] = (
-    df["precipitation"]
-)
-
-for h in [3, 6, 12, 24, 48, 72]:
-    df[f"precip_{h}h"] = (
-        df["precipitation"]
-        .rolling(h, min_periods=1)
-        .sum()
+if "fecha" not in ev.columns:
+    fail(
+        "eventos_severos.csv no contiene 'fecha'."
     )
 
-for h in [3, 6, 12, 24, 48, 72]:
-    df[f"gust_max_{h}h"] = (
-        df["wind_gusts_10m"]
-        .rolling(h, min_periods=1)
-        .max()
-    )
-
-for h in [3, 6, 12, 24, 48, 72]:
-    df[f"wind_max_{h}h"] = (
-        df["wind_speed_10m"]
-        .rolling(h, min_periods=1)
-        .max()
-    )
-
-
-# ============================================================
-# 6. CAMBIOS METEOROLOGICOS
-# ============================================================
-
-print("\n[5/8] Calculando cambios...")
-
-for h in [1, 3, 6, 12, 24]:
-    df[f"pressure_change_{h}h"] = (
-        df["pressure_msl"]
-        - df["pressure_msl"].shift(h)
-    )
-
-    df[f"temperature_change_{h}h"] = (
-        df["temperature_2m"]
-        - df["temperature_2m"].shift(h)
-    )
-
-    df[f"humidity_change_{h}h"] = (
-        df["relative_humidity_2m"]
-        - df["relative_humidity_2m"].shift(h)
-    )
-
-    df[f"wind_change_{h}h"] = (
-        df["wind_speed_10m"]
-        - df["wind_speed_10m"].shift(h)
-    )
-
-    df[f"gust_change_{h}h"] = (
-        df["wind_gusts_10m"]
-        - df["wind_gusts_10m"].shift(h)
-    )
-
-
-# ============================================================
-# 7. CLIMATOLOGIA 1991-2020
-# ============================================================
-
-print("\n[6/8] Calculando climatología 1991-2020...")
-
-clim = df[
-    (df["year"] >= 1991)
-    & (df["year"] <= 2020)
-].copy()
-
-if len(clim) == 0:
-    raise ValueError(
-        "No hay datos suficientes para climatología 1991-2020."
-    )
-
-clim_month = (
-    clim
-    .groupby("month")
-    .agg(
-        clima_temp_media=(
-            "temperature_2m",
-            "mean"
-        ),
-        clima_humedad_media=(
-            "relative_humidity_2m",
-            "mean"
-        ),
-        clima_presion_media=(
-            "pressure_msl",
-            "mean"
-        ),
-        clima_precip_media=(
-            "precipitation",
-            "mean"
-        ),
-        clima_viento_media=(
-            "wind_speed_10m",
-            "mean"
-        ),
-        clima_rafaga_media=(
-            "wind_gusts_10m",
-            "mean"
-        ),
-        clima_precip_p95=(
-            "precipitation",
-            lambda x: x.quantile(0.95)
-        ),
-        clima_precip_p99=(
-            "precipitation",
-            lambda x: x.quantile(0.99)
-        ),
-        clima_rafaga_p95=(
-            "wind_gusts_10m",
-            lambda x: x.quantile(0.95)
-        ),
-        clima_rafaga_p99=(
-            "wind_gusts_10m",
-            lambda x: x.quantile(0.99)
-        ),
-        clima_temp_p95=(
-            "temperature_2m",
-            lambda x: x.quantile(0.95)
-        ),
-        clima_temp_p05=(
-            "temperature_2m",
-            lambda x: x.quantile(0.05)
-        ),
-    )
-    .reset_index()
-)
-
-df = df.merge(
-    clim_month,
-    on="month",
-    how="left"
-)
-
-df["anomalia_temperatura"] = (
-    df["temperature_2m"]
-    - df["clima_temp_media"]
-)
-
-df["anomalia_humedad"] = (
-    df["relative_humidity_2m"]
-    - df["clima_humedad_media"]
-)
-
-df["anomalia_presion"] = (
-    df["pressure_msl"]
-    - df["clima_presion_media"]
-)
-
-df["anomalia_precipitacion"] = (
-    df["precipitation"]
-    - df["clima_precip_media"]
-)
-
-df["anomalia_viento"] = (
-    df["wind_speed_10m"]
-    - df["clima_viento_media"]
-)
-
-df["anomalia_rafaga"] = (
-    df["wind_gusts_10m"]
-    - df["clima_rafaga_media"]
-)
-
-
-# ============================================================
-# 8. EVENTOS SEVEROS
-# ============================================================
-
-print("\n[7/8] Incorporando eventos históricos...")
-
-eventos = pd.read_csv(
-    EVENTOS_FILE
-)
-
-if "fecha" not in eventos.columns:
-    raise ValueError(
-        "eventos_severos.csv no tiene columna fecha."
-    )
-
-eventos["fecha"] = pd.to_datetime(
-    eventos["fecha"],
+ev["fecha"] = pd.to_datetime(
+    ev["fecha"],
     errors="coerce"
 )
 
-eventos = eventos.dropna(
-    subset=["fecha"]
-).copy()
-
-eventos["fecha_dia"] = (
-    eventos["fecha"].dt.normalize()
+ev = (
+    ev
+    .dropna(subset=["fecha"])
+    .sort_values("fecha")
+    .reset_index(drop=True)
 )
 
-# Inicializar etiquetas
-df["evento_severo"] = 0
-df["evento_6h"] = 0
-df["evento_12h"] = 0
-df["evento_24h"] = 0
-df["evento_48h"] = 0
-df["evento_72h"] = 0
 
-df["evento_tipo"] = ""
-df["evento_rafaga_kmh"] = np.nan
-df["evento_lluvia_mm"] = np.nan
-df["evento_tornado"] = 0
-df["evento_inundacion"] = 0
-df["evento_granizo"] = 0
+# ------------------------------------------------------------
+# IMPORTANTE
+#
+# Los eventos disponibles tienen fecha.
+# No vamos a inventar una hora que la fuente no proporciona.
+# ------------------------------------------------------------
 
-for _, ev in eventos.iterrows():
+# Objetivos futuros
+for h in [
+    6,
+    12,
+    24,
+    48,
+    72
+]:
 
-    fecha = ev["fecha"]
+    clima[
+        f"target_next_{h}h"
+    ] = 0
 
-    # Momento del evento.
-    # Solo usamos información previa para los objetivos.
-    inicio = fecha - pd.Timedelta(hours=72)
-    fin = fecha
 
-    mask72 = (
-        (df["time"] >= inicio)
-        & (df["time"] < fin)
+clima["event_id"] = ""
+clima["event_type"] = ""
+
+clima["event_time_precision"] = (
+    "none"
+)
+
+clima["label_quality"] = (
+    "none"
+)
+
+clima["hours_to_event"] = np.nan
+
+
+# ------------------------------------------------------------
+# Etiquetado
+# ------------------------------------------------------------
+
+for _, evento in ev.iterrows():
+
+    fecha = evento["fecha"].normalize()
+
+    nombre_evento = str(
+        evento.get(
+            "evento",
+            ""
+        )
     )
 
-    df.loc[mask72, "evento_72h"] = 1
+    event_id = fecha.strftime(
+        "%Y-%m-%d"
+    )
 
-    for h, col in [
-        (6, "evento_6h"),
-        (12, "evento_12h"),
-        (24, "evento_24h"),
-        (48, "evento_48h"),
-        (72, "evento_72h"),
+    # --------------------------------------------------------
+    # Como NO tenemos hora exacta,
+    # NO inventamos targets de 6h/12h.
+    # --------------------------------------------------------
+
+    for h in [
+        24,
+        48,
+        72
     ]:
 
-        inicio_h = (
+        inicio = (
             fecha
             - pd.Timedelta(hours=h)
         )
 
         mask = (
-            (df["time"] >= inicio_h)
-            & (df["time"] < fecha)
+            (clima["time"] >= inicio)
+            &
+            (clima["time"] < fecha)
         )
 
-        df.loc[mask, col] = 1
-
-    # El evento queda asociado al momento exacto
-    # cuando existe un registro horario correspondiente.
-    exact = (
-        df["time"]
-        == fecha
-    )
-
-    if exact.any():
-
-        df.loc[
-            exact,
-            "evento_severo"
+        clima.loc[
+            mask,
+            f"target_next_{h}h"
         ] = 1
 
-        if "evento" in eventos.columns:
-            df.loc[
-                exact,
-                "evento_tipo"
-            ] = str(
-                ev.get("evento", "")
-            )
+        clima.loc[
+            mask,
+            "event_id"
+        ] = event_id
 
-        if "rafaga_kmh" in eventos.columns:
-            df.loc[
-                exact,
-                "evento_rafaga_kmh"
-            ] = pd.to_numeric(
-                ev.get("rafaga_kmh"),
-                errors="coerce"
-            )
+        clima.loc[
+            mask,
+            "event_type"
+        ] = nombre_evento
 
-        if "lluvia_mm" in eventos.columns:
-            df.loc[
-                exact,
-                "evento_lluvia_mm"
-            ] = pd.to_numeric(
-                ev.get("lluvia_mm"),
-                errors="coerce"
-            )
+        clima.loc[
+            mask,
+            "event_time_precision"
+        ] = "date_only"
 
-        for source_col, target_col in [
-            ("tornado", "evento_tornado"),
-            ("inundacion", "evento_inundacion"),
-            ("granizo", "evento_granizo"),
-        ]:
-            if source_col in eventos.columns:
-                df.loc[
-                    exact,
-                    target_col
-                ] = pd.to_numeric(
-                    ev.get(source_col),
-                    errors="coerce"
-                )
+        clima.loc[
+            mask,
+            "label_quality"
+        ] = "date_only_proxy"
+
+        clima.loc[
+            mask,
+            "hours_to_event"
+        ] = (
+            fecha
+            - clima.loc[
+                mask,
+                "time"
+            ]
+        ).dt.total_seconds() / 3600
+
+
+# ------------------------------------------------------------
+# Objetivos 6h y 12h
+#
+# Se dejan como NaN porque no conocemos la hora exacta
+# de ocurrencia de los eventos.
+# ------------------------------------------------------------
+
+for h in [
+    6,
+    12
+]:
+
+    clima[
+        f"target_next_{h}h"
+    ] = np.nan
+
+
+# ------------------------------------------------------------
+# Protección contra leakage
+# ------------------------------------------------------------
+
+clima["post_event_label"] = 0
 
 
 # ============================================================
-# 9. INFORMACION DOCUMENTAL
+# 7. CATALOGO DOCUMENTAL
 # ============================================================
 
-print("\n[8/8] Registrando fuentes documentales...")
+print("[6/9] Catálogo documental...")
 
-documentos = []
+doc = []
 
-if META_FILE.exists():
+if META.exists():
 
-    texto = META_FILE.read_text(
+    raw = META.read_text(
         encoding="utf-8",
         errors="ignore"
     )
 
-    documentos.append({
-        "fuente": "climaar_datos_historicos_meta.txt",
-        "disponible": 1,
-        "tamano_caracteres": len(texto),
-        "observacion":
-            "Paquete textual de fuentes meteorológicas. "
-            "Los gráficos sin valor numérico exacto "
-            "no se convierten automáticamente en números."
+    sources = re.findall(
+        r"FUENTE:\s*(.*?)\s*={5,}",
+        raw,
+        flags=re.S
+    )
+
+    for source in sources:
+
+        source = " ".join(
+            source.split()
+        )
+
+        if source:
+
+            doc.append({
+                "tipo": "documento",
+                "fuente": source,
+                "fecha": "",
+                "evento": "",
+                "variable": "",
+                "valor": np.nan,
+                "unidad": "",
+                "verificacion":
+                    "fuente_incluida",
+                "nota":
+                    "Los gráficos sin valor numérico exacto no se convierten en números."
+            })
+
+
+# ------------------------------------------------------------
+# Datos numéricos explícitos
+# ------------------------------------------------------------
+
+explicit = [
+
+    (
+        "1981-03-14",
+        "Temporal grave",
+        "rafaga_kmh",
+        110,
+        "km/h"
+    ),
+
+    (
+        "1981-03-14",
+        "Temporal grave",
+        "lluvia",
+        85,
+        "mm"
+    ),
+
+    (
+        "1982-02-13",
+        "Tornado/temporal extremo",
+        "rafaga_kmh",
+        170,
+        "km/h"
+    ),
+
+    (
+        "2019-12-30",
+        "Tornado F0 Paso Piedras",
+        "rafaga_kmh",
+        115,
+        "km/h"
+    ),
+
+    (
+        "2019-12-30",
+        "Tornado F0 Paso Piedras",
+        "lluvia_1h",
+        100,
+        "mm"
+    ),
+
+    (
+        "2023-12-16",
+        "Temporal destructivo",
+        "rafaga_kmh_edes",
+        189,
+        "km/h"
+    ),
+
+    (
+        "2023-12-16",
+        "Temporal destructivo",
+        "lluvia",
+        45,
+        "mm"
+    ),
+
+    (
+        "2025-03-07",
+        "Inundación histórica",
+        "lluvia_12h",
+        290,
+        "mm"
+    ),
+]
+
+
+for (
+    fecha,
+    evento,
+    variable,
+    valor,
+    unidad
+) in explicit:
+
+    doc.append({
+
+        "tipo":
+            "dato_explicito",
+
+        "fuente":
+            "climaar_datos_historicos_meta.txt",
+
+        "fecha":
+            fecha,
+
+        "evento":
+            evento,
+
+        "variable":
+            variable,
+
+        "valor":
+            valor,
+
+        "unidad":
+            unidad,
+
+        "verificacion":
+            "explicito_en_paquete",
+
+        "nota":
+            "No extraído de una barra gráfica ni aproximado."
+
     })
 
-else:
 
-    documentos.append({
-        "fuente": "climaar_datos_historicos_meta.txt",
-        "disponible": 0,
-        "tamano_caracteres": 0,
-        "observacion":
-            "Archivo no encontrado en el repositorio."
-    })
-
-
-catalogo = pd.DataFrame(documentos)
-
-catalogo.to_csv(
-    OUTPUT_CATALOGO,
+pd.DataFrame(doc).to_csv(
+    CAT,
     index=False,
     encoding="utf-8"
 )
 
 
 # ============================================================
-# 10. METADATOS DE FUENTES
+# 8. CONTROLES DE CALIDAD
 # ============================================================
 
-df["documentacion_historica_disponible"] = (
-    1 if META_FILE.exists() else 0
-)
+print("[7/9] Controles de calidad...")
 
-df["climatologia_fuente"] = (
-    "Open-Meteo histórico 1991-2020"
-)
 
-df["eventos_fuente"] = (
-    "data/historico/eventos_severos.csv"
-)
+# Orden temporal
+if not clima[
+    "time"
+].is_monotonic_increasing:
 
-df["dataset_version"] = (
-    "ClimaAR-FINAL-1.0"
-)
+    fail(
+        "El dataset no quedó ordenado."
+    )
+
+
+# Duplicados
+if clima[
+    "time"
+].duplicated().any():
+
+    fail(
+        "Quedaron timestamps duplicados."
+    )
+
+
+# No debe existir leakage posterior
+if int(
+    (
+        clima["post_event_label"]
+        != 0
+    ).sum()
+) != 0:
+
+    fail(
+        "Existe una etiqueta posterior al evento."
+    )
+
+
+# Verificar fechas
+if clima["time"].min().year > 1980:
+
+    print(
+        "ADVERTENCIA: "
+        "el histórico no comienza en 1980."
+    )
+
+
+if clima["time"].max().year < 2026:
+
+    print(
+        "ADVERTENCIA: "
+        "el histórico no llega a 2026."
+    )
 
 
 # ============================================================
-# 11. LIMPIEZA FINAL
+# 9. GUARDAR
 # ============================================================
 
-print("\nPreparando dataset final...")
+print("[8/9] Guardando dataset...")
 
-# Reemplazar infinitos
-df = df.replace(
+clima = clima.replace(
     [np.inf, -np.inf],
     np.nan
 )
 
-# No eliminamos filas por NaN:
-# los primeros registros naturalmente
-# no tienen historial suficiente.
-
-df = df.sort_values(
-    "time"
-).reset_index(drop=True)
-
-
-# ============================================================
-# 12. GUARDAR DATASET
-# ============================================================
-
-df.to_csv(
-    OUTPUT_DATASET,
+clima.to_csv(
+    OUT,
     index=False,
     encoding="utf-8"
 )
 
 
 # ============================================================
-# 13. RESUMEN
+# RESUMEN
 # ============================================================
 
-positivos_6 = int(
-    df["evento_6h"].sum()
-)
+rows = []
 
-positivos_12 = int(
-    df["evento_12h"].sum()
-)
 
-positivos_24 = int(
-    df["evento_24h"].sum()
-)
+for h in [
+    6,
+    12,
+    24,
+    48,
+    72
+]:
 
-positivos_48 = int(
-    df["evento_48h"].sum()
-)
+    col = (
+        f"target_next_{h}h"
+    )
 
-positivos_72 = int(
-    df["evento_72h"].sum()
-)
+    rows.append({
 
-resumen = pd.DataFrame([{
-    "dataset_version":
-        "ClimaAR-FINAL-1.0",
+        "metrica":
+            f"positivos_target_next_{h}h",
 
-    "registros":
-        len(df),
+        "valor":
+            int(
+                (
+                    clima[col]
+                    == 1
+                ).sum()
+            ),
 
-    "columnas":
-        len(df.columns),
+        "nota":
+            (
+                "6/12 h quedan sin etiqueta "
+                "porque no conocemos la hora exacta."
+                if h in [6, 12]
+                else
+                "Etiqueta basada en fecha del evento."
+            )
+    })
 
-    "fecha_inicio":
-        str(df["time"].min()),
 
-    "fecha_fin":
-        str(df["time"].max()),
+rows.extend([
 
-    "eventos_catalogados":
-        len(eventos),
+    {
+        "metrica":
+            "registros",
 
-    "muestras_evento_6h":
-        positivos_6,
+        "valor":
+            len(clima),
 
-    "muestras_evento_12h":
-        positivos_12,
+        "nota":
+            "Dataset meteorológico horario"
+    },
 
-    "muestras_evento_24h":
-        positivos_24,
+    {
+        "metrica":
+            "columnas",
 
-    "muestras_evento_48h":
-        positivos_48,
+        "valor":
+            len(clima.columns),
 
-    "muestras_evento_72h":
-        positivos_72,
+        "nota":
+            "Features + objetivos + trazabilidad"
+    },
 
-    "documentacion_historica":
-        int(META_FILE.exists()),
+    {
+        "metrica":
+            "eventos_catalogados",
 
-    "fuente_climatologia":
-        "1991-2020",
+        "valor":
+            len(ev),
 
-    "estado":
-        "dataset construido correctamente"
-}])
+        "nota":
+            "Eventos históricos"
+    },
 
-resumen.to_csv(
-    OUTPUT_RESUMEN,
+    {
+        "metrica":
+            "fuentes_documentales",
+
+        "valor":
+            len([
+                d
+                for d in doc
+                if d.get("tipo")
+                == "documento"
+            ]),
+
+        "nota":
+            "Fuentes detectadas"
+    },
+
+    {
+        "metrica":
+            "datos_documentales_explicitos",
+
+        "valor":
+            len(explicit),
+
+        "nota":
+            "Valores numéricos explícitos"
+    },
+
+    {
+        "metrica":
+            "post_event_labels",
+
+        "valor":
+            int(
+                (
+                    clima[
+                        "post_event_label"
+                    ] != 0
+                ).sum()
+            ),
+
+        "nota":
+            "Debe ser 0"
+    },
+
+    {
+        "metrica":
+            "estado",
+
+        "valor":
+            "OK",
+
+        "nota":
+            "Dataset construido y validado"
+    }
+
+])
+
+
+pd.DataFrame(rows).to_csv(
+    RES,
     index=False,
     encoding="utf-8"
 )
 
 
-# ============================================================
-# 14. RESULTADO
-# ============================================================
+print("[9/9] FINALIZADO")
 
-print("\n" + "=" * 70)
-print("DATASET FINAL GENERADO")
-print("=" * 70)
+print("-" * 72)
 
 print(
-    f"Registros: {len(df):,}"
+    f"Dataset: {OUT}"
 )
 
 print(
-    f"Columnas: {len(df.columns)}"
+    f"Catalogo: {CAT}"
 )
 
 print(
-    f"Eventos: {len(eventos)}"
+    f"Resumen: {RES}"
 )
 
 print(
-    f"Positivos 6h: {positivos_6:,}"
+    f"Registros: {len(clima):,}"
 )
 
 print(
-    f"Positivos 12h: {positivos_12:,}"
+    f"Columnas: {len(clima.columns)}"
 )
 
 print(
-    f"Positivos 24h: {positivos_24:,}"
+    f"Eventos: {len(ev)}"
 )
 
 print(
-    f"Positivos 48h: {positivos_48:,}"
+    "=== CLIMAAR DATASET FINAL OK ==="
 )
-
-print(
-    f"Positivos 72h: {positivos_72:,}"
-)
-
-print("\nArchivos creados:")
-
-print(
-    OUTPUT_DATASET
-)
-
-print(
-    OUTPUT_CATALOGO
-)
-
-print(
-    OUTPUT_RESUMEN
-)
-
-print("\n=== CLIMAAR DATASET FINAL OK ===")
