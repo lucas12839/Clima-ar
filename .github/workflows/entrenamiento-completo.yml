@@ -24,14 +24,23 @@ jobs:
         run: |
           pip install pandas numpy scikit-learn joblib
 
-      - name: Construir dataset meteorologico
+      - name: Construir dataset y entrenar modelo
         run: |
           python - <<'PY'
           import pandas as pd
           import numpy as np
           import os
+          import joblib
+
+          from sklearn.ensemble import RandomForestClassifier
+          from sklearn.metrics import (
+              classification_report,
+              confusion_matrix,
+              roc_auc_score
+          )
 
           BASE = "data/historico"
+
           CLIMA = f"{BASE}/clima_horario_1980_2026.csv"
           EVENTOS = f"{BASE}/eventos_severos.csv"
 
@@ -40,6 +49,8 @@ jobs:
 
           if not os.path.exists(EVENTOS):
               raise SystemExit(f"No existe {EVENTOS}")
+
+          print("Cargando datos meteorologicos...")
 
           clima = pd.read_csv(CLIMA)
           eventos = pd.read_csv(EVENTOS)
@@ -54,14 +65,24 @@ jobs:
               errors="coerce"
           )
 
-          clima = clima.dropna(subset=["time"])
-          eventos = eventos.dropna(subset=["fecha"])
+          clima = clima.dropna(
+              subset=["time"]
+          )
 
-          clima = clima.sort_values("time").reset_index(drop=True)
+          eventos = eventos.dropna(
+              subset=["fecha"]
+          )
 
-          # --------------------------------------------------
+          clima = clima.sort_values(
+              "time"
+          ).reset_index(drop=True)
+
+          print("Registros meteorologicos:", len(clima))
+          print("Eventos:", len(eventos))
+
+          # ==========================================
           # VARIABLES TEMPORALES
-          # --------------------------------------------------
+          # ==========================================
 
           clima["hora"] = clima["time"].dt.hour
           clima["mes"] = clima["time"].dt.month
@@ -83,11 +104,12 @@ jobs:
               2 * np.pi * clima["mes"] / 12
           )
 
-          # --------------------------------------------------
+          # ==========================================
           # LLUVIA ACUMULADA
-          # --------------------------------------------------
+          # ==========================================
 
           for horas in [1, 3, 6, 12, 24]:
+
               clima[f"lluvia_{horas}h"] = (
                   clima["precipitation"]
                   .rolling(
@@ -97,11 +119,12 @@ jobs:
                   .sum()
               )
 
-          # --------------------------------------------------
-          # MAXIMOS DE VIENTO Y RAFAGA
-          # --------------------------------------------------
+          # ==========================================
+          # VIENTO
+          # ==========================================
 
           for horas in [3, 6, 12, 24]:
+
               clima[f"rafaga_max_{horas}h"] = (
                   clima["wind_gusts_10m"]
                   .rolling(
@@ -120,9 +143,9 @@ jobs:
                   .max()
               )
 
-          # --------------------------------------------------
+          # ==========================================
           # CAMBIOS METEOROLOGICOS
-          # --------------------------------------------------
+          # ==========================================
 
           for horas in [1, 3, 6, 12, 24]:
 
@@ -146,18 +169,22 @@ jobs:
                   - clima["wind_speed_10m"].shift(horas)
               )
 
-          # --------------------------------------------------
-          # INDICES FISICOS SIMPLES
-          # --------------------------------------------------
+          # ==========================================
+          # HUMEDAD / PUNTO DE ROCIO
+          # ==========================================
 
-          clima["punto_rocio"] = clima[
-              "dew_point_2m"
-          ]
+          clima["punto_rocio"] = (
+              clima["dew_point_2m"]
+          )
 
           clima["diferencia_temp_rocio"] = (
               clima["temperature_2m"]
               - clima["dew_point_2m"]
           )
+
+          # ==========================================
+          # INDICADORES
+          # ==========================================
 
           clima["presion_descenso_6h"] = (
               clima["cambio_presion_6h"] < -3
@@ -183,9 +210,9 @@ jobs:
               clima["wind_gusts_10m"] >= 100
           ).astype(int)
 
-          # --------------------------------------------------
-          # ETIQUETAS
-          # --------------------------------------------------
+          # ==========================================
+          # ETIQUETAS DE EVENTOS
+          # ==========================================
 
           etiquetas = [
               "tormenta_severa",
@@ -202,19 +229,19 @@ jobs:
           clima["evento"] = ""
           clima["evento_fecha"] = pd.NaT
 
-          # --------------------------------------------------
-          # ASIGNAR EVENTOS
-          #
-          # Se considera la ventana de 24 h previa.
-          # El evento real queda identificado por su fecha.
-          # --------------------------------------------------
-
           for _, evento in eventos.iterrows():
 
               fecha = evento["fecha"]
 
-              inicio = fecha - pd.Timedelta(hours=24)
-              fin = fecha + pd.Timedelta(hours=23)
+              inicio = (
+                  fecha -
+                  pd.Timedelta(hours=24)
+              )
+
+              fin = (
+                  fecha +
+                  pd.Timedelta(hours=23)
+              )
 
               mask = (
                   (clima["time"] >= inicio) &
@@ -228,6 +255,7 @@ jobs:
                       valor = evento[etiqueta]
 
                       if pd.notna(valor):
+
                           clima.loc[
                               mask,
                               etiqueta
@@ -243,201 +271,68 @@ jobs:
                   "evento_fecha"
               ] = fecha
 
-          # --------------------------------------------------
-          # OBJETIVO PRINCIPAL
-          # --------------------------------------------------
-
           clima["evento_severo"] = (
               clima[etiquetas]
               .max(axis=1)
               .astype(int)
           )
 
-          # --------------------------------------------------
+          # ==========================================
           # LIMPIEZA
-          # --------------------------------------------------
+          # ==========================================
 
           clima = clima.replace(
               [np.inf, -np.inf],
               np.nan
           )
 
-          clima = clima.dropna(
-              subset=[
-                  "temperature_2m",
-                  "relative_humidity_2m",
-                  "dew_point_2m",
-                  "pressure_msl",
-                  "precipitation",
-                  "wind_speed_10m",
-                  "wind_gusts_10m"
-              ]
-          )
-
-          salida = (
-              f"{BASE}/dataset_maestro.csv"
-          )
-
-          clima.to_csv(
-              salida,
-              index=False
-          )
-
-          print()
-          print("====================================")
-          print("DATASET MAESTRO CLIMAAR")
-          print("====================================")
-          print("Filas:", len(clima))
-          print("Columnas:", len(clima.columns))
-          print("Desde:", clima["time"].min())
-          print("Hasta:", clima["time"].max())
-          print(
-              "Horas etiquetadas:",
-              int(clima["evento_severo"].sum())
-          )
-          print(
-              "Eventos:",
-              clima["evento_fecha"].dropna().nunique()
-          )
-          print("====================================")
-          PY
-
-      - name: Crear resumen climatologico
-        run: |
-          python - <<'PY'
-          import pandas as pd
-
-          archivo = (
-              "data/historico/dataset_maestro.csv"
-          )
-
-          df = pd.read_csv(archivo)
-
-          df["time"] = pd.to_datetime(
-              df["time"]
-          )
-
-          variables = [
+          columnas_base = [
               "temperature_2m",
               "relative_humidity_2m",
               "dew_point_2m",
               "pressure_msl",
               "precipitation",
               "wind_speed_10m",
-              "wind_gusts_10m",
-              "lluvia_1h",
-              "lluvia_3h",
-              "lluvia_6h",
-              "lluvia_12h",
-              "lluvia_24h",
-              "cambio_presion_1h",
-              "cambio_presion_3h",
-              "cambio_presion_6h",
-              "cambio_presion_12h",
-              "cambio_presion_24h"
+              "wind_direction_10m",
+              "wind_gusts_10m"
           ]
 
-          variables = [
-              x for x in variables
-              if x in df.columns
-          ]
-
-          resumen = df[variables].describe()
-
-          resumen.to_csv(
-              "data/historico/"
-              "resumen_climatologico_maestro.csv"
+          clima = clima.dropna(
+              subset=columnas_base
           )
 
-          mensual = (
-              df.groupby("mes")[variables]
-              .mean()
-          )
-
-          mensual.to_csv(
-              "data/historico/"
-              "climatologia_mensual_calculada.csv"
-          )
-
-          print(resumen)
-          PY
-
-      - name: Crear train y test temporal
-        run: |
-          python - <<'PY'
-          import pandas as pd
-
-          df = pd.read_csv(
-              "data/historico/dataset_maestro.csv"
-          )
-
-          df["time"] = pd.to_datetime(
-              df["time"]
-          )
-
-          df = df.sort_values("time")
-
-          # No se mezclan fechas.
-          # El futuro siempre queda fuera del entrenamiento.
+          # ==========================================
+          # TRAIN / TEST TEMPORAL
+          # ==========================================
 
           corte = pd.Timestamp(
               "2018-01-01"
           )
 
-          train = df[
-              df["time"] < corte
+          train = clima[
+              clima["time"] < corte
           ].copy()
 
-          test = df[
-              df["time"] >= corte
+          test = clima[
+              clima["time"] >= corte
           ].copy()
-
-          train.to_csv(
-              "data/historico/train.csv",
-              index=False
-          )
-
-          test.to_csv(
-              "data/historico/test.csv",
-              index=False
-          )
 
           print("TRAIN:", len(train))
           print("TEST:", len(test))
 
           print(
               "EVENTOS TRAIN:",
-              train["evento_severo"].sum()
+              int(train["evento_severo"].sum())
           )
 
           print(
               "EVENTOS TEST:",
-              test["evento_severo"].sum()
-          )
-          PY
-
-      - name: Entrenar modelo base
-        run: |
-          python - <<'PY'
-          import pandas as pd
-          import numpy as np
-          import os
-          import joblib
-
-          from sklearn.ensemble import RandomForestClassifier
-          from sklearn.metrics import (
-              classification_report,
-              confusion_matrix,
-              roc_auc_score
+              int(test["evento_severo"].sum())
           )
 
-          train = pd.read_csv(
-              "data/historico/train.csv"
-          )
-
-          test = pd.read_csv(
-              "data/historico/test.csv"
-          )
+          # ==========================================
+          # VARIABLES DEL MODELO
+          # ==========================================
 
           columnas = [
               "temperature_2m",
@@ -448,44 +343,56 @@ jobs:
               "wind_speed_10m",
               "wind_direction_10m",
               "wind_gusts_10m",
+
               "hora",
               "mes",
               "dia_anio",
+
               "hora_sin",
               "hora_cos",
               "mes_sin",
               "mes_cos",
+
               "lluvia_1h",
               "lluvia_3h",
               "lluvia_6h",
               "lluvia_12h",
               "lluvia_24h",
+
               "rafaga_max_3h",
               "rafaga_max_6h",
               "rafaga_max_12h",
               "rafaga_max_24h",
+
               "viento_max_3h",
               "viento_max_6h",
               "viento_max_12h",
               "viento_max_24h",
+
               "cambio_presion_1h",
               "cambio_presion_3h",
               "cambio_presion_6h",
               "cambio_presion_12h",
               "cambio_presion_24h",
+
               "cambio_temp_1h",
               "cambio_temp_3h",
               "cambio_temp_6h",
+
               "cambio_humedad_1h",
               "cambio_humedad_3h",
               "cambio_humedad_6h",
+
               "cambio_viento_1h",
               "cambio_viento_3h",
               "cambio_viento_6h",
+
               "presion_descenso_6h",
               "presion_descenso_12h",
+
               "lluvia_intensa_1h",
               "lluvia_extrema_6h",
+
               "viento_fuerte",
               "viento_muy_fuerte"
           ]
@@ -497,30 +404,51 @@ jobs:
 
           X_train = (
               train[columnas]
-              .replace([np.inf, -np.inf], np.nan)
+              .replace(
+                  [np.inf, -np.inf],
+                  np.nan
+              )
               .fillna(0)
           )
 
-          y_train = train[
-              "evento_severo"
-          ].astype(int)
+          y_train = (
+              train["evento_severo"]
+              .astype(int)
+          )
 
           X_test = (
               test[columnas]
-              .replace([np.inf, -np.inf], np.nan)
+              .replace(
+                  [np.inf, -np.inf],
+                  np.nan
+              )
               .fillna(0)
           )
 
-          y_test = test[
-              "evento_severo"
-          ].astype(int)
+          y_test = (
+              test["evento_severo"]
+              .astype(int)
+          )
 
           if y_train.nunique() < 2:
-              print(
-                  "No hay suficientes clases "
-                  "para entrenar el modelo."
+              raise SystemExit(
+                  "ERROR: TRAIN no contiene "
+                  "las dos clases necesarias."
               )
-              raise SystemExit(0)
+
+          if len(X_test) == 0:
+              raise SystemExit(
+                  "ERROR: TEST esta vacio."
+              )
+
+          # ==========================================
+          # ENTRENAMIENTO
+          # ==========================================
+
+          print()
+          print("====================================")
+          print("ENTRENANDO RANDOM FOREST")
+          print("====================================")
 
           modelo = RandomForestClassifier(
               n_estimators=300,
@@ -536,18 +464,17 @@ jobs:
               y_train
           )
 
-          pred = modelo.predict(X_test)
-          prob = modelo.predict_proba(X_test)[:, 1]
-
-          os.makedirs(
-              "modelo",
-              exist_ok=True
+          pred = modelo.predict(
+              X_test
           )
 
-          joblib.dump(
-              modelo,
-              "modelo/climaar_randomforest.joblib"
-          )
+          prob = modelo.predict_proba(
+              X_test
+          )[:, 1]
+
+          # ==========================================
+          # RESULTADOS
+          # ==========================================
 
           reporte = classification_report(
               y_test,
@@ -559,6 +486,33 @@ jobs:
               y_test,
               pred
           )
+
+          auc = None
+
+          if y_test.nunique() == 2:
+
+              auc = roc_auc_score(
+                  y_test,
+                  prob
+              )
+
+          os.makedirs(
+              "modelo",
+              exist_ok=True
+          )
+
+          # ==========================================
+          # GUARDAR MODELO
+          # ==========================================
+
+          joblib.dump(
+              modelo,
+              "modelo/climaar_randomforest.joblib"
+          )
+
+          # ==========================================
+          # GUARDAR METRICAS
+          # ==========================================
 
           with open(
               "modelo/metricas.txt",
@@ -575,11 +529,31 @@ jobs:
               )
 
               f.write(
-                  "Variables utilizadas:\n"
+                  f"TRAIN: {len(train)}\n"
+              )
+
+              f.write(
+                  f"TEST: {len(test)}\n"
+              )
+
+              f.write(
+                  f"EVENTOS TRAIN: "
+                  f"{int(y_train.sum())}\n"
+              )
+
+              f.write(
+                  f"EVENTOS TEST: "
+                  f"{int(y_test.sum())}\n\n"
+              )
+
+              f.write(
+                  "VARIABLES UTILIZADAS:\n"
               )
 
               for c in columnas:
-                  f.write(f"- {c}\n")
+                  f.write(
+                      f"- {c}\n"
+                  )
 
               f.write(
                   "\nREPORTE\n\n"
@@ -595,52 +569,91 @@ jobs:
                   str(matriz)
               )
 
-              if y_test.nunique() == 2:
-
-                  auc = roc_auc_score(
-                      y_test,
-                      prob
-                  )
+              if auc is not None:
 
                   f.write(
                       "\n\nROC-AUC: "
                       + str(auc)
                   )
 
+          # ==========================================
+          # IMPORTANCIA DE VARIABLES
+          # ==========================================
+
+          importancia = pd.DataFrame({
+              "variable": columnas,
+              "importancia": modelo.feature_importances_
+          })
+
+          importancia = importancia.sort_values(
+              "importancia",
+              ascending=False
+          )
+
+          importancia.to_csv(
+              "modelo/importancia_variables.csv",
+              index=False
+          )
+
+          # ==========================================
+          # RESUMEN PEQUEÑO
+          # ==========================================
+
+          resumen = pd.DataFrame([{
+              "train_registros": len(train),
+              "test_registros": len(test),
+              "eventos_train": int(y_train.sum()),
+              "eventos_test": int(y_test.sum()),
+              "variables": len(columnas),
+              "roc_auc": auc
+          }])
+
+          resumen.to_csv(
+              "modelo/resumen_modelo.csv",
+              index=False
+          )
+
+          print()
+          print("====================================")
+          print("RESULTADO")
+          print("====================================")
           print(reporte)
           print("Matriz:")
           print(matriz)
 
-          if y_test.nunique() == 2:
-              print(
-                  "ROC-AUC:",
-                  roc_auc_score(
-                      y_test,
-                      prob
-                  )
-              )
+          if auc is not None:
+              print("ROC-AUC:", auc)
           else:
               print(
                   "ROC-AUC no calculable: "
-                  "el TEST tiene una sola clase."
+                  "TEST tiene una sola clase."
               )
 
+          print()
           print(
               "Modelo guardado correctamente."
           )
+
+          print(
+              "NO se guardan train.csv, "
+              "test.csv ni dataset_maestro.csv."
+          )
+
           PY
 
-      - name: Guardar todo
+      - name: Guardar resultados pequenos
         run: |
           git config user.name "climaar-bot"
           git config user.email "bot@climaar.com.ar"
 
           git add \
-            data/historico/ \
-            modelo/
+            modelo/climaar_randomforest.joblib \
+            modelo/metricas.txt \
+            modelo/importancia_variables.csv \
+            modelo/resumen_modelo.csv
 
           git commit \
-            -m "Construir dataset maestro ClimaAR" \
+            -m "Entrenar modelo base ClimaAR" \
             || echo "sin cambios"
 
           git push
