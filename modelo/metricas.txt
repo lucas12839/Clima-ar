@@ -1,78 +1,43 @@
-CLIMAAR - MODELO DIARIO DE EVENTOS SEVEROS
-============================================
+CLIMAAR - FIRMA ATMOSFERICA COMPLETA
+======================================
 
 {
-  "tipo_modelo": "clasificador_dia_severo",
-  "version": "1.1",
-  "registros_horarios_utilizados": 409872,
-  "dias_utilizados": 17078,
-  "dias_severos": 5,
-  "dias_normales": 17073,
-  "eventos_catalogados": 5,
-  "variables_modelo": 80,
-  "precision_media_cv": 0.0,
-  "recall_medio_cv": 0.0,
-  "f1_medio_cv": 0.0,
-  "roc_auc_medio_cv": 0.6864121209626026,
-  "hora_evento_utilizada": false,
-  "targets_artificiales_utilizados": false,
+  "version": "2.0",
+  "tipo_modelo": "firma_atmosferica_diaria_no_supervisada",
+  "registros_horarios": 409872,
+  "dias_totales": 17078,
+  "dias_normales_usados_para_ajuste": 17073,
+  "dias_referencia_smn": 5,
+  "variables": 52,
   "unidad_entrenamiento": "dia",
-  "umbral_exploratorio": 0.05
+  "hora_del_evento_utilizada": false,
+  "targets_artificiales": false,
+  "negativos_artificiales": false,
+  "fuente_de_referencias": "SMN",
+  "umbral_exploratorio": 0.029555562297573303,
+  "recall_referencias_smn": 0.8,
+  "precision_referencias_smn": 0.011560693641618497,
+  "dias_marcados_umbral": 346,
+  "advertencia": "Resultado exploratorio: solo hay cinco dias de referencia SMN y no debe interpretarse como precision operativa."
 }
 
-VALIDACION
- fold  precision  recall  f1  roc_auc
-    1        0.0     0.0 0.0 0.995022
-    2        0.0     0.0 0.0 0.473353
-    3        0.0     0.0 0.0 0.476720
-    4        0.0     0.0 0.0 1.000000
-    5        0.0     0.0 0.0 0.486965
+CALIBRACION SMN
+ umbral_anomalia  tp_eventos_smn  fp_dias_normales  fn_eventos_smn  recall_referencias_smn  precision_referencias_smn  dias_marcados
+       -0.008082               4              1708               1                     0.8                   0.002336           1712
+       -0.005517               4              1537               1                     0.8                   0.002596           1541
+       -0.002740               4              1366               1                     0.8                   0.002920           1370
+        0.000491               4              1196               1                     0.8                   0.003333           1200
+        0.004098               4              1025               1                     0.8                   0.003887           1029
+        0.008688               4               854               1                     0.8                   0.004662            858
+        0.013609               4               683               1                     0.8                   0.005822            687
+        0.020755               4               513               1                     0.8                   0.007737            517
+        0.029556               4               342               1                     0.8                   0.011561            346
+        0.047621               3               171               2                     0.6                   0.017241            174
 
-ANALISIS DE UMBRAL
-{
-  "umbral_exploratorio": 0.05,
-  "precision": 0.06666666666666667,
-  "recall": 0.2,
-  "f1": 0.1,
-  "f2": 0.14285714285714285,
-  "fpr": 0.0008200082000820008,
-  "verdaderos_positivos": 1,
-  "falsos_positivos": 14,
-  "falsos_negativos": 4,
-  "dias_marcados": 15,
-  "base": "predicciones_out_of_fold",
-  "finalidad": "analisis_exploratorio_no_produccion"
-}
-
-VARIABLES MAS IMPORTANTES
-              variable  importancia
-         lluvia_3h_max     0.056402
-         lluvia_6h_max     0.055902
-         presion_media     0.050499
-  precipitacion_max_1h     0.042714
-anomalia_precipitacion     0.041818
-       punto_rocio_max     0.040513
-           presion_max     0.035659
-      presion_media_3d     0.035438
-  cambio_viento_6h_min     0.033495
-  temperatura_media_3d     0.030873
-       temperatura_min     0.030434
-        lluvia_12h_max     0.029974
-   precipitacion_total     0.026385
-           presion_min     0.025779
-     punto_rocio_medio     0.023884
-      anomalia_presion     0.022515
-cambio_humedad_12h_max     0.022039
-      horas_lluvia_1mm     0.021129
-         rafaga_max_3d     0.017615
-        lluvia_24h_max     0.016791
-      anomalia_humedad     0.016774
-             lluvia_3d     0.016085
-       punto_rocio_min     0.014765
-cambio_humedad_24h_max     0.013779
-     temperatura_media     0.013542
-        temp_clim_mean     0.012597
- cambio_viento_12h_min     0.012411
-   cambio_temp_12h_max     0.011452
- cambio_viento_12h_max     0.011418
-               mes_sin     0.011061
+REFERENCIAS
+     fecha                 evento_referencia  anomalia_atmosferica  percentil_anomalia
+1981-03-14                    Temporal grave             -0.066815            0.331713
+1982-02-13 Tornado temporal Chile Pedro Pico              0.071149            0.995960
+2019-12-30           Tornado F0 Paso Piedras              0.034559            0.983253
+2023-12-16              Temporal destructivo              0.094701            0.998478
+2025-03-07              Inundacion historica              0.082839            0.997365
