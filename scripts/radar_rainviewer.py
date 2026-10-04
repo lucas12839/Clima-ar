@@ -1,22 +1,34 @@
-import requests
 import os
+import sys
 import json
 import math
-import sys
-
-from PIL import Image
 from io import BytesIO
-import numpy as np
-import cv2
 from datetime import datetime, timezone
 
+import requests
+from PIL import Image
+import numpy as np
+import cv2
 
-LAT = -38.0055
-LON = -62.0
+
+LAT = -38.71
+LON = -62.26
 ZOOM = 7
 
 DATA_DIR = "data/radar"
 os.makedirs(DATA_DIR, exist_ok=True)
+
+API_URL = "https://api.rainviewer.com/public/weather-maps.json"
+
+HEADERS = {
+    "User-Agent": "ClimaAR/5.0",
+    "Referer": "https://www.rainviewer.com/",
+    "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
+}
+
+TILE_SIZE = 512
+GRID_RADIUS = 1
+MIN_TILE_BYTES = 200
 
 
 def latlon_to_tile(lat, lon, zoom):
@@ -34,411 +46,810 @@ def latlon_to_tile(lat, lon, zoom):
     return int(xtile), int(ytile)
 
 
-print("=== CLIMAAR V4 OFICIAL ===")
+def pixels_per_km(lat, zoom, tile_size):
+    world_km = 40075.016
 
-
-# ---------------------------------------------------------
-# OBTENER DATOS OFICIALES DE RAINVIEWER
-# ---------------------------------------------------------
-
-api_url = "https://api.rainviewer.com/public/weather-maps.json"
-
-try:
-    response = requests.get(api_url, timeout=20)
-    response.raise_for_status()
-    data = response.json()
-except Exception as e:
-    print(f"ERROR API RAINVIEWER: {e}")
-    sys.exit(1)
-
-
-host = data.get(
-    "host",
-    "https://tilecache.rainviewer.com"
-).rstrip("/")
-
-frames = data.get("radar", {}).get("past", [])[-6:]
-
-
-print(f"Host: {host}")
-print(f"Frames: {len(frames)}")
-
-
-if not frames:
-    print("ERROR CRITICO: RainViewer no devolvio frames.")
-    sys.exit(1)
-
-
-# ---------------------------------------------------------
-# UBICACION BAHIA BLANCA
-# ---------------------------------------------------------
-
-xt, yt = latlon_to_tile(
-    LAT,
-    LON,
-    ZOOM
-)
-
-print(f"Tile central: X={xt} Y={yt}")
-
-
-results = []
-
-
-# ---------------------------------------------------------
-# DESCARGAR FRAMES
-# ---------------------------------------------------------
-
-for frame in frames:
-
-    path = frame["path"]
-    timestamp = frame["time"]
-
-    big = Image.new(
-        "RGBA",
-        (1536, 1536),
-        (0, 0, 0, 0)
+    km_x = (
+        world_km
+        * math.cos(math.radians(lat))
+        / ((2 ** zoom) * tile_size)
     )
 
-    ok = 0
+    km_y = (
+        world_km
+        / ((2 ** zoom) * tile_size)
+    )
 
-    for dx in [-1, 0, 1]:
+    return km_x, km_y
 
-        for dy in [-1, 0, 1]:
+
+def fetch_rainviewer():
+    try:
+        response = requests.get(
+            API_URL,
+            headers=HEADERS,
+            timeout=25,
+        )
+
+        response.raise_for_status()
+        data = response.json()
+
+    except Exception as exc:
+        print(f"ERROR API RAINVIEWER: {exc}")
+        sys.exit(1)
+
+    host = data.get(
+        "host",
+        "https://tilecache.rainviewer.com",
+    ).rstrip("/")
+
+    frames = data.get(
+        "radar",
+        {}
+    ).get(
+        "past",
+        []
+    )
+
+    if not frames:
+        print(
+            "ERROR CRITICO: "
+            "RainViewer no devolvio frames."
+        )
+        sys.exit(1)
+
+    return host, frames
+
+
+def download_frame(
+    host,
+    frame,
+    xt,
+    yt
+):
+    path = frame["path"]
+    timestamp = int(frame["time"])
+
+    size = TILE_SIZE * 3
+
+    image = Image.new(
+        "RGBA",
+        (size, size),
+        (0, 0, 0, 0),
+    )
+
+    successful_tiles = 0
+
+    for dx in (-1, 0, 1):
+
+        for dy in (-1, 0, 1):
 
             url = (
-                f"{host}"
-                f"{path}"
-                f"/512/{ZOOM}/"
-                f"{xt + dx}/"
-                f"{yt + dy}/"
-                f"2/1_1.png"
+                f"{host}{path}"
+                f"/{TILE_SIZE}/{ZOOM}/"
+                f"{xt + dx}/{yt + dy}/2/1_1.png"
             )
 
             try:
 
-                resp = requests.get(
+                response = requests.get(
                     url,
-                    timeout=15
+                    headers=HEADERS,
+                    timeout=20,
                 )
 
                 if (
-                    resp.status_code == 200
-                    and len(resp.content) > 200
+                    response.status_code != 200
+                    or len(response.content)
+                    < MIN_TILE_BYTES
                 ):
+                    print(
+                        f"Tile invalida: "
+                        f"HTTP {response.status_code} "
+                        f"{url}"
+                    )
+                    continue
 
-                    tile = Image.open(
-                        BytesIO(resp.content)
-                    ).convert("RGBA")
+                tile = Image.open(
+                    BytesIO(
+                        response.content
+                    )
+                ).convert("RGBA")
 
-                    tile_array = np.array(tile)
+                x = (
+                    dx + 1
+                ) * TILE_SIZE
 
-                    # Comprobar que la tesela tenga
-                    # al menos algun pixel visible.
-                    if np.any(
-                        tile_array[:, :, 3] > 0
-                    ):
+                y = (
+                    dy + 1
+                ) * TILE_SIZE
 
-                        big.paste(
-                            tile,
-                            (
-                                (dx + 1) * 512,
-                                (dy + 1) * 512
-                            ),
-                            tile
-                        )
+                image.alpha_composite(
+                    tile,
+                    (x, y)
+                )
 
-                    ok += 1
+                successful_tiles += 1
 
-            except Exception as e:
+            except Exception as exc:
 
                 print(
-                    f"fail {url} -> {e}"
+                    f"FAIL tile {url} -> {exc}"
                 )
 
-    print(
-        f"{timestamp} -> "
-        f"{path} "
-        f"tiles OK: {ok}"
+    return (
+        image,
+        successful_tiles,
+        timestamp,
+        path
     )
 
-    # Si este frame no pudo descargar
-    # ninguna tesela, se ignora.
-    if ok == 0:
 
-        print(
-            "ADVERTENCIA: "
-            "0 tiles en este frame, lo salteo"
-        )
+def radar_mask(image):
 
-        continue
+    array = np.asarray(image)
 
+    alpha = array[:, :, 3]
 
-    # -----------------------------------------------------
-    # MASCARA DE RADAR
-    # -----------------------------------------------------
-
-    alpha = np.array(big)[:, :, 3]
-
-    _, mask = cv2.threshold(
-        alpha,
-        15,
+    mask = np.where(
+        alpha >= 20,
         255,
-        cv2.THRESH_BINARY
+        0,
+    ).astype(np.uint8)
+
+    kernel = np.ones(
+        (3, 3),
+        np.uint8
     )
 
-
-    area = int(
-        np.count_nonzero(mask)
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_OPEN,
+        kernel,
     )
 
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_CLOSE,
+        kernel,
+    )
 
-    results.append(
-        {
-            "mask": mask,
-            "img": big,
-            "area": area,
-            "time": timestamp,
-            "path": path
+    return mask
+
+
+def largest_component(mask):
+
+    count, labels, stats, centers = (
+        cv2.connectedComponentsWithStats(
+            mask,
+            8,
+        )
+    )
+
+    best = None
+
+    for i in range(
+        1,
+        count
+    ):
+
+        area = int(
+            stats[
+                i,
+                cv2.CC_STAT_AREA
+            ]
+        )
+
+        if area < 20:
+            continue
+
+        candidate = {
+            "area_px": area,
+
+            "centroid_x": float(
+                centers[i][0]
+            ),
+
+            "centroid_y": float(
+                centers[i][1]
+            ),
+
+            "bbox": [
+                int(
+                    stats[
+                        i,
+                        cv2.CC_STAT_LEFT
+                    ]
+                ),
+
+                int(
+                    stats[
+                        i,
+                        cv2.CC_STAT_TOP
+                    ]
+                ),
+
+                int(
+                    stats[
+                        i,
+                        cv2.CC_STAT_WIDTH
+                    ]
+                ),
+
+                int(
+                    stats[
+                        i,
+                        cv2.CC_STAT_HEIGHT
+                    ]
+                ),
+            ],
         }
-    )
+
+        if (
+            best is None
+            or area > best["area_px"]
+        ):
+            best = candidate
+
+    return best
 
 
-# ---------------------------------------------------------
-# EXIGIR AL MENOS UN FRAME VALIDO
-# ---------------------------------------------------------
-
-if not results:
-
-    print(
-        "ERROR CRITICO: "
-        "No se descargo ningun radar. "
-        "Falla el workflow a proposito."
-    )
-
-    sys.exit(1)
-
-
-# ---------------------------------------------------------
-# GUARDAR RADAR ACTUAL
-# ---------------------------------------------------------
-
-actual_path = os.path.join(
-    DATA_DIR,
-    "actual.png"
-)
-
-results[-1]["img"].save(
-    actual_path
-)
-
-
-print(
-    f"Guardado actual.png "
-    f"area={results[-1]['area']}"
-)
-
-
-# ---------------------------------------------------------
-# STATUS
-# ---------------------------------------------------------
-
-status = {
-
-    "actualizado":
-        datetime.now(
-            timezone.utc
-        ).isoformat(),
-
-    "host_usado":
-        host,
-
-    "area_px":
-        results[-1]["area"],
-
-    "distancia_km":
-        None,
-
-    "eta_minutos":
-        None,
-
-    "duracion_estimada_min":
-        None,
-
-    "fortalecimiento":
-        "estable",
-
-    "estado":
-        "cielo despejado"
-}
-
-
-# ---------------------------------------------------------
-# ANALISIS ENTRE FRAMES
-# ---------------------------------------------------------
-
-if len(results) >= 2:
-
-    prev = results[-2]
-    curr = results[-1]
-
-
-    # -----------------------------------------------------
-    # FORTALECIMIENTO / DEBILITAMIENTO
-    # -----------------------------------------------------
-
-    if (
-        curr["area"]
-        > prev["area"] * 1.15
-    ):
-
-        status["fortalecimiento"] = (
-            "fortaleciendose"
-        )
-
-    elif (
-        curr["area"]
-        < prev["area"] * 0.85
-    ):
-
-        status["fortalecimiento"] = (
-            "debilitandose"
-        )
-
-
-    # -----------------------------------------------------
-    # DISTANCIA
-    # -----------------------------------------------------
+def distance_to_bahia(mask):
 
     ys, xs = np.where(
-        curr["mask"] > 0
+        mask > 0
+    )
+
+    if len(xs) == 0:
+        return None
+
+    height, width = mask.shape
+
+    center_x = width / 2.0
+    center_y = height / 2.0
+
+    km_x, km_y = pixels_per_km(
+        LAT,
+        ZOOM,
+        TILE_SIZE,
+    )
+
+    dx = (
+        xs - center_x
+    ) * km_x
+
+    dy = (
+        ys - center_y
+    ) * km_y
+
+    distances = np.sqrt(
+        dx * dx
+        + dy * dy
+    )
+
+    return float(
+        np.min(distances)
     )
 
 
-    if len(xs) > 0:
+def analyze_frame(image):
 
-        h, w = curr["mask"].shape
+    mask = radar_mask(
+        image
+    )
 
-        cy = h // 2
-        cx = w // 2
-
-
-        dists = np.sqrt(
-            (xs - cx) ** 2
-            +
-            (ys - cy) ** 2
+    area = int(
+        np.count_nonzero(
+            mask
         )
+    )
+
+    component = largest_component(
+        mask
+    )
+
+    distance = distance_to_bahia(
+        mask
+    )
+
+    return {
+        "mask": mask,
+        "area": area,
+        "component": component,
+        "distance_km": distance,
+    }
 
 
-        # Aproximacion inicial.
-        # Se ajustara posteriormente
-        # con georreferenciacion precisa.
+def motion_between(
+    previous,
+    current
+):
 
-        km_per_px = 0.85
+    if (
+        previous is None
+        or current is None
+    ):
+        return None
 
+    previous_component = (
+        previous["component"]
+    )
 
-        dist_km = (
-            np.min(dists)
-            * km_per_px
+    current_component = (
+        current["component"]
+    )
+
+    if (
+        previous_component is None
+        or current_component is None
+    ):
+        return None
+
+    dx_px = (
+        current_component["centroid_x"]
+        - previous_component["centroid_x"]
+    )
+
+    dy_px = (
+        current_component["centroid_y"]
+        - previous_component["centroid_y"]
+    )
+
+    km_x, km_y = pixels_per_km(
+        LAT,
+        ZOOM,
+        TILE_SIZE,
+    )
+
+    east_km = (
+        dx_px * km_x
+    )
+
+    south_km = (
+        dy_px * km_y
+    )
+
+    distance_km = math.hypot(
+        east_km,
+        south_km,
+    )
+
+    direction = (
+        math.degrees(
+            math.atan2(
+                east_km,
+                -south_km,
+            )
         )
+        + 360.0
+    ) % 360.0
+
+    return {
+        "dx_px": round(
+            dx_px,
+            2,
+        ),
+
+        "dy_px": round(
+            dy_px,
+            2,
+        ),
+
+        "movimiento_km": round(
+            distance_km,
+            2,
+        ),
+
+        "direccion_grados": round(
+            direction,
+            1,
+        ),
+    }
 
 
-        status["distancia_km"] = round(
-            float(dist_km),
-            1
+def direction_name(
+    degrees
+):
+
+    names = [
+        "N",
+        "NE",
+        "E",
+        "SE",
+        "S",
+        "SO",
+        "O",
+        "NO",
+    ]
+
+    return names[
+        int(
+            (
+                degrees
+                + 22.5
+            ) // 45
+        ) % 8
+    ]
+
+
+def calculate_speed(
+    movement,
+    previous_timestamp,
+    current_timestamp
+):
+
+    if movement is None:
+        return None
+
+    if previous_timestamp is None:
+        return None
+
+    elapsed_minutes = (
+        current_timestamp
+        - previous_timestamp
+    ) / 60.0
+
+    if elapsed_minutes <= 0:
+        return None
+
+    speed_kmh = (
+        movement["movimiento_km"]
+        / (
+            elapsed_minutes
+            / 60.0
         )
+    )
 
+    return {
+        "intervalo_minutos": round(
+            elapsed_minutes,
+            1,
+        ),
+
+        "velocidad_kmh": round(
+            speed_kmh,
+            1,
+        ),
+    }
+
+
+def analyze_sequence(
+    results
+):
+
+    if not results:
+        return None
+
+    current = results[-1]
+
+    status = {
+        "actualizado":
+            datetime.now(
+                timezone.utc
+            ).isoformat(),
+
+        "fuente":
+            "RainViewer",
+
+        "latitud":
+            LAT,
+
+        "longitud":
+            LON,
+
+        "frames_analizados":
+            len(results),
+
+        "area_px":
+            current["area"],
+
+        "distancia_km":
+            (
+                round(
+                    current["distance_km"],
+                    1,
+                )
+                if current["distance_km"]
+                is not None
+                else None
+            ),
+
+        "fortalecimiento":
+            "sin_datos",
+
+        "velocidad_kmh":
+            None,
+
+        "direccion":
+            None,
+
+        "direccion_grados":
+            None,
+
+        "eta_minutos":
+            None,
+
+        "confianza_movimiento":
+            0.0,
+
+        "estado":
+            "sin_precipitacion",
+    }
+
+    if current["area"] > 0:
 
         status["estado"] = (
-            f"lluvia a "
-            f"{status['distancia_km']} km"
+            "precipitacion detectada"
+        )
+
+    if len(results) < 2:
+        return status
+
+    previous = results[-2]
+
+    movement = motion_between(
+        previous,
+        current,
+    )
+
+    speed = calculate_speed(
+        movement,
+        previous["timestamp"],
+        current["timestamp"],
+    )
+
+    if speed is not None:
+
+        status[
+            "velocidad_kmh"
+        ] = speed[
+            "velocidad_kmh"
+        ]
+
+    if movement is not None:
+
+        status[
+            "direccion_grados"
+        ] = movement[
+            "direccion_grados"
+        ]
+
+        status[
+            "direccion"
+        ] = direction_name(
+            movement[
+                "direccion_grados"
+            ]
+        )
+
+    previous_area = (
+        previous["area"]
+    )
+
+    current_area = (
+        current["area"]
+    )
+
+    if previous_area > 0:
+
+        change = (
+            current_area
+            / previous_area
+            - 1.0
+        ) * 100.0
+
+        if change >= 15:
+
+            status[
+                "fortalecimiento"
+            ] = "fortaleciendose"
+
+        elif change <= -15:
+
+            status[
+                "fortalecimiento"
+            ] = "debilitandose"
+
+        else:
+
+            status[
+                "fortalecimiento"
+            ] = "estable"
+
+    if (
+        movement is not None
+        and speed is not None
+        and current["component"]
+        is not None
+    ):
+
+        confidence = 0.75
+
+        if current["area"] >= 100:
+            confidence += 0.10
+
+        if (
+            speed["velocidad_kmh"]
+            <= 120
+        ):
+            confidence += 0.10
+
+        status[
+            "confianza_movimiento"
+        ] = round(
+            min(
+                confidence,
+                0.95
+            ),
+            2,
+        )
+
+    return status
+
+
+def save_status(
+    status
+):
+
+    path = os.path.join(
+        DATA_DIR,
+        "status.json",
+    )
+
+    with open(
+        path,
+        "w",
+        encoding="utf-8",
+    ) as file:
+
+        json.dump(
+            status,
+            file,
+            indent=2,
+            ensure_ascii=False,
         )
 
 
-        # -------------------------------------------------
-        # MOVIMIENTO
-        # -------------------------------------------------
+def main():
 
-        try:
+    print(
+        "=== CLIMAAR RAINVIEWER V5 ==="
+    )
 
-            flow = cv2.calcOpticalFlowFarneback(
-                prev["mask"],
-                curr["mask"],
-                None,
-                0.5,
-                3,
-                15,
-                3,
-                5,
-                1.2,
-                0
+    host, frames = (
+        fetch_rainviewer()
+    )
+
+    xt, yt = latlon_to_tile(
+        LAT,
+        LON,
+        ZOOM,
+    )
+
+    print(
+        f"Host: {host}"
+    )
+
+    print(
+        f"Frames disponibles: "
+        f"{len(frames)}"
+    )
+
+    print(
+        f"Tile central: "
+        f"X={xt} Y={yt}"
+    )
+
+    selected_frames = (
+        frames[-12:]
+    )
+
+    results = []
+
+    for frame in selected_frames:
+
+        (
+            image,
+            tiles_ok,
+            timestamp,
+            path,
+        ) = download_frame(
+            host,
+            frame,
+            xt,
+            yt,
+        )
+
+        print(
+            f"{timestamp} -> "
+            f"tiles OK: "
+            f"{tiles_ok}/9"
+        )
+
+        if tiles_ok == 0:
+
+            print(
+                "Frame descartado: "
+                "0 tiles."
             )
 
+            continue
 
-            vx = np.mean(
-                flow[ys, xs, 0]
-            )
+        analysis = analyze_frame(
+            image
+        )
 
-            vy = np.mean(
-                flow[ys, xs, 1]
-            )
+        results.append(
+            {
+                "timestamp":
+                    timestamp,
 
+                "path":
+                    path,
 
-            speed = (
-                math.sqrt(
-                    vx ** 2
-                    +
-                    vy ** 2
-                )
-                * km_per_px
-                * 6
-            )
+                "image":
+                    image,
 
+                **analysis,
+            }
+        )
 
-            if speed > 3:
+    if not results:
 
-                status["eta_minutos"] = int(
-                    (dist_km / speed)
-                    * 60
-                )
+        print(
+            "ERROR CRITICO: "
+            "No se pudo obtener "
+            "ningun frame."
+        )
 
+        sys.exit(1)
 
-        except Exception:
+    current = results[-1]
 
-            pass
+    actual_path = os.path.join(
+        DATA_DIR,
+        "actual.png",
+    )
 
+    current["image"].save(
+        actual_path
+    )
 
-# ---------------------------------------------------------
-# GUARDAR STATUS
-# ---------------------------------------------------------
+    status = analyze_sequence(
+        results
+    )
 
-status_path = os.path.join(
-    DATA_DIR,
-    "status.json"
-)
+    status[
+        "timestamp_frame"
+    ] = current[
+        "timestamp"
+    ]
 
+    status[
+        "frame_utc"
+    ] = datetime.fromtimestamp(
+        current["timestamp"],
+        timezone.utc,
+    ).isoformat()
 
-with open(
-    status_path,
-    "w",
-    encoding="utf-8"
-) as f:
+    status["tiles"] = 9
 
-    json.dump(
-        status,
-        f,
-        indent=2,
-        ensure_ascii=False
+    save_status(
+        status
+    )
+
+    print(
+        json.dumps(
+            status,
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+
+    print(
+        "=== V5 OK ==="
     )
 
 
-print(
-    json.dumps(
-        status,
-        indent=2,
-        ensure_ascii=False
-    )
-)
-
-
-print("=== V4 OK ===")
+if __name__ == "__main__":
+    main()
