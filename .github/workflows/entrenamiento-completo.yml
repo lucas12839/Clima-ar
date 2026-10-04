@@ -44,28 +44,16 @@ jobs:
               confusion_matrix
           )
 
-          # ============================================================
-          # ARCHIVOS
-          # ============================================================
-
           CLIMA = "data/historico/clima_horario_1980_2026.csv"
           EVENTOS = "data/historico/eventos_severos.csv"
 
           if not os.path.exists(CLIMA):
-              raise SystemExit(
-                  f"ERROR: no existe {CLIMA}"
-              )
+              raise SystemExit(f"ERROR: no existe {CLIMA}")
 
           if not os.path.exists(EVENTOS):
-              raise SystemExit(
-                  f"ERROR: no existe {EVENTOS}"
-              )
+              raise SystemExit(f"ERROR: no existe {EVENTOS}")
 
           os.makedirs("modelo", exist_ok=True)
-
-          # ============================================================
-          # CARGAR TODO EL HISTORICO
-          # ============================================================
 
           print("=" * 60)
           print("CLIMAAR - CARGA DEL HISTORICO COMPLETO")
@@ -74,17 +62,8 @@ jobs:
           clima = pd.read_csv(CLIMA)
           eventos = pd.read_csv(EVENTOS)
 
-          print(
-              f"Registros meteorologicos: {len(clima):,}"
-          )
-
-          print(
-              f"Eventos catalogados: {len(eventos)}"
-          )
-
-          # ============================================================
-          # FECHAS
-          # ============================================================
+          print(f"Registros meteorologicos: {len(clima):,}")
+          print(f"Eventos catalogados: {len(eventos)}")
 
           clima["time"] = pd.to_datetime(
               clima["time"],
@@ -112,10 +91,6 @@ jobs:
               .reset_index(drop=True)
           )
 
-          # ============================================================
-          # VARIABLES NUMERICAS
-          # ============================================================
-
           columnas_numericas = [
               "temperature_2m",
               "relative_humidity_2m",
@@ -134,27 +109,13 @@ jobs:
                       errors="coerce"
                   )
 
-          # ============================================================
-          # DIA
-          #
-          # LA HORA DEL EVENTO NO SE UTILIZA.
-          # ============================================================
-
           clima["fecha"] = clima["time"].dt.floor("D")
           clima["mes"] = clima["time"].dt.month
-
-          # ============================================================
-          # DIFERENCIA TEMPERATURA - ROCIO
-          # ============================================================
 
           clima["diferencia_temp_rocio"] = (
               clima["temperature_2m"]
               - clima["dew_point_2m"]
           )
-
-          # ============================================================
-          # COMPONENTES DEL VIENTO
-          # ============================================================
 
           direccion_rad = np.deg2rad(
               clima["wind_direction_10m"]
@@ -169,10 +130,6 @@ jobs:
               clima["wind_speed_10m"]
               * np.cos(direccion_rad)
           )
-
-          # ============================================================
-          # CAMBIOS METEOROLOGICOS
-          # ============================================================
 
           for horas in [3, 6, 12, 24]:
 
@@ -196,42 +153,25 @@ jobs:
                   - clima["wind_speed_10m"].shift(horas)
               )
 
-          # ============================================================
-          # ACUMULADOS
-          # ============================================================
-
           for horas in [3, 6, 12, 24]:
 
               clima[f"lluvia_{horas}h"] = (
                   clima["precipitation"]
-                  .rolling(
-                      horas,
-                      min_periods=1
-                  )
+                  .rolling(horas, min_periods=1)
                   .sum()
               )
 
               clima[f"rafaga_max_{horas}h"] = (
                   clima["wind_gusts_10m"]
-                  .rolling(
-                      horas,
-                      min_periods=1
-                  )
+                  .rolling(horas, min_periods=1)
                   .max()
               )
 
               clima[f"viento_max_{horas}h"] = (
                   clima["wind_speed_10m"]
-                  .rolling(
-                      horas,
-                      min_periods=1
-                  )
+                  .rolling(horas, min_periods=1)
                   .max()
               )
-
-          # ============================================================
-          # INDICADORES
-          # ============================================================
 
           clima["lluvia_1mm"] = (
               clima["precipitation"] >= 1
@@ -249,263 +189,107 @@ jobs:
               clima["wind_gusts_10m"] >= 100
           ).astype(int)
 
-          # ============================================================
-          # AGREGACION DIARIA
-          #
-          # TODO EL HISTORICO SE UTILIZA.
-          # UNA FILA = UN DIA.
-          # ============================================================
-
           print()
           print("Construyendo dataset diario...")
 
           daily = clima.groupby("fecha").agg(
 
-              temperatura_media=(
-                  "temperature_2m",
-                  "mean"
-              ),
+              temperatura_media=("temperature_2m", "mean"),
+              temperatura_min=("temperature_2m", "min"),
+              temperatura_max=("temperature_2m", "max"),
 
-              temperatura_min=(
-                  "temperature_2m",
-                  "min"
-              ),
+              humedad_media=("relative_humidity_2m", "mean"),
+              humedad_min=("relative_humidity_2m", "min"),
+              humedad_max=("relative_humidity_2m", "max"),
 
-              temperatura_max=(
-                  "temperature_2m",
-                  "max"
-              ),
+              punto_rocio_medio=("dew_point_2m", "mean"),
+              punto_rocio_min=("dew_point_2m", "min"),
+              punto_rocio_max=("dew_point_2m", "max"),
 
-              humedad_media=(
-                  "relative_humidity_2m",
-                  "mean"
-              ),
+              presion_media=("pressure_msl", "mean"),
+              presion_min=("pressure_msl", "min"),
+              presion_max=("pressure_msl", "max"),
 
-              humedad_min=(
-                  "relative_humidity_2m",
-                  "min"
-              ),
+              precipitacion_total=("precipitation", "sum"),
+              precipitacion_max_1h=("precipitation", "max"),
 
-              humedad_max=(
-                  "relative_humidity_2m",
-                  "max"
-              ),
+              viento_medio=("wind_speed_10m", "mean"),
+              viento_max=("wind_speed_10m", "max"),
 
-              punto_rocio_medio=(
-                  "dew_point_2m",
-                  "mean"
-              ),
+              rafaga_media=("wind_gusts_10m", "mean"),
+              rafaga_max=("wind_gusts_10m", "max"),
 
-              punto_rocio_min=(
-                  "dew_point_2m",
-                  "min"
-              ),
-
-              punto_rocio_max=(
-                  "dew_point_2m",
-                  "max"
-              ),
-
-              presion_media=(
-                  "pressure_msl",
-                  "mean"
-              ),
-
-              presion_min=(
-                  "pressure_msl",
-                  "min"
-              ),
-
-              presion_max=(
-                  "pressure_msl",
-                  "max"
-              ),
-
-              precipitacion_total=(
-                  "precipitation",
-                  "sum"
-              ),
-
-              precipitacion_max_1h=(
-                  "precipitation",
-                  "max"
-              ),
-
-              viento_medio=(
-                  "wind_speed_10m",
-                  "mean"
-              ),
-
-              viento_max=(
-                  "wind_speed_10m",
-                  "max"
-              ),
-
-              rafaga_media=(
-                  "wind_gusts_10m",
-                  "mean"
-              ),
-
-              rafaga_max=(
-                  "wind_gusts_10m",
-                  "max"
-              ),
-
-              viento_u_medio=(
-                  "viento_u",
-                  "mean"
-              ),
-
-              viento_v_medio=(
-                  "viento_v",
-                  "mean"
-              ),
+              viento_u_medio=("viento_u", "mean"),
+              viento_v_medio=("viento_v", "mean"),
 
               diferencia_rocio_media=(
                   "diferencia_temp_rocio",
                   "mean"
               ),
 
-              lluvia_3h_max=(
-                  "lluvia_3h",
-                  "max"
-              ),
+              lluvia_3h_max=("lluvia_3h", "max"),
+              lluvia_6h_max=("lluvia_6h", "max"),
+              lluvia_12h_max=("lluvia_12h", "max"),
+              lluvia_24h_max=("lluvia_24h", "max"),
 
-              lluvia_6h_max=(
-                  "lluvia_6h",
-                  "max"
-              ),
+              rafaga_max_3h=("rafaga_max_3h", "max"),
+              rafaga_max_6h=("rafaga_max_6h", "max"),
+              rafaga_max_12h=("rafaga_max_12h", "max"),
+              rafaga_max_24h=("rafaga_max_24h", "max"),
 
-              lluvia_12h_max=(
-                  "lluvia_12h",
-                  "max"
-              ),
-
-              lluvia_24h_max=(
-                  "lluvia_24h",
-                  "max"
-              ),
-
-              rafaga_max_3h=(
-                  "rafaga_max_3h",
-                  "max"
-              ),
-
-              rafaga_max_6h=(
-                  "rafaga_max_6h",
-                  "max"
-              ),
-
-              rafaga_max_12h=(
-                  "rafaga_max_12h",
-                  "max"
-              ),
-
-              rafaga_max_24h=(
-                  "rafaga_max_24h",
-                  "max"
-              ),
-
-              viento_max_3h=(
-                  "viento_max_3h",
-                  "max"
-              ),
-
-              viento_max_6h=(
-                  "viento_max_6h",
-                  "max"
-              ),
-
-              viento_max_12h=(
-                  "viento_max_12h",
-                  "max"
-              ),
-
-              viento_max_24h=(
-                  "viento_max_24h",
-                  "max"
-              ),
+              viento_max_3h=("viento_max_3h", "max"),
+              viento_max_6h=("viento_max_6h", "max"),
+              viento_max_12h=("viento_max_12h", "max"),
+              viento_max_24h=("viento_max_24h", "max"),
 
               cambio_presion_3h_min=(
                   "cambio_presion_3h",
                   "min"
               ),
-
               cambio_presion_6h_min=(
                   "cambio_presion_6h",
                   "min"
               ),
-
               cambio_presion_12h_min=(
                   "cambio_presion_12h",
                   "min"
               ),
-
               cambio_presion_24h_min=(
                   "cambio_presion_24h",
                   "min"
               ),
-
               cambio_presion_3h_max=(
                   "cambio_presion_3h",
                   "max"
               ),
 
-              cambio_temp_6h_min=(
-                  "cambio_temp_6h",
-                  "min"
-              ),
-
-              cambio_temp_6h_max=(
-                  "cambio_temp_6h",
-                  "max"
-              ),
-
-              cambio_temp_12h_min=(
-                  "cambio_temp_12h",
-                  "min"
-              ),
-
-              cambio_temp_12h_max=(
-                  "cambio_temp_12h",
-                  "max"
-              ),
-
-              cambio_temp_24h_min=(
-                  "cambio_temp_24h",
-                  "min"
-              ),
-
-              cambio_temp_24h_max=(
-                  "cambio_temp_24h",
-                  "max"
-              ),
+              cambio_temp_6h_min=("cambio_temp_6h", "min"),
+              cambio_temp_6h_max=("cambio_temp_6h", "max"),
+              cambio_temp_12h_min=("cambio_temp_12h", "min"),
+              cambio_temp_12h_max=("cambio_temp_12h", "max"),
+              cambio_temp_24h_min=("cambio_temp_24h", "min"),
+              cambio_temp_24h_max=("cambio_temp_24h", "max"),
 
               cambio_humedad_6h_min=(
                   "cambio_humedad_6h",
                   "min"
               ),
-
               cambio_humedad_6h_max=(
                   "cambio_humedad_6h",
                   "max"
               ),
-
               cambio_humedad_12h_min=(
                   "cambio_humedad_12h",
                   "min"
               ),
-
               cambio_humedad_12h_max=(
                   "cambio_humedad_12h",
                   "max"
               ),
-
               cambio_humedad_24h_min=(
                   "cambio_humedad_24h",
                   "min"
               ),
-
               cambio_humedad_24h_max=(
                   "cambio_humedad_24h",
                   "max"
@@ -515,57 +299,33 @@ jobs:
                   "cambio_viento_6h",
                   "min"
               ),
-
               cambio_viento_6h_max=(
                   "cambio_viento_6h",
                   "max"
               ),
-
               cambio_viento_12h_min=(
                   "cambio_viento_12h",
                   "min"
               ),
-
               cambio_viento_12h_max=(
                   "cambio_viento_12h",
                   "max"
               ),
-
               cambio_viento_24h_min=(
                   "cambio_viento_24h",
                   "min"
               ),
-
               cambio_viento_24h_max=(
                   "cambio_viento_24h",
                   "max"
               ),
 
-              horas_lluvia_1mm=(
-                  "lluvia_1mm",
-                  "sum"
-              ),
-
-              horas_lluvia_10mm=(
-                  "lluvia_10mm",
-                  "sum"
-              ),
-
-              horas_rafaga_80=(
-                  "rafaga_80",
-                  "sum"
-              ),
-
-              horas_rafaga_100=(
-                  "rafaga_100",
-                  "sum"
-              )
+              horas_lluvia_1mm=("lluvia_1mm", "sum"),
+              horas_lluvia_10mm=("lluvia_10mm", "sum"),
+              horas_rafaga_80=("rafaga_80", "sum"),
+              horas_rafaga_100=("rafaga_100", "sum")
 
           ).reset_index()
-
-          # ============================================================
-          # RANGOS
-          # ============================================================
 
           daily["temperatura_rango"] = (
               daily["temperatura_max"]
@@ -581,10 +341,6 @@ jobs:
               daily["presion_max"]
               - daily["presion_min"]
           )
-
-          # ============================================================
-          # TENDENCIAS MULTIDIARIAS
-          # ============================================================
 
           daily = (
               daily
@@ -634,12 +390,6 @@ jobs:
               .mean()
           )
 
-          # ============================================================
-          # ESTACIONALIDAD
-          #
-          # NO SE UTILIZA LA HORA.
-          # ============================================================
-
           daily["mes"] = daily["fecha"].dt.month
 
           daily["mes_sin"] = np.sin(
@@ -649,10 +399,6 @@ jobs:
           daily["mes_cos"] = np.cos(
               2 * np.pi * daily["mes"] / 12
           )
-
-          # ============================================================
-          # CLIMATOLOGIA 1991-2020
-          # ============================================================
 
           periodo_clima = daily[
               (daily["fecha"] >= "1991-01-01")
@@ -710,15 +456,6 @@ jobs:
               - daily["humedad_clim_mean"]
           )
 
-          # ============================================================
-          # ETIQUETA
-          #
-          # 1 = DIA DE EVENTO SEVERO
-          # 0 = DIA NORMAL
-          #
-          # LA HORA DEL EVENTO NO PARTICIPA.
-          # ============================================================
-
           fechas_eventos = set(
               eventos["fecha"]
               .dt.normalize()
@@ -730,9 +467,6 @@ jobs:
               .isin(fechas_eventos)
               .astype(int)
           )
-
-          # Referencia documental.
-          # NO entra al modelo.
 
           mapa_eventos = dict(
               zip(
@@ -746,10 +480,6 @@ jobs:
               .map(mapa_eventos)
               .fillna("")
           )
-
-          # ============================================================
-          # COMPROBACIONES
-          # ============================================================
 
           total_dias = len(daily)
 
@@ -765,6 +495,7 @@ jobs:
           print("=" * 60)
           print("RESUMEN")
           print("=" * 60)
+
           print(
               f"Registros horarios utilizados: {len(clima):,}"
           )
@@ -783,10 +514,6 @@ jobs:
                   "ERROR: los dias severos no coinciden "
                   "con los eventos catalogados."
               )
-
-          # ============================================================
-          # VARIABLES DEL MODELO
-          # ============================================================
 
           features = [
 
@@ -923,12 +650,6 @@ jobs:
                   mediana
               )
 
-          # ============================================================
-          # VALIDACION CRUZADA
-          #
-          # SE VALIDA POR DIAS COMPLETOS.
-          # ============================================================
-
           print()
           print("=" * 60)
           print("VALIDACION CRUZADA")
@@ -941,6 +662,9 @@ jobs:
           )
 
           resultados = []
+
+          oof_y = []
+          oof_prob = []
 
           for numero_fold, (
               train_idx,
@@ -978,6 +702,14 @@ jobs:
               prob = modelo.predict_proba(
                   X_test
               )[:, 1]
+
+              oof_y.extend(
+                  y_test.tolist()
+              )
+
+              oof_prob.extend(
+                  prob.tolist()
+              )
 
               precision = precision_score(
                   y_test,
@@ -1036,6 +768,267 @@ jobs:
           ])
 
           # ============================================================
+          # ANALISIS DE UMBRALES
+          # ============================================================
+
+          print()
+          print("=" * 60)
+          print("ANALISIS DE UMBRALES")
+          print("=" * 60)
+
+          y_oof = np.asarray(
+              oof_y,
+              dtype=int
+          )
+
+          p_oof = np.asarray(
+              oof_prob,
+              dtype=float
+          )
+
+          filas_umbral = []
+
+          for umbral in np.arange(
+              0.01,
+              1.00,
+              0.01
+          ):
+
+              pred_umbral = (
+                  p_oof >= umbral
+              ).astype(int)
+
+              tn, fp, fn, tp = confusion_matrix(
+                  y_oof,
+                  pred_umbral,
+                  labels=[0, 1]
+              ).ravel()
+
+              precision_u = precision_score(
+                  y_oof,
+                  pred_umbral,
+                  zero_division=0
+              )
+
+              recall_u = recall_score(
+                  y_oof,
+                  pred_umbral,
+                  zero_division=0
+              )
+
+              f1_u = f1_score(
+                  y_oof,
+                  pred_umbral,
+                  zero_division=0
+              )
+
+              beta = 2.0
+
+              if (
+                  precision_u + recall_u
+              ) > 0:
+
+                  f2_u = (
+                      (1 + beta ** 2)
+                      * precision_u
+                      * recall_u
+                      / (
+                          beta ** 2
+                          * precision_u
+                          + recall_u
+                      )
+                  )
+
+              else:
+
+                  f2_u = 0.0
+
+              fpr_u = (
+                  fp / (fp + tn)
+                  if (fp + tn) > 0
+                  else 0.0
+              )
+
+              filas_umbral.append({
+                  "umbral": float(umbral),
+                  "precision": float(precision_u),
+                  "recall": float(recall_u),
+                  "f1": float(f1_u),
+                  "f2": float(f2_u),
+                  "fpr": float(fpr_u),
+                  "verdaderos_positivos": int(tp),
+                  "falsos_positivos": int(fp),
+                  "falsos_negativos": int(fn),
+                  "verdaderos_negativos": int(tn),
+                  "dias_marcados": int(
+                      pred_umbral.sum()
+                  )
+              })
+
+          analisis_umbrales = pd.DataFrame(
+              filas_umbral
+          )
+
+          analisis_umbrales.to_csv(
+              "modelo/analisis_umbrales.csv",
+              index=False
+          )
+
+          candidatos = analisis_umbrales[
+              analisis_umbrales["recall"] >= 0.80
+          ].copy()
+
+          if candidatos.empty:
+
+              candidatos = analisis_umbrales[
+                  analisis_umbrales["recall"] >= 0.60
+              ].copy()
+
+          if candidatos.empty:
+
+              candidatos = analisis_umbrales.copy()
+
+          recomendado = (
+              candidatos
+              .sort_values(
+                  [
+                      "f2",
+                      "recall",
+                      "fpr",
+                      "umbral"
+                  ],
+                  ascending=[
+                      False,
+                      False,
+                      True,
+                      False
+                  ]
+              )
+              .iloc[0]
+          )
+
+          umbral_info = {
+
+              "umbral_exploratorio":
+                  float(
+                      recomendado["umbral"]
+                  ),
+
+              "precision":
+                  float(
+                      recomendado["precision"]
+                  ),
+
+              "recall":
+                  float(
+                      recomendado["recall"]
+                  ),
+
+              "f1":
+                  float(
+                      recomendado["f1"]
+                  ),
+
+              "f2":
+                  float(
+                      recomendado["f2"]
+                  ),
+
+              "fpr":
+                  float(
+                      recomendado["fpr"]
+                  ),
+
+              "verdaderos_positivos":
+                  int(
+                      recomendado[
+                          "verdaderos_positivos"
+                      ]
+                  ),
+
+              "falsos_positivos":
+                  int(
+                      recomendado[
+                          "falsos_positivos"
+                      ]
+                  ),
+
+              "falsos_negativos":
+                  int(
+                      recomendado[
+                          "falsos_negativos"
+                      ]
+                  ),
+
+              "dias_marcados":
+                  int(
+                      recomendado[
+                          "dias_marcados"
+                      ]
+                  ),
+
+              "base":
+                  "predicciones_out_of_fold",
+
+              "finalidad":
+                  "analisis_exploratorio_no_produccion"
+          }
+
+          with open(
+              "modelo/umbral_operativo.json",
+              "w",
+              encoding="utf-8"
+          ) as archivo:
+
+              json.dump(
+                  umbral_info,
+                  archivo,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          print(
+              f"Umbral exploratorio: "
+              f"{umbral_info['umbral_exploratorio']:.2f}"
+          )
+
+          print(
+              f"Precision: "
+              f"{umbral_info['precision']:.4f}"
+          )
+
+          print(
+              f"Recall: "
+              f"{umbral_info['recall']:.4f}"
+          )
+
+          print(
+              f"F1: "
+              f"{umbral_info['f1']:.4f}"
+          )
+
+          print(
+              f"F2: "
+              f"{umbral_info['f2']:.4f}"
+          )
+
+          print(
+              f"FPR: "
+              f"{umbral_info['fpr']:.4f}"
+          )
+
+          print(
+              f"TP: "
+              f"{umbral_info['verdaderos_positivos']} | "
+              f"FP: "
+              f"{umbral_info['falsos_positivos']} | "
+              f"FN: "
+              f"{umbral_info['falsos_negativos']} | "
+              f"Dias marcados: "
+              f"{umbral_info['dias_marcados']}"
+          )
+
+          # ============================================================
           # MODELO FINAL
           # ============================================================
 
@@ -1059,10 +1052,6 @@ jobs:
               y
           )
 
-          # ============================================================
-          # GUARDAR MODELO COMPRIMIDO
-          # ============================================================
-
           ruta_modelo = (
               "modelo/"
               "climaar_modelo_dia_severo.joblib"
@@ -1073,15 +1062,11 @@ jobs:
                   "modelo": modelo_final,
                   "features": features,
                   "tipo": "clasificador_dia_severo",
-                  "version": "1.0"
+                  "version": "1.1"
               },
               ruta_modelo,
               compress=3
           )
-
-          # ============================================================
-          # IMPORTANCIA
-          # ============================================================
 
           importancia = pd.DataFrame({
               "variable": features,
@@ -1103,25 +1088,18 @@ jobs:
               index=False
           )
 
-          # ============================================================
-          # VALIDACION
-          # ============================================================
-
           validacion.to_csv(
               "modelo/validacion_diaria.csv",
               index=False
           )
 
-          # ============================================================
-          # RESUMEN
-          # ============================================================
-
           resumen = {
+
               "tipo_modelo":
                   "clasificador_dia_severo",
 
               "version":
-                  "1.0",
+                  "1.1",
 
               "registros_horarios_utilizados":
                   int(len(clima)),
@@ -1143,22 +1121,30 @@ jobs:
 
               "precision_media_cv":
                   float(
-                      validacion["precision"].mean()
+                      validacion[
+                          "precision"
+                      ].mean()
                   ),
 
               "recall_medio_cv":
                   float(
-                      validacion["recall"].mean()
+                      validacion[
+                          "recall"
+                      ].mean()
                   ),
 
               "f1_medio_cv":
                   float(
-                      validacion["f1"].mean()
+                      validacion[
+                          "f1"
+                      ].mean()
                   ),
 
               "roc_auc_medio_cv":
                   float(
-                      validacion["roc_auc"].mean()
+                      validacion[
+                          "roc_auc"
+                      ].mean()
                   ),
 
               "hora_evento_utilizada":
@@ -1168,7 +1154,14 @@ jobs:
                   False,
 
               "unidad_entrenamiento":
-                  "dia"
+                  "dia",
+
+              "umbral_exploratorio":
+                  float(
+                      umbral_info[
+                          "umbral_exploratorio"
+                      ]
+                  )
           }
 
           with open(
@@ -1184,11 +1177,8 @@ jobs:
                   ensure_ascii=False
               )
 
-          # ============================================================
-          # CONFIGURACION
-          # ============================================================
-
           configuracion = {
+
               "modelo":
                   "RandomForestClassifier",
 
@@ -1214,7 +1204,14 @@ jobs:
                   "dia",
 
               "features":
-                  features
+                  features,
+
+              "umbral_exploratorio":
+                  float(
+                      umbral_info[
+                          "umbral_exploratorio"
+                      ]
+                  )
           }
 
           with open(
@@ -1229,10 +1226,6 @@ jobs:
                   indent=2,
                   ensure_ascii=False
               )
-
-          # ============================================================
-          # METRICAS
-          # ============================================================
 
           with open(
               "modelo/metricas.txt",
@@ -1261,7 +1254,21 @@ jobs:
               )
 
               archivo.write(
-                  validacion.to_string(index=False)
+                  validacion.to_string(
+                      index=False
+                  )
+              )
+
+              archivo.write(
+                  "\n\nANALISIS DE UMBRAL\n"
+              )
+
+              archivo.write(
+                  json.dumps(
+                      umbral_info,
+                      indent=2,
+                      ensure_ascii=False
+                  )
               )
 
               archivo.write(
@@ -1273,13 +1280,6 @@ jobs:
                       index=False
                   )
               )
-
-          # ============================================================
-          # DATASET DIARIO
-          #
-          # SE GUARDA COMO ARTEFACTO.
-          # NO SE SUBE AL REPOSITORIO.
-          # ============================================================
 
           columnas_a_guardar = [
               "fecha",
@@ -1293,10 +1293,7 @@ jobs:
           )
 
           # ============================================================
-          # CONTROL DE TAMAÑO
-          #
-          # NINGUN ARCHIVO QUE VAYA A GITHUB
-          # PUEDE SUPERAR 90 MB.
+          # CONTROL DE TAMANO
           # ============================================================
 
           print()
@@ -1305,12 +1302,22 @@ jobs:
           print("=" * 60)
 
           archivos_repo = [
+
               "modelo/climaar_modelo_dia_severo.joblib",
+
               "modelo/importancia_variables.csv",
+
               "modelo/validacion_diaria.csv",
+
               "modelo/resumen_modelo.json",
+
               "modelo/configuracion_modelo.json",
-              "modelo/metricas.txt"
+
+              "modelo/metricas.txt",
+
+              "modelo/analisis_umbrales.csv",
+
+              "modelo/umbral_operativo.json"
           ]
 
           for archivo in archivos_repo:
@@ -1320,20 +1327,29 @@ jobs:
                       f"ERROR: falta {archivo}"
                   )
 
-              tamano = os.path.getsize(archivo)
+              tamano = os.path.getsize(
+                  archivo
+              )
 
               print(
                   f"{archivo}: "
                   f"{tamano / 1024 / 1024:.2f} MB"
               )
 
-              if tamano >= 90 * 1024 * 1024:
+              if tamano >= (
+                  90 * 1024 * 1024
+              ):
+
                   raise SystemExit(
-                      f"ERROR: {archivo} supera 90 MB."
+                      f"ERROR: {archivo} "
+                      f"supera 90 MB."
                   )
 
           print()
-          print("OK: ningun archivo del repositorio supera 90 MB.")
+          print(
+              "OK: ningun archivo del repositorio "
+              "supera 90 MB."
+          )
 
           print()
           print("=" * 60)
@@ -1341,23 +1357,28 @@ jobs:
           print("=" * 60)
 
           print(
-              f"Registros horarios: {len(clima):,}"
+              f"Registros horarios: "
+              f"{len(clima):,}"
           )
 
           print(
-              f"Dias entrenados: {total_dias:,}"
+              f"Dias entrenados: "
+              f"{total_dias:,}"
           )
 
           print(
-              f"Dias severos: {dias_severos}"
+              f"Dias severos: "
+              f"{dias_severos}"
           )
 
           print(
-              f"Dias normales: {dias_normales:,}"
+              f"Dias normales: "
+              f"{dias_normales:,}"
           )
 
           print(
-              f"Variables: {len(features)}"
+              f"Variables: "
+              f"{len(features)}"
           )
 
           print(
@@ -1376,14 +1397,16 @@ jobs:
           )
 
           print(
-              f"Modelo: {ruta_modelo}"
+              f"Umbral exploratorio: "
+              f"{umbral_info['umbral_exploratorio']:.2f}"
+          )
+
+          print(
+              f"Modelo: "
+              f"{ruta_modelo}"
           )
 
           PY
-
-      # ================================================================
-      # VERIFICAR RESULTADOS
-      # ================================================================
 
       - name: Verificar resultados
         run: |
@@ -1402,14 +1425,17 @@ jobs:
 
           echo ""
           echo "=============================================="
+          echo "UMBRAL EXPLORATORIO"
+          echo "=============================================="
+
+          cat modelo/umbral_operativo.json
+
+          echo ""
+          echo "=============================================="
           echo "VARIABLES MAS IMPORTANTES"
           echo "=============================================="
 
           head -31 modelo/importancia_variables.csv
-
-      # ================================================================
-      # ARTEFACTO
-      # ================================================================
 
       - name: Subir resultados como artefacto
         uses: actions/upload-artifact@v4
@@ -1422,12 +1448,10 @@ jobs:
             modelo/resumen_modelo.json
             modelo/configuracion_modelo.json
             modelo/metricas.txt
+            modelo/analisis_umbrales.csv
+            modelo/umbral_operativo.json
             modelo/dataset_diario_entrenamiento.csv
           retention-days: 30
-
-      # ================================================================
-      # GUARDAR SOLO RESULTADOS NECESARIOS EN GITHUB
-      # ================================================================
 
       - name: Guardar resultados en GitHub
         run: |
@@ -1440,9 +1464,11 @@ jobs:
             modelo/importancia_variables.csv \
             modelo/resumen_modelo.json \
             modelo/configuracion_modelo.json \
-            modelo/metricas.txt
+            modelo/metricas.txt \
+            modelo/analisis_umbrales.csv \
+            modelo/umbral_operativo.json
 
           git diff --cached --quiet || git commit \
-            -m "Entrenamiento completo diario ClimaAR"
+            -m "Analisis de umbral modelo diario ClimaAR"
 
           git push
