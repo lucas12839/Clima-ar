@@ -1,22 +1,61 @@
-CLIMAAR - MODELO PRE-EVENTO
-============================
+CLIMAAR - MODELO DIARIO DE EVENTOS SEVEROS
+============================================
 
 {
-  "tipo": "modelo_pre_evento",
-  "ventana_pre_evento_horas": 24,
+  "tipo_modelo": "clasificador_dia_severo",
+  "version": "1.0",
+  "registros_horarios_utilizados": 409872,
+  "dias_utilizados": 17078,
+  "dias_severos": 5,
+  "dias_normales": 17073,
   "eventos_catalogados": 5,
-  "muestras_positivas": 120,
-  "muestras_negativas": 120,
-  "precision_media": 0.292063492063492,
-  "recall_medio": 0.1,
-  "f1_medio": 0.14858260019550343,
-  "roc_auc_medio": 0.44548611111111114,
-  "nota": "Validacion leave-one-event-out. No representa todavia el rendimiento final del nowcasting por radar."
+  "variables_modelo": 80,
+  "precision_media_cv": 0.0,
+  "recall_medio_cv": 0.0,
+  "f1_medio_cv": 0.0,
+  "roc_auc_medio_cv": 0.6864121209626026,
+  "hora_evento_utilizada": false,
+  "targets_artificiales_utilizados": false,
+  "unidad_entrenamiento": "dia"
 }
 
-MATRICES POR EVENTO
-1981-03-14: [[23, 1], [24, 0]]
-1982-02-13: [[23, 1], [16, 8]]
-2019-12-30: [[24, 0], [24, 0]]
-2023-12-16: [[21, 3], [20, 4]]
-2025-03-07: [[23, 1], [24, 0]]
+VALIDACION
+ fold  precision  recall  f1  roc_auc
+    1        0.0     0.0 0.0 0.995022
+    2        0.0     0.0 0.0 0.473353
+    3        0.0     0.0 0.0 0.476720
+    4        0.0     0.0 0.0 1.000000
+    5        0.0     0.0 0.0 0.486965
+
+VARIABLES MAS IMPORTANTES
+              variable  importancia
+         lluvia_3h_max     0.056402
+         lluvia_6h_max     0.055902
+         presion_media     0.050499
+  precipitacion_max_1h     0.042714
+anomalia_precipitacion     0.041818
+       punto_rocio_max     0.040513
+           presion_max     0.035659
+      presion_media_3d     0.035438
+  cambio_viento_6h_min     0.033495
+  temperatura_media_3d     0.030873
+       temperatura_min     0.030434
+        lluvia_12h_max     0.029974
+   precipitacion_total     0.026385
+           presion_min     0.025779
+     punto_rocio_medio     0.023884
+      anomalia_presion     0.022515
+cambio_humedad_12h_max     0.022039
+      horas_lluvia_1mm     0.021129
+         rafaga_max_3d     0.017615
+        lluvia_24h_max     0.016791
+      anomalia_humedad     0.016774
+             lluvia_3d     0.016085
+       punto_rocio_min     0.014765
+cambio_humedad_24h_max     0.013779
+     temperatura_media     0.013542
+        temp_clim_mean     0.012597
+ cambio_viento_12h_min     0.012411
+   cambio_temp_12h_max     0.011452
+ cambio_viento_12h_max     0.011418
+               mes_sin     0.011061
