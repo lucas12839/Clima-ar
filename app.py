@@ -14,7 +14,7 @@ from io import BytesIO
 # CLIMAAR
 # ============================================================
 
-VERSION = "4.2.2"
+VERSION = "4.3.0"
 
 app = FastAPI(
     title="ClimaAR",
@@ -83,7 +83,9 @@ def iso_now():
 
 
 def argentina_time(utc_dt):
+
     try:
+
         from zoneinfo import ZoneInfo
 
         return utc_dt.astimezone(
@@ -91,15 +93,15 @@ def argentina_time(utc_dt):
         )
 
     except Exception:
+
         return utc_dt
 
 
 def clean_json_value(value):
     """
-    Convierte valores problemáticos para JSON
-    como NaN o Infinity en None.
-    También procesa diccionarios y listas
-    recursivamente.
+    Convierte NaN e Infinity en None.
+    Procesa recursivamente diccionarios,
+    listas y tuplas.
     """
 
     if isinstance(value, float):
@@ -152,6 +154,7 @@ def load_json():
         return clean_json_value(data)
 
     except Exception:
+
         return None
 
 
@@ -174,6 +177,7 @@ def load_nowcast():
         return clean_json_value(data)
 
     except Exception:
+
         return None
 
 
@@ -866,7 +870,7 @@ def radar_preview():
 
 
 # ============================================================
-# PÁGINA RADAR
+# PÁGINA RADAR + NOWCAST
 # ============================================================
 
 @app.get(
@@ -919,17 +923,19 @@ def radar_page():
                 padding: 12px;
                 background: #171717;
                 border-bottom: 1px solid #333;
+                position: relative;
+                z-index: 1000;
             }
 
             h1 {
-                margin: 0 0 6px 0;
+                margin: 0 0 5px 0;
                 font-size: 20px;
             }
 
             #estado {
                 font-size: 13px;
                 color: #ccc;
-                margin-bottom: 10px;
+                margin-bottom: 9px;
             }
 
             button {
@@ -949,7 +955,7 @@ def radar_page():
             }
 
             #resultado {
-                margin-top: 8px;
+                margin-top: 7px;
                 font-size: 13px;
                 min-height: 18px;
             }
@@ -965,6 +971,133 @@ def radar_page():
                 font-size: 9px;
             }
 
+            .info-panel {
+
+                position: absolute;
+
+                left: 10px;
+                right: 10px;
+
+                bottom: 15px;
+
+                z-index: 999;
+
+                background: rgba(17,17,17,0.94);
+
+                border: 1px solid #444;
+
+                border-radius: 12px;
+
+                padding: 12px;
+
+                box-shadow:
+                    0 4px 16px
+                    rgba(0,0,0,0.45);
+
+                backdrop-filter: blur(5px);
+
+                max-width: 520px;
+
+                margin: auto;
+            }
+
+            .estado-principal {
+
+                font-size: 18px;
+
+                font-weight: bold;
+
+                margin-bottom: 7px;
+            }
+
+            .estado-secundario {
+
+                font-size: 12px;
+
+                color: #bbb;
+
+                margin-bottom: 10px;
+            }
+
+            .grid {
+
+                display: grid;
+
+                grid-template-columns:
+                    repeat(2, 1fr);
+
+                gap: 7px;
+            }
+
+            .dato {
+
+                background: #222;
+
+                border-radius: 8px;
+
+                padding: 8px;
+            }
+
+            .dato-titulo {
+
+                font-size: 10px;
+
+                color: #999;
+
+                margin-bottom: 3px;
+            }
+
+            .dato-valor {
+
+                font-size: 14px;
+
+                font-weight: bold;
+            }
+
+            .separador {
+
+                margin: 10px 0 8px 0;
+
+                border-top: 1px solid #333;
+            }
+
+            .fuentes {
+
+                font-size: 10px;
+
+                color: #888;
+
+                line-height: 1.4;
+            }
+
+            .sin-actividad {
+                color: #58d68d;
+            }
+
+            .actividad {
+                color: #ffb84d;
+            }
+
+            .alerta {
+                color: #ff6b6b;
+            }
+
+            .marcador-bahia {
+
+                background: white;
+
+                border: 3px solid #1976d2;
+
+                width: 18px;
+                height: 18px;
+
+                border-radius: 50%;
+
+                box-shadow:
+                    0 0 0 4px
+                    rgba(25,118,210,0.35);
+            }
+
         </style>
 
     </head>
@@ -978,7 +1111,7 @@ def radar_page():
             </h1>
 
             <div id="estado">
-                RainViewer · radar listo
+                RainViewer · cargando radar...
             </div>
 
             <button onclick="actualizarRadar()">
@@ -990,6 +1123,146 @@ def radar_page():
         </div>
 
         <div id="map"></div>
+
+        <div class="info-panel">
+
+            <div
+                id="estadoPrincipal"
+                class="estado-principal">
+                Analizando condiciones...
+            </div>
+
+            <div
+                id="estadoSecundario"
+                class="estado-secundario">
+                Cargando nowcast...
+            </div>
+
+            <div class="grid">
+
+                <div class="dato">
+
+                    <div class="dato-titulo">
+                        DISTANCIA
+                    </div>
+
+                    <div
+                        id="distancia"
+                        class="dato-valor">
+                        —
+                    </div>
+
+                </div>
+
+                <div class="dato">
+
+                    <div class="dato-titulo">
+                        VELOCIDAD
+                    </div>
+
+                    <div
+                        id="velocidad"
+                        class="dato-valor">
+                        —
+                    </div>
+
+                </div>
+
+                <div class="dato">
+
+                    <div class="dato-titulo">
+                        DIRECCIÓN
+                    </div>
+
+                    <div
+                        id="direccion"
+                        class="dato-valor">
+                        —
+                    </div>
+
+                </div>
+
+                <div class="dato">
+
+                    <div class="dato-titulo">
+                        TENDENCIA
+                    </div>
+
+                    <div
+                        id="fortalecimiento"
+                        class="dato-valor">
+                        —
+                    </div>
+
+                </div>
+
+                <div class="dato">
+
+                    <div class="dato-titulo">
+                        ETA
+                    </div>
+
+                    <div
+                        id="eta"
+                        class="dato-valor">
+                        —
+                    </div>
+
+                </div>
+
+                <div class="dato">
+
+                    <div class="dato-titulo">
+                        CONFIANZA
+                    </div>
+
+                    <div
+                        id="confianza"
+                        class="dato-valor">
+                        —
+                    </div>
+
+                </div>
+
+                <div class="dato">
+
+                    <div class="dato-titulo">
+                        PROYECCIÓN 30 MIN
+                    </div>
+
+                    <div
+                        id="proy30"
+                        class="dato-valor">
+                        —
+                    </div>
+
+                </div>
+
+                <div class="dato">
+
+                    <div class="dato-titulo">
+                        PROYECCIÓN 60 MIN
+                    </div>
+
+                    <div
+                        id="proy60"
+                        class="dato-valor">
+                        —
+                    </div>
+
+                </div>
+
+            </div>
+
+            <div class="separador"></div>
+
+            <div
+                id="fuentes"
+                class="fuentes">
+                RainViewer · SAZB · Open-Meteo · ClimaAR
+            </div>
+
+        </div>
 
         <script
             src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
@@ -1024,76 +1297,580 @@ def radar_page():
                 }
             ).addTo(map);
 
+
+            /*
+             * MARCADOR BAHÍA BLANCA
+             */
+
+            const iconBahia =
+                L.divIcon({
+
+                    className: "",
+
+                    html:
+                        '<div class="marcador-bahia"></div>',
+
+                    iconSize: [
+                        18,
+                        18
+                    ],
+
+                    iconAnchor: [
+                        9,
+                        9
+                    ]
+
+                });
+
+            L.marker(
+                centro,
+                {
+                    icon: iconBahia
+                }
+            )
+            .addTo(map)
+            .bindTooltip(
+                "Bahía Blanca",
+                {
+                    permanent: false
+                }
+            );
+
+
             let radar = null;
 
 
-            async function cargarRadarGuardado() {
+            function texto(
+                valor,
+                sufijo = ""
+            ) {
+
+                if (
+                    valor === null ||
+                    valor === undefined ||
+                    valor === ""
+                ) {
+                    return "—";
+                }
+
+                return String(valor) + sufijo;
+            }
+
+
+            function porcentaje(valor) {
+
+                if (
+                    valor === null ||
+                    valor === undefined
+                ) {
+                    return "—";
+                }
+
+                const numero =
+                    Number(valor);
+
+                if (
+                    !Number.isFinite(numero)
+                ) {
+                    return "—";
+                }
+
+                return Math.round(
+                    numero * 100
+                ) + "%";
+            }
+
+
+            function direccionTexto(
+                direccion,
+                grados
+            ) {
+
+                if (direccion) {
+                    return direccion;
+                }
+
+                if (
+                    grados === null ||
+                    grados === undefined
+                ) {
+                    return "—";
+                }
+
+                const d =
+                    Number(grados);
+
+                if (
+                    !Number.isFinite(d)
+                ) {
+                    return "—";
+                }
+
+                const nombres = [
+                    "N",
+                    "NE",
+                    "E",
+                    "SE",
+                    "S",
+                    "SO",
+                    "O",
+                    "NO"
+                ];
+
+                const indice =
+                    Math.round(
+                        d / 45
+                    ) % 8;
+
+                return nombres[
+                    indice
+                ];
+            }
+
+
+            function obtenerNowcast(
+                estado
+            ) {
+
+                if (
+                    estado &&
+                    estado.nowcast_radar &&
+                    estado.nowcast_radar.datos
+                ) {
+
+                    return estado
+                        .nowcast_radar
+                        .datos;
+
+                }
+
+                if (
+                    estado &&
+                    estado.nowcast_radar
+                ) {
+
+                    return estado
+                        .nowcast_radar;
+
+                }
+
+                return null;
+            }
+
+
+            function mostrarNowcast(
+                estado
+            ) {
+
+                const n =
+                    obtenerNowcast(
+                        estado
+                    );
+
+                const principal =
+                    document.getElementById(
+                        "estadoPrincipal"
+                    );
+
+                const secundario =
+                    document.getElementById(
+                        "estadoSecundario"
+                    );
+
+
+                if (!n) {
+
+                    principal.textContent =
+                        "Nowcast no disponible";
+
+                    principal.className =
+                        "estado-principal alerta";
+
+                    secundario.textContent =
+                        "No hay datos suficientes.";
+
+                    return;
+                }
+
+
+                const actividad =
+                    n.actividad === true;
+
+
+                if (!actividad) {
+
+                    principal.textContent =
+                        "🟢 Sin precipitación detectada";
+
+                    principal.className =
+                        "estado-principal sin-actividad";
+
+                    secundario.textContent =
+                        "Radar operativo · " +
+                        texto(
+                            n.frames_analizados
+                        ) +
+                        " frames analizados";
+
+                } else {
+
+                    principal.textContent =
+                        "🟠 Precipitación detectada";
+
+                    principal.className =
+                        "estado-principal actividad";
+
+                    secundario.textContent =
+                        "Seguimiento radar activo";
+                }
+
+
+                document.getElementById(
+                    "distancia"
+                ).textContent =
+                    n.distancia_km !== null &&
+                    n.distancia_km !== undefined
+                    ? texto(
+                        Number(
+                            n.distancia_km
+                        ).toFixed(1),
+                        " km"
+                    )
+                    : "—";
+
+
+                document.getElementById(
+                    "velocidad"
+                ).textContent =
+                    n.velocidad_kmh !== null &&
+                    n.velocidad_kmh !== undefined
+                    ? texto(
+                        Number(
+                            n.velocidad_kmh
+                        ).toFixed(1),
+                        " km/h"
+                    )
+                    : "—";
+
+
+                document.getElementById(
+                    "direccion"
+                ).textContent =
+                    direccionTexto(
+                        n.direccion,
+                        n.direccion_grados
+                    );
+
+
+                document.getElementById(
+                    "fortalecimiento"
+                ).textContent =
+                    n.fortalecimiento
+                    ? n.fortalecimiento
+                    : "—";
+
+
+                document.getElementById(
+                    "eta"
+                ).textContent =
+                    n.eta_minutos !== null &&
+                    n.eta_minutos !== undefined
+                    ? texto(
+                        Math.round(
+                            Number(
+                                n.eta_minutos
+                            )
+                        ),
+                        " min"
+                    )
+                    : "—";
+
+
+                document.getElementById(
+                    "confianza"
+                ).textContent =
+                    porcentaje(
+                        n.confianza_movimiento
+                    );
+
+
+                document.getElementById(
+                    "proy30"
+                ).textContent =
+                    n.proyeccion_30_min !== null &&
+                    n.proyeccion_30_min !== undefined
+                    ? String(
+                        n.proyeccion_30_min
+                    )
+                    : "—";
+
+
+                document.getElementById(
+                    "proy60"
+                ).textContent =
+                    n.proyeccion_60_min !== null &&
+                    n.proyeccion_60_min !== undefined
+                    ? String(
+                        n.proyeccion_60_min
+                    )
+                    : "—";
+
+
+                const fuentes =
+                    document.getElementById(
+                        "fuentes"
+                    );
+
+                let textoFuentes =
+                    "Radar: RainViewer";
+
+
+                if (
+                    estado &&
+                    estado.sazb &&
+                    estado.sazb.disponible
+                ) {
+
+                    textoFuentes +=
+                        " · SAZB";
+
+                }
+
+
+                if (
+                    estado &&
+                    estado.openmeteo &&
+                    estado.openmeteo.disponible
+                ) {
+
+                    textoFuentes +=
+                        " · Open-Meteo";
+
+                }
+
+
+                if (
+                    estado &&
+                    estado.modelo_historico &&
+                    estado.modelo_historico.disponible
+                ) {
+
+                    textoFuentes +=
+                        " · Modelo histórico";
+
+                }
+
+
+                fuentes.textContent =
+                    textoFuentes;
+            }
+
+
+            async function cargarEstado() {
 
                 try {
 
                     const response =
                         await fetch(
-                            "/radar/status?ts=" +
+                            "/estado?ts=" +
                             Date.now()
                         );
 
                     if (!response.ok) {
-                        return;
+
+                        throw new Error(
+                            "HTTP " +
+                            response.status
+                        );
                     }
 
                     const data =
                         await response.json();
 
+
+                    mostrarNowcast(
+                        data
+                    );
+
+
+                    /*
+                     * RADAR
+                     */
+
                     if (
-                        data.bounds &&
-                        data.bounds.north !== undefined
+                        data.radar &&
+                        data.radar.bounds &&
+                        data.radar.bounds.north !==
+                        undefined
                     ) {
 
                         const bounds = [
 
                             [
-                                data.bounds.south,
-                                data.bounds.west
+                                data.radar.bounds.south,
+                                data.radar.bounds.west
                             ],
 
                             [
-                                data.bounds.north,
-                                data.bounds.east
+                                data.radar.bounds.north,
+                                data.radar.bounds.east
                             ]
 
                         ];
 
-                        radar =
-                            L.imageOverlay(
+
+                        if (!radar) {
+
+                            radar =
+                                L.imageOverlay(
+                                    "/radar.png?ts=" +
+                                    Date.now(),
+                                    bounds,
+                                    {
+                                        opacity: 0.65,
+                                        interactive: false
+                                    }
+                                )
+                                .addTo(map);
+
+                        } else {
+
+                            radar.setBounds(
+                                bounds
+                            );
+
+                            radar.setUrl(
                                 "/radar.png?ts=" +
-                                Date.now(),
-                                bounds,
-                                {
-                                    opacity: 0.65,
-                                    interactive: false
-                                }
-                            ).addTo(map);
+                                Date.now()
+                            );
+                        }
                     }
 
+
                     if (
-                        data.frame_argentina
+                        data.radar &&
+                        data.radar.frame_argentina
                     ) {
 
                         document.getElementById(
                             "estado"
                         ).textContent =
                             "RainViewer · último frame: " +
-                            data.frame_argentina +
+                            data.radar.frame_argentina +
                             " · teselas: " +
-                            data.teselas_ok +
+                            texto(
+                                data.radar.teselas_ok
+                            ) +
                             "/" +
-                            data.teselas_total;
+                            texto(
+                                data.radar.teselas_total
+                            );
+
+                    } else {
+
+                        const n =
+                            obtenerNowcast(
+                                data
+                            );
+
+                        if (
+                            n &&
+                            n.frame_actual_utc
+                        ) {
+
+                            document.getElementById(
+                                "estado"
+                            ).textContent =
+                                "RainViewer · frame: " +
+                                n.frame_actual_utc;
+                        }
                     }
+
+
+                    /*
+                     * DATOS SAZB
+                     *
+                     * Son opcionales porque
+                     * el endpoint puede variar
+                     * según la versión desplegada.
+                     */
+
+                    if (
+                        data.sazb &&
+                        data.sazb.disponible
+                    ) {
+
+                        const s =
+                            data.sazb;
+
+                        const temp =
+                            s.temperatura_c;
+
+                        const viento =
+                            s.viento_kt;
+
+                        const presion =
+                            s.presion_hpa;
+
+                        let extra =
+                            "";
+
+                        if (
+                            temp !== null &&
+                            temp !== undefined
+                        ) {
+
+                            extra +=
+                                " · " +
+                                Number(
+                                    temp
+                                ).toFixed(1) +
+                                "°C";
+                        }
+
+                        if (
+                            viento !== null &&
+                            viento !== undefined
+                        ) {
+
+                            extra +=
+                                " · viento " +
+                                Number(
+                                    viento
+                                ).toFixed(0) +
+                                " kt";
+                        }
+
+                        if (
+                            presion !== null &&
+                            presion !== undefined
+                        ) {
+
+                            extra +=
+                                " · " +
+                                Number(
+                                    presion
+                                ).toFixed(0) +
+                                " hPa";
+                        }
+
+                        document.getElementById(
+                            "resultado"
+                        ).textContent =
+                            "SAZB" +
+                            extra;
+                    }
+
 
                 } catch (error) {
 
+                    document.getElementById(
+                        "resultado"
+                    ).textContent =
+                        "No se pudo actualizar el análisis.";
+
                     console.log(
-                        "No hay radar guardado todavía."
+                        error
                     );
                 }
             }
@@ -1109,6 +1886,7 @@ def radar_page():
                 resultado.textContent =
                     "Actualizando radar...";
 
+
                 try {
 
                     const response =
@@ -1119,6 +1897,7 @@ def radar_page():
 
                     const data =
                         await response.json();
+
 
                     if (
                         data.estado !== "ok"
@@ -1134,28 +1913,23 @@ def radar_page():
                         return;
                     }
 
-                    if (radar) {
 
-                        radar.setUrl(
-                            "/radar.png?ts=" +
-                            Date.now()
-                        );
+                    const bounds = [
 
-                    } else {
+                        [
+                            data.bounds.south,
+                            data.bounds.west
+                        ],
 
-                        const bounds = [
+                        [
+                            data.bounds.north,
+                            data.bounds.east
+                        ]
 
-                            [
-                                data.bounds.south,
-                                data.bounds.west
-                            ],
+                    ];
 
-                            [
-                                data.bounds.north,
-                                data.bounds.east
-                            ]
 
-                        ];
+                    if (!radar) {
 
                         radar =
                             L.imageOverlay(
@@ -1166,24 +1940,34 @@ def radar_page():
                                     opacity: 0.65,
                                     interactive: false
                                 }
-                            ).addTo(map);
+                            )
+                            .addTo(map);
+
+                    } else {
+
+                        radar.setBounds(
+                            bounds
+                        );
+
+                        radar.setUrl(
+                            "/radar.png?ts=" +
+                            Date.now()
+                        );
                     }
+
 
                     map.setView(
                         centro,
                         9
                     );
 
+
                     resultado.textContent =
-                        "OK · " +
+                        "Radar actualizado · " +
                         data.teselas_ok +
                         "/" +
-                        data.teselas_total +
-                        " · " +
-                        (
-                            data.frame_argentina ||
-                            "frame actualizado"
-                        );
+                        data.teselas_total;
+
 
                     document.getElementById(
                         "estado"
@@ -1198,6 +1982,10 @@ def radar_page():
                         "/" +
                         data.teselas_total;
 
+
+                    await cargarEstado();
+
+
                 } catch (error) {
 
                     resultado.textContent =
@@ -1206,6 +1994,10 @@ def radar_page():
                 }
             }
 
+
+            /*
+             * INICIO
+             */
 
             setTimeout(
                 function() {
@@ -1217,7 +2009,23 @@ def radar_page():
             );
 
 
-            cargarRadarGuardado();
+            cargarEstado();
+
+
+            /*
+             * ACTUALIZACIÓN AUTOMÁTICA
+             *
+             * El radar se mantiene con su
+             * actualización manual.
+             *
+             * El análisis se refresca cada
+             * 60 segundos.
+             */
+
+            setInterval(
+                cargarEstado,
+                60000
+            );
 
         </script>
 
