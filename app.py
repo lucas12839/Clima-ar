@@ -4,20 +4,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from io import BytesIO
 from zoneinfo import ZoneInfo
-import json
-import math
-import time
+import json, math, time
 
 import requests
 from PIL import Image
 
 
-# ============================================================
-# CLIMAAR
-# Radar Bahía Blanca + RainViewer + Nowcast V7
-# ============================================================
-
-VERSION = "5.0.0"
+VERSION = "5.0.1"
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -51,17 +44,10 @@ HEADERS = {
 
 app = FastAPI(
     title="ClimaAR",
-    description=(
-        "Radar meteorológico y seguimiento "
-        "de tormentas para Bahía Blanca"
-    ),
+    description="Radar meteorológico y seguimiento de tormentas para Bahía Blanca",
     version=VERSION
 )
 
-
-# ============================================================
-# UTILIDADES
-# ============================================================
 
 def iso_now():
     return datetime.now(timezone.utc).isoformat()
@@ -133,10 +119,6 @@ def save_json(path, data):
     )
 
 
-# ============================================================
-# COORDENADAS
-# ============================================================
-
 def lon_to_x(lon):
 
     return int(
@@ -191,10 +173,6 @@ def y_to_lat(y):
         )
     )
 
-
-# ============================================================
-# RAINVIEWER
-# ============================================================
 
 def rainviewer_data():
 
@@ -307,7 +285,6 @@ def build_radar():
             )
 
             item = {
-
                 "x": x,
                 "y": y,
                 "url": url,
@@ -342,17 +319,9 @@ def build_radar():
                 )
 
                 item.update({
-
-                    "http":
-                        response.status_code,
-
-                    "valid_png":
-                        True,
-
-                    "size":
-                        len(
-                            response.content
-                        )
+                    "http": response.status_code,
+                    "valid_png": True,
+                    "size": len(response.content)
                 })
 
                 ok += 1
@@ -486,9 +455,21 @@ def build_radar():
     return status
 
 
-# ============================================================
-# API
-# ============================================================
+def cargar_nowcast():
+
+    data = load_json(
+        NOWCAST_FILE
+    )
+
+    if not isinstance(
+        data,
+        dict
+    ):
+
+        return None
+
+    return data
+
 
 @app.get(
     "/",
@@ -688,26 +669,6 @@ def radar_preview():
     return radar_png()
 
 
-# ============================================================
-# NOWCAST V7
-# ============================================================
-
-def cargar_nowcast():
-
-    data = load_json(
-        NOWCAST_FILE
-    )
-
-    if not isinstance(
-        data,
-        dict
-    ):
-
-        return None
-
-    return data
-
-
 @app.get("/nowcast")
 def nowcast():
 
@@ -734,10 +695,6 @@ def nowcast():
     }
 
 
-# ============================================================
-# SAZB
-# ============================================================
-
 @app.get("/observacion")
 def observacion():
 
@@ -758,10 +715,6 @@ def observacion():
         }
     )
 
-
-# ============================================================
-# ESTADO GENERAL
-# ============================================================
 
 @app.get("/estado")
 def estado():
@@ -811,10 +764,6 @@ def estado():
     })
 
 
-# ============================================================
-# MODELO
-# ============================================================
-
 @app.get("/modelo")
 def modelo():
 
@@ -849,11 +798,6 @@ def tormenta():
         {}
     )
 
-    nucleos = n.get(
-        "nucleos",
-        []
-    )
-
     return {
 
         "estado":
@@ -869,7 +813,10 @@ def tormenta():
             ),
 
         "nucleos":
-            nucleos,
+            n.get(
+                "nucleos",
+                []
+            ),
 
         "nucleo_principal_id":
             n.get(
@@ -890,13 +837,8 @@ def tormenta():
     }
 
 
-# ============================================================
-# INTERFAZ
-# ============================================================
-
 HTML = r'''
 <!doctype html>
-
 <html lang="es">
 
 <head>
@@ -1125,10 +1067,6 @@ button {
     color: #ff6b6b;
 }
 
-.info {
-    color: #65b9ff;
-}
-
 @media (max-width: 520px) {
 
     .panel {
@@ -1141,6 +1079,7 @@ button {
     .proj {
         grid-template-columns: repeat(2,1fr);
     }
+
 }
 
 </style>
@@ -1185,7 +1124,6 @@ Analizando condiciones...
 Cargando datos...
 </div>
 
-
 <div class="grid">
 
 <div class="dato">
@@ -1220,9 +1158,7 @@ Cargando datos...
 
 </div>
 
-
 <div class="sep"></div>
-
 
 <div class="grid">
 
@@ -1258,20 +1194,15 @@ Cargando datos...
 
 </div>
 
-
 <div class="sep"></div>
 
-<div
-    id="coresTitle"
-    class="section-title"
->
+<div class="section-title">
 NÚCLEOS DE PRECIPITACIÓN
 </div>
 
 <div id="cores">
 Sin núcleos detectados.
 </div>
-
 
 <div class="sep"></div>
 
@@ -1303,7 +1234,6 @@ REFLECTIVIDAD RADAR · dBZ · RAINVIEWER UNIVERSAL BLUE
 
 </div>
 
-
 <div
     id="obs"
     class="obs"
@@ -1317,7 +1247,6 @@ Radar: RainViewer · Observación: Aviation Weather Center SAZB · Seguimiento: 
 
 </div>
 
-
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
@@ -1327,14 +1256,12 @@ const center = [
     -62.26
 ];
 
-
 const map = L.map(
     'map'
 ).setView(
     center,
     9
 );
-
 
 L.tileLayer(
     'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -1345,7 +1272,6 @@ L.tileLayer(
     }
 ).addTo(map);
 
-
 L.marker(
     center
 ).addTo(map)
@@ -1353,13 +1279,10 @@ L.marker(
     'Bahía Blanca'
 );
 
-
 let radar = null;
-
 
 const el = id =>
     document.getElementById(id);
-
 
 const val = (
     v,
@@ -1418,21 +1341,15 @@ function trendText(value) {
     const s = String(value)
         .toLowerCase();
 
-    if (
-        s.includes('fortal')
-    ) {
+    if (s.includes('fortal')) {
         return 'Fortaleciendo';
     }
 
-    if (
-        s.includes('debil')
-    ) {
+    if (s.includes('debil')) {
         return 'Debilitando';
     }
 
-    if (
-        s.includes('estable')
-    ) {
+    if (s.includes('estable')) {
         return 'Estable';
     }
 
@@ -1451,28 +1368,21 @@ function confidence(value) {
 
     const n = Number(value);
 
-    if (!Number.isFinite(n)) {
-        return '—';
-    }
-
-    return Math.round(
-        n * 100
-    ) + '%';
+    return Number.isFinite(n)
+        ? Math.round(n * 100) + '%'
+        : '—';
 }
 
 
 function formatDistance(value) {
 
-    if (
-        value === null ||
-        value === undefined
-    ) {
-        return '—';
-    }
-
     const n = Number(value);
 
-    if (!Number.isFinite(n)) {
+    if (
+        value === null ||
+        value === undefined ||
+        !Number.isFinite(n)
+    ) {
         return '—';
     }
 
@@ -1482,16 +1392,13 @@ function formatDistance(value) {
 
 function formatSpeed(value) {
 
-    if (
-        value === null ||
-        value === undefined
-    ) {
-        return '—';
-    }
-
     const n = Number(value);
 
-    if (!Number.isFinite(n)) {
+    if (
+        value === null ||
+        value === undefined ||
+        !Number.isFinite(n)
+    ) {
         return '—';
     }
 
@@ -1501,16 +1408,13 @@ function formatSpeed(value) {
 
 function formatEta(value) {
 
-    if (
-        value === null ||
-        value === undefined
-    ) {
-        return '—';
-    }
-
     const n = Number(value);
 
-    if (!Number.isFinite(n)) {
+    if (
+        value === null ||
+        value === undefined ||
+        !Number.isFinite(n)
+    ) {
         return '—';
     }
 
@@ -1518,9 +1422,7 @@ function formatEta(value) {
 }
 
 
-function projectionValue(
-    projection
-) {
+function projectionValue(projection) {
 
     if (!projection) {
         return '—';
@@ -1531,13 +1433,9 @@ function projectionValue(
         projection.distancia_km !== undefined
     ) {
 
-        return (
-            Number(
-                projection.distancia_km
-            ).toFixed(1)
-            +
-            ' km'
-        );
+        return Number(
+            projection.distancia_km
+        ).toFixed(1) + ' km';
     }
 
     if (
@@ -1554,57 +1452,51 @@ function projectionValue(
 }
 
 
-function renderProjections(
-    projections
-) {
+function renderProjections(projections) {
 
     if (
         !projections ||
         typeof projections !== 'object'
     ) {
-
         return '';
     }
-
-    const order = [
-        '15',
-        '30',
-        '45',
-        '60',
-        '90'
-    ];
 
     let html = '';
 
     for (
-        const minutes of order
+        const minutes of [
+            '15',
+            '30',
+            '45',
+            '60',
+            '90'
+        ]
     ) {
 
         const p =
             projections[minutes] ??
-            projections[
-                minutes + '_min'
-            ];
+            projections[minutes + '_min'];
 
         if (!p) {
             continue;
         }
-
-        const inside =
-            p.en_zona_radar === true
-            ? 'zona radar'
-            : 'fuera';
 
         html += `
             <div class="proj-item">
                 <div class="proj-time">
                     +${minutes} min
                 </div>
+
                 <div class="proj-value">
                     ${projectionValue(p)}
                 </div>
+
                 <div class="proj-time">
-                    ${inside}
+                    ${
+                        p.en_zona_radar === true
+                        ? 'zona radar'
+                        : 'fuera'
+                    }
                 </div>
             </div>
         `;
@@ -1614,9 +1506,7 @@ function renderProjections(
 }
 
 
-function renderCores(
-    n
-) {
+function renderCores(n) {
 
     const container =
         el('cores');
@@ -1626,9 +1516,7 @@ function renderCores(
         ? n.nucleos
         : [];
 
-    if (
-        cores.length === 0
-    ) {
+    if (!cores.length) {
 
         container.innerHTML =
             '<div class="sub">Sin núcleos de precipitación detectados en los frames analizados.</div>';
@@ -1644,7 +1532,7 @@ function renderCores(
             const id =
                 core.track_id ??
                 core.id ??
-                (index + 1);
+                index + 1;
 
             const principal =
                 Number(id) ===
@@ -1655,18 +1543,9 @@ function renderCores(
             const hacia =
                 core.movimiento_hacia_bahia === true;
 
-            const speed =
-                core.velocidad_kmh;
-
             const dir =
                 core.direccion_grados ??
                 core.direccion;
-
-            const dist =
-                core.distancia_km;
-
-            const eta =
-                core.eta_minutos;
 
             const conf =
                 core.confianza ??
@@ -1683,13 +1562,19 @@ function renderCores(
 
                     <div class="core-main">
                         Núcleo ${id}
-                        ${principal ? ' · PRINCIPAL' : ''}
+                        ${
+                            principal
+                            ? ' · PRINCIPAL'
+                            : ''
+                        }
                     </div>
 
                     <div class="core-sub">
-                        ${hacia
+                        ${
+                            hacia
                             ? '🟠 Movimiento hacia Bahía Blanca'
-                            : 'Movimiento no dirigido hacia Bahía Blanca'}
+                            : 'Movimiento no dirigido hacia Bahía Blanca'
+                        }
                     </div>
 
                     <div class="grid">
@@ -1699,7 +1584,9 @@ function renderCores(
                                 DISTANCIA
                             </div>
                             <div class="dv">
-                                ${formatDistance(dist)}
+                                ${formatDistance(
+                                    core.distancia_km
+                                )}
                             </div>
                         </div>
 
@@ -1708,7 +1595,9 @@ function renderCores(
                                 VELOCIDAD
                             </div>
                             <div class="dv">
-                                ${formatSpeed(speed)}
+                                ${formatSpeed(
+                                    core.velocidad_kmh
+                                )}
                             </div>
                         </div>
 
@@ -1726,7 +1615,9 @@ function renderCores(
                                 ETA
                             </div>
                             <div class="dv">
-                                ${formatEta(eta)}
+                                ${formatEta(
+                                    core.eta_minutos
+                                )}
                             </div>
                         </div>
 
@@ -1756,12 +1647,30 @@ function renderCores(
 }
 
 
-function nowcast(
-    data
-) {
+/*
+   CORRECCIÓN IMPORTANTE:
+
+   radar_nowcast.json tiene esta estructura:
+
+   {
+       "version": "7.0",
+       "nowcast": {
+           "frames_analizados": 12,
+           ...
+       }
+   }
+
+   Por eso ahora entramos primero a .nowcast.
+*/
+
+function nowcast(data) {
+
+    const wrapper =
+        data?.nowcast_radar?.datos;
 
     const n =
-        data?.nowcast_radar?.datos;
+        wrapper?.nowcast ??
+        wrapper;
 
     if (!n) {
 
@@ -1773,6 +1682,10 @@ function nowcast(
             .className =
             'main bad';
 
+        el('sub')
+            .textContent =
+            'No hay datos del motor V7.';
+
         el('cores')
             .textContent =
             'No hay datos del motor V7.';
@@ -1780,17 +1693,14 @@ function nowcast(
         return;
     }
 
-
     const active =
         n.actividad === true;
-
 
     el('principal')
         .textContent =
         active
         ? '🟠 Precipitación detectada'
         : '🟢 Sin precipitación detectada';
-
 
     el('principal')
         .className =
@@ -1800,7 +1710,6 @@ function nowcast(
             ? 'warn'
             : 'ok'
         );
-
 
     el('sub')
         .textContent =
@@ -1814,20 +1723,17 @@ function nowcast(
         ) +
         '/9 teselas';
 
-
     el('dist')
         .textContent =
         formatDistance(
             n.distancia_km
         );
 
-
     el('vel')
         .textContent =
         formatSpeed(
             n.velocidad_kmh
         );
-
 
     el('celldir')
         .textContent =
@@ -1836,13 +1742,11 @@ function nowcast(
             n.direccion
         );
 
-
     el('trend')
         .textContent =
         trendText(
             n.fortalecimiento
         );
-
 
     el('eta')
         .textContent =
@@ -1850,21 +1754,17 @@ function nowcast(
             n.eta_minutos
         );
 
-
     el('conf')
         .textContent =
         confidence(
             n.confianza_movimiento
         );
 
-
     renderCores(n);
 }
 
 
-function sazb(
-    s
-) {
+function sazb(s) {
 
     if (
         !s ||
@@ -1878,14 +1778,10 @@ function sazb(
         return;
     }
 
-
     const kmh =
         s.viento_kt != null
-        ? Number(
-            s.viento_kt
-        ) * 1.852
+        ? Number(s.viento_kt) * 1.852
         : null;
-
 
     el('temp')
         .textContent =
@@ -1894,7 +1790,6 @@ function sazb(
             ' °C'
         );
 
-
     el('rocio')
         .textContent =
         val(
@@ -1902,14 +1797,11 @@ function sazb(
             ' °C'
         );
 
-
     el('viento')
         .textContent =
         kmh != null
-        ? kmh.toFixed(1)
-          + ' km/h'
+        ? kmh.toFixed(1) + ' km/h'
         : '—';
-
 
     el('dir')
         .textContent =
@@ -1917,16 +1809,13 @@ function sazb(
             s.direccion_viento
         );
 
-
     el('presion')
         .textContent =
         s.presion_hpa != null
         ? Number(
             s.presion_hpa
-        ).toFixed(1)
-          + ' hPa'
+        ).toFixed(1) + ' hPa'
         : '—';
-
 
     el('vis')
         .textContent =
@@ -1934,7 +1823,6 @@ function sazb(
             s.visibilidad_millas,
             ' mi'
         );
-
 
     el('obs')
         .textContent =
@@ -1946,16 +1834,11 @@ function sazb(
 }
 
 
-function overlay(
-    radarData
-) {
+function overlay(radarData) {
 
-    if (
-        !radarData?.bounds
-    ) {
+    if (!radarData?.bounds) {
         return;
     }
-
 
     const bounds = [
 
@@ -1969,7 +1852,6 @@ function overlay(
             radarData.bounds.east
         ]
     ];
-
 
     if (!radar) {
 
@@ -2008,10 +1890,8 @@ async function load() {
                 Date.now()
             );
 
-
         const data =
             await response.json();
-
 
         if (!data.radar) {
 
@@ -2025,19 +1905,15 @@ async function load() {
                 await radarResponse.json();
         }
 
-
         nowcast(data);
-
 
         sazb(
             data.observacion_sazb
         );
 
-
         overlay(
             data.radar
         );
-
 
         if (
             data.radar?.frame_argentina
@@ -2057,7 +1933,6 @@ async function load() {
                 );
         }
 
-
     } catch (error) {
 
         el('resultado')
@@ -2075,7 +1950,6 @@ async function actualizarRadar() {
         .textContent =
         'Actualizando radar...';
 
-
     try {
 
         const response =
@@ -2084,10 +1958,8 @@ async function actualizarRadar() {
                 Date.now()
             );
 
-
         const data =
             await response.json();
-
 
         if (
             data.estado !== 'ok'
@@ -2104,9 +1976,7 @@ async function actualizarRadar() {
             return;
         }
 
-
         overlay(data);
-
 
         el('resultado')
             .textContent =
@@ -2115,9 +1985,7 @@ async function actualizarRadar() {
             '/' +
             data.teselas_total;
 
-
         await load();
-
 
     } catch (error) {
 
@@ -2134,9 +2002,7 @@ setTimeout(
     300
 );
 
-
 load();
-
 
 setInterval(
     load,
@@ -2146,14 +2012,9 @@ setInterval(
 </script>
 
 </body>
-
 </html>
 '''
 
-
-# ============================================================
-# PÁGINA RADAR
-# ============================================================
 
 @app.get(
     "/radar",
