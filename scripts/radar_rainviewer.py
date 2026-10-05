@@ -14,7 +14,7 @@ import cv2
 
 # ============================================================
 # CLIMAAR - RADAR RAINVIEWER + NOWCAST
-# Version 6.0
+# Version 6.1
 # ============================================================
 
 LAT = -38.71
@@ -45,7 +45,7 @@ API_URL = (
 )
 
 HEADERS = {
-    "User-Agent": "ClimaAR/6.0",
+    "User-Agent": "ClimaAR/6.1",
     "Referer": "https://www.rainviewer.com/",
     "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
 }
@@ -62,6 +62,9 @@ TRACK_FRAMES = 6
 
 # Mínimo de movimiento para considerar que hay desplazamiento real.
 MIN_MOVEMENT_KM = 1.0
+
+# Ventanas de proyección del nowcast.
+PROJECTION_MINUTES = (15, 30, 45, 60, 90)
 
 
 # ============================================================
@@ -1184,7 +1187,7 @@ def projection(
         TILE_SIZE * 3
     )
 
-    reaches_bahia = (
+    inside_radar = (
         projected_x >= 0
         and projected_x <= width
         and projected_y >= 0
@@ -1216,7 +1219,7 @@ def projection(
 
         "dentro_area_radar":
             bool(
-                reaches_bahia
+                inside_radar
             )
     }
 
@@ -1303,6 +1306,10 @@ def analyze_sequence(
         "eta_minutos":
             None,
 
+        "proyecciones":
+            {},
+
+        # Compatibilidad con la app actual.
         "proyeccion_30_min":
             None,
 
@@ -1401,21 +1408,32 @@ def analyze_sequence(
         "eta_minutos"
     ] = eta
 
+    for minutes in PROJECTION_MINUTES:
+
+        projected = projection(
+            current,
+            track,
+            minutes
+        )
+
+        status[
+            "proyecciones"
+        ][
+            str(minutes)
+        ] = projected
+
+    # Mantener las claves que ya consume la app 4.4.0.
     status[
         "proyeccion_30_min"
-    ] = projection(
-        current,
-        track,
-        30
-    )
+    ] = status[
+        "proyecciones"
+    ].get("30")
 
     status[
         "proyeccion_60_min"
-    ] = projection(
-        current,
-        track,
-        60
-    )
+    ] = status[
+        "proyecciones"
+    ].get("60")
 
     return status
 
@@ -1637,7 +1655,7 @@ def save_history(
 def main():
 
     print("=" * 70)
-    print("CLIMAAR - RADAR RAINVIEWER NOWCAST 6.0")
+    print("CLIMAAR - RADAR RAINVIEWER NOWCAST 6.1")
     print("=" * 70)
 
     host, frames = (
@@ -1739,7 +1757,7 @@ def main():
     output = {
 
         "version":
-            "6.0",
+            "6.1",
 
         "app":
             "ClimaAR",
@@ -1778,9 +1796,11 @@ def main():
             "El nowcast se calcula "
             "por seguimiento de movimiento "
             "de la precipitacion radar. "
+            "Las proyecciones son extrapolaciones "
+            "de la trayectoria observada y no "
+            "constituyen una garantia de trayectoria futura. "
             "La ETA y las proyecciones "
-            "son estimaciones y deben "
-            "interpretarse con su confianza."
+            "deben interpretarse con su confianza."
         )
     }
 
