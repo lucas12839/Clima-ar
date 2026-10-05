@@ -1,0 +1,97 @@
+name: ClimaAR Intelligence
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+
+  workflow_dispatch:
+
+jobs:
+  intelligence:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+
+      - name: Bajar codigo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar librerias
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Ejecutar fusion meteorologica
+        run: |
+          set -e
+
+          python scripts/meteorologia_fusion.py
+
+          test -s data/ia/estado_meteorologico.json
+          test -s data/ia/historial_meteorologico.csv
+          test -s data/meteorologia/ambiente_futuro.json
+
+          python -m json.tool \
+            data/ia/estado_meteorologico.json \
+            >/dev/null
+
+          python -m json.tool \
+            data/meteorologia/ambiente_futuro.json \
+            >/dev/null
+
+          echo "ClimaAR Intelligence OK"
+
+      - name: Guardar datos
+        run: |
+          set -e
+
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.com.ar"
+
+          git add \
+            data/ia/estado_meteorologico.json \
+            data/ia/historial_meteorologico.csv \
+            data/meteorologia/ambiente_futuro.json
+
+          if git diff --cached --quiet; then
+            echo "Sin cambios meteorologicos."
+            exit 0
+          fi
+
+          git commit -m "ClimaAR Intelligence data"
+
+          for intento in 1 2 3 4 5; do
+
+            echo "Intento de push: $intento"
+
+            git fetch origin main
+
+            if git rebase origin/main; then
+
+              if git push origin HEAD:main; then
+                echo "Push Intelligence correcto."
+                exit 0
+              fi
+
+            else
+              echo "Rebase con conflicto."
+              git rebase --abort || true
+            fi
+
+            echo "Otro workflow modifico main."
+            echo "Esperando..."
+            sleep 10
+
+          done
+
+          echo "No se pudo subir Intelligence."
+          exit 1
