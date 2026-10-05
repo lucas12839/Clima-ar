@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import math
 import csv
@@ -13,13 +12,16 @@ import cv2
 
 
 # ============================================================
-# CLIMAAR - RADAR RAINVIEWER + NOWCAST
-# Version 7.0
+# CLIMAAR - RADAR RAINVIEWER V7.1
+# dBZ REAL + SEGUIMIENTO DE NÚCLEOS + NOWCAST
 # ============================================================
 
 LAT = -38.71
 LON = -62.26
+
 ZOOM = 7
+TILE_SIZE = 512
+GRID_RADIUS = 1
 
 DATA_DIR = "data/radar"
 HISTORY_DIR = os.path.join(DATA_DIR, "historico")
@@ -44,39 +46,167 @@ API_URL = (
 )
 
 HEADERS = {
-    "User-Agent": "ClimaAR/7.0",
+    "User-Agent": "ClimaAR/7.1",
     "Referer": "https://www.rainviewer.com/",
     "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
 }
 
-TILE_SIZE = 512
-GRID_RADIUS = 1
-
-MIN_TILE_BYTES = 200
-
 MAX_HISTORY_FRAMES = 144
-
-# Cantidad máxima de frames utilizados
-# para calcular la trayectoria.
 TRACK_FRAMES = 6
 
-# Área mínima para considerar un núcleo.
 MIN_COMPONENT_AREA = 20
-
-# Máximo de núcleos simultáneos.
 MAX_COMPONENTS = 12
 
-# Velocidad máxima razonable para mantener
-# la identidad de un núcleo entre frames.
 MAX_TRACK_SPEED_KMH = 180.0
 
-# Ventanas de proyección.
 PROJECTION_MINUTES = (
     15,
     30,
     45,
     60,
     90
+)
+
+
+# ============================================================
+# TABLA UNIVERSAL BLUE DE RAINVIEWER
+#
+# Color scheme 2
+# dBZ aproximado desde la tabla oficial de RainViewer.
+#
+# IMPORTANTE:
+# RainViewer utiliza colores discretos. Por eso algunos
+# valores altos comparten color y no pueden distinguirse
+# individualmente solo desde el PNG.
+# ============================================================
+
+DBZ_HEX = [
+    "cec08796",
+    "d2c48ba0",
+    "d6c88faa",
+    "dacc93b4",
+    "ded097be",
+
+    "88ddeeff",
+    "6cd1ebff",
+    "51c5e8ff",
+    "36bae5ff",
+    "1baee2ff",
+
+    "00a3e0ff",
+    "009ad5ff",
+    "0091caff",
+    "0088bfff",
+    "007fb4ff",
+
+    "0077aaff",
+    "0070a3ff",
+    "00699cff",
+    "006295ff",
+    "005b8eff",
+
+    "005588ff",
+    "005180ff",
+    "004e78ff",
+    "004a70ff",
+    "004768ff",
+
+    "ffee00ff",
+    "ffe000ff",
+    "ffd200ff",
+    "ffc500ff",
+    "ffb700ff",
+
+    "ffaa00ff",
+    "ff9f00ff",
+    "ff9500ff",
+    "ff8b00ff",
+    "ff8100ff",
+
+    "ff4400ff",
+    "f23600ff",
+    "e62800ff",
+    "d91b00ff",
+    "cd0d00ff",
+
+    "c10000ff",
+    "a80000ff",
+    "8f0000ff",
+    "760000ff",
+    "5d0000ff",
+
+    "ffaaffff",
+    "ff9fffff",
+    "ff95ffff",
+    "ff8bffff",
+    "ff81ffff",
+
+    "ff77ffff",
+    "ff6cffff",
+    "ff62ffff",
+    "ff58ffff",
+    "ff4effff",
+
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+]
+
+
+DBZ_VALUES = np.arange(
+    10,
+    96,
+    dtype=np.float32
+)
+
+
+DBZ_RGB = np.array(
+    [
+        [
+            int(h[i:i + 2], 16)
+            for i in (0, 2, 4)
+        ]
+        for h in DBZ_HEX
+    ],
+    dtype=np.float32
 )
 
 
@@ -96,7 +226,7 @@ os.makedirs(
 
 
 # ============================================================
-# UTILIDADES
+# CONVERSIÓN LAT/LON → TILE
 # ============================================================
 
 def latlon_to_tile(
@@ -109,30 +239,39 @@ def latlon_to_tile(
 
     x = (
         (lon + 180.0)
-        / 360.0
-        * n
+        /
+        360.0
+        *
+        n
     )
 
-    lat_rad = math.radians(
-        lat
-    )
+    lat_rad = math.radians(lat)
 
     y = (
-        1.0
-        -
-        math.asinh(
-            math.tan(
-                lat_rad
+        (
+            1.0
+            -
+            math.asinh(
+                math.tan(lat_rad)
             )
+            /
+            math.pi
         )
-        / math.pi
-    ) / 2.0 * n
+        /
+        2.0
+        *
+        n
+    )
 
     return (
         int(x),
         int(y)
     )
 
+
+# ============================================================
+# ESCALA PIXEL → KM
+# ============================================================
 
 def pixels_per_km(
     lat,
@@ -172,15 +311,23 @@ def pixels_per_km(
     )
 
 
+# ============================================================
+# FECHA DEL FRAME
+# ============================================================
+
 def frame_datetime(
-    timestamp
+    ts
 ):
 
     return datetime.fromtimestamp(
-        int(timestamp),
+        int(ts),
         timezone.utc
     ).isoformat()
 
+
+# ============================================================
+# DIRECCIÓN
+# ============================================================
 
 def direction_name(
     degrees
@@ -197,50 +344,41 @@ def direction_name(
         "NO"
     ]
 
-    index = int(
-        (
-            degrees
-            + 22.5
+    return names[
+        int(
+            (
+                degrees
+                +
+                22.5
+            )
+            /
+            45
         )
-        / 45
-    ) % 8
-
-    return names[index]
+        %
+        8
+    ]
 
 
 # ============================================================
-# RAINVIEWER API
+# OBTENER FRAMES DE RAINVIEWER
 # ============================================================
 
 def fetch_rainviewer():
 
-    try:
-
-        response = requests.get(
-            API_URL,
-            headers=HEADERS,
-            timeout=30
-        )
-
-        response.raise_for_status()
-
-        data = response.json()
-
-    except Exception as exc:
-
-        print(
-            f"ERROR API RAINVIEWER: {exc}"
-        )
-
-        sys.exit(1)
-
-    host = (
-        data.get(
-            "host",
-            "https://tilecache.rainviewer.com"
-        )
-        .rstrip("/")
+    response = requests.get(
+        API_URL,
+        headers=HEADERS,
+        timeout=30
     )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    host = data.get(
+        "host",
+        "https://tilecache.rainviewer.com"
+    ).rstrip("/")
 
     frames = (
         data
@@ -250,12 +388,9 @@ def fetch_rainviewer():
 
     if not frames:
 
-        print(
-            "ERROR CRITICO: "
-            "RainViewer no devolvio frames."
+        raise RuntimeError(
+            "RainViewer no devolvió frames."
         )
-
-        sys.exit(1)
 
     return (
         host,
@@ -264,7 +399,7 @@ def fetch_rainviewer():
 
 
 # ============================================================
-# DESCARGA DE FRAME
+# DESCARGAR FRAME
 # ============================================================
 
 def download_frame(
@@ -280,15 +415,11 @@ def download_frame(
         frame["time"]
     )
 
-    image_size = (
-        TILE_SIZE * 3
-    )
-
     image = Image.new(
         "RGBA",
         (
-            image_size,
-            image_size
+            TILE_SIZE * 3,
+            TILE_SIZE * 3
         ),
         (
             0,
@@ -310,13 +441,25 @@ def download_frame(
             GRID_RADIUS + 1
         ):
 
+            # =================================================
+            # RainViewer:
+            #
+            # 2 = Universal Blue
+            # 0 = sin suavizado
+            # 0 = configuración nieve
+            #
+            # El objetivo es conservar los colores originales
+            # para poder traducirlos posteriormente a dBZ.
+            # =================================================
+
             url = (
-                f"{host}{path}"
-                f"/{TILE_SIZE}"
-                f"/{ZOOM}"
-                f"/{xt + dx}"
-                f"/{yt + dy}"
-                f"/2/1_1.png"
+                f"{host}"
+                f"{path}/"
+                f"{TILE_SIZE}/"
+                f"{ZOOM}/"
+                f"{xt + dx}/"
+                f"{yt + dy}/"
+                f"2/0_0.png"
             )
 
             try:
@@ -330,10 +473,8 @@ def download_frame(
                 if (
                     response.status_code != 200
                     or
-                    len(response.content)
-                    < MIN_TILE_BYTES
+                    len(response.content) < 200
                 ):
-
                     continue
 
                 tile = (
@@ -343,24 +484,29 @@ def download_frame(
                             response.content
                         )
                     )
-                    .convert("RGBA")
+                    .convert(
+                        "RGBA"
+                    )
                 )
-
-                x = (
-                    dx
-                    + GRID_RADIUS
-                ) * TILE_SIZE
-
-                y = (
-                    dy
-                    + GRID_RADIUS
-                ) * TILE_SIZE
 
                 image.alpha_composite(
                     tile,
                     (
-                        x,
-                        y
+                        (
+                            dx
+                            +
+                            GRID_RADIUS
+                        )
+                        *
+                        TILE_SIZE,
+
+                        (
+                            dy
+                            +
+                            GRID_RADIUS
+                        )
+                        *
+                        TILE_SIZE
                     )
                 )
 
@@ -382,56 +528,327 @@ def download_frame(
 
 
 # ============================================================
-# MASCARA RADAR
+# RGB → dBZ
 # ============================================================
 
-def radar_mask(
+def rgba_to_dbz(
     image
 ):
 
     array = np.asarray(
         image
+    ).astype(
+        np.float32
     )
+
+    rgb = array[:, :, :3]
 
     alpha = array[:, :, 3]
 
-    mask = np.where(
-        alpha >= 20,
+    flat = rgb.reshape(
+        -1,
+        3
+    )
+
+    # Distancia euclídea entre cada pixel y todos los
+    # colores conocidos de la tabla.
+
+    distances = (
+        (
+            flat[:, None, :]
+            -
+            DBZ_RGB[None, :, :]
+        )
+        ** 2
+    ).sum(
+        axis=2
+    )
+
+    indices = np.argmin(
+        distances,
+        axis=1
+    )
+
+    nearest_distance = np.sqrt(
+        np.min(
+            distances,
+            axis=1
+        )
+    ).reshape(
+        rgb.shape[:2]
+    )
+
+    dbz = (
+        DBZ_VALUES[
+            indices
+        ]
+        .reshape(
+            rgb.shape[:2]
+        )
+        .astype(
+            np.float32
+        )
+    )
+
+    # Solo consideramos válidos los píxeles:
+    #
+    # 1. con alpha
+    # 2. suficientemente cercanos a un color oficial
+
+    valid = (
+        (alpha > 0)
+        &
+        (
+            nearest_distance
+            <=
+            8.0
+        )
+    )
+
+    dbz[
+        ~valid
+    ] = np.nan
+
+    return dbz
+
+
+# ============================================================
+# MÁSCARA DE PRECIPITACIÓN
+# ============================================================
+
+def dbz_mask(
+    dbz,
+    threshold=10.0
+):
+
+    return np.where(
+        np.isfinite(dbz)
+        &
+        (
+            dbz
+            >=
+            threshold
+        ),
         255,
         0
     ).astype(
         np.uint8
     )
 
-    kernel = np.ones(
-        (
-            3,
-            3
-        ),
-        np.uint8
-    )
 
-    mask = cv2.morphologyEx(
-        mask,
-        cv2.MORPH_OPEN,
-        kernel
-    )
+# ============================================================
+# MÉTRICAS dBZ
+# ============================================================
 
-    mask = cv2.morphologyEx(
-        mask,
-        cv2.MORPH_CLOSE,
-        kernel
-    )
+def dbz_metrics(
+    dbz
+):
 
-    return mask
+    valid = dbz[
+        np.isfinite(dbz)
+    ]
+
+    precip = valid[
+        valid >= 10
+    ]
+
+    if precip.size == 0:
+
+        return {
+            "dbz_max": None,
+            "dbz_mean": None,
+            "dbz_p90": None,
+            "dbz_pixels": 0
+        }
+
+    return {
+
+        "dbz_max":
+            float(
+                np.max(
+                    precip
+                )
+            ),
+
+        "dbz_mean":
+            round(
+                float(
+                    np.mean(
+                        precip
+                    )
+                ),
+                1
+            ),
+
+        "dbz_p90":
+            float(
+                np.percentile(
+                    precip,
+                    90
+                )
+            ),
+
+        "dbz_pixels":
+            int(
+                precip.size
+            )
+    }
 
 
 # ============================================================
-# DETECCION DE MULTIPLES NUCLEOS
+# CLASIFICACIÓN DE INTENSIDAD
+# ============================================================
+
+def intensity_label(
+    dbz
+):
+
+    if dbz is None:
+        return "sin_precipitacion"
+
+    if dbz < 20:
+        return "debil"
+
+    if dbz < 30:
+        return "moderada"
+
+    if dbz < 40:
+        return "fuerte"
+
+    if dbz < 50:
+        return "muy_fuerte"
+
+    if dbz < 60:
+        return "severa"
+
+    if dbz < 65:
+        return "muy_severa"
+
+    return "extrema"
+
+
+# ============================================================
+# DISTANCIA DEL CENTRO DEL RADAR A BAHÍA BLANCA
+# ============================================================
+
+def distance_point_to_bahia(
+    cx,
+    cy
+):
+
+    center_x = (
+        TILE_SIZE
+        *
+        1.5
+    )
+
+    center_y = (
+        TILE_SIZE
+        *
+        1.5
+    )
+
+    km_x, km_y = (
+        pixels_per_km(
+            LAT,
+            ZOOM,
+            TILE_SIZE
+        )
+    )
+
+    return math.hypot(
+        (
+            cx
+            -
+            center_x
+        )
+        *
+        km_x,
+
+        (
+            cy
+            -
+            center_y
+        )
+        *
+        km_y
+    )
+
+
+# ============================================================
+# DISTANCIA MÍNIMA DEL ECO A BAHÍA
+# ============================================================
+
+def distance_to_bahia(
+    mask
+):
+
+    ys, xs = np.where(
+        mask > 0
+    )
+
+    if len(xs) == 0:
+
+        return None
+
+    center_x = (
+        TILE_SIZE
+        *
+        1.5
+    )
+
+    center_y = (
+        TILE_SIZE
+        *
+        1.5
+    )
+
+    km_x, km_y = (
+        pixels_per_km(
+            LAT,
+            ZOOM,
+            TILE_SIZE
+        )
+    )
+
+    distances = np.sqrt(
+        (
+            (
+                xs
+                -
+                center_x
+            )
+            *
+            km_x
+        )
+        ** 2
+        +
+        (
+            (
+                ys
+                -
+                center_y
+            )
+            *
+            km_y
+        )
+        ** 2
+    )
+
+    return float(
+        np.min(
+            distances
+        )
+    )
+
+
+# ============================================================
+# DETECCIÓN DE NÚCLEOS
 # ============================================================
 
 def components_from_mask(
-    mask
+    mask,
+    dbz
 ):
 
     count, labels, stats, centers = (
@@ -456,7 +873,41 @@ def components_from_mask(
         )
 
         if area < MIN_COMPONENT_AREA:
+
             continue
+
+        ys, xs = np.where(
+            labels == i
+        )
+
+        values = dbz[
+            ys,
+            xs
+        ]
+
+        values = values[
+            np.isfinite(values)
+        ]
+
+        max_dbz = (
+            float(
+                np.max(
+                    values
+                )
+            )
+            if values.size
+            else None
+        )
+
+        mean_dbz = (
+            float(
+                np.mean(
+                    values
+                )
+            )
+            if values.size
+            else None
+        )
 
         components.append({
 
@@ -471,6 +922,17 @@ def components_from_mask(
             "centroid_y":
                 float(
                     centers[i][1]
+                ),
+
+            "max_dbz":
+                max_dbz,
+
+            "mean_dbz":
+                mean_dbz,
+
+            "intensidad":
+                intensity_label(
+                    max_dbz
                 ),
 
             "bbox": [
@@ -506,8 +968,14 @@ def components_from_mask(
         })
 
     components.sort(
-        key=lambda c:
-        c["area_px"],
+        key=lambda c: (
+            c["max_dbz"]
+            if c["max_dbz"]
+            is not None
+            else -999,
+
+            c["area_px"]
+        ),
         reverse=True
     )
 
@@ -516,120 +984,8 @@ def components_from_mask(
     ]
 
 
-def largest_component(
-    mask
-):
-
-    components = (
-        components_from_mask(
-            mask
-        )
-    )
-
-    if not components:
-        return None
-
-    return components[0]
-
-
 # ============================================================
-# DISTANCIA A BAHIA
-# ============================================================
-
-def distance_point_to_bahia(
-    cx,
-    cy
-):
-
-    width = (
-        TILE_SIZE * 3
-    )
-
-    height = (
-        TILE_SIZE * 3
-    )
-
-    center_x = (
-        width / 2.0
-    )
-
-    center_y = (
-        height / 2.0
-    )
-
-    km_x, km_y = (
-        pixels_per_km(
-            LAT,
-            ZOOM,
-            TILE_SIZE
-        )
-    )
-
-    return math.hypot(
-        (
-            cx
-            - center_x
-        ) * km_x,
-
-        (
-            cy
-            - center_y
-        ) * km_y
-    )
-
-
-def distance_to_bahia(
-    mask
-):
-
-    ys, xs = np.where(
-        mask > 0
-    )
-
-    if len(xs) == 0:
-        return None
-
-    width = mask.shape[1]
-    height = mask.shape[0]
-
-    center_x = (
-        width / 2.0
-    )
-
-    center_y = (
-        height / 2.0
-    )
-
-    km_x, km_y = (
-        pixels_per_km(
-            LAT,
-            ZOOM,
-            TILE_SIZE
-        )
-    )
-
-    dx = (
-        xs - center_x
-    ) * km_x
-
-    dy = (
-        ys - center_y
-    ) * km_y
-
-    distances = np.sqrt(
-        dx * dx
-        + dy * dy
-    )
-
-    return float(
-        np.min(
-            distances
-        )
-    )
-
-
-# ============================================================
-# ANALISIS DE FRAME
+# ANALIZAR FRAME
 # ============================================================
 
 def analyze_frame(
@@ -639,42 +995,53 @@ def analyze_frame(
     path
 ):
 
-    mask = radar_mask(
+    dbz = rgba_to_dbz(
         image
+    )
+
+    mask = dbz_mask(
+        dbz
     )
 
     components = (
         components_from_mask(
-            mask
+            mask,
+            dbz
         )
     )
 
-    area = int(
-        np.count_nonzero(
-            mask
-        )
+    metrics = dbz_metrics(
+        dbz
     )
 
-    for comp in components:
+    for component in components:
 
-        comp[
+        component[
             "distance_km"
         ] = round(
             distance_point_to_bahia(
-                comp[
+                component[
                     "centroid_x"
                 ],
-                comp[
+                component[
                     "centroid_y"
                 ]
             ),
             2
         )
 
+    distance = (
+        distance_to_bahia(
+            mask
+        )
+    )
+
     return {
 
         "timestamp":
-            int(timestamp),
+            int(
+                timestamp
+            ),
 
         "frame_utc":
             frame_datetime(
@@ -682,292 +1049,39 @@ def analyze_frame(
             ),
 
         "tiles_ok":
-            int(tiles_ok),
+            int(
+                tiles_ok
+            ),
 
         "path":
             path,
 
         "area":
-            area,
+            int(
+                np.count_nonzero(
+                    mask
+                )
+            ),
 
         "components":
             components,
 
-        "component":
+        "distance_km":
             (
-                components[0]
-                if components
+                round(
+                    distance,
+                    2
+                )
+                if distance is not None
                 else None
             ),
 
-        "distance_km":
-            distance_to_bahia(
-                mask
-            )
+        **metrics
     }
 
 
 # ============================================================
-# COSTO DE ASIGNACION DE NUCLEOS
-# ============================================================
-
-def component_cost(
-    old,
-    new,
-    elapsed_minutes
-):
-
-    km_x, km_y = (
-        pixels_per_km(
-            LAT,
-            ZOOM,
-            TILE_SIZE
-        )
-    )
-
-    dx = (
-        new["centroid_x"]
-        -
-        old["centroid_x"]
-    ) * km_x
-
-    dy = (
-        new["centroid_y"]
-        -
-        old["centroid_y"]
-    ) * km_y
-
-    distance_km = math.hypot(
-        dx,
-        dy
-    )
-
-    max_distance = max(
-        5.0,
-        MAX_TRACK_SPEED_KMH
-        *
-        max(
-            elapsed_minutes,
-            1.0
-        )
-        / 60.0
-    )
-
-    if (
-        distance_km
-        > max_distance
-    ):
-
-        return None
-
-    area_ratio = (
-        max(
-            old["area_px"],
-            new["area_px"]
-        )
-        /
-        max(
-            1,
-            min(
-                old["area_px"],
-                new["area_px"]
-            )
-        )
-    )
-
-    area_penalty = min(
-        2.0,
-        math.log(
-            area_ratio
-        )
-    )
-
-    return (
-        distance_km
-        / max_distance
-        +
-        0.15
-        * area_penalty
-    )
-
-
-# ============================================================
-# TRACKING DE MULTIPLES NUCLEOS
-# ============================================================
-
-def track_components(
-    results
-):
-
-    tracks = {}
-
-    next_id = 1
-
-    previous = []
-
-    for frame_index, frame in enumerate(
-        results
-    ):
-
-        components = (
-            frame["components"]
-        )
-
-        for comp in components:
-
-            comp[
-                "track_id"
-            ] = None
-
-        if frame_index == 0:
-
-            for comp in components:
-
-                comp[
-                    "track_id"
-                ] = next_id
-
-                tracks[
-                    next_id
-                ] = [
-
-                    (
-                        frame["timestamp"],
-                        comp["centroid_x"],
-                        comp["centroid_y"],
-                        comp["area_px"],
-                        frame_index
-                    )
-                ]
-
-                next_id += 1
-
-            previous = components
-
-            continue
-
-        elapsed = (
-            frame["timestamp"]
-            -
-            results[
-                frame_index - 1
-            ]["timestamp"]
-        ) / 60.0
-
-        candidates = []
-
-        for pi, old in enumerate(
-            previous
-        ):
-
-            for ci, new in enumerate(
-                components
-            ):
-
-                if (
-                    new["track_id"]
-                    is not None
-                ):
-
-                    continue
-
-                cost = (
-                    component_cost(
-                        old,
-                        new,
-                        elapsed
-                    )
-                )
-
-                if cost is not None:
-
-                    candidates.append(
-                        (
-                            cost,
-                            pi,
-                            ci
-                        )
-                    )
-
-        used_old = set()
-        used_new = set()
-
-        for _, pi, ci in sorted(
-            candidates
-        ):
-
-            if (
-                pi in used_old
-                or
-                ci in used_new
-            ):
-
-                continue
-
-            old = previous[pi]
-            new = components[ci]
-
-            track_id = old.get(
-                "track_id"
-            )
-
-            if track_id is None:
-                continue
-
-            new[
-                "track_id"
-            ] = track_id
-
-            tracks.setdefault(
-                track_id,
-                []
-            ).append(
-
-                (
-                    frame["timestamp"],
-                    new["centroid_x"],
-                    new["centroid_y"],
-                    new["area_px"],
-                    frame_index
-                )
-            )
-
-            used_old.add(pi)
-            used_new.add(ci)
-
-        for comp in components:
-
-            if (
-                comp["track_id"]
-                is None
-            ):
-
-                comp[
-                    "track_id"
-                ] = next_id
-
-                tracks[
-                    next_id
-                ] = [
-
-                    (
-                        frame["timestamp"],
-                        comp["centroid_x"],
-                        comp["centroid_y"],
-                        comp["area_px"],
-                        frame_index
-                    )
-                ]
-
-                next_id += 1
-
-        previous = components
-
-    return tracks
-
-
-# ============================================================
-# MOVIMIENTO
+# MOVIMIENTO ENTRE DOS POSICIONES
 # ============================================================
 
 def movement_between_points(
@@ -982,6 +1096,7 @@ def movement_between_points(
     ) / 60.0
 
     if elapsed_minutes <= 0:
+
         return None
 
     km_x, km_y = (
@@ -1016,7 +1131,8 @@ def movement_between_points(
                 -south_km
             )
         )
-        + 360.0
+        +
+        360.0
     ) % 360.0
 
     speed = (
@@ -1024,7 +1140,8 @@ def movement_between_points(
         /
         (
             elapsed_minutes
-            / 60.0
+            /
+            60.0
         )
     )
 
@@ -1045,6 +1162,322 @@ def movement_between_points(
 
 
 # ============================================================
+# COSTO PARA ASOCIAR NÚCLEOS ENTRE FRAMES
+# ============================================================
+
+def component_cost(
+    old,
+    new,
+    elapsed_minutes
+):
+
+    km_x, km_y = (
+        pixels_per_km(
+            LAT,
+            ZOOM,
+            TILE_SIZE
+        )
+    )
+
+    distance_km = math.hypot(
+
+        (
+            new["centroid_x"]
+            -
+            old["centroid_x"]
+        )
+        *
+        km_x,
+
+        (
+            new["centroid_y"]
+            -
+            old["centroid_y"]
+        )
+        *
+        km_y
+    )
+
+    max_distance = max(
+
+        5.0,
+
+        MAX_TRACK_SPEED_KMH
+        *
+        max(
+            elapsed_minutes,
+            1.0
+        )
+        /
+        60.0
+    )
+
+    if distance_km > max_distance:
+
+        return None
+
+    area_ratio = (
+        max(
+            old["area_px"],
+            new["area_px"]
+        )
+        /
+        max(
+            1,
+            min(
+                old["area_px"],
+                new["area_px"]
+            )
+        )
+    )
+
+    area_penalty = min(
+        2.0,
+        math.log(
+            area_ratio
+        )
+    )
+
+    return (
+        distance_km
+        /
+        max_distance
+        +
+        0.15
+        *
+        area_penalty
+    )
+
+
+# ============================================================
+# SEGUIMIENTO DE NÚCLEOS
+# ============================================================
+
+def track_components(
+    results
+):
+
+    tracks = {}
+
+    next_id = 1
+
+    previous = []
+
+    for frame_index, frame in enumerate(
+        results
+    ):
+
+        components = (
+            frame["components"]
+        )
+
+        for component in components:
+
+            component[
+                "track_id"
+            ] = None
+
+        if frame_index == 0:
+
+            for component in components:
+
+                component[
+                    "track_id"
+                ] = next_id
+
+                tracks[
+                    next_id
+                ] = [
+
+                    (
+                        frame[
+                            "timestamp"
+                        ],
+
+                        component[
+                            "centroid_x"
+                        ],
+
+                        component[
+                            "centroid_y"
+                        ],
+
+                        component[
+                            "area_px"
+                        ],
+
+                        frame_index
+                    )
+                ]
+
+                next_id += 1
+
+            previous = components
+
+            continue
+
+        elapsed = (
+            frame[
+                "timestamp"
+            ]
+            -
+            results[
+                frame_index - 1
+            ][
+                "timestamp"
+            ]
+        ) / 60.0
+
+        candidates = []
+
+        for previous_index, old in enumerate(
+            previous
+        ):
+
+            for component_index, new in enumerate(
+                components
+            ):
+
+                cost = component_cost(
+                    old,
+                    new,
+                    elapsed
+                )
+
+                if cost is not None:
+
+                    candidates.append(
+                        (
+                            cost,
+                            previous_index,
+                            component_index
+                        )
+                    )
+
+        used_old = set()
+
+        used_new = set()
+
+        for (
+            _,
+            previous_index,
+            component_index
+        ) in sorted(
+            candidates
+        ):
+
+            if (
+                previous_index
+                in
+                used_old
+                or
+                component_index
+                in
+                used_new
+            ):
+
+                continue
+
+            old = previous[
+                previous_index
+            ]
+
+            new = components[
+                component_index
+            ]
+
+            track_id = old.get(
+                "track_id"
+            )
+
+            if track_id is None:
+
+                continue
+
+            new[
+                "track_id"
+            ] = track_id
+
+            tracks.setdefault(
+                track_id,
+                []
+            ).append(
+
+                (
+                    frame[
+                        "timestamp"
+                    ],
+
+                    new[
+                        "centroid_x"
+                    ],
+
+                    new[
+                        "centroid_y"
+                    ],
+
+                    new[
+                        "area_px"
+                    ],
+
+                    frame_index
+                )
+            )
+
+            used_old.add(
+                previous_index
+            )
+
+            used_new.add(
+                component_index
+            )
+
+        for component in components:
+
+            if (
+                component[
+                    "track_id"
+                ]
+                is None
+            ):
+
+                component[
+                    "track_id"
+                ] = next_id
+
+                tracks[
+                    next_id
+                ] = [
+
+                    (
+                        frame[
+                            "timestamp"
+                        ],
+
+                        component[
+                            "centroid_x"
+                        ],
+
+                        component[
+                            "centroid_y"
+                        ],
+
+                        component[
+                            "area_px"
+                        ],
+
+                        frame_index
+                    )
+                ]
+
+                next_id += 1
+
+        previous = components
+
+    return tracks
+
+
+# ============================================================
 # RESUMEN DE TRAYECTORIA
 # ============================================================
 
@@ -1052,7 +1485,9 @@ def summarize_track(
     track_points
 ):
 
-    if len(track_points) < 2:
+    if len(
+        track_points
+    ) < 2:
 
         return {
 
@@ -1074,17 +1509,21 @@ def summarize_track(
         len(points)
     ):
 
-        move = (
+        movement = (
             movement_between_points(
-                points[i - 1],
-                points[i]
+                points[
+                    i - 1
+                ],
+                points[
+                    i
+                ]
             )
         )
 
-        if move is not None:
+        if movement is not None:
 
             movements.append(
-                move
+                movement
             )
 
     if not movements:
@@ -1100,7 +1539,9 @@ def summarize_track(
 
     speeds = np.array(
         [
-            m["speed_kmh"]
+            m[
+                "speed_kmh"
+            ]
             for m in movements
         ],
         dtype=float
@@ -1108,7 +1549,9 @@ def summarize_track(
 
     distances = np.array(
         [
-            m["distance_km"]
+            m[
+                "distance_km"
+            ]
             for m in movements
         ],
         dtype=float
@@ -1117,7 +1560,9 @@ def summarize_track(
     directions = np.deg2rad(
         np.array(
             [
-                m["direction_deg"]
+                m[
+                    "direction_deg"
+                ]
                 for m in movements
             ],
             dtype=float
@@ -1147,7 +1592,8 @@ def summarize_track(
                 mean_cos
             )
         )
-        + 360.0
+        +
+        360.0
     ) % 360.0
 
     resultant = math.sqrt(
@@ -1178,39 +1624,67 @@ def summarize_track(
         0.0,
         min(
             1.0,
-            1.0 - speed_cv
+            1.0
+            -
+            speed_cv
         )
     )
 
     confidence = min(
         0.95,
-        0.45 * resultant
+
+        0.45
+        *
+        resultant
+
         +
-        0.35 * speed_consistency
+
+        0.35
+        *
+        speed_consistency
+
         +
+
         0.20
         *
         min(
             1.0,
-            len(movements)
-            / 5.0
+            len(
+                movements
+            )
+            /
+            5.0
         )
     )
 
-    first_area = points[0][3]
-    last_area = points[-1][3]
+    first_area = points[
+        0
+    ][
+        3
+    ]
 
-    if first_area > 0:
+    last_area = points[
+        -1
+    ][
+        3
+    ]
 
-        change = (
+    change = (
+
+        (
             last_area
-            / first_area
-            - 1.0
-        ) * 100.0
+            /
+            first_area
+            -
+            1.0
+        )
+        *
+        100.0
 
-    else:
+        if first_area > 0
 
-        change = None
+        else None
+    )
 
     if change is None:
 
@@ -1288,7 +1762,7 @@ def summarize_track(
 
 
 # ============================================================
-# ¿SE DIRIGE A BAHIA?
+# ¿EL NÚCLEO SE MUEVE HACIA BAHÍA?
 # ============================================================
 
 def movement_towards_bahia(
@@ -1300,35 +1774,26 @@ def movement_towards_bahia(
         not track.get(
             "valido"
         )
-        or component is None
+        or
+        component is None
     ):
 
         return False
 
-    width = (
-        TILE_SIZE * 3
-    )
-
-    height = (
-        TILE_SIZE * 3
-    )
-
-    cx = component[
-        "centroid_x"
-    ]
-
-    cy = component[
-        "centroid_y"
-    ]
-
     dx = (
-        width / 2.0
-        - cx
+        TILE_SIZE * 1.5
+        -
+        component[
+            "centroid_x"
+        ]
     )
 
     dy = (
-        height / 2.0
-        - cy
+        TILE_SIZE * 1.5
+        -
+        component[
+            "centroid_y"
+        ]
     )
 
     if math.hypot(
@@ -1345,10 +1810,12 @@ def movement_towards_bahia(
                 -dy
             )
         )
-        + 360.0
+        +
+        360.0
     ) % 360.0
 
-    diff = abs(
+    difference = abs(
+
         (
             track[
                 "direccion_grados"
@@ -1357,15 +1824,21 @@ def movement_towards_bahia(
             target_angle
             +
             180.0
-        ) % 360.0
-        - 180.0
+        )
+        % 360.0
+        -
+        180.0
     )
 
-    return diff <= 45.0
+    return (
+        difference
+        <=
+        45.0
+    )
 
 
 # ============================================================
-# PIXEL -> LAT/LON
+# PIXEL → LAT/LON
 # ============================================================
 
 def pixel_to_latlon(
@@ -1373,31 +1846,23 @@ def pixel_to_latlon(
     local_y
 ):
 
-    xt, yt = (
-        latlon_to_tile(
-            LAT,
-            LON,
-            ZOOM
-        )
+    xt, yt = latlon_to_tile(
+        LAT,
+        LON,
+        ZOOM
     )
-
-    origin_x = (
-        xt - GRID_RADIUS
-    ) * TILE_SIZE
-
-    origin_y = (
-        yt - GRID_RADIUS
-    ) * TILE_SIZE
 
     world_x = (
-        origin_x
-        + local_x
-    )
+        xt
+        -
+        GRID_RADIUS
+    ) * TILE_SIZE + local_x
 
     world_y = (
-        origin_y
-        + local_y
-    )
+        yt
+        -
+        GRID_RADIUS
+    ) * TILE_SIZE + local_y
 
     n = float(
         2 ** ZOOM
@@ -1405,16 +1870,22 @@ def pixel_to_latlon(
 
     lon = (
         world_x
-        / TILE_SIZE
-        / n
-        * 360.0
-        - 180.0
+        /
+        TILE_SIZE
+        /
+        n
+        *
+        360.0
+        -
+        180.0
     )
 
     y = (
         world_y
-        / TILE_SIZE
-        / n
+        /
+        TILE_SIZE
+        /
+        n
     )
 
     lat = math.degrees(
@@ -1424,7 +1895,8 @@ def pixel_to_latlon(
                 *
                 (
                     1.0
-                    - 2.0 * y
+                    -
+                    2.0 * y
                 )
             )
         )
@@ -1437,7 +1909,7 @@ def pixel_to_latlon(
 
 
 # ============================================================
-# PROYECCION
+# PROYECCIÓN DEL NÚCLEO
 # ============================================================
 
 def projection(
@@ -1450,16 +1922,15 @@ def projection(
         not track.get(
             "valido"
         )
-        or component is None
+        or
+        component is None
     ):
 
         return None
 
-    speed = (
-        track[
-            "velocidad_kmh"
-        ]
-    )
+    speed = track[
+        "velocidad_kmh"
+    ]
 
     direction = math.radians(
         track[
@@ -1469,8 +1940,10 @@ def projection(
 
     travel_km = (
         speed
-        * minutes
-        / 60.0
+        *
+        minutes
+        /
+        60.0
     )
 
     km_x, km_y = (
@@ -1489,8 +1962,10 @@ def projection(
         math.sin(
             direction
         )
-        * travel_km
-        / km_x
+        *
+        travel_km
+        /
+        km_x
     )
 
     projected_y = (
@@ -1501,25 +1976,30 @@ def projection(
         math.cos(
             direction
         )
-        * travel_km
-        / km_y
-    )
-
-    width = (
-        TILE_SIZE * 3
-    )
-
-    height = (
-        TILE_SIZE * 3
+        *
+        travel_km
+        /
+        km_y
     )
 
     inside = (
-        0 <= projected_x < width
+
+        0
+        <=
+        projected_x
+        <
+        TILE_SIZE * 3
+
         and
-        0 <= projected_y < height
+
+        0
+        <=
+        projected_y
+        <
+        TILE_SIZE * 3
     )
 
-    distance_to_bahia = (
+    distance = (
         distance_point_to_bahia(
             projected_x,
             projected_y
@@ -1546,7 +2026,7 @@ def projection(
 
         "distancia_a_bahia_km":
             round(
-                distance_to_bahia,
+                distance,
                 1
             ),
 
@@ -1626,30 +2106,40 @@ def calculate_eta(
         track[
             "velocidad_kmh"
         ]
-        * 60.0
+        *
+        60.0
     )
 
-    if (
-        0 <= eta <= 360
-    ):
+    return (
 
-        return round(
+        round(
             eta,
             1
         )
 
-    return None
+        if
+        0
+        <=
+        eta
+        <=
+        360
+
+        else
+        None
+    )
 
 
 # ============================================================
-# ANALISIS COMPLETO
+# ANÁLISIS DE LA SECUENCIA
 # ============================================================
 
 def analyze_sequence(
     results
 ):
 
-    current = results[-1]
+    current = results[
+        -1
+    ]
 
     status = {
 
@@ -1696,17 +2186,35 @@ def analyze_sequence(
             ],
 
         "distancia_km":
-            (
-                round(
-                    current[
-                        "distance_km"
-                    ],
-                    1
-                )
-                if current[
-                    "distance_km"
-                ] is not None
-                else None
+            current[
+                "distance_km"
+            ],
+
+        "dbz_max":
+            current[
+                "dbz_max"
+            ],
+
+        "dbz_mean":
+            current[
+                "dbz_mean"
+            ],
+
+        "dbz_p90":
+            current[
+                "dbz_p90"
+            ],
+
+        "dbz_pixels":
+            current[
+                "dbz_pixels"
+            ],
+
+        "intensidad":
+            intensity_label(
+                current[
+                    "dbz_max"
+                ]
             ),
 
         "fortalecimiento":
@@ -1733,7 +2241,6 @@ def analyze_sequence(
         "proyecciones":
             {},
 
-        # Compatibilidad con app actual.
         "proyeccion_30_min":
             None,
 
@@ -1752,10 +2259,13 @@ def analyze_sequence(
         "estado":
             (
                 "precipitacion_detectada"
-                if current[
+                if
+                current[
                     "area"
                 ] > 0
+
                 else
+
                 "sin_precipitacion_detectada"
             )
     }
@@ -1776,41 +2286,35 @@ def analyze_sequence(
         )
     )
 
-    current_components = (
-        current[
-            "components"
-        ]
-    )
-
     nuclei = []
 
-    for comp in current_components:
+    for component in current[
+        "components"
+    ]:
 
-        track_id = comp[
+        track_id = component[
             "track_id"
         ]
 
-        points = tracks.get(
-            track_id,
-            []
-        )
-
         summary = (
             summarize_track(
-                points
+                tracks.get(
+                    track_id,
+                    []
+                )
             )
         )
 
         toward = (
             movement_towards_bahia(
-                comp,
+                component,
                 summary
             )
         )
 
         eta = (
             calculate_eta(
-                comp,
+                component,
                 summary
             )
         )
@@ -1828,7 +2332,7 @@ def analyze_sequence(
                 projections[
                     str(minutes)
                 ] = projection(
-                    comp,
+                    component,
                     summary,
                     minutes
                 )
@@ -1839,13 +2343,42 @@ def analyze_sequence(
                 track_id,
 
             "area_px":
-                comp[
+                component[
                     "area_px"
+                ],
+
+            "max_dbz":
+                component[
+                    "max_dbz"
+                ],
+
+            "mean_dbz":
+                (
+                    round(
+                        component[
+                            "mean_dbz"
+                        ],
+                        1
+                    )
+
+                    if
+
+                    component[
+                        "mean_dbz"
+                    ] is not None
+
+                    else
+                    None
+                ),
+
+            "intensidad":
+                component[
+                    "intensidad"
                 ],
 
             "distancia_km":
                 round(
-                    comp[
+                    component[
                         "distance_km"
                     ],
                     1
@@ -1899,22 +2432,36 @@ def analyze_sequence(
                 projections,
 
             "bbox":
-                comp[
+                component[
                     "bbox"
                 ]
         })
 
     nuclei.sort(
         key=lambda n: (
+
             not n[
                 "movimiento_hacia_bahia"
             ],
+
             n[
                 "distancia_km"
             ],
-            -n[
-                "area_px"
-            ]
+
+            -(
+                n[
+                    "max_dbz"
+                ]
+
+                if
+
+                n[
+                    "max_dbz"
+                ] is not None
+
+                else
+                -999
+            )
         )
     )
 
@@ -1922,99 +2469,104 @@ def analyze_sequence(
 
         return status
 
-    principal = nuclei[0]
-
-    status[
-        "nucleos"
-    ] = nuclei
-
-    status[
-        "nucleo_principal_id"
-    ] = principal[
-        "id"
+    principal = nuclei[
+        0
     ]
 
-    status[
-        "area_px"
-    ] = principal[
-        "area_px"
-    ]
+    status.update({
 
-    status[
-        "distancia_km"
-    ] = principal[
-        "distancia_km"
-    ]
+        "nucleos":
+            nuclei,
 
-    status[
-        "velocidad_kmh"
-    ] = principal[
-        "velocidad_kmh"
-    ]
+        "nucleo_principal_id":
+            principal[
+                "id"
+            ],
 
-    status[
-        "direccion"
-    ] = principal[
-        "direccion"
-    ]
+        "area_px":
+            principal[
+                "area_px"
+            ],
 
-    status[
-        "direccion_grados"
-    ] = principal[
-        "direccion_grados"
-    ]
+        "distancia_km":
+            principal[
+                "distancia_km"
+            ],
 
-    status[
-        "movimiento_hacia_bahia"
-    ] = principal[
-        "movimiento_hacia_bahia"
-    ]
+        "dbz_max":
+            principal[
+                "max_dbz"
+            ],
 
-    status[
-        "eta_minutos"
-    ] = principal[
-        "eta_minutos"
-    ]
+        "dbz_mean":
+            principal[
+                "mean_dbz"
+            ],
 
-    status[
-        "fortalecimiento"
-    ] = principal[
-        "fortalecimiento"
-    ]
+        "intensidad":
+            principal[
+                "intensidad"
+            ],
 
-    status[
-        "cambio_area_pct"
-    ] = principal[
-        "cambio_area_pct"
-    ]
+        "velocidad_kmh":
+            principal[
+                "velocidad_kmh"
+            ],
 
-    status[
-        "confianza_movimiento"
-    ] = principal[
-        "confianza_movimiento"
-    ]
+        "direccion":
+            principal[
+                "direccion"
+            ],
 
-    status[
-        "proyecciones"
-    ] = principal[
-        "proyecciones"
-    ]
+        "direccion_grados":
+            principal[
+                "direccion_grados"
+            ],
 
-    status[
-        "proyeccion_30_min"
-    ] = principal[
-        "proyecciones"
-    ].get(
-        "30"
-    )
+        "movimiento_hacia_bahia":
+            principal[
+                "movimiento_hacia_bahia"
+            ],
 
-    status[
-        "proyeccion_60_min"
-    ] = principal[
-        "proyecciones"
-    ].get(
-        "60"
-    )
+        "eta_minutos":
+            principal[
+                "eta_minutos"
+            ],
+
+        "fortalecimiento":
+            principal[
+                "fortalecimiento"
+            ],
+
+        "cambio_area_pct":
+            principal[
+                "cambio_area_pct"
+            ],
+
+        "confianza_movimiento":
+            principal[
+                "confianza_movimiento"
+            ],
+
+        "proyecciones":
+            principal[
+                "proyecciones"
+            ],
+
+        "proyeccion_30_min":
+            principal[
+                "proyecciones"
+            ].get(
+                "30"
+            ),
+
+        "proyeccion_60_min":
+            principal[
+                "proyecciones"
+            ].get(
+                "60"
+            )
+    })
 
     return status
 
@@ -2036,6 +2588,10 @@ def save_features(
         "longitud",
         "area_px",
         "distance_km",
+        "dbz_max",
+        "dbz_mean",
+        "dbz_p90",
+        "dbz_pixels",
         "tiles_ok",
         "nucleos"
     ]
@@ -2083,18 +2639,29 @@ def save_features(
                     ],
 
                 "distance_km":
-                    (
-                        round(
-                            item[
-                                "distance_km"
-                            ],
-                            2
-                        )
-                        if item[
-                            "distance_km"
-                        ] is not None
-                        else ""
-                    ),
+                    item[
+                        "distance_km"
+                    ],
+
+                "dbz_max":
+                    item[
+                        "dbz_max"
+                    ],
+
+                "dbz_mean":
+                    item[
+                        "dbz_mean"
+                    ],
+
+                "dbz_p90":
+                    item[
+                        "dbz_p90"
+                    ],
+
+                "dbz_pixels":
+                    item[
+                        "dbz_pixels"
+                    ],
 
                 "tiles_ok":
                     item[
@@ -2112,7 +2679,7 @@ def save_features(
 
 
 # ============================================================
-# HISTORICO
+# GUARDAR HISTÓRICO
 # ============================================================
 
 def save_history(
@@ -2120,13 +2687,11 @@ def save_history(
     image
 ):
 
-    filename = os.path.join(
-        HISTORY_DIR,
-        f"radar_{timestamp}.png"
-    )
-
     image.save(
-        filename
+        os.path.join(
+            HISTORY_DIR,
+            f"radar_{timestamp}.png"
+        )
     )
 
     files = []
@@ -2154,6 +2719,7 @@ def save_history(
                                 6:-4
                             ]
                         ),
+
                         os.path.join(
                             HISTORY_DIR,
                             name
@@ -2167,13 +2733,14 @@ def save_history(
 
     files.sort()
 
-    while (
-        len(files)
-        > MAX_HISTORY_FRAMES
-    ):
+    while len(
+        files
+    ) > MAX_HISTORY_FRAMES:
 
         _, old_path = (
-            files.pop(0)
+            files.pop(
+                0
+            )
         )
 
         try:
@@ -2199,16 +2766,24 @@ def main():
 
     print(
         "CLIMAAR - "
-        "RADAR RAINVIEWER NOWCAST 7.0"
+        "RADAR RAINVIEWER NOWCAST 7.1 + dBZ"
     )
 
     print(
         "=" * 70
     )
 
+    # --------------------------------------------------------
+    # RainViewer
+    # --------------------------------------------------------
+
     host, frames = (
         fetch_rainviewer()
     )
+
+    # --------------------------------------------------------
+    # Tile central de Bahía Blanca
+    # --------------------------------------------------------
 
     xt, yt = (
         latlon_to_tile(
@@ -2218,6 +2793,10 @@ def main():
         )
     )
 
+    # --------------------------------------------------------
+    # Últimos 12 frames disponibles
+    # --------------------------------------------------------
+
     selected_frames = frames[
         -12:
     ]
@@ -2225,6 +2804,10 @@ def main():
     results = []
 
     latest_image = None
+
+    # --------------------------------------------------------
+    # Procesamiento
+    # --------------------------------------------------------
 
     for index, frame in enumerate(
         selected_frames,
@@ -2249,54 +2832,80 @@ def main():
         if tiles_ok == 0:
 
             print(
-                "Frame sin tiles validas."
+                "Frame sin tiles válidas."
             )
 
             continue
 
+        item = analyze_frame(
+            image,
+            timestamp,
+            tiles_ok,
+            path
+        )
+
         results.append(
-            analyze_frame(
-                image,
-                timestamp,
-                tiles_ok,
-                path
-            )
+            item
         )
 
         latest_image = image
 
-    if not results:
-
         print(
-            "ERROR: no se pudo "
-            "procesar ningun frame."
+            f"  dBZ max={item['dbz_max']} | "
+            f"media={item['dbz_mean']} | "
+            f"p90={item['dbz_p90']} | "
+            f"pix={item['dbz_pixels']}"
         )
 
-        sys.exit(1)
+    # --------------------------------------------------------
+    # Validación
+    # --------------------------------------------------------
+
+    if not results:
+
+        raise RuntimeError(
+            "No se pudo procesar ningún frame."
+        )
 
     results.sort(
         key=lambda x:
         x["timestamp"]
     )
 
-    current = results[-1]
+    current = results[
+        -1
+    ]
 
-    if latest_image is not None:
+    # --------------------------------------------------------
+    # Imagen actual
+    # --------------------------------------------------------
 
-        latest_image.save(
-            ACTUAL_FILE
-        )
+    latest_image.save(
+        ACTUAL_FILE
+    )
 
-        save_history(
-            current[
-                "timestamp"
-            ],
-            latest_image
-        )
+    # --------------------------------------------------------
+    # Histórico
+    # --------------------------------------------------------
+
+    save_history(
+        current[
+            "timestamp"
+        ],
+        latest_image
+    )
+
+    # --------------------------------------------------------
+    # CSV
+    # --------------------------------------------------------
 
     save_features(
         results
     )
+
+    # --------------------------------------------------------
+    # NOWCAST
+    # --------------------------------------------------------
 
     nowcast = (
         analyze_sequence(
@@ -2304,10 +2913,14 @@ def main():
         )
     )
 
+    # --------------------------------------------------------
+    # JSON FINAL
+    # --------------------------------------------------------
+
     output = {
 
         "version":
-            "7.0",
+            "7.1",
 
         "app":
             "ClimaAR",
@@ -2327,6 +2940,18 @@ def main():
         "fuente":
             "RainViewer",
 
+        "rainviewer_color_scheme":
+            "Universal Blue (2)",
+
+        "rainviewer_smooth":
+            0,
+
+        "rainviewer_snow":
+            0,
+
+        "dbz_decode":
+            "tabla oficial Universal Blue",
+
         "nowcast":
             nowcast,
 
@@ -2343,12 +2968,11 @@ def main():
         },
 
         "nota": (
-            "El nowcast sigue multiples "
-            "nucleos de precipitacion y "
-            "extrapola su movimiento observado. "
-            "Las proyecciones no garantizan "
-            "la trayectoria futura y deben "
-            "interpretarse con su confianza."
+            "dBZ decodificado desde la tabla oficial "
+            "de colores de RainViewer. Los colores "
+            "repetidos de la paleta no permiten "
+            "distinguir todos los valores individuales; "
+            "65-74 y 75-95 comparten colores."
         )
     }
 
@@ -2365,6 +2989,26 @@ def main():
             indent=2
         )
 
+    # --------------------------------------------------------
+    # Mostrar resultado en Actions
+    # --------------------------------------------------------
+
+    print(
+        ""
+    )
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "RESULTADO NOWCAST"
+    )
+
+    print(
+        "=" * 70
+    )
+
     print(
         json.dumps(
             nowcast,
@@ -2374,25 +3018,22 @@ def main():
     )
 
     print(
-        f"Frames procesados: "
-        f"{len(results)}"
+        "=" * 70
     )
 
     print(
-        f"Actual: "
-        f"{ACTUAL_FILE}"
+        "CLIMAAR RADAR V7.1 FINALIZADO"
     )
 
     print(
-        f"Nowcast: "
-        f"{NOWCAST_FILE}"
+        "=" * 70
     )
 
-    print(
-        f"Features: "
-        f"{FEATURES_CSV}"
-    )
 
+# ============================================================
+# EJECUCIÓN
+# ============================================================
 
 if __name__ == "__main__":
+
     main()
