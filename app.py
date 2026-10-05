@@ -50,6 +50,7 @@ HEADERS = {
 ACTUAL_FILE = RADAR_DIR / "actual.png"
 PREVIEW_FILE = RADAR_DIR / "preview.png"
 STATUS_FILE = RADAR_DIR / "status.json"
+NOWCAST_FILE = RADAR_DIR / "radar_nowcast.json"
 
 
 # ============================================================
@@ -63,7 +64,9 @@ def utc_now():
 def argentina_time(utc_dt):
     try:
         from zoneinfo import ZoneInfo
-        return utc_dt.astimezone(ZoneInfo("America/Argentina/Buenos_Aires"))
+        return utc_dt.astimezone(
+            ZoneInfo("America/Argentina/Buenos_Aires")
+        )
     except Exception:
         return utc_dt
 
@@ -86,6 +89,18 @@ def load_json():
     try:
         return json.loads(
             STATUS_FILE.read_text(encoding="utf-8")
+        )
+    except Exception:
+        return None
+
+
+def load_nowcast():
+    if not NOWCAST_FILE.exists():
+        return None
+
+    try:
+        return json.loads(
+            NOWCAST_FILE.read_text(encoding="utf-8")
         )
     except Exception:
         return None
@@ -180,7 +195,7 @@ def rainviewer_data():
 
 
 # ============================================================
-# URL DE TESela
+# URL DE TESELA
 # ============================================================
 
 def tile_url(host, path, x, y):
@@ -198,7 +213,7 @@ def tile_url(host, path, x, y):
 
 
 # ============================================================
-# DESCARGA DE TESela
+# DESCARGA DE TESELA
 # ============================================================
 
 def download_tile(url):
@@ -315,6 +330,7 @@ def build_9tiles():
     )
 
     # Límites geográficos de las 3x3 teselas
+
     left_x = center_x - GRID_RADIUS
     right_x = center_x + GRID_RADIUS + 1
 
@@ -411,13 +427,16 @@ def inicio():
     <!DOCTYPE html>
     <html lang="es">
     <head>
+
         <meta charset="UTF-8">
+
         <meta name="viewport"
               content="width=device-width, initial-scale=1.0">
 
         <title>ClimaAR</title>
 
         <style>
+
             body {
                 font-family: Arial, sans-serif;
                 margin: 0;
@@ -429,7 +448,9 @@ def inicio():
             a {
                 color: #4da6ff;
             }
+
         </style>
+
     </head>
 
     <body>
@@ -784,11 +805,6 @@ def radar_page():
             });
 
 
-            // IMPORTANTE:
-            // NO usamos fitBounds().
-            // El mapa queda centrado directamente
-            // en Bahía Blanca.
-
             map.setView(centro, 9);
 
 
@@ -924,10 +940,6 @@ def radar_page():
                     }
 
 
-                    // ------------------------------------------
-                    // Crear / actualizar overlay
-                    // ------------------------------------------
-
                     if (radar) {
 
                         radar.setUrl(
@@ -960,13 +972,6 @@ def radar_page():
                             ).addTo(map);
 
                     }
-
-
-                    // ------------------------------------------
-                    // NO fitBounds()
-                    // ------------------------------------------
-                    // El mapa permanece centrado en Bahía
-                    // Blanca y no se aleja al norte del país.
 
 
                     map.setView(
@@ -1054,7 +1059,7 @@ def observacion():
 
 
 # ============================================================
-# ESTADO GENERAL
+# ESTADO GENERAL + NOWCAST
 # ============================================================
 
 @app.get("/estado")
@@ -1062,10 +1067,36 @@ def estado():
 
     radar = load_json()
 
+    nowcast = load_nowcast()
+
+    if nowcast is None:
+
+        nowcast = {
+            "disponible": False,
+            "estado": "sin_datos",
+            "motivo":
+                "Todavia no existe radar_nowcast.json."
+        }
+
+    else:
+
+        nowcast = {
+            "disponible": True,
+            "estado": "ok",
+            "datos": nowcast
+        }
+
     return {
         "app": "ClimaAR",
         "version": "4.2.1",
         "radar": radar,
+        "nowcast_radar": nowcast,
+        "nowcast_radar_operativo":
+            nowcast.get(
+                "disponible",
+                False
+            ),
+        "nowcast_radar_ia": False,
         "hora_utc": iso_now()
     }
 
@@ -1079,7 +1110,8 @@ def modelo():
 
     return {
         "estado": "experimental",
-        "mensaje": "Módulo de análisis meteorológico de ClimaAR."
+        "mensaje":
+            "Módulo de análisis meteorológico de ClimaAR."
     }
 
 
@@ -1093,7 +1125,8 @@ def tormenta():
     return {
         "estado": "ok",
         "zona": "Bahía Blanca",
-        "mensaje": "Análisis de tormenta disponible cuando existan datos suficientes."
+        "mensaje":
+            "Análisis de tormenta disponible cuando existan datos suficientes."
     }
 
 
@@ -1104,8 +1137,22 @@ def tormenta():
 @app.get("/nowcast")
 def nowcast():
 
+    data = load_nowcast()
+
+    if data is None:
+
+        return {
+            "disponible": False,
+            "estado": "sin_datos",
+            "zona": "Bahía Blanca",
+            "mensaje":
+                "Todavia no existe radar_nowcast.json."
+        }
+
     return {
-        "estado": "experimental",
+        "disponible": True,
+        "estado": "ok",
         "zona": "Bahía Blanca",
-        "mensaje": "Nowcast de evolución de tormentas."
+        "fuente": "RainViewer",
+        "nowcast": data
     }
