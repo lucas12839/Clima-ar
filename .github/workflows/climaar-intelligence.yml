@@ -7,7 +7,9 @@ on:
   workflow_dispatch:
 
 jobs:
+
   intelligence:
+
     runs-on: ubuntu-latest
 
     permissions:
@@ -15,29 +17,61 @@ jobs:
 
     steps:
 
+      # ======================================================
+      # BAJAR REPOSITORIO
+      # ======================================================
+
       - name: Bajar codigo
+
         uses: actions/checkout@v4
+
         with:
           fetch-depth: 0
 
+
+      # ======================================================
+      # PYTHON
+      # ======================================================
+
       - name: Preparar Python
+
         uses: actions/setup-python@v5
+
         with:
           python-version: '3.11'
 
+
+      # ======================================================
+      # LIBRERIAS
+      # ======================================================
+
       - name: Instalar librerias
+
         run: |
+
+          set -e
+
           python -m pip install --upgrade pip
+
           pip install requests
 
+
+      # ======================================================
+      # FUSION METEOROLOGICA
+      # ======================================================
+
       - name: Ejecutar fusion meteorologica
+
         run: |
+
           set -e
 
           python scripts/meteorologia_fusion.py
 
           test -s data/ia/estado_meteorologico.json
+
           test -s data/ia/historial_meteorologico.csv
+
           test -s data/meteorologia/ambiente_futuro.json
 
           python -m json.tool \
@@ -48,26 +82,192 @@ jobs:
             data/meteorologia/ambiente_futuro.json \
             >/dev/null
 
-          echo "ClimaAR Intelligence OK"
+          echo "Fusion meteorologica OK"
+
+
+      # ======================================================
+      # MOTOR DE INTELIGENCIA DE TORMENTAS
+      # ======================================================
+
+      - name: Ejecutar Storm Engine
+
+        run: |
+
+          set -e
+
+          test -s data/radar/radar_nowcast.json
+
+          test -s data/ia/estado_meteorologico.json
+
+          python scripts/tormenta_intelligence.py
+
+          test -s data/ia/inteligencia_tormenta.json
+
+          test -s data/ia/historial_inteligencia_tormenta.csv
+
+          python -m json.tool \
+            data/ia/inteligencia_tormenta.json \
+            >/dev/null
+
+          echo "Storm Engine OK"
+
+
+      # ======================================================
+      # VALIDACION FINAL
+      # ======================================================
+
+      - name: Verificacion final
+
+        run: |
+
+          set -e
+
+          python - <<'PY'
+
+          import json
+
+          with open(
+              "data/ia/inteligencia_tormenta.json",
+              "r",
+              encoding="utf-8"
+          ) as f:
+
+              data = json.load(f)
+
+          required = [
+              "version",
+              "motor",
+              "estado",
+              "severidad",
+              "probabilidades",
+              "peligros",
+              "confianza_modelo",
+              "razones"
+          ]
+
+          for key in required:
+
+              if key not in data:
+
+                  raise SystemExit(
+                      f"Falta campo obligatorio: {key}"
+                  )
+
+          probabilities = data[
+              "probabilidades"
+          ]
+
+          hazards = data[
+              "peligros"
+          ]
+
+          for key in [
+              "tormenta",
+              "llegada_bahia"
+          ]:
+
+              value = probabilities[key]
+
+              if not (
+                  0 <= value <= 1
+              ):
+
+                  raise SystemExit(
+                      f"Probabilidad invalida: {key}"
+                  )
+
+          for key, value in hazards.items():
+
+              if not (
+                  0 <= value <= 1
+              ):
+
+                  raise SystemExit(
+                      f"Peligro invalido: {key}"
+                  )
+
+          if data[
+              "severidad"
+          ] not in [
+              "verde",
+              "amarillo",
+              "naranja",
+              "rojo"
+          ]:
+
+              raise SystemExit(
+                  "Severidad invalida."
+              )
+
+          print(
+              "Estado:",
+              data["estado"]
+          )
+
+          print(
+              "Severidad:",
+              data["severidad"]
+          )
+
+          print(
+              "Probabilidad tormenta:",
+              probabilities["tormenta"]
+          )
+
+          print(
+              "Confianza:",
+              data["confianza_modelo"]
+          )
+
+          print(
+              "Validacion final OK"
+          )
+
+          PY
+
+
+      # ======================================================
+      # GUARDAR DATOS
+      # ======================================================
 
       - name: Guardar datos
+
         run: |
+
           set -e
 
           git config user.name "climaar-bot"
+
           git config user.email "bot@climaar.com.ar"
 
           git add \
             data/ia/estado_meteorologico.json \
             data/ia/historial_meteorologico.csv \
-            data/meteorologia/ambiente_futuro.json
+            data/meteorologia/ambiente_futuro.json \
+            data/ia/inteligencia_tormenta.json \
+            data/ia/historial_inteligencia_tormenta.csv
 
           if git diff --cached --quiet; then
-            echo "Sin cambios meteorologicos."
+
+            echo "Sin cambios de Intelligence."
+
             exit 0
+
           fi
 
-          git commit -m "ClimaAR Intelligence data"
+          git commit \
+            -m "ClimaAR Intelligence storm engine"
+
+
+      # ======================================================
+      # PUSH CON REINTENTOS
+      # ======================================================
+
+      - name: Subir resultados
+
+        run: |
+
+          set -e
 
           for intento in 1 2 3 4 5; do
 
@@ -78,20 +278,29 @@ jobs:
             if git rebase origin/main; then
 
               if git push origin HEAD:main; then
+
                 echo "Push Intelligence correcto."
+
                 exit 0
+
               fi
 
             else
+
               echo "Rebase con conflicto."
+
               git rebase --abort || true
+
             fi
 
             echo "Otro workflow modifico main."
+
             echo "Esperando..."
+
             sleep 10
 
           done
 
           echo "No se pudo subir Intelligence."
+
           exit 1
