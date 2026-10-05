@@ -14,7 +14,7 @@ from io import BytesIO
 # CLIMAAR
 # ============================================================
 
-VERSION = "4.3.0"
+VERSION = "4.3.1"
 
 app = FastAPI(
     title="ClimaAR",
@@ -98,11 +98,6 @@ def argentina_time(utc_dt):
 
 
 def clean_json_value(value):
-    """
-    Convierte NaN e Infinity en None.
-    Procesa recursivamente diccionarios,
-    listas y tuplas.
-    """
 
     if isinstance(value, float):
 
@@ -1259,7 +1254,7 @@ def radar_page():
             <div
                 id="fuentes"
                 class="fuentes">
-                RainViewer · SAZB · Open-Meteo · ClimaAR
+                Radar: RainViewer · SAZB · Open-Meteo · ClimaAR
             </div>
 
         </div>
@@ -1297,10 +1292,6 @@ def radar_page():
                 }
             ).addTo(map);
 
-
-            /*
-             * MARCADOR BAHÍA BLANCA
-             */
 
             const iconBahia =
                 L.divIcon({
@@ -1418,8 +1409,10 @@ def radar_page():
                 ];
 
                 const indice =
-                    Math.round(
-                        d / 45
+                    (
+                        Math.round(
+                            d / 45
+                        ) % 8 + 8
                     ) % 8;
 
                 return nombres[
@@ -1428,6 +1421,19 @@ def radar_page():
             }
 
 
+            /*
+             * CORRECCIÓN PRINCIPAL:
+             *
+             * El JSON real tiene:
+             *
+             * nowcast_radar
+             *   └── datos
+             *        └── nowcast
+             *
+             * Por eso entramos hasta
+             * datos.nowcast.
+             */
+
             function obtenerNowcast(
                 estado
             ) {
@@ -1435,22 +1441,51 @@ def radar_page():
                 if (
                     estado &&
                     estado.nowcast_radar &&
-                    estado.nowcast_radar.datos
+                    estado.nowcast_radar.datos &&
+                    estado.nowcast_radar.datos.nowcast
                 ) {
 
                     return estado
                         .nowcast_radar
-                        .datos;
+                        .datos
+                        .nowcast;
+
+                }
+
+                /*
+                 * Compatibilidad por si en el futuro
+                 * el formato cambia.
+                 */
+
+                if (
+                    estado &&
+                    estado.nowcast_radar &&
+                    estado.nowcast_radar.datos
+                ) {
+
+                    const datos =
+                        estado.nowcast_radar.datos;
+
+                    if (
+                        datos.actividad !== undefined ||
+                        datos.frames_analizados !== undefined
+                    ) {
+
+                        return datos;
+
+                    }
 
                 }
 
                 if (
                     estado &&
-                    estado.nowcast_radar
+                    estado.nowcast_radar &&
+                    estado.nowcast_radar.nowcast
                 ) {
 
                     return estado
-                        .nowcast_radar;
+                        .nowcast_radar
+                        .nowcast;
 
                 }
 
@@ -1521,7 +1556,11 @@ def radar_page():
                         "estado-principal actividad";
 
                     secundario.textContent =
-                        "Seguimiento radar activo";
+                        "Seguimiento radar activo · " +
+                        texto(
+                            n.frames_analizados
+                        ) +
+                        " frames analizados";
                 }
 
 
@@ -1666,15 +1705,80 @@ def radar_page():
             }
 
 
+            /*
+             * ACTUALIZAR OVERLAY
+             */
+
+            function colocarRadar(
+                data
+            ) {
+
+                if (
+                    !data ||
+                    !data.bounds
+                ) {
+                    return false;
+                }
+
+                const bounds = [
+
+                    [
+                        data.bounds.south,
+                        data.bounds.west
+                    ],
+
+                    [
+                        data.bounds.north,
+                        data.bounds.east
+                    ]
+
+                ];
+
+
+                if (!radar) {
+
+                    radar =
+                        L.imageOverlay(
+                            "/radar.png?ts=" +
+                            Date.now(),
+                            bounds,
+                            {
+                                opacity: 0.65,
+                                interactive: false
+                            }
+                        )
+                        .addTo(map);
+
+                } else {
+
+                    radar.setBounds(
+                        bounds
+                    );
+
+                    radar.setUrl(
+                        "/radar.png?ts=" +
+                        Date.now()
+                    );
+                }
+
+                return true;
+            }
+
+
+            /*
+             * CARGAR ESTADO
+             */
+
             async function cargarEstado() {
 
                 try {
 
-                    const response =
+                    let response =
                         await fetch(
                             "/estado?ts=" +
                             Date.now()
                         );
+
 
                     if (!response.ok) {
 
@@ -1684,8 +1788,61 @@ def radar_page():
                         );
                     }
 
-                    const data =
+
+                    let data =
                         await response.json();
+
+
+                    /*
+                     * CORRECCIÓN:
+                     *
+                     * Si Render arrancó sin
+                     * status.json, generamos
+                     * automáticamente el radar.
+                     *
+                     * Ya no hace falta tocar
+                     * "Actualizar radar".
+                     */
+
+                    if (
+                        !data.radar
+                    ) {
+
+                        document.getElementById(
+                            "resultado"
+                        ).textContent =
+                            "Generando radar...";
+
+
+                        const radarResponse =
+                            await fetch(
+                                "/radar/9tiles?ts=" +
+                                Date.now()
+                            );
+
+
+                        const radarData =
+                            await radarResponse.json();
+
+
+                        if (
+                            radarData.estado === "ok"
+                        ) {
+
+                            data.radar =
+                                radarData;
+
+                            document.getElementById(
+                                "resultado"
+                            ).textContent =
+                                "Radar generado automáticamente · " +
+                                radarData.teselas_ok +
+                                "/" +
+                                radarData.teselas_total;
+
+                        }
+
+                    }
 
 
                     mostrarNowcast(
@@ -1704,46 +1861,9 @@ def radar_page():
                         undefined
                     ) {
 
-                        const bounds = [
-
-                            [
-                                data.radar.bounds.south,
-                                data.radar.bounds.west
-                            ],
-
-                            [
-                                data.radar.bounds.north,
-                                data.radar.bounds.east
-                            ]
-
-                        ];
-
-
-                        if (!radar) {
-
-                            radar =
-                                L.imageOverlay(
-                                    "/radar.png?ts=" +
-                                    Date.now(),
-                                    bounds,
-                                    {
-                                        opacity: 0.65,
-                                        interactive: false
-                                    }
-                                )
-                                .addTo(map);
-
-                        } else {
-
-                            radar.setBounds(
-                                bounds
-                            );
-
-                            radar.setUrl(
-                                "/radar.png?ts=" +
-                                Date.now()
-                            );
-                        }
+                        colocarRadar(
+                            data.radar
+                        );
                     }
 
 
@@ -1789,10 +1909,6 @@ def radar_page():
 
                     /*
                      * DATOS SAZB
-                     *
-                     * Son opcionales porque
-                     * el endpoint puede variar
-                     * según la versión desplegada.
                      */
 
                     if (
@@ -1876,6 +1992,10 @@ def radar_page():
             }
 
 
+            /*
+             * ACTUALIZACIÓN MANUAL
+             */
+
             async function actualizarRadar() {
 
                 const resultado =
@@ -1914,46 +2034,9 @@ def radar_page():
                     }
 
 
-                    const bounds = [
-
-                        [
-                            data.bounds.south,
-                            data.bounds.west
-                        ],
-
-                        [
-                            data.bounds.north,
-                            data.bounds.east
-                        ]
-
-                    ];
-
-
-                    if (!radar) {
-
-                        radar =
-                            L.imageOverlay(
-                                "/radar.png?ts=" +
-                                Date.now(),
-                                bounds,
-                                {
-                                    opacity: 0.65,
-                                    interactive: false
-                                }
-                            )
-                            .addTo(map);
-
-                    } else {
-
-                        radar.setBounds(
-                            bounds
-                        );
-
-                        radar.setUrl(
-                            "/radar.png?ts=" +
-                            Date.now()
-                        );
-                    }
+                    colocarRadar(
+                        data
+                    );
 
 
                     map.setView(
@@ -2009,17 +2092,16 @@ def radar_page():
             );
 
 
+            /*
+             * CARGA INICIAL AUTOMÁTICA
+             */
+
             cargarEstado();
 
 
             /*
-             * ACTUALIZACIÓN AUTOMÁTICA
-             *
-             * El radar se mantiene con su
-             * actualización manual.
-             *
-             * El análisis se refresca cada
-             * 60 segundos.
+             * ACTUALIZACIÓN DEL ANÁLISIS
+             * CADA 60 SEGUNDOS
              */
 
             setInterval(
@@ -2062,7 +2144,24 @@ def estado():
 
         radar = load_json()
 
+        /*
+         * Si Render arrancó sin status.json,
+         * generamos el radar automáticamente.
+         */
+
+        if radar is None:
+
+            try:
+
+                radar = build_9tiles()
+
+            except Exception:
+
+                radar = None
+
+
         nowcast_data = load_nowcast()
+
 
         if nowcast_data is None:
 
@@ -2082,6 +2181,7 @@ def estado():
                 "datos": nowcast_data
             }
 
+
         respuesta = {
             "app": "ClimaAR",
             "version": VERSION,
@@ -2098,13 +2198,17 @@ def estado():
             "hora_utc": iso_now()
         }
 
-        respuesta = clean_json_value(
-            respuesta
-        )
+
+        respuesta =
+            clean_json_value(
+                respuesta
+            )
+
 
         return JSONResponse(
             content=respuesta
         )
+
 
     except Exception as exc:
 
