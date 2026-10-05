@@ -12,104 +12,212 @@ import numpy as np
 import cv2
 
 
+# ============================================================
+# CLIMAAR - RADAR RAINVIEWER + NOWCAST
+# Version 6.0
+# ============================================================
+
 LAT = -38.71
 LON = -62.26
+
 ZOOM = 7
 
 DATA_DIR = "data/radar"
 HISTORY_DIR = os.path.join(DATA_DIR, "historico")
-FEATURES_CSV = os.path.join(DATA_DIR, "radar_features_rainviewer.csv")
 
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(HISTORY_DIR, exist_ok=True)
+FEATURES_CSV = os.path.join(
+    DATA_DIR,
+    "radar_features_rainviewer.csv"
+)
 
-API_URL = "https://api.rainviewer.com/public/weather-maps.json"
+NOWCAST_FILE = os.path.join(
+    DATA_DIR,
+    "radar_nowcast.json"
+)
+
+ACTUAL_FILE = os.path.join(
+    DATA_DIR,
+    "actual.png"
+)
+
+API_URL = (
+    "https://api.rainviewer.com/public/weather-maps.json"
+)
 
 HEADERS = {
-    "User-Agent": "ClimaAR/5.1",
+    "User-Agent": "ClimaAR/6.0",
     "Referer": "https://www.rainviewer.com/",
     "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
 }
 
 TILE_SIZE = 512
 GRID_RADIUS = 1
+
 MIN_TILE_BYTES = 200
+
 MAX_HISTORY_FRAMES = 144
 
+# Cantidad máxima de frames usados para calcular movimiento.
+TRACK_FRAMES = 6
+
+# Mínimo de movimiento para considerar que hay desplazamiento real.
+MIN_MOVEMENT_KM = 1.0
+
+
+# ============================================================
+# DIRECTORIOS
+# ============================================================
+
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(HISTORY_DIR, exist_ok=True)
+
+
+# ============================================================
+# UTILIDADES
+# ============================================================
 
 def latlon_to_tile(lat, lon, zoom):
+
     n = 2.0 ** zoom
-    xtile = (lon + 180.0) / 360.0 * n
+
+    xtile = (
+        (lon + 180.0)
+        / 360.0
+        * n
+    )
+
     lat_rad = math.radians(lat)
 
     ytile = (
-        1.0 - math.asinh(math.tan(lat_rad)) / math.pi
+        1.0
+        - math.asinh(
+            math.tan(lat_rad)
+        ) / math.pi
     ) / 2.0 * n
 
     return int(xtile), int(ytile)
 
 
 def pixels_per_km(lat, zoom, tile_size):
+
     world_km = 40075.016
 
     km_x = (
-        world_km * math.cos(math.radians(lat))
-        / ((2 ** zoom) * tile_size)
+        world_km
+        * math.cos(
+            math.radians(lat)
+        )
+        / (
+            (2 ** zoom)
+            * tile_size
+        )
     )
 
-    km_y = world_km / ((2 ** zoom) * tile_size)
+    km_y = (
+        world_km
+        / (
+            (2 ** zoom)
+            * tile_size
+        )
+    )
 
     return km_x, km_y
 
 
+def frame_datetime(timestamp):
+
+    return datetime.fromtimestamp(
+        int(timestamp),
+        timezone.utc
+    ).isoformat()
+
+
+# ============================================================
+# RAINVIEWER API
+# ============================================================
+
 def fetch_rainviewer():
+
     try:
+
         response = requests.get(
             API_URL,
             headers=HEADERS,
-            timeout=25,
+            timeout=30
         )
 
         response.raise_for_status()
+
         data = response.json()
 
     except Exception as exc:
-        print(f"ERROR API RAINVIEWER: {exc}")
+
+        print(
+            f"ERROR API RAINVIEWER: {exc}"
+        )
+
         sys.exit(1)
 
-    host = data.get(
-        "host",
-        "https://tilecache.rainviewer.com",
-    ).rstrip("/")
+    host = (
+        data.get(
+            "host",
+            "https://tilecache.rainviewer.com"
+        )
+        .rstrip("/")
+    )
 
-    frames = data.get(
-        "radar",
-        {}
-    ).get(
-        "past",
-        []
+    frames = (
+        data
+        .get("radar", {})
+        .get("past", [])
     )
 
     if not frames:
+
         print(
             "ERROR CRITICO: "
             "RainViewer no devolvio frames."
         )
+
         sys.exit(1)
 
     return host, frames
 
 
-def download_frame(host, frame, xt, yt):
-    path = frame["path"]
-    timestamp = int(frame["time"])
+# ============================================================
+# DESCARGA DE UN FRAME
+# ============================================================
 
-    size = TILE_SIZE * 3
+def download_frame(
+    host,
+    frame,
+    xt,
+    yt
+):
+
+    path = frame["path"]
+
+    timestamp = int(
+        frame["time"]
+    )
+
+    image_size = (
+        TILE_SIZE
+        * 3
+    )
 
     image = Image.new(
         "RGBA",
-        (size, size),
-        (0, 0, 0, 0),
+        (
+            image_size,
+            image_size
+        ),
+        (
+            0,
+            0,
+            0,
+            0
+        )
     )
 
     successful_tiles = 0
@@ -118,21 +226,27 @@ def download_frame(host, frame, xt, yt):
         -GRID_RADIUS,
         GRID_RADIUS + 1
     ):
+
         for dy in range(
             -GRID_RADIUS,
             GRID_RADIUS + 1
         ):
+
             url = (
                 f"{host}{path}"
-                f"/{TILE_SIZE}/{ZOOM}/"
-                f"{xt + dx}/{yt + dy}/2/1_1.png"
+                f"/{TILE_SIZE}"
+                f"/{ZOOM}"
+                f"/{xt + dx}"
+                f"/{yt + dy}"
+                f"/2/1_1.png"
             )
 
             try:
+
                 response = requests.get(
                     url,
                     headers=HEADERS,
-                    timeout=20,
+                    timeout=20
                 )
 
                 if (
@@ -140,35 +254,44 @@ def download_frame(host, frame, xt, yt):
                     or len(response.content)
                     < MIN_TILE_BYTES
                 ):
-                    print(
-                        f"Tile invalida: "
-                        f"HTTP {response.status_code} "
-                        f"{url}"
-                    )
+
                     continue
 
-                tile = Image.open(
-                    BytesIO(response.content)
-                ).convert("RGBA")
+                tile = (
+                    Image
+                    .open(
+                        BytesIO(
+                            response.content
+                        )
+                    )
+                    .convert("RGBA")
+                )
 
                 x = (
-                    dx + GRID_RADIUS
+                    dx
+                    + GRID_RADIUS
                 ) * TILE_SIZE
 
                 y = (
-                    dy + GRID_RADIUS
+                    dy
+                    + GRID_RADIUS
                 ) * TILE_SIZE
 
                 image.alpha_composite(
                     tile,
-                    (x, y)
+                    (
+                        x,
+                        y
+                    )
                 )
 
                 successful_tiles += 1
 
             except Exception as exc:
+
                 print(
-                    f"FAIL tile {url} -> {exc}"
+                    "ERROR TILE:",
+                    exc
                 )
 
     return (
@@ -179,42 +302,59 @@ def download_frame(host, frame, xt, yt):
     )
 
 
+# ============================================================
+# MASCARA RADAR
+# ============================================================
+
 def radar_mask(image):
-    array = np.asarray(image)
+
+    array = np.asarray(
+        image
+    )
 
     alpha = array[:, :, 3]
 
     mask = np.where(
         alpha >= 20,
         255,
-        0,
-    ).astype(np.uint8)
+        0
+    ).astype(
+        np.uint8
+    )
 
     kernel = np.ones(
-        (3, 3),
+        (
+            3,
+            3
+        ),
         np.uint8
     )
 
     mask = cv2.morphologyEx(
         mask,
         cv2.MORPH_OPEN,
-        kernel,
+        kernel
     )
 
     mask = cv2.morphologyEx(
         mask,
         cv2.MORPH_CLOSE,
-        kernel,
+        kernel
     )
 
     return mask
 
 
+# ============================================================
+# COMPONENTE PRINCIPAL
+# ============================================================
+
 def largest_component(mask):
+
     count, labels, stats, centers = (
         cv2.connectedComponentsWithStats(
             mask,
-            8,
+            8
         )
     )
 
@@ -224,6 +364,7 @@ def largest_component(mask):
         1,
         count
     ):
+
         area = int(
             stats[
                 i,
@@ -235,17 +376,22 @@ def largest_component(mask):
             continue
 
         candidate = {
-            "area_px": area,
 
-            "centroid_x": float(
-                centers[i][0]
-            ),
+            "area_px":
+                area,
 
-            "centroid_y": float(
-                centers[i][1]
-            ),
+            "centroid_x":
+                float(
+                    centers[i][0]
+                ),
+
+            "centroid_y":
+                float(
+                    centers[i][1]
+                ),
 
             "bbox": [
+
                 int(
                     stats[
                         i,
@@ -272,20 +418,26 @@ def largest_component(mask):
                         i,
                         cv2.CC_STAT_HEIGHT
                     ]
-                ),
-            ],
+                )
+            ]
         }
 
         if (
             best is None
             or area > best["area_px"]
         ):
+
             best = candidate
 
     return best
 
 
+# ============================================================
+# DISTANCIA A BAHIA BLANCA
+# ============================================================
+
 def distance_to_bahia(mask):
+
     ys, xs = np.where(
         mask > 0
     )
@@ -293,15 +445,24 @@ def distance_to_bahia(mask):
     if len(xs) == 0:
         return None
 
-    height, width = mask.shape
+    height, width = (
+        mask.shape
+    )
 
-    center_x = width / 2.0
-    center_y = height / 2.0
+    center_x = (
+        width / 2.0
+    )
 
-    km_x, km_y = pixels_per_km(
-        LAT,
-        ZOOM,
-        TILE_SIZE,
+    center_y = (
+        height / 2.0
+    )
+
+    km_x, km_y = (
+        pixels_per_km(
+            LAT,
+            ZOOM,
+            TILE_SIZE
+        )
     )
 
     dx = (
@@ -322,7 +483,17 @@ def distance_to_bahia(mask):
     )
 
 
-def analyze_frame(image):
+# ============================================================
+# ANALISIS DE FRAME
+# ============================================================
+
+def analyze_frame(
+    image,
+    timestamp,
+    tiles_ok,
+    path
+):
+
     mask = radar_mask(
         image
     )
@@ -333,60 +504,90 @@ def analyze_frame(image):
         )
     )
 
-    component = largest_component(
-        mask
+    component = (
+        largest_component(
+            mask
+        )
     )
 
-    distance = distance_to_bahia(
-        mask
+    distance = (
+        distance_to_bahia(
+            mask
+        )
     )
 
     return {
-        "mask": mask,
-        "area": area,
-        "component": component,
-        "distance_km": distance,
+
+        "timestamp":
+            int(timestamp),
+
+        "frame_utc":
+            frame_datetime(
+                timestamp
+            ),
+
+        "tiles_ok":
+            int(tiles_ok),
+
+        "path":
+            path,
+
+        "area":
+            area,
+
+        "component":
+            component,
+
+        "distance_km":
+            distance
     }
 
+
+# ============================================================
+# MOVIMIENTO ENTRE DOS FRAMES
+# ============================================================
 
 def motion_between(
     previous,
     current
 ):
+
     if (
         previous is None
         or current is None
     ):
         return None
 
-    previous_component = (
-        previous["component"]
+    pc = previous.get(
+        "component"
     )
 
-    current_component = (
-        current["component"]
+    cc = current.get(
+        "component"
     )
 
     if (
-        previous_component is None
-        or current_component is None
+        pc is None
+        or cc is None
     ):
         return None
 
     dx_px = (
-        current_component["centroid_x"]
-        - previous_component["centroid_x"]
+        cc["centroid_x"]
+        - pc["centroid_x"]
     )
 
     dy_px = (
-        current_component["centroid_y"]
-        - previous_component["centroid_y"]
+        cc["centroid_y"]
+        - pc["centroid_y"]
     )
 
-    km_x, km_y = pixels_per_km(
-        LAT,
-        ZOOM,
-        TILE_SIZE,
+    km_x, km_y = (
+        pixels_per_km(
+            LAT,
+            ZOOM,
+            TILE_SIZE
+        )
     )
 
     east_km = (
@@ -397,47 +598,67 @@ def motion_between(
         dy_px * km_y
     )
 
-    distance_km = math.hypot(
+    movement_km = math.hypot(
         east_km,
-        south_km,
+        south_km
     )
 
     direction = (
         math.degrees(
             math.atan2(
                 east_km,
-                -south_km,
+                -south_km
             )
         )
         + 360.0
     ) % 360.0
 
+    elapsed_minutes = (
+        current["timestamp"]
+        - previous["timestamp"]
+    ) / 60.0
+
+    if elapsed_minutes <= 0:
+        return None
+
+    speed_kmh = (
+        movement_km
+        / (
+            elapsed_minutes
+            / 60.0
+        )
+    )
+
     return {
-        "dx_px": round(
+
+        "dx_px":
             dx_px,
-            2,
-        ),
 
-        "dy_px": round(
+        "dy_px":
             dy_px,
-            2,
-        ),
 
-        "movimiento_km": round(
-            distance_km,
-            2,
-        ),
+        "movimiento_km":
+            movement_km,
 
-        "direccion_grados": round(
+        "direccion_grados":
             direction,
-            1,
-        ),
+
+        "velocidad_kmh":
+            speed_kmh,
+
+        "intervalo_minutos":
+            elapsed_minutes
     }
 
+
+# ============================================================
+# NOMBRE DE DIRECCION
+# ============================================================
 
 def direction_name(
     degrees
 ):
+
     names = [
         "N",
         "NE",
@@ -446,68 +667,37 @@ def direction_name(
         "S",
         "SO",
         "O",
-        "NO",
+        "NO"
     ]
 
-    return names[
-        int(
-            (
-                degrees
-                + 22.5
-            ) // 45
-        ) % 8
-    ]
+    index = int(
+        (
+            degrees
+            + 22.5
+        ) / 45
+    ) % 8
+
+    return names[index]
 
 
-def calculate_speed(
-    movement,
-    previous_timestamp,
-    current_timestamp
-):
-    if (
-        movement is None
-        or previous_timestamp is None
-    ):
-        return None
-
-    elapsed_minutes = (
-        current_timestamp
-        - previous_timestamp
-    ) / 60.0
-
-    if elapsed_minutes <= 0:
-        return None
-
-    speed_kmh = (
-        movement["movimiento_km"]
-        / (
-            elapsed_minutes
-            / 60.0
-        )
-    )
-
-    return {
-        "intervalo_minutos": round(
-            elapsed_minutes,
-            1,
-        ),
-
-        "velocidad_kmh": round(
-            speed_kmh,
-            1,
-        ),
-    }
-
+# ============================================================
+# FORTALECIMIENTO
+# ============================================================
 
 def strengthening_state(
     previous_area,
     current_area
 ):
+
     if (
         previous_area <= 0
         or current_area <= 0
     ):
-        return "sin_datos"
+
+        return (
+            "sin_datos",
+            None
+        )
 
     change = (
         current_area
@@ -516,30 +706,543 @@ def strengthening_state(
     ) * 100.0
 
     if change >= 15:
-        return "fortaleciendose"
+
+        return (
+            "fortaleciendose",
+            change
+        )
 
     if change <= -15:
-        return "debilitandose"
 
-    return "estable"
+        return (
+            "debilitandose",
+            change
+        )
 
+    return (
+        "estable",
+        change
+    )
+
+
+# ============================================================
+# TRACK MULTIFRAME
+# ============================================================
+
+def build_track(
+    results
+):
+
+    valid = []
+
+    for item in results:
+
+        if (
+            item.get("component")
+            is not None
+        ):
+
+            valid.append(
+                item
+            )
+
+    if len(valid) < 2:
+
+        return {
+            "valido": False,
+            "motivo":
+                "No hay suficientes frames con precipitacion."
+        }
+
+    valid = valid[
+        -TRACK_FRAMES:
+    ]
+
+    movements = []
+
+    for i in range(
+        1,
+        len(valid)
+    ):
+
+        movement = (
+            motion_between(
+                valid[i - 1],
+                valid[i]
+            )
+        )
+
+        if movement is not None:
+
+            movements.append(
+                movement
+            )
+
+    if not movements:
+
+        return {
+            "valido": False,
+            "motivo":
+                "No se pudo calcular movimiento."
+        }
+
+    speeds = np.array(
+        [
+            x["velocidad_kmh"]
+            for x in movements
+        ],
+        dtype=float
+    )
+
+    directions = np.array(
+        [
+            x["direccion_grados"]
+            for x in movements
+        ],
+        dtype=float
+    )
+
+    distances = np.array(
+        [
+            x["movimiento_km"]
+            for x in movements
+        ],
+        dtype=float
+    )
+
+    median_speed = float(
+        np.median(
+            speeds
+        )
+    )
+
+    median_distance = float(
+        np.median(
+            distances
+        )
+    )
+
+    # Promedio circular de direcciones.
+    radians = np.deg2rad(
+        directions
+    )
+
+    mean_sin = np.mean(
+        np.sin(radians)
+    )
+
+    mean_cos = np.mean(
+        np.cos(radians)
+    )
+
+    mean_direction = (
+        math.degrees(
+            math.atan2(
+                mean_sin,
+                mean_cos
+            )
+        )
+        + 360
+    ) % 360
+
+    # Consistencia de dirección.
+    resultant = math.sqrt(
+        mean_sin ** 2
+        + mean_cos ** 2
+    )
+
+    # Consistencia de velocidad.
+    if median_speed > 0:
+
+        speed_cv = (
+            float(
+                np.std(
+                    speeds
+                )
+            )
+            / median_speed
+        )
+
+    else:
+
+        speed_cv = 1.0
+
+    speed_consistency = max(
+        0.0,
+        min(
+            1.0,
+            1.0
+            - speed_cv
+        )
+    )
+
+    direction_consistency = max(
+        0.0,
+        min(
+            1.0,
+            resultant
+        )
+    )
+
+    sample_score = min(
+        1.0,
+        len(movements) / 5.0
+    )
+
+    confidence = (
+        0.45
+        * direction_consistency
+        + 0.35
+        * speed_consistency
+        + 0.20
+        * sample_score
+    )
+
+    return {
+
+        "valido":
+            True,
+
+        "frames_validos":
+            len(valid),
+
+        "intervalos":
+            len(movements),
+
+        "velocidad_kmh":
+            round(
+                median_speed,
+                1
+            ),
+
+        "direccion_grados":
+            round(
+                mean_direction,
+                1
+            ),
+
+        "direccion":
+            direction_name(
+                mean_direction
+            ),
+
+        "movimiento_mediano_km":
+            round(
+                median_distance,
+                2
+            ),
+
+        "confianza":
+            round(
+                min(
+                    confidence,
+                    0.95
+                ),
+                2
+            )
+    }
+
+
+# ============================================================
+# ¿LA CELULA VA HACIA BAHIA?
+# ============================================================
+
+def movement_towards_bahia(
+    current,
+    track
+):
+
+    if (
+        not track
+        or not track.get(
+            "valido",
+            False
+        )
+    ):
+
+        return False
+
+    component = (
+        current.get(
+            "component"
+        )
+    )
+
+    if component is None:
+        return False
+
+    cx = component[
+        "centroid_x"
+    ]
+
+    cy = component[
+        "centroid_y"
+    ]
+
+    width = (
+        TILE_SIZE * 3
+    )
+
+    height = (
+        TILE_SIZE * 3
+    )
+
+    center_x = (
+        width / 2.0
+    )
+
+    center_y = (
+        height / 2.0
+    )
+
+    dx_to_bahia = (
+        center_x - cx
+    )
+
+    dy_to_bahia = (
+        center_y - cy
+    )
+
+    distance_to_target = math.hypot(
+        dx_to_bahia,
+        dy_to_bahia
+    )
+
+    if distance_to_target < 5:
+        return True
+
+    target_angle = (
+        math.degrees(
+            math.atan2(
+                dx_to_bahia,
+                -dy_to_bahia
+            )
+        )
+        + 360
+    ) % 360
+
+    current_angle = track[
+        "direccion_grados"
+    ]
+
+    diff = abs(
+        (
+            current_angle
+            - target_angle
+            + 180
+        ) % 360
+        - 180
+    )
+
+    return diff <= 45
+
+
+# ============================================================
+# ETA
+# ============================================================
+
+def calculate_eta(
+    current,
+    track
+):
+
+    if (
+        not track
+        or not track.get(
+            "valido",
+            False
+        )
+    ):
+
+        return None
+
+    speed = track.get(
+        "velocidad_kmh"
+    )
+
+    if (
+        speed is None
+        or speed < 5
+    ):
+
+        return None
+
+    if not movement_towards_bahia(
+        current,
+        track
+    ):
+
+        return None
+
+    distance = (
+        current.get(
+            "distance_km"
+        )
+    )
+
+    if (
+        distance is None
+        or distance <= 0
+    ):
+
+        return None
+
+    eta = (
+        distance
+        / speed
+        * 60.0
+    )
+
+    if eta < 0:
+        return None
+
+    if eta > 360:
+        return None
+
+    return round(
+        eta,
+        1
+    )
+
+
+# ============================================================
+# PROYECCION
+# ============================================================
+
+def projection(
+    current,
+    track,
+    minutes
+):
+
+    if (
+        not track
+        or not track.get(
+            "valido",
+            False
+        )
+    ):
+
+        return None
+
+    component = (
+        current.get(
+            "component"
+        )
+    )
+
+    if component is None:
+        return None
+
+    speed = (
+        track["velocidad_kmh"]
+    )
+
+    direction = math.radians(
+        track["direccion_grados"]
+    )
+
+    distance_km = (
+        speed
+        * minutes
+        / 60.0
+    )
+
+    km_x, km_y = (
+        pixels_per_km(
+            LAT,
+            ZOOM,
+            TILE_SIZE
+        )
+    )
+
+    east_km = (
+        math.sin(direction)
+        * distance_km
+    )
+
+    south_km = (
+        -math.cos(direction)
+        * distance_km
+    )
+
+    projected_x = (
+        component["centroid_x"]
+        + east_km / km_x
+    )
+
+    projected_y = (
+        component["centroid_y"]
+        + south_km / km_y
+    )
+
+    width = (
+        TILE_SIZE * 3
+    )
+
+    height = (
+        TILE_SIZE * 3
+    )
+
+    reaches_bahia = (
+        projected_x >= 0
+        and projected_x <= width
+        and projected_y >= 0
+        and projected_y <= height
+    )
+
+    return {
+
+        "minutos":
+            minutes,
+
+        "distancia_proyectada_km":
+            round(
+                distance_km,
+                1
+            ),
+
+        "x":
+            round(
+                projected_x,
+                1
+            ),
+
+        "y":
+            round(
+                projected_y,
+                1
+            ),
+
+        "dentro_area_radar":
+            bool(
+                reaches_bahia
+            )
+    }
+
+
+# ============================================================
+# ANALISIS COMPLETO
+# ============================================================
 
 def analyze_sequence(
     results
 ):
+
     if not results:
         return None
 
     current = results[-1]
 
     status = {
+
+        "fuente":
+            "RainViewer",
+
         "actualizado":
             datetime.now(
                 timezone.utc
             ).isoformat(),
-
-        "fuente":
-            "RainViewer",
 
         "latitud":
             LAT,
@@ -550,22 +1253,40 @@ def analyze_sequence(
         "frames_analizados":
             len(results),
 
+        "frame_actual":
+            current["timestamp"],
+
+        "frame_actual_utc":
+            current["frame_utc"],
+
+        "tiles_ok":
+            current["tiles_ok"],
+
+        "actividad":
+            current["area"] > 0,
+
         "area_px":
             current["area"],
 
         "distancia_km":
             (
                 round(
-                    current["distance_km"],
-                    1,
+                    current[
+                        "distance_km"
+                    ],
+                    1
                 )
-                if current["distance_km"]
-                is not None
+                if current[
+                    "distance_km"
+                ] is not None
                 else None
             ),
 
         "fortalecimiento":
             "sin_datos",
+
+        "cambio_area_pct":
+            None,
 
         "velocidad_kmh":
             None,
@@ -576,437 +1297,348 @@ def analyze_sequence(
         "direccion_grados":
             None,
 
+        "movimiento_hacia_bahia":
+            False,
+
         "eta_minutos":
+            None,
+
+        "proyeccion_30_min":
+            None,
+
+        "proyeccion_60_min":
             None,
 
         "confianza_movimiento":
             0.0,
 
         "estado":
-            "sin_precipitacion",
-
-        "timestamp_frame":
-            current["timestamp"],
-
-        "frame_utc":
-            datetime.fromtimestamp(
-                current["timestamp"],
-                timezone.utc,
-            ).isoformat(),
-
-        "tiles":
-            current["tiles_ok"],
+            (
+                "precipitacion_detectada"
+                if current["area"] > 0
+                else
+                "sin_precipitacion_detectada"
+            )
     }
-
-    if current["area"] > 0:
-        status["estado"] = (
-            "precipitacion_detectada"
-        )
 
     if len(results) < 2:
         return status
 
     previous = results[-2]
 
-    movement = motion_between(
-        previous,
-        current,
-    )
-
-    speed = calculate_speed(
-        movement,
-        previous["timestamp"],
-        current["timestamp"],
-    )
-
-    if speed is not None:
-        status[
-            "velocidad_kmh"
-        ] = speed[
-            "velocidad_kmh"
-        ]
-
-    if movement is not None:
-        status[
-            "direccion_grados"
-        ] = movement[
-            "direccion_grados"
-        ]
-
-        status[
-            "direccion"
-        ] = direction_name(
-            movement[
-                "direccion_grados"
-            ]
+    strengthening, change = (
+        strengthening_state(
+            previous["area"],
+            current["area"]
         )
+    )
 
     status[
         "fortalecimiento"
-    ] = strengthening_state(
-        previous["area"],
-        current["area"],
-    )
+    ] = strengthening
 
-    if (
-        movement is not None
-        and speed is not None
-        and current["component"]
-        is not None
-    ):
-        confidence = 0.60
-
-        if current["area"] >= 100:
-            confidence += 0.10
-
-        if (
-            speed["velocidad_kmh"]
-            <= 120
-        ):
-            confidence += 0.10
-
-        if (
-            movement["movimiento_km"]
-            >= 1
-        ):
-            confidence += 0.10
-
-        if len(results) >= 4:
-            confidence += 0.10
+    if change is not None:
 
         status[
-            "confianza_movimiento"
+            "cambio_area_pct"
         ] = round(
-            min(
-                confidence,
-                0.95
-            ),
-            2,
+            change,
+            1
         )
+
+    track = build_track(
+        results
+    )
+
+    if not track.get(
+        "valido",
+        False
+    ):
+
+        return status
+
+    status[
+        "velocidad_kmh"
+    ] = track[
+        "velocidad_kmh"
+    ]
+
+    status[
+        "direccion_grados"
+    ] = track[
+        "direccion_grados"
+    ]
+
+    status[
+        "direccion"
+    ] = track[
+        "direccion"
+    ]
+
+    status[
+        "confianza_movimiento"
+    ] = track[
+        "confianza"
+    ]
+
+    toward = (
+        movement_towards_bahia(
+            current,
+            track
+        )
+    )
+
+    status[
+        "movimiento_hacia_bahia"
+    ] = toward
+
+    eta = calculate_eta(
+        current,
+        track
+    )
+
+    status[
+        "eta_minutos"
+    ] = eta
+
+    status[
+        "proyeccion_30_min"
+    ] = projection(
+        current,
+        track,
+        30
+    )
+
+    status[
+        "proyeccion_60_min"
+    ] = projection(
+        current,
+        track,
+        60
+    )
 
     return status
 
 
+# ============================================================
+# GUARDAR FEATURES
+# ============================================================
+
 def save_features(
     results
 ):
-    rows = []
 
-    for item in results:
-        component = item[
-            "component"
-        ]
+    fieldnames = [
 
-        row = {
-            "frame_time":
-                item["timestamp"],
-
-            "frame_utc":
-                datetime.fromtimestamp(
-                    item["timestamp"],
-                    timezone.utc,
-                ).isoformat(),
-
-            "source":
-                "RainViewer",
-
-            "latitud":
-                LAT,
-
-            "longitud":
-                LON,
-
-            "area_px":
-                item["area"],
-
-            "distance_km":
-                (
-                    round(
-                        item["distance_km"],
-                        2,
-                    )
-                    if item["distance_km"]
-                    is not None
-                    else ""
-                ),
-
-            "tiles_ok":
-                item["tiles_ok"],
-
-            "centroid_x":
-                (
-                    round(
-                        component[
-                            "centroid_x"
-                        ],
-                        2,
-                    )
-                    if component
-                    is not None
-                    else ""
-                ),
-
-            "centroid_y":
-                (
-                    round(
-                        component[
-                            "centroid_y"
-                        ],
-                        2,
-                    )
-                    if component
-                    is not None
-                    else ""
-                ),
-
-            "bbox_x":
-                (
-                    component[
-                        "bbox"
-                    ][0]
-                    if component
-                    is not None
-                    else ""
-                ),
-
-            "bbox_y":
-                (
-                    component[
-                        "bbox"
-                    ][1]
-                    if component
-                    is not None
-                    else ""
-                ),
-
-            "bbox_width":
-                (
-                    component[
-                        "bbox"
-                    ][2]
-                    if component
-                    is not None
-                    else ""
-                ),
-
-            "bbox_height":
-                (
-                    component[
-                        "bbox"
-                    ][3]
-                    if component
-                    is not None
-                    else ""
-                ),
-        }
-
-        rows.append(
-            row
-        )
-
-    if not rows:
-        return
-
-    fieldnames = list(
-        rows[0].keys()
-    )
-
-    existing = []
-
-    if os.path.exists(
-        FEATURES_CSV
-    ):
-        try:
-            with open(
-                FEATURES_CSV,
-                "r",
-                encoding="utf-8",
-                newline="",
-            ) as file:
-                existing = list(
-                    csv.DictReader(
-                        file
-                    )
-                )
-
-        except Exception as exc:
-            print(
-                f"AVISO: no se pudo leer "
-                f"{FEATURES_CSV}: {exc}"
-            )
-
-    by_timestamp = {}
-
-    for row in existing:
-        timestamp = row.get(
-            "frame_time"
-        )
-
-        if timestamp:
-            by_timestamp[
-                str(timestamp)
-            ] = row
-
-    for row in rows:
-        by_timestamp[
-            str(row["frame_time"])
-        ] = row
-
-    combined = list(
-        by_timestamp.values()
-    )
-
-    combined.sort(
-        key=lambda row: int(
-            float(
-                row["frame_time"]
-            )
-        )
-    )
+        "frame_time",
+        "frame_utc",
+        "source",
+        "latitud",
+        "longitud",
+        "area_px",
+        "distance_km",
+        "tiles_ok",
+        "centroid_x",
+        "centroid_y",
+        "bbox_x",
+        "bbox_y",
+        "bbox_width",
+        "bbox_height"
+    ]
 
     with open(
         FEATURES_CSV,
         "w",
-        encoding="utf-8",
         newline="",
-    ) as file:
+        encoding="utf-8"
+    ) as f:
 
         writer = csv.DictWriter(
-            file,
-            fieldnames=fieldnames,
+            f,
+            fieldnames=fieldnames
         )
 
         writer.writeheader()
-        writer.writerows(
-            combined
-        )
 
-    print(
-        f"Features guardadas: "
-        f"{len(combined)} frames"
-    )
+        for item in results:
+
+            component = (
+                item["component"]
+            )
+
+            if component:
+
+                bbox = (
+                    component["bbox"]
+                )
+
+                centroid_x = round(
+                    component[
+                        "centroid_x"
+                    ],
+                    2
+                )
+
+                centroid_y = round(
+                    component[
+                        "centroid_y"
+                    ],
+                    2
+                )
+
+                bbox_x = bbox[0]
+                bbox_y = bbox[1]
+                bbox_width = bbox[2]
+                bbox_height = bbox[3]
+
+            else:
+
+                centroid_x = ""
+                centroid_y = ""
+                bbox_x = ""
+                bbox_y = ""
+                bbox_width = ""
+                bbox_height = ""
+
+            writer.writerow({
+
+                "frame_time":
+                    item["timestamp"],
+
+                "frame_utc":
+                    item["frame_utc"],
+
+                "source":
+                    "RainViewer",
+
+                "latitud":
+                    LAT,
+
+                "longitud":
+                    LON,
+
+                "area_px":
+                    item["area"],
+
+                "distance_km":
+                    (
+                        round(
+                            item[
+                                "distance_km"
+                            ],
+                            2
+                        )
+                        if item[
+                            "distance_km"
+                        ] is not None
+                        else ""
+                    ),
+
+                "tiles_ok":
+                    item["tiles_ok"],
+
+                "centroid_x":
+                    centroid_x,
+
+                "centroid_y":
+                    centroid_y,
+
+                "bbox_x":
+                    bbox_x,
+
+                "bbox_y":
+                    bbox_y,
+
+                "bbox_width":
+                    bbox_width,
+
+                "bbox_height":
+                    bbox_height
+            })
 
 
-def save_history_frame(
-    item
+# ============================================================
+# HISTORICO
+# ============================================================
+
+def save_history(
+    timestamp,
+    image
 ):
-    timestamp = item[
-        "timestamp"
-    ]
 
     filename = os.path.join(
         HISTORY_DIR,
-        f"radar_{timestamp}.png",
+        f"radar_{timestamp}.png"
     )
 
-    if not os.path.exists(
+    image.save(
         filename
-    ):
-        item["image"].save(
-            filename,
-            optimize=True,
-        )
+    )
 
-        print(
-            f"Historico guardado: "
-            f"{filename}"
-        )
-
-    else:
-        print(
-            f"Historico ya existe: "
-            f"{filename}"
-        )
-
-
-def cleanup_history():
     files = []
 
-    for filename in os.listdir(
+    for name in os.listdir(
         HISTORY_DIR
     ):
-        if not filename.startswith(
-            "radar_"
+
+        if (
+            name.startswith(
+                "radar_"
+            )
+            and name.endswith(
+                ".png"
+            )
         ):
-            continue
 
-        if not filename.endswith(
-            ".png"
-        ):
-            continue
-
-        path = os.path.join(
-            HISTORY_DIR,
-            filename,
-        )
-
-        try:
-            timestamp = int(
-                filename[
-                    len("radar_"):-4
-                ]
+            path = os.path.join(
+                HISTORY_DIR,
+                name
             )
 
-        except ValueError:
-            continue
+            try:
 
-        files.append(
-            (
-                timestamp,
-                path
-            )
-        )
+                files.append(
+                    (
+                        int(
+                            name[
+                                6:-4
+                            ]
+                        ),
+                        path
+                    )
+                )
+
+            except ValueError:
+
+                pass
 
     files.sort(
-        key=lambda item: item[0]
+        key=lambda x: x[0]
     )
 
     while len(files) > MAX_HISTORY_FRAMES:
-        _, path = files.pop(0)
+
+        _, old_path = files.pop(
+            0
+        )
 
         try:
             os.remove(
-                path
+                old_path
             )
-
-            print(
-                f"Historico eliminado: "
-                f"{path}"
-            )
-
-        except OSError as exc:
-            print(
-                f"AVISO: no se pudo eliminar "
-                f"{path}: {exc}"
-            )
+        except OSError:
+            pass
 
 
-def save_status(
-    status
-):
-    path = os.path.join(
-        DATA_DIR,
-        "status.json",
-    )
-
-    with open(
-        path,
-        "w",
-        encoding="utf-8",
-    ) as file:
-
-        json.dump(
-            status,
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
-
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
-    print(
-        "=== CLIMAAR RAINVIEWER V5.1 ==="
-    )
+
+    print("=" * 70)
+    print("CLIMAAR - RADAR RAINVIEWER NOWCAST 6.0")
+    print("=" * 70)
 
     host, frames = (
         fetch_rainviewer()
@@ -1015,147 +1647,188 @@ def main():
     xt, yt = latlon_to_tile(
         LAT,
         LON,
-        ZOOM,
+        ZOOM
     )
 
-    print(
-        f"Host: {host}"
-    )
-
-    print(
-        f"Frames disponibles: "
-        f"{len(frames)}"
-    )
-
-    print(
-        f"Tile central: "
-        f"X={xt} Y={yt}"
-    )
-
-    selected_frames = (
-        frames[-12:]
-    )
+    # RainViewer normalmente entrega
+    # alrededor de 12 frames pasados.
+    # Usamos todos los disponibles.
+    selected_frames = frames[
+        -12:
+    ]
 
     results = []
 
-    for frame in selected_frames:
+    latest_image = None
 
-        (
-            image,
-            tiles_ok,
-            timestamp,
-            path,
-        ) = download_frame(
-            host,
-            frame,
-            xt,
-            yt,
-        )
+    for index, frame in enumerate(
+        selected_frames,
+        start=1
+    ):
 
         print(
-            f"{timestamp} -> "
-            f"tiles OK: "
-            f"{tiles_ok}/9"
+            f"Procesando frame "
+            f"{index}/{len(selected_frames)}"
+        )
+
+        image, tiles_ok, timestamp, path = (
+            download_frame(
+                host,
+                frame,
+                xt,
+                yt
+            )
         )
 
         if tiles_ok == 0:
 
             print(
-                "Frame descartado: "
-                "0 tiles."
+                "Frame sin tiles validas."
             )
 
             continue
 
         analysis = analyze_frame(
-            image
+            image,
+            timestamp,
+            tiles_ok,
+            path
         )
-
-        item = {
-            "timestamp":
-                timestamp,
-
-            "path":
-                path,
-
-            "image":
-                image,
-
-            "tiles_ok":
-                tiles_ok,
-
-            **analysis,
-        }
 
         results.append(
-            item
+            analysis
         )
 
-        save_history_frame(
-            item
-        )
+        latest_image = image
 
     if not results:
 
         print(
-            "ERROR CRITICO: "
-            "No se pudo obtener "
+            "ERROR: no se pudo procesar "
             "ningun frame."
         )
 
         sys.exit(1)
 
     results.sort(
-        key=lambda item:
-            item["timestamp"]
+        key=lambda x:
+        x["timestamp"]
     )
 
     current = results[-1]
 
-    actual_path = os.path.join(
-        DATA_DIR,
-        "actual.png",
-    )
+    if latest_image is not None:
 
-    current["image"].save(
-        actual_path,
-        optimize=True,
-    )
+        latest_image.save(
+            ACTUAL_FILE
+        )
+
+        save_history(
+            current["timestamp"],
+            latest_image
+        )
 
     save_features(
         results
     )
 
-    cleanup_history()
-
-    status = analyze_sequence(
+    nowcast = analyze_sequence(
         results
     )
 
-    if status is None:
+    output = {
 
-        print(
-            "ERROR CRITICO: "
-            "No se pudo generar "
-            "status."
+        "version":
+            "6.0",
+
+        "app":
+            "ClimaAR",
+
+        "ubicacion": {
+
+            "latitud":
+                LAT,
+
+            "longitud":
+                LON,
+
+            "ciudad":
+                "Bahia Blanca"
+        },
+
+        "fuente":
+            "RainViewer",
+
+        "nowcast":
+            nowcast,
+
+        "historial": {
+
+            "frames_procesados":
+                len(results),
+
+            "frames_disponibles":
+                len(selected_frames),
+
+            "max_history_frames":
+                MAX_HISTORY_FRAMES
+        },
+
+        "nota": (
+            "El nowcast se calcula "
+            "por seguimiento de movimiento "
+            "de la precipitacion radar. "
+            "La ETA y las proyecciones "
+            "son estimaciones y deben "
+            "interpretarse con su confianza."
+        )
+    }
+
+    with open(
+        NOWCAST_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            output,
+            f,
+            ensure_ascii=False,
+            indent=2
         )
 
-        sys.exit(1)
-
-    save_status(
-        status
-    )
+    print()
+    print("=" * 70)
+    print("NOWCAST")
+    print("=" * 70)
 
     print(
         json.dumps(
-            status,
-            indent=2,
+            nowcast,
             ensure_ascii=False,
+            indent=2
         )
     )
 
+    print()
     print(
-        "=== CLIMAAR RAINVIEWER V5.1 OK ==="
+        f"Frames procesados: "
+        f"{len(results)}"
+    )
+
+    print(
+        f"Actual: "
+        f"{ACTUAL_FILE}"
+    )
+
+    print(
+        f"Nowcast: "
+        f"{NOWCAST_FILE}"
+    )
+
+    print(
+        f"Features: "
+        f"{FEATURES_CSV}"
     )
 
 
