@@ -11,10 +11,10 @@ import requests
 # ============================================================
 # CLIMAAR INTELLIGENCE
 # MOTOR DE ADQUISICION Y FUSION METEOROLOGICA
-# Version 1.0.1
+# Version 1.0.2
 # ============================================================
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 LAT = -38.71
 LON = -62.26
@@ -54,49 +54,41 @@ GRID = [
         "lat": -38.71,
         "lon": -62.26,
     },
-
     {
         "id": "BB_N",
         "lat": -38.46,
         "lon": -62.26,
     },
-
     {
         "id": "BB_NE",
         "lat": -38.46,
         "lon": -62.01,
     },
-
     {
         "id": "BB_E",
         "lat": -38.71,
         "lon": -62.01,
     },
-
     {
         "id": "BB_SE",
         "lat": -38.96,
         "lon": -62.01,
     },
-
     {
         "id": "BB_S",
         "lat": -38.96,
         "lon": -62.26,
     },
-
     {
         "id": "BB_SO",
         "lat": -38.96,
         "lon": -62.51,
     },
-
     {
         "id": "BB_O",
         "lat": -38.71,
         "lon": -62.51,
     },
-
     {
         "id": "BB_NO",
         "lat": -38.46,
@@ -107,14 +99,9 @@ GRID = [
 
 # ============================================================
 # VARIABLES ECMWF
-#
-# Los niveles de viento correctos para ECMWF/Open-Meteo
-# son 10 m, 100 m y 200 m.
 # ============================================================
 
 HOURLY_VARIABLES = [
-
-    # Superficie
     "temperature_2m",
     "relative_humidity_2m",
     "dew_point_2m",
@@ -122,21 +109,17 @@ HOURLY_VARIABLES = [
     "pressure_msl",
     "surface_pressure",
 
-    # Precipitacion
     "precipitation",
     "rain",
     "showers",
 
-    # Nubes
     "cloud_cover",
     "cloud_cover_low",
     "cloud_cover_mid",
     "cloud_cover_high",
 
-    # Visibilidad
     "visibility",
 
-    # Viento
     "wind_speed_10m",
     "wind_direction_10m",
     "wind_gusts_10m",
@@ -147,19 +130,15 @@ HOURLY_VARIABLES = [
     "wind_speed_200m",
     "wind_direction_200m",
 
-    # Conveccion
     "cape",
     "convective_inhibition",
 
-    # Humedad atmosferica
     "vapour_pressure_deficit",
     "boundary_layer_height",
     "total_column_integrated_water_vapour",
 
-    # Nivel de congelacion
     "freezing_level_height",
 
-    # Actividad electrica modelada
     "lightning_density",
 ]
 
@@ -286,6 +265,7 @@ def cargar_radar():
         nowcast,
         dict
     ):
+
         nowcast = {}
 
     return {
@@ -683,16 +663,44 @@ def obtener_actual_centro(
 
             try:
 
-                dt = datetime.fromisoformat(
+                texto = str(
                     registro[
                         "tiempo_utc"
-                    ].replace(
-                        "Z",
-                        "+00:00"
+                    ]
+                ).strip()
+
+                if texto.endswith(
+                    "Z"
+                ):
+
+                    texto = (
+                        texto[:-1]
+                        + "+00:00"
                     )
+
+                dt = datetime.fromisoformat(
+                    texto
                 )
 
+                # Open-Meteo puede devolver
+                # timestamps sin offset.
+                # Como esta consulta esta en UTC,
+                # los interpretamos explicitamente
+                # como UTC.
+                if dt.tzinfo is None:
+
+                    dt = dt.replace(
+                        tzinfo=timezone.utc
+                    )
+
+                else:
+
+                    dt = dt.astimezone(
+                        timezone.utc
+                    )
+
             except Exception:
+
                 continue
 
             diferencia = abs(
@@ -755,9 +763,11 @@ def calcular_calidad(
     score = 0
 
     if radar_ok:
+
         score += 40
 
     if sazb_ok:
+
         score += 20
 
     if puntos_validos >= 9:
@@ -1285,7 +1295,7 @@ def main():
     )
 
     print(
-        f"Salida principal:"
+        "Salida principal:"
     )
 
     print(
@@ -1323,4 +1333,4 @@ if __name__ == "__main__":
 
     sys.exit(
         main()
-    )
+            )
