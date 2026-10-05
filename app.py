@@ -11,7 +11,13 @@ import time
 import requests
 from PIL import Image
 
-VERSION = "4.4.0"
+
+# ============================================================
+# CLIMAAR
+# Radar Bahía Blanca + RainViewer + Nowcast V7
+# ============================================================
+
+VERSION = "5.0.0"
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -19,6 +25,7 @@ RADAR_DIR = BASE_DIR / "data" / "radar"
 SAZB_DIR = BASE_DIR / "data" / "sazb"
 
 RADAR_DIR.mkdir(parents=True, exist_ok=True)
+SAZB_DIR.mkdir(parents=True, exist_ok=True)
 
 ACTUAL_FILE = RADAR_DIR / "actual.png"
 PREVIEW_FILE = RADAR_DIR / "preview.png"
@@ -41,12 +48,20 @@ HEADERS = {
     "Referer": "https://www.rainviewer.com/"
 }
 
+
 app = FastAPI(
     title="ClimaAR",
-    description="Radar meteorológico y seguimiento de tormentas para Bahía Blanca",
+    description=(
+        "Radar meteorológico y seguimiento "
+        "de tormentas para Bahía Blanca"
+    ),
     version=VERSION
 )
 
+
+# ============================================================
+# UTILIDADES
+# ============================================================
 
 def iso_now():
     return datetime.now(timezone.utc).isoformat()
@@ -61,28 +76,34 @@ def argentina_time(dt):
         return dt
 
 
-def clean(v):
-    if isinstance(v, float):
-        if not math.isfinite(v):
+def clean(value):
+
+    if isinstance(value, float):
+
+        if not math.isfinite(value):
             return None
 
-    if isinstance(v, dict):
+    if isinstance(value, dict):
+
         return {
-            str(k): clean(x)
-            for k, x in v.items()
+            str(k): clean(v)
+            for k, v in value.items()
         }
 
-    if isinstance(v, list):
+    if isinstance(value, list):
+
         return [
-            clean(x)
-            for x in v
+            clean(v)
+            for v in value
         ]
 
-    return v
+    return value
 
 
 def load_json(path):
+
     try:
+
         if not path.exists():
             return None
 
@@ -95,10 +116,12 @@ def load_json(path):
         )
 
     except Exception:
+
         return None
 
 
 def save_json(path, data):
+
     path.write_text(
         json.dumps(
             clean(data),
@@ -110,7 +133,12 @@ def save_json(path, data):
     )
 
 
+# ============================================================
+# COORDENADAS
+# ============================================================
+
 def lon_to_x(lon):
+
     return int(
         (lon + 180.0)
         / 360.0
@@ -119,6 +147,7 @@ def lon_to_x(lon):
 
 
 def lat_to_y(lat):
+
     return int(
         (
             1
@@ -136,6 +165,7 @@ def lat_to_y(lat):
 
 
 def x_to_lon(x):
+
     return (
         x
         / (2 ** RADAR_ZOOM)
@@ -145,6 +175,7 @@ def x_to_lon(x):
 
 
 def y_to_lat(y):
+
     return math.degrees(
         math.atan(
             math.sinh(
@@ -161,17 +192,21 @@ def y_to_lat(y):
     )
 
 
+# ============================================================
+# RAINVIEWER
+# ============================================================
+
 def rainviewer_data():
 
-    r = requests.get(
+    response = requests.get(
         RAINVIEWER_API,
         headers=HEADERS,
         timeout=20
     )
 
-    r.raise_for_status()
+    response.raise_for_status()
 
-    data = r.json()
+    data = response.json()
 
     past = (
         data
@@ -180,6 +215,7 @@ def rainviewer_data():
     )
 
     if not past:
+
         raise RuntimeError(
             "RainViewer no devolvió frames históricos."
         )
@@ -187,18 +223,27 @@ def rainviewer_data():
     frame = past[-1]
 
     if not frame.get("path"):
+
         raise RuntimeError(
             "RainViewer no devolvió path para el frame."
         )
 
     return {
-        "host": data.get(
-            "host",
-            "https://tilecache.rainviewer.com"
-        ),
-        "path": frame["path"],
-        "time": frame.get("time"),
-        "frames": len(past)
+
+        "host":
+            data.get(
+                "host",
+                "https://tilecache.rainviewer.com"
+            ),
+
+        "path":
+            frame["path"],
+
+        "time":
+            frame.get("time"),
+
+        "frames":
+            len(past)
     }
 
 
@@ -262,6 +307,7 @@ def build_radar():
             )
 
             item = {
+
                 "x": x,
                 "y": y,
                 "url": url,
@@ -273,22 +319,22 @@ def build_radar():
 
             try:
 
-                r = requests.get(
+                response = requests.get(
                     url,
                     headers=HEADERS,
                     timeout=20
                 )
 
-                r.raise_for_status()
+                response.raise_for_status()
 
-                im = Image.open(
+                image = Image.open(
                     BytesIO(
-                        r.content
+                        response.content
                     )
                 ).convert("RGBA")
 
                 canvas.alpha_composite(
-                    im,
+                    image,
                     (
                         (dx + 1) * TILE_SIZE,
                         (dy + 1) * TILE_SIZE
@@ -296,16 +342,24 @@ def build_radar():
                 )
 
                 item.update({
-                    "http": r.status_code,
-                    "valid_png": True,
-                    "size": len(r.content)
+
+                    "http":
+                        response.status_code,
+
+                    "valid_png":
+                        True,
+
+                    "size":
+                        len(
+                            response.content
+                        )
                 })
 
                 ok += 1
 
-            except Exception as e:
+            except Exception as exc:
 
-                item["error"] = str(e)
+                item["error"] = str(exc)
 
             tiles.append(item)
 
@@ -432,6 +486,10 @@ def build_radar():
     return status
 
 
+# ============================================================
+# API
+# ============================================================
+
 @app.get(
     "/",
     response_class=HTMLResponse
@@ -449,10 +507,18 @@ def home():
 def health():
 
     return {
-        "estado": "ok",
-        "servicio": "ClimaAR",
-        "version": VERSION,
-        "hora_utc": iso_now()
+
+        "estado":
+            "ok",
+
+        "servicio":
+            "ClimaAR",
+
+        "version":
+            VERSION,
+
+        "hora_utc":
+            iso_now()
     }
 
 
@@ -460,15 +526,24 @@ def health():
 def radar_9tiles():
 
     try:
+
         return build_radar()
 
-    except Exception as e:
+    except Exception as exc:
 
         return {
-            "estado": "error",
-            "fuente": "RainViewer",
-            "error": str(e),
-            "hora_utc": iso_now()
+
+            "estado":
+                "error",
+
+            "fuente":
+                "RainViewer",
+
+            "error":
+                str(exc),
+
+            "hora_utc":
+                iso_now()
         }
 
 
@@ -476,10 +551,16 @@ def radar_9tiles():
 def radar_status():
 
     return (
-        load_json(STATUS_FILE)
-        or {
-            "estado": "sin_datos",
-            "fuente": "RainViewer"
+        load_json(
+            STATUS_FILE
+        )
+        or
+        {
+            "estado":
+                "sin_datos",
+
+            "fuente":
+                "RainViewer"
         }
     )
 
@@ -501,29 +582,30 @@ def radar_debug():
             y
         )
 
-        r = requests.get(
+        response = requests.get(
             url,
             headers=HEADERS,
             timeout=20
         )
 
-        r.raise_for_status()
+        response.raise_for_status()
 
-        im = Image.open(
+        image = Image.open(
             BytesIO(
-                r.content
+                response.content
             )
         )
 
         return {
 
-            "estado": "ok",
+            "estado":
+                "ok",
 
             "api_http":
                 200,
 
             "tile_http":
-                r.status_code,
+                response.status_code,
 
             "tile_url":
                 url,
@@ -538,31 +620,38 @@ def radar_debug():
                 RADAR_ZOOM,
 
             "bytes":
-                len(r.content),
+                len(
+                    response.content
+                ),
 
             "png": {
+
                 "valido":
                     True,
 
                 "formato":
-                    im.format,
+                    image.format,
 
                 "modo":
-                    im.mode,
+                    image.mode,
 
                 "ancho":
-                    im.width,
+                    image.width,
 
                 "alto":
-                    im.height
+                    image.height
             }
         }
 
-    except Exception as e:
+    except Exception as exc:
 
         return {
-            "estado": "error",
-            "error": str(e)
+
+            "estado":
+                "error",
+
+            "error":
+                str(exc)
         }
 
 
@@ -581,7 +670,8 @@ def radar_png():
 
         return JSONResponse(
             {
-                "estado": "sin_imagen"
+                "estado":
+                    "sin_imagen"
             },
             status_code=503
         )
@@ -598,60 +688,30 @@ def radar_preview():
     return radar_png()
 
 
-@app.get("/estado")
-def estado():
+# ============================================================
+# NOWCAST V7
+# ============================================================
 
-    return clean({
+def cargar_nowcast():
 
-        "app":
-            "ClimaAR",
+    data = load_json(
+        NOWCAST_FILE
+    )
 
-        "version":
-            VERSION,
+    if not isinstance(
+        data,
+        dict
+    ):
 
-        "radar":
-            load_json(
-                STATUS_FILE
-            ),
+        return None
 
-        "observacion_sazb":
-            load_json(
-                SAZB_STATUS_FILE
-            ),
-
-        "nowcast_radar": {
-
-            "disponible":
-                NOWCAST_FILE.exists(),
-
-            "estado":
-                "ok"
-                if NOWCAST_FILE.exists()
-                else "sin_datos",
-
-            "datos":
-                load_json(
-                    NOWCAST_FILE
-                )
-        },
-
-        "nowcast_radar_operativo":
-            NOWCAST_FILE.exists(),
-
-        "nowcast_radar_ia":
-            False,
-
-        "hora_utc":
-            iso_now()
-    })
+    return data
 
 
 @app.get("/nowcast")
 def nowcast():
 
-    data = load_json(
-        NOWCAST_FILE
-    )
+    data = cargar_nowcast()
 
     return {
 
@@ -674,6 +734,10 @@ def nowcast():
     }
 
 
+# ============================================================
+# SAZB
+# ============================================================
+
 @app.get("/observacion")
 def observacion():
 
@@ -681,15 +745,75 @@ def observacion():
         load_json(
             SAZB_STATUS_FILE
         )
-        or {
-            "estado": "sin_datos",
+        or
+        {
+            "estado":
+                "sin_datos",
+
             "fuente":
                 "Aviation Weather Center",
+
             "estacion":
                 "SAZB"
         }
     )
 
+
+# ============================================================
+# ESTADO GENERAL
+# ============================================================
+
+@app.get("/estado")
+def estado():
+
+    nowcast_data = cargar_nowcast()
+
+    return clean({
+
+        "app":
+            "ClimaAR",
+
+        "version":
+            VERSION,
+
+        "radar":
+            load_json(
+                STATUS_FILE
+            ),
+
+        "observacion_sazb":
+            load_json(
+                SAZB_STATUS_FILE
+            ),
+
+        "nowcast_radar": {
+
+            "disponible":
+                nowcast_data is not None,
+
+            "estado":
+                "ok"
+                if nowcast_data is not None
+                else "sin_datos",
+
+            "datos":
+                nowcast_data
+        },
+
+        "nowcast_radar_operativo":
+            nowcast_data is not None,
+
+        "nowcast_radar_ia":
+            False,
+
+        "hora_utc":
+            iso_now()
+    })
+
+
+# ============================================================
+# MODELO
+# ============================================================
 
 @app.get("/modelo")
 def modelo():
@@ -707,6 +831,29 @@ def modelo():
 @app.get("/tormenta")
 def tormenta():
 
+    data = cargar_nowcast()
+
+    if not data:
+
+        return {
+
+            "estado":
+                "sin_datos",
+
+            "zona":
+                "Bahía Blanca"
+        }
+
+    n = data.get(
+        "nowcast",
+        {}
+    )
+
+    nucleos = n.get(
+        "nucleos",
+        []
+    )
+
     return {
 
         "estado":
@@ -715,13 +862,41 @@ def tormenta():
         "zona":
             "Bahía Blanca",
 
-        "mensaje":
-            "Análisis de tormenta disponible cuando existan datos suficientes."
+        "actividad":
+            n.get(
+                "actividad",
+                False
+            ),
+
+        "nucleos":
+            nucleos,
+
+        "nucleo_principal_id":
+            n.get(
+                "nucleo_principal_id"
+            ),
+
+        "proyecciones":
+            n.get(
+                "proyecciones",
+                {}
+            ),
+
+        "confianza":
+            n.get(
+                "confianza_movimiento",
+                0
+            )
     }
 
 
+# ============================================================
+# INTERFAZ
+# ============================================================
+
 HTML = r'''
 <!doctype html>
+
 <html lang="es">
 
 <head>
@@ -745,7 +920,7 @@ ClimaAR — Radar Bahía Blanca
 <style>
 
 * {
-    box-sizing: border-box
+    box-sizing: border-box;
 }
 
 html,
@@ -753,7 +928,7 @@ body {
     margin: 0;
     background: #111;
     color: #fff;
-    font-family: Arial, sans-serif
+    font-family: Arial, sans-serif;
 }
 
 .top {
@@ -761,18 +936,18 @@ body {
     background: #171717;
     border-bottom: 1px solid #333;
     position: relative;
-    z-index: 1000
+    z-index: 1000;
 }
 
 h1 {
     margin: 0 0 5px;
-    font-size: 20px
+    font-size: 20px;
 }
 
 #estado {
     font-size: 13px;
     color: #ccc;
-    margin-bottom: 9px
+    margin-bottom: 9px;
 }
 
 button {
@@ -783,19 +958,19 @@ button {
     background: #1976d2;
     color: #fff;
     font-size: 16px;
-    font-weight: bold
+    font-weight: bold;
 }
 
 #resultado {
     margin-top: 7px;
     font-size: 13px;
-    min-height: 18px
+    min-height: 18px;
 }
 
 #map {
     width: 100%;
     height: calc(100vh - 150px);
-    min-height: 520px
+    min-height: 520px;
 }
 
 .panel {
@@ -804,79 +979,130 @@ button {
     right: 10px;
     bottom: 15px;
     z-index: 999;
-    background: rgba(17,17,17,.94);
+    background: rgba(17,17,17,.95);
     border: 1px solid #444;
     border-radius: 12px;
     padding: 12px;
     box-shadow: 0 4px 16px rgba(0,0,0,.45);
-    max-width: 560px;
+    max-width: 600px;
     margin: auto;
-    max-height: 55vh;
-    overflow-y: auto
+    max-height: 65vh;
+    overflow-y: auto;
 }
 
 .main {
     font-size: 18px;
     font-weight: bold;
-    margin-bottom: 5px
+    margin-bottom: 5px;
 }
 
 .sub {
     font-size: 12px;
     color: #bbb;
-    margin-bottom: 10px
+    margin-bottom: 10px;
 }
 
 .grid {
     display: grid;
     grid-template-columns: repeat(2,1fr);
-    gap: 7px
+    gap: 7px;
 }
 
 .dato {
     background: #222;
     border-radius: 8px;
-    padding: 8px
+    padding: 8px;
 }
 
 .dt {
     font-size: 10px;
     color: #999;
-    margin-bottom: 3px
+    margin-bottom: 3px;
 }
 
 .dv {
     font-size: 14px;
-    font-weight: bold
+    font-weight: bold;
 }
 
 .sep {
     margin: 10px 0 8px;
-    border-top: 1px solid #333
+    border-top: 1px solid #333;
+}
+
+.section-title {
+    font-size: 12px;
+    font-weight: bold;
+    color: #ddd;
+    margin: 9px 0 6px;
+}
+
+.core {
+    background: #202020;
+    border: 1px solid #383838;
+    border-radius: 9px;
+    padding: 9px;
+    margin-bottom: 7px;
+}
+
+.core-main {
+    font-size: 14px;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.core-sub {
+    color: #aaa;
+    font-size: 11px;
+    margin-bottom: 6px;
+}
+
+.proj {
+    display: grid;
+    grid-template-columns: repeat(3,1fr);
+    gap: 5px;
+}
+
+.proj-item {
+    background: #292929;
+    border-radius: 6px;
+    padding: 6px;
+    text-align: center;
+}
+
+.proj-time {
+    font-size: 9px;
+    color: #999;
+}
+
+.proj-value {
+    font-size: 11px;
+    font-weight: bold;
+    margin-top: 2px;
 }
 
 .fuentes,
 .obs {
     font-size: 10px;
     color: #888;
-    margin-top: 7px
+    margin-top: 7px;
 }
 
 .legend {
     font-size: 11px;
     font-weight: bold;
-    margin: 8px 0 5px
+    margin: 8px 0 5px;
 }
 
 .bar {
     display: flex;
     height: 14px;
     border-radius: 4px;
-    overflow: hidden
+    overflow: hidden;
 }
 
 .bar span {
-    flex: 1
+    flex: 1;
 }
 
 .labels {
@@ -884,19 +1110,37 @@ button {
     justify-content: space-between;
     font-size: 9px;
     color: #aaa;
-    margin-top: 3px
+    margin-top: 3px;
 }
 
 .ok {
-    color: #58d68d
+    color: #58d68d;
 }
 
 .warn {
-    color: #ffb84d
+    color: #ffb84d;
 }
 
 .bad {
-    color: #ff6b6b
+    color: #ff6b6b;
+}
+
+.info {
+    color: #65b9ff;
+}
+
+@media (max-width: 520px) {
+
+    .panel {
+        bottom: 8px;
+        left: 7px;
+        right: 7px;
+        max-height: 68vh;
+    }
+
+    .proj {
+        grid-template-columns: repeat(2,1fr);
+    }
 }
 
 </style>
@@ -941,6 +1185,7 @@ Analizando condiciones...
 Cargando datos...
 </div>
 
+
 <div class="grid">
 
 <div class="dato">
@@ -973,19 +1218,11 @@ Cargando datos...
 <div id="vis" class="dv">—</div>
 </div>
 
-<div class="dato">
-<div class="dt">RÁFAGA</div>
-<div id="rafaga" class="dv">—</div>
 </div>
 
-<div class="dato">
-<div class="dt">HUMEDAD</div>
-<div id="humedad" class="dv">—</div>
-</div>
-
-</div>
 
 <div class="sep"></div>
+
 
 <div class="grid">
 
@@ -995,7 +1232,7 @@ Cargando datos...
 </div>
 
 <div class="dato">
-<div class="dt">VELOCIDAD CÉLULA</div>
+<div class="dt">VELOCIDAD</div>
 <div id="vel" class="dv">—</div>
 </div>
 
@@ -1020,6 +1257,21 @@ Cargando datos...
 </div>
 
 </div>
+
+
+<div class="sep"></div>
+
+<div
+    id="coresTitle"
+    class="section-title"
+>
+NÚCLEOS DE PRECIPITACIÓN
+</div>
+
+<div id="cores">
+Sin núcleos detectados.
+</div>
+
 
 <div class="sep"></div>
 
@@ -1051,6 +1303,7 @@ REFLECTIVIDAD RADAR · dBZ · RAINVIEWER UNIVERSAL BLUE
 
 </div>
 
+
 <div
     id="obs"
     class="obs"
@@ -1059,10 +1312,11 @@ SAZB · cargando observación...
 </div>
 
 <div class="fuentes">
-Radar: RainViewer · Observación: Aviation Weather Center SAZB · Nowcast: ClimaAR
+Radar: RainViewer · Observación: Aviation Weather Center SAZB · Seguimiento: ClimaAR V7
 </div>
 
 </div>
+
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -1073,12 +1327,14 @@ const center = [
     -62.26
 ];
 
+
 const map = L.map(
     'map'
 ).setView(
     center,
     9
 );
+
 
 L.tileLayer(
     'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -1089,6 +1345,7 @@ L.tileLayer(
     }
 ).addTo(map);
 
+
 L.marker(
     center
 ).addTo(map)
@@ -1096,38 +1353,45 @@ L.marker(
     'Bahía Blanca'
 );
 
+
 let radar = null;
+
 
 const el = id =>
     document.getElementById(id);
 
+
 const val = (
     v,
-    s = ''
-) =>
-    (
+    suffix = ''
+) => {
+
+    if (
         v === null ||
         v === undefined ||
         v === ''
-    )
-    ? '—'
-    : String(v) + s;
-
-
-function direction(d) {
-
-    if (
-        d === null ||
-        d === undefined ||
-        d === ''
     ) {
         return '—';
     }
 
-    const n = Number(d);
+    return String(v) + suffix;
+};
+
+
+function direction(value) {
+
+    if (
+        value === null ||
+        value === undefined ||
+        value === ''
+    ) {
+        return '—';
+    }
+
+    const n = Number(value);
 
     if (!Number.isFinite(n)) {
-        return String(d);
+        return String(value);
     }
 
     return [
@@ -1145,10 +1409,359 @@ function direction(d) {
 }
 
 
-function nowcast(d) {
+function trendText(value) {
+
+    if (!value) {
+        return '—';
+    }
+
+    const s = String(value)
+        .toLowerCase();
+
+    if (
+        s.includes('fortal')
+    ) {
+        return 'Fortaleciendo';
+    }
+
+    if (
+        s.includes('debil')
+    ) {
+        return 'Debilitando';
+    }
+
+    if (
+        s.includes('estable')
+    ) {
+        return 'Estable';
+    }
+
+    return String(value);
+}
+
+
+function confidence(value) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+        return '—';
+    }
+
+    const n = Number(value);
+
+    if (!Number.isFinite(n)) {
+        return '—';
+    }
+
+    return Math.round(
+        n * 100
+    ) + '%';
+}
+
+
+function formatDistance(value) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+        return '—';
+    }
+
+    const n = Number(value);
+
+    if (!Number.isFinite(n)) {
+        return '—';
+    }
+
+    return n.toFixed(1) + ' km';
+}
+
+
+function formatSpeed(value) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+        return '—';
+    }
+
+    const n = Number(value);
+
+    if (!Number.isFinite(n)) {
+        return '—';
+    }
+
+    return n.toFixed(1) + ' km/h';
+}
+
+
+function formatEta(value) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+        return '—';
+    }
+
+    const n = Number(value);
+
+    if (!Number.isFinite(n)) {
+        return '—';
+    }
+
+    return Math.round(n) + ' min';
+}
+
+
+function projectionValue(
+    projection
+) {
+
+    if (!projection) {
+        return '—';
+    }
+
+    if (
+        projection.distancia_km !== null &&
+        projection.distancia_km !== undefined
+    ) {
+
+        return (
+            Number(
+                projection.distancia_km
+            ).toFixed(1)
+            +
+            ' km'
+        );
+    }
+
+    if (
+        projection.latitud !== null &&
+        projection.latitud !== undefined
+    ) {
+
+        return Number(
+            projection.latitud
+        ).toFixed(2);
+    }
+
+    return '—';
+}
+
+
+function renderProjections(
+    projections
+) {
+
+    if (
+        !projections ||
+        typeof projections !== 'object'
+    ) {
+
+        return '';
+    }
+
+    const order = [
+        '15',
+        '30',
+        '45',
+        '60',
+        '90'
+    ];
+
+    let html = '';
+
+    for (
+        const minutes of order
+    ) {
+
+        const p =
+            projections[minutes] ??
+            projections[
+                minutes + '_min'
+            ];
+
+        if (!p) {
+            continue;
+        }
+
+        const inside =
+            p.en_zona_radar === true
+            ? 'zona radar'
+            : 'fuera';
+
+        html += `
+            <div class="proj-item">
+                <div class="proj-time">
+                    +${minutes} min
+                </div>
+                <div class="proj-value">
+                    ${projectionValue(p)}
+                </div>
+                <div class="proj-time">
+                    ${inside}
+                </div>
+            </div>
+        `;
+    }
+
+    return html;
+}
+
+
+function renderCores(
+    n
+) {
+
+    const container =
+        el('cores');
+
+    const cores =
+        Array.isArray(n.nucleos)
+        ? n.nucleos
+        : [];
+
+    if (
+        cores.length === 0
+    ) {
+
+        container.innerHTML =
+            '<div class="sub">Sin núcleos de precipitación detectados en los frames analizados.</div>';
+
+        return;
+    }
+
+    let html = '';
+
+    cores.forEach(
+        (core, index) => {
+
+            const id =
+                core.track_id ??
+                core.id ??
+                (index + 1);
+
+            const principal =
+                Number(id) ===
+                Number(
+                    n.nucleo_principal_id
+                );
+
+            const hacia =
+                core.movimiento_hacia_bahia === true;
+
+            const speed =
+                core.velocidad_kmh;
+
+            const dir =
+                core.direccion_grados ??
+                core.direccion;
+
+            const dist =
+                core.distancia_km;
+
+            const eta =
+                core.eta_minutos;
+
+            const conf =
+                core.confianza ??
+                core.confianza_movimiento;
+
+            const projections =
+                core.proyecciones ??
+                core.projection ??
+                {};
+
+            html += `
+
+                <div class="core">
+
+                    <div class="core-main">
+                        Núcleo ${id}
+                        ${principal ? ' · PRINCIPAL' : ''}
+                    </div>
+
+                    <div class="core-sub">
+                        ${hacia
+                            ? '🟠 Movimiento hacia Bahía Blanca'
+                            : 'Movimiento no dirigido hacia Bahía Blanca'}
+                    </div>
+
+                    <div class="grid">
+
+                        <div class="dato">
+                            <div class="dt">
+                                DISTANCIA
+                            </div>
+                            <div class="dv">
+                                ${formatDistance(dist)}
+                            </div>
+                        </div>
+
+                        <div class="dato">
+                            <div class="dt">
+                                VELOCIDAD
+                            </div>
+                            <div class="dv">
+                                ${formatSpeed(speed)}
+                            </div>
+                        </div>
+
+                        <div class="dato">
+                            <div class="dt">
+                                DIRECCIÓN
+                            </div>
+                            <div class="dv">
+                                ${direction(dir)}
+                            </div>
+                        </div>
+
+                        <div class="dato">
+                            <div class="dt">
+                                ETA
+                            </div>
+                            <div class="dv">
+                                ${formatEta(eta)}
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <div class="section-title">
+                        PROYECCIÓN
+                    </div>
+
+                    <div class="proj">
+                        ${renderProjections(
+                            projections
+                        )}
+                    </div>
+
+                    <div class="core-sub">
+                        Confianza:
+                        ${confidence(conf)}
+                    </div>
+
+                </div>
+            `;
+        }
+    );
+
+    container.innerHTML = html;
+}
+
+
+function nowcast(
+    data
+) {
 
     const n =
-        d?.nowcast_radar?.datos;
+        data?.nowcast_radar?.datos;
 
     if (!n) {
 
@@ -1160,17 +1773,24 @@ function nowcast(d) {
             .className =
             'main bad';
 
+        el('cores')
+            .textContent =
+            'No hay datos del motor V7.';
+
         return;
     }
 
+
     const active =
         n.actividad === true;
+
 
     el('principal')
         .textContent =
         active
         ? '🟠 Precipitación detectada'
         : '🟢 Sin precipitación detectada';
+
 
     el('principal')
         .className =
@@ -1181,27 +1801,33 @@ function nowcast(d) {
             : 'ok'
         );
 
+
     el('sub')
         .textContent =
-        'Radar operativo · ' +
-        val(n.frames_analizados) +
-        ' frames analizados';
+        'Nowcast V7 · ' +
+        val(
+            n.frames_analizados
+        ) +
+        ' frames · ' +
+        val(
+            n.tiles_ok
+        ) +
+        '/9 teselas';
+
 
     el('dist')
         .textContent =
-        n.distancia_km != null
-        ? Number(
+        formatDistance(
             n.distancia_km
-        ).toFixed(1) + ' km'
-        : '—';
+        );
+
 
     el('vel')
         .textContent =
-        n.velocidad_kmh != null
-        ? Number(
+        formatSpeed(
             n.velocidad_kmh
-        ).toFixed(1) + ' km/h'
-        : '—';
+        );
+
 
     el('celldir')
         .textContent =
@@ -1210,33 +1836,35 @@ function nowcast(d) {
             n.direccion
         );
 
+
     el('trend')
         .textContent =
-        val(
+        trendText(
             n.fortalecimiento
         );
 
+
     el('eta')
         .textContent =
-        n.eta_minutos != null
-        ? Math.round(
+        formatEta(
             n.eta_minutos
-        ) + ' min'
-        : '—';
+        );
+
 
     el('conf')
         .textContent =
-        n.confianza_movimiento != null
-        ? Math.round(
-            Number(
-                n.confianza_movimiento
-            ) * 100
-        ) + '%'
-        : '—';
+        confidence(
+            n.confianza_movimiento
+        );
+
+
+    renderCores(n);
 }
 
 
-function sazb(s) {
+function sazb(
+    s
+) {
 
     if (
         !s ||
@@ -1250,12 +1878,14 @@ function sazb(s) {
         return;
     }
 
+
     const kmh =
         s.viento_kt != null
         ? Number(
             s.viento_kt
         ) * 1.852
         : null;
+
 
     el('temp')
         .textContent =
@@ -1264,6 +1894,7 @@ function sazb(s) {
             ' °C'
         );
 
+
     el('rocio')
         .textContent =
         val(
@@ -1271,12 +1902,14 @@ function sazb(s) {
             ' °C'
         );
 
+
     el('viento')
         .textContent =
         kmh != null
-        ? kmh.toFixed(1) +
-          ' km/h'
+        ? kmh.toFixed(1)
+          + ' km/h'
         : '—';
+
 
     el('dir')
         .textContent =
@@ -1284,14 +1917,16 @@ function sazb(s) {
             s.direccion_viento
         );
 
+
     el('presion')
         .textContent =
         s.presion_hpa != null
         ? Number(
             s.presion_hpa
-        ).toFixed(1) +
-        ' hPa'
+        ).toFixed(1)
+          + ' hPa'
         : '—';
+
 
     el('vis')
         .textContent =
@@ -1300,13 +1935,6 @@ function sazb(s) {
             ' mi'
         );
 
-    el('rafaga')
-        .textContent =
-        '—';
-
-    el('humedad')
-        .textContent =
-        '—';
 
     el('obs')
         .textContent =
@@ -1318,22 +1946,30 @@ function sazb(s) {
 }
 
 
-function overlay(r) {
+function overlay(
+    radarData
+) {
 
-    if (!r?.bounds) {
+    if (
+        !radarData?.bounds
+    ) {
         return;
     }
 
-    const b = [
+
+    const bounds = [
+
         [
-            r.bounds.south,
-            r.bounds.west
+            radarData.bounds.south,
+            radarData.bounds.west
         ],
+
         [
-            r.bounds.north,
-            r.bounds.east
+            radarData.bounds.north,
+            radarData.bounds.east
         ]
     ];
+
 
     if (!radar) {
 
@@ -1341,15 +1977,18 @@ function overlay(r) {
             L.imageOverlay(
                 '/radar.png?ts=' +
                 Date.now(),
-                b,
+                bounds,
                 {
-                    opacity: .65
+                    opacity: .65,
+                    interactive: false
                 }
             ).addTo(map);
 
     } else {
 
-        radar.setBounds(b);
+        radar.setBounds(
+            bounds
+        );
 
         radar.setUrl(
             '/radar.png?ts=' +
@@ -1363,62 +2002,69 @@ async function load() {
 
     try {
 
-        let r =
+        const response =
             await fetch(
                 '/estado?ts=' +
                 Date.now()
             );
 
-        let d =
-            await r.json();
 
-        if (!d.radar) {
+        const data =
+            await response.json();
 
-            const rr =
+
+        if (!data.radar) {
+
+            const radarResponse =
                 await fetch(
                     '/radar/9tiles?ts=' +
                     Date.now()
                 );
 
-            d.radar =
-                await rr.json();
+            data.radar =
+                await radarResponse.json();
         }
 
-        nowcast(d);
+
+        nowcast(data);
+
 
         sazb(
-            d.observacion_sazb
+            data.observacion_sazb
         );
+
 
         overlay(
-            d.radar
+            data.radar
         );
 
+
         if (
-            d.radar?.frame_argentina
+            data.radar?.frame_argentina
         ) {
 
             el('estado')
                 .textContent =
                 'RainViewer · último frame: ' +
-                d.radar.frame_argentina +
+                data.radar.frame_argentina +
                 ' · teselas: ' +
                 val(
-                    d.radar.teselas_ok
+                    data.radar.teselas_ok
                 ) +
                 '/' +
                 val(
-                    d.radar.teselas_total
+                    data.radar.teselas_total
                 );
         }
 
-    } catch (e) {
+
+    } catch (error) {
 
         el('resultado')
             .textContent =
             'No se pudo actualizar el análisis.';
 
-        console.log(e);
+        console.log(error);
     }
 }
 
@@ -1429,49 +2075,56 @@ async function actualizarRadar() {
         .textContent =
         'Actualizando radar...';
 
+
     try {
 
-        const r =
+        const response =
             await fetch(
                 '/radar/9tiles?ts=' +
                 Date.now()
             );
 
-        const d =
-            await r.json();
+
+        const data =
+            await response.json();
+
 
         if (
-            d.estado !== 'ok'
+            data.estado !== 'ok'
         ) {
 
             el('resultado')
                 .textContent =
                 'Error: ' +
                 (
-                    d.error ||
+                    data.error ||
                     'No se pudo actualizar.'
                 );
 
             return;
         }
 
-        overlay(d);
+
+        overlay(data);
+
 
         el('resultado')
             .textContent =
             'Radar actualizado · ' +
-            d.teselas_ok +
+            data.teselas_ok +
             '/' +
-            d.teselas_total;
+            data.teselas_total;
+
 
         await load();
 
-    } catch (e) {
+
+    } catch (error) {
 
         el('resultado')
             .textContent =
             'Error de conexión: ' +
-            e;
+            error;
     }
 }
 
@@ -1481,7 +2134,9 @@ setTimeout(
     300
 );
 
+
 load();
+
 
 setInterval(
     load,
@@ -1491,9 +2146,14 @@ setInterval(
 </script>
 
 </body>
+
 </html>
 '''
 
+
+# ============================================================
+# PÁGINA RADAR
+# ============================================================
 
 @app.get(
     "/radar",
