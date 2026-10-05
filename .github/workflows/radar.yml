@@ -8,12 +8,15 @@ on:
 jobs:
   radar:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
     steps:
       - name: Bajar código
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Python
         uses: actions/setup-python@v5
@@ -21,15 +24,74 @@ jobs:
           python-version: '3.11'
 
       - name: Instalar librerias
-        run: pip install requests Pillow numpy opencv-python-headless
-
-      - name: Procesar radar
-        run: python scripts/radar_rainviewer.py
-
-      - name: Subir cambios
         run: |
+          python -m pip install --upgrade pip
+          pip install requests Pillow numpy opencv-python-headless
+
+      - name: Procesar radar V7
+        run: |
+          python scripts/radar_rainviewer.py
+
+      - name: Verificar archivos V7
+        run: |
+          set -e
+
+          test -s data/radar/radar_nowcast.json
+          test -s data/radar/radar_features_rainviewer.csv
+
+          python -m json.tool \
+            data/radar/radar_nowcast.json \
+            >/dev/null
+
+          echo "Radar V7 OK"
+
+      - name: Guardar resultados V7
+        run: |
+          set -e
+
           git config user.name "climaar-bot"
           git config user.email "bot@climaar.com.ar"
-          git add data/radar/
-          git commit -m "update radar RainViewer" || echo "sin cambios"
-          git push
+
+          # Solo guardar archivos propios del motor V7.
+          # actual.png y status.json quedan a cargo
+          # de ClimaAR Operativo para evitar conflictos.
+          git add \
+            data/radar/radar_nowcast.json \
+            data/radar/radar_features_rainviewer.csv \
+            data/radar/historico/
+
+          if git diff --cached --quiet; then
+            echo "Sin cambios V7."
+            exit 0
+          fi
+
+          git commit -m "radar V7 nowcast"
+
+          # Reintentar si otro workflow modifico main
+          # mientras este job estaba trabajando.
+          for intento in 1 2 3 4 5; do
+
+            echo "Intento de push: $intento"
+
+            git fetch origin main
+
+            if git rebase origin/main; then
+
+              if git push origin HEAD:main; then
+                echo "Push V7 correcto."
+                exit 0
+              fi
+
+            else
+              echo "Rebase con conflicto."
+
+              git rebase --abort || true
+            fi
+
+            echo "Otro workflow modifico main. Esperando..."
+            sleep 10
+
+          done
+
+          echo "No se pudo subir V7 despues de 5 intentos."
+          exit 1
