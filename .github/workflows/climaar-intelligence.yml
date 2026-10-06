@@ -115,8 +115,7 @@ jobs:
 
           if severidad not in severidades:
               raise SystemExit(
-                  f"ERROR: severidad inválida: "
-                  f"{severidad}"
+                  f"ERROR: severidad inválida: {severidad}"
               )
 
           probabilidades = data.get(
@@ -276,11 +275,9 @@ jobs:
 
           else:
 
-              print(
-                  "AVISO: todavía no existe "
-                  "el modelo V8. "
-                  "Storm Engine continúa "
-                  "con análisis meteorológico."
+              raise SystemExit(
+                  "ERROR: no existe el modelo "
+                  "climaar_predictor_impacto_v8.joblib"
               )
 
           print(
@@ -310,6 +307,10 @@ jobs:
               ia.get("disponible")
           )
           print(
+              "Probabilidad impacto:",
+              ia.get("probabilidad_impacto")
+          )
+          print(
               "Razones:",
               len(razones)
           )
@@ -318,10 +319,10 @@ jobs:
           )
           PY
 
-      - name: Verificar cambios
+      - name: Verificar cambios de código
         run: |
           git diff --check -- \
-            ':!data/ia/historial_meteorologico.csv'
+            ':!data/ia/*.csv'
 
       - name: Guardar resultados
         run: |
