@@ -2,41 +2,11 @@ import csv
 import json
 import math
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 
-# ============================================================
-# CLIMAAR INTELLIGENCE
-# MOTOR DE INTELIGENCIA DE TORMENTAS
-#
-# Version 1.0.0
-#
-# Consume:
-#   - Radar V7 RainViewer
-#   - Estado meteorologico fusionado
-#   - Ambiente ECMWF futuro
-#
-# Produce:
-#   - Probabilidad de tormenta
-#   - Probabilidad de llegada a Bahia Blanca
-#   - Fortalecimiento / debilitamiento
-#   - ETA
-#   - Duracion estimada
-#   - Peligros
-#   - Clasificacion de tormenta
-#   - Severidad ClimaAR
-#   - Confianza
-#   - Historial para futura calibracion / ML
-#
-# IMPORTANTE:
-# Esta version es un motor fisico-estadistico inicial.
-# No finge ser un modelo ML entrenado cuando todavia no
-# existe suficiente historico etiquetado de tormentas.
-# ============================================================
-
-
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -69,50 +39,26 @@ LAT = -38.71
 LON = -62.26
 
 
-# ============================================================
-# HISTORICO
-# ============================================================
-
 HISTORY_FIELDS = [
-
     "timestamp_utc",
-
     "estado",
-
     "severidad",
-
     "prob_tormenta",
-
     "prob_llegada_bahia",
-
     "prob_fortalecimiento",
-
     "prob_debilitamiento",
-
     "prob_lluvia_fuerte",
-
     "prob_viento_fuerte",
-
     "prob_granizo",
-
     "prob_rayo",
-
     "eta_minutos",
-
     "duracion_estimada_minutos",
-
     "velocidad_kmh",
-
     "direccion_grados",
-
     "cape",
-
     "humedad",
-
     "rafaga_kmh",
-
     "calidad_datos",
-
     "confianza_modelo",
 ]
 
@@ -122,16 +68,10 @@ HISTORY_FIELDS = [
 # ============================================================
 
 def now_utc():
-
-    return datetime.now(
-        timezone.utc
-    ).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
-def finite(
-    value,
-    default=None
-):
+def finite(value, default=None):
 
     try:
 
@@ -150,16 +90,9 @@ def finite(
         return default
 
 
-def clamp(
-    value,
-    low=0.0,
-    high=1.0
-):
+def clamp(value, low=0.0, high=1.0):
 
-    value = finite(
-        value,
-        0.0
-    )
+    value = finite(value, 0.0)
 
     return max(
         low,
@@ -170,28 +103,22 @@ def clamp(
     )
 
 
-def load_json(
-    path
-):
+def load_json(path):
 
     try:
 
-        with path.open(
-            "r",
-            encoding="utf-8"
-        ) as f:
-
-            return json.load(f)
+        return json.loads(
+            path.read_text(
+                encoding="utf-8"
+            )
+        )
 
     except Exception:
 
         return None
 
 
-def save_json(
-    path,
-    data
-):
+def save_json(path, data):
 
     path.parent.mkdir(
         parents=True,
@@ -202,56 +129,38 @@ def save_json(
         path.suffix + ".tmp"
     )
 
-    with temp.open(
-        "w",
-        encoding="utf-8"
-    ) as f:
-
-        json.dump(
+    temp.write_text(
+        json.dumps(
             data,
-            f,
             ensure_ascii=False,
             indent=2,
             allow_nan=False
-        )
-
-    temp.replace(
-        path
+        ),
+        encoding="utf-8"
     )
+
+    temp.replace(path)
 
 
 # ============================================================
 # FECHAS
 # ============================================================
 
-def parse_dt(
-    value
-):
+def parse_dt(value):
 
     if not value:
         return None
 
     try:
 
-        text = str(
-            value
-        ).strip()
+        text = str(value).strip()
 
-        if text.endswith(
-            "Z"
-        ):
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
 
-            text = (
-                text[:-1]
-                + "+00:00"
-            )
-
-        dt = datetime.fromisoformat(
-            text
-        )
+        dt = datetime.fromisoformat(text)
 
         if dt.tzinfo is None:
-
             dt = dt.replace(
                 tzinfo=timezone.utc
             )
@@ -265,30 +174,30 @@ def parse_dt(
         return None
 
 
-def nearest_record(
-    records,
-    target=None
-):
+def nearest_record(records, target=None):
+
+    if not isinstance(records, list):
+        return None
 
     if not records:
         return None
 
-    if target is None:
-
-        target = datetime.now(
-            timezone.utc
-        )
+    target = (
+        target
+        or
+        datetime.now(timezone.utc)
+    )
 
     best = None
-
     best_diff = None
 
     for row in records:
 
+        if not isinstance(row, dict):
+            continue
+
         dt = parse_dt(
-            row.get(
-                "tiempo_utc"
-            )
+            row.get("tiempo_utc")
         )
 
         if dt is None:
@@ -296,8 +205,7 @@ def nearest_record(
 
         diff = abs(
             (
-                dt
-                - target
+                dt - target
             ).total_seconds()
         )
 
@@ -308,7 +216,6 @@ def nearest_record(
         ):
 
             best = row
-
             best_diff = diff
 
     return best
@@ -344,19 +251,14 @@ def load_inputs():
 
         radar = {}
 
-    return (
-        fusion,
-        radar
-    )
+    return fusion, radar
 
 
 # ============================================================
-# AMBIENTE ACTUAL
+# AMBIENTE
 # ============================================================
 
-def current_environment(
-    fusion
-):
+def current_environment(fusion):
 
     actual = fusion.get(
         "ambiente_actual"
@@ -396,9 +298,9 @@ def current_environment(
     for point in points:
 
         if (
-            point.get(
-                "punto"
-            )
+            isinstance(point, dict)
+            and
+            point.get("punto")
             ==
             "BB_CENTRO"
         ):
@@ -413,13 +315,7 @@ def current_environment(
     return None
 
 
-# ============================================================
-# AMBIENTE FUTURO
-# ============================================================
-
-def future_points(
-    fusion
-):
+def future_points(fusion):
 
     future = fusion.get(
         "ambiente_futuro",
@@ -453,7 +349,11 @@ def environment_along_projection(
     projection
 ):
 
-    if not projection:
+    if not isinstance(
+        projection,
+        dict
+    ):
+
         return None
 
     projected_lat = finite(
@@ -477,21 +377,15 @@ def environment_along_projection(
         0.0
     )
 
-    target = datetime.now(
-        timezone.utc
+    target = (
+        datetime.now(timezone.utc)
+        +
+        timedelta(
+            minutes=minutes
+        )
     )
 
-    if minutes:
-
-        target = datetime.fromtimestamp(
-            target.timestamp()
-            +
-            minutes * 60.0,
-            timezone.utc
-        )
-
     best = None
-
     best_score = None
 
     for point in points:
@@ -517,16 +411,6 @@ def environment_along_projection(
             LON
         )
 
-        spatial = math.hypot(
-            point_lat
-            -
-            projected_lat,
-
-            point_lon
-            -
-            projected_lon
-        )
-
         row = nearest_record(
             point.get(
                 "datos",
@@ -547,12 +431,15 @@ def environment_along_projection(
         if dt is None:
             continue
 
+        spatial = math.hypot(
+            point_lat - projected_lat,
+            point_lon - projected_lon
+        )
+
         temporal = (
             abs(
                 (
-                    dt
-                    -
-                    target
+                    dt - target
                 ).total_seconds()
             )
             / 3600.0
@@ -571,7 +458,6 @@ def environment_along_projection(
         ):
 
             best = row
-
             best_score = score
 
     return best
@@ -581,9 +467,7 @@ def environment_along_projection(
 # RADAR
 # ============================================================
 
-def radar_summary(
-    radar
-):
+def radar_summary(radar):
 
     nowcast = radar.get(
         "nowcast",
@@ -600,106 +484,43 @@ def radar_summary(
     return nowcast
 
 
-def projection_map(
-    nowcast
-):
+def projections(nowcast):
 
-    projections = nowcast.get(
+    data = nowcast.get(
         "proyecciones",
         {}
     )
 
     if not isinstance(
-        projections,
+        data,
         dict
     ):
 
         return {}
 
-    return projections
-
-
-def principal_core(
-    nowcast
-):
-
-    cores = nowcast.get(
-        "nucleos",
-        []
-    )
-
-    if not isinstance(
-        cores,
-        list
-    ):
-
-        return None
-
-    principal_id = nowcast.get(
-        "nucleo_principal_id"
-    )
-
-    if principal_id is not None:
-
-        for core in cores:
-
-            if (
-                str(
-                    core.get(
-                        "id"
-                    )
-                )
-                ==
-                str(
-                    principal_id
-                )
-            ):
-
-                return core
-
-    if cores:
-
-        return cores[0]
-
-    return None
+    return data
 
 
 # ============================================================
-# POTENCIAL CONVECTIVO DEL AMBIENTE
+# AMBIENTE CONVECTIVO
 # ============================================================
 
-def probability_from_environment(
-    env
-):
+def environment_score(env):
 
     if not env:
 
-        return (
-            0.05,
-            {
-                "datos_ambientales":
-                    "ausentes"
-            }
-        )
+        return 0.05, []
 
     cape = finite(
-        env.get(
-            "cape"
-        ),
-        0.0
+        env.get("cape"),
+        0
     )
 
     humidity = finite(
         env.get(
             "relative_humidity_2m"
         ),
-        0.0
-    )
-
-    dew = finite(
-        env.get(
-            "dew_point_2m"
-        )
+        0
     )
 
     temperature = finite(
@@ -708,42 +529,33 @@ def probability_from_environment(
         )
     )
 
-    showers = finite(
+    dew = finite(
         env.get(
-            "showers"
-        ),
-        0.0
+            "dew_point_2m"
+        )
     )
 
     rain = finite(
-        env.get(
-            "rain"
-        ),
-        0.0
+        env.get("rain"),
+        0
+    )
+
+    showers = finite(
+        env.get("showers"),
+        0
     )
 
     precipitation = finite(
-        env.get(
-            "precipitation"
-        ),
-        0.0
-    )
-
-    cloud = finite(
-        env.get(
-            "cloud_cover"
-        ),
-        0.0
+        env.get("precipitation"),
+        0
     )
 
     score = 0.0
-
     reasons = []
 
     if cape >= 1500:
 
         score += 0.35
-
         reasons.append(
             "CAPE alto"
         )
@@ -751,7 +563,6 @@ def probability_from_environment(
     elif cape >= 800:
 
         score += 0.25
-
         reasons.append(
             "CAPE moderado-alto"
         )
@@ -759,7 +570,6 @@ def probability_from_environment(
     elif cape >= 300:
 
         score += 0.12
-
         reasons.append(
             "CAPE presente"
         )
@@ -767,7 +577,6 @@ def probability_from_environment(
     if humidity >= 75:
 
         score += 0.15
-
         reasons.append(
             "humedad alta"
         )
@@ -777,21 +586,18 @@ def probability_from_environment(
         score += 0.08
 
     if (
-        dew is not None
-        and
         temperature is not None
+        and
+        dew is not None
     ):
 
         spread = (
-            temperature
-            -
-            dew
+            temperature - dew
         )
 
         if spread <= 8:
 
             score += 0.15
-
             reasons.append(
                 "capa baja humeda"
             )
@@ -801,29 +607,21 @@ def probability_from_environment(
             score += 0.07
 
     if (
-        showers > 0
-        or
         rain > 0
+        or
+        showers > 0
         or
         precipitation > 0
     ):
 
         score += 0.18
-
         reasons.append(
             "precipitacion prevista"
         )
 
-    if cloud >= 80:
-
-        score += 0.05
-
     return (
         clamp(score),
-        {
-            "razones":
-                reasons
-        }
+        reasons
     )
 
 
@@ -836,6 +634,10 @@ def active_storm_probability(
     env
 ):
 
+    environment_probability, _ = (
+        environment_score(env)
+    )
+
     activity = bool(
         nowcast.get(
             "actividad"
@@ -846,17 +648,11 @@ def active_storm_probability(
         nowcast.get(
             "area_px"
         ),
-        0.0
+        0
     )
 
     trend = nowcast.get(
         "fortalecimiento"
-    )
-
-    environment_probability, _ = (
-        probability_from_environment(
-            env
-        )
     )
 
     if (
@@ -870,14 +666,12 @@ def active_storm_probability(
             * 0.8
         )
 
-    probability = 0.45
+    probability = 0.42
 
     if area >= 500:
-
-        probability += 0.15
+        probability += 0.12
 
     if area >= 2000:
-
         probability += 0.10
 
     if (
@@ -909,12 +703,86 @@ def active_storm_probability(
 
 
 # ============================================================
-# PROBABILIDAD DE IMPACTO
+# CALIDAD DEL SEGUIMIENTO
 # ============================================================
 
-def impact_probability(
-    nowcast
-):
+def movement_quality(nowcast):
+
+    if not nowcast.get(
+        "actividad"
+    ):
+
+        return 0.0
+
+    confidence = clamp(
+        nowcast.get(
+            "confianza_movimiento"
+        )
+    )
+
+    speed = finite(
+        nowcast.get(
+            "velocidad_kmh"
+        )
+    )
+
+    distance = finite(
+        nowcast.get(
+            "distancia_km"
+        )
+    )
+
+    eta = finite(
+        nowcast.get(
+            "eta_minutos"
+        )
+    )
+
+    toward = bool(
+        nowcast.get(
+            "movimiento_hacia_bahia"
+        )
+    )
+
+    projection_data = projections(
+        nowcast
+    )
+
+    quality = (
+        0.45
+        * confidence
+    )
+
+    if (
+        speed is not None
+        and
+        2 <= speed <= 180
+    ):
+
+        quality += 0.15
+
+    if distance is not None:
+        quality += 0.10
+
+    if eta is not None:
+        quality += 0.10
+
+    if projection_data:
+        quality += 0.10
+
+    if toward:
+        quality += 0.10
+
+    return clamp(
+        quality
+    )
+
+
+# ============================================================
+# IMPACTO
+# ============================================================
+
+def impact_probability(nowcast):
 
     if not nowcast.get(
         "actividad"
@@ -940,48 +808,52 @@ def impact_probability(
         )
     )
 
-    confidence = clamp(
-        nowcast.get(
-            "confianza_movimiento"
-        )
+    tracking = movement_quality(
+        nowcast
     )
 
     if not toward:
 
-        return (
-            0.10
-            *
-            confidence
+        return round(
+            0.08 * tracking,
+            3
         )
 
-    proximity = 0.25
+    if distance is None:
 
-    if distance is not None:
+        proximity = 0.20
+
+    else:
 
         proximity = clamp(
             1.0
             -
             distance / 180.0,
-            0.15,
+            0.10,
             1.0
         )
 
     if eta is not None:
 
         if eta <= 120:
-
-            proximity += 0.15
+            proximity += 0.12
 
         if eta <= 60:
+            proximity += 0.12
 
+        if eta <= 30:
             proximity += 0.10
 
-    return clamp(
-        0.35
+    probability = (
+        0.20
         +
         0.45 * proximity
         +
-        0.20 * confidence
+        0.35 * tracking
+    )
+
+    return clamp(
+        probability
     )
 
 
@@ -1011,9 +883,7 @@ def strengthening_probability(
     )
 
     environment_probability, _ = (
-        probability_from_environment(
-            env
-        )
+        environment_score(env)
     )
 
     probability = 0.35
@@ -1037,15 +907,12 @@ def strengthening_probability(
     if change is not None:
 
         if change >= 30:
-
             probability += 0.15
 
         elif change >= 15:
-
             probability += 0.08
 
         elif change <= -30:
-
             probability -= 0.12
 
     probability += (
@@ -1068,34 +935,22 @@ def hazard_probabilities(
     env
 ):
 
-    activity = bool(
-        nowcast.get(
-            "actividad"
-        )
-    )
-
-    if not activity:
+    if not nowcast.get(
+        "actividad"
+    ):
 
         return {
-
-            "lluvia_fuerte":
-                0.02,
-
-            "viento_fuerte":
-                0.02,
-
-            "granizo":
-                0.01,
-
-            "rayo":
-                0.01,
+            "lluvia_fuerte": 0.02,
+            "viento_fuerte": 0.02,
+            "granizo": 0.01,
+            "rayo": 0.01,
         }
 
     area = finite(
         nowcast.get(
             "area_px"
         ),
-        0.0
+        0
     )
 
     trend = nowcast.get(
@@ -1103,12 +958,10 @@ def hazard_probabilities(
     )
 
     cape = finite(
-        env.get(
-            "cape"
-        )
+        env.get("cape")
         if env
         else None,
-        0.0
+        0
     )
 
     gust = finite(
@@ -1117,25 +970,21 @@ def hazard_probabilities(
         )
         if env
         else None,
-        0.0
+        0
     )
 
     rain = finite(
-        env.get(
-            "rain"
-        )
+        env.get("rain")
         if env
         else None,
-        0.0
+        0
     )
 
     showers = finite(
-        env.get(
-            "showers"
-        )
+        env.get("showers")
         if env
         else None,
-        0.0
+        0
     )
 
     lightning = finite(
@@ -1144,16 +993,12 @@ def hazard_probabilities(
         )
         if env
         else None,
-        0.0
+        0
     )
 
     area_factor = clamp(
         area / 4000.0
     )
-
-    # ----------------------------------------
-    # LLUVIA FUERTE
-    # ----------------------------------------
 
     heavy_rain = (
         0.12
@@ -1177,10 +1022,6 @@ def hazard_probabilities(
 
         heavy_rain += 0.10
 
-    # ----------------------------------------
-    # VIENTO
-    # ----------------------------------------
-
     strong_wind = (
         0.08
         +
@@ -1203,10 +1044,6 @@ def hazard_probabilities(
 
         strong_wind += 0.08
 
-    # ----------------------------------------
-    # GRANIZO
-    # ----------------------------------------
-
     hail = (
         0.02
         +
@@ -1221,10 +1058,6 @@ def hazard_probabilities(
 
         hail += 0.08
 
-    # ----------------------------------------
-    # RAYOS
-    # ----------------------------------------
-
     lightning_probability = (
         0.03
         +
@@ -1232,7 +1065,6 @@ def hazard_probabilities(
     )
 
     if cape >= 800:
-
         lightning_probability += 0.18
 
     if lightning > 0:
@@ -1243,21 +1075,14 @@ def hazard_probabilities(
         )
 
     return {
-
         "lluvia_fuerte":
-            clamp(
-                heavy_rain
-            ),
+            clamp(heavy_rain),
 
         "viento_fuerte":
-            clamp(
-                strong_wind
-            ),
+            clamp(strong_wind),
 
         "granizo":
-            clamp(
-                hail
-            ),
+            clamp(hail),
 
         "rayo":
             clamp(
@@ -1280,30 +1105,24 @@ def classify_storm(
         "actividad"
     ):
 
-        return (
-            "sin_tormenta_activa"
-        )
+        return "sin_tormenta_activa"
 
     trend = nowcast.get(
         "fortalecimiento"
     )
 
     cape = finite(
-        env.get(
-            "cape"
-        )
+        env.get("cape")
         if env
         else None,
-        0.0
+        0
     )
 
     rain = finite(
-        env.get(
-            "rain"
-        )
+        env.get("rain")
         if env
         else None,
-        0.0
+        0
     )
 
     gust = finite(
@@ -1312,21 +1131,11 @@ def classify_storm(
         )
         if env
         else None,
-        0.0
+        0
     )
 
     severe_score = max(
-        hazards[
-            "viento_fuerte"
-        ],
-
-        hazards[
-            "granizo"
-        ],
-
-        hazards[
-            "rayo"
-        ]
+        hazards.values()
     )
 
     if (
@@ -1367,23 +1176,20 @@ def classify_storm(
         ] >= 0.30
     ):
 
-        return (
-            "tormenta_con_lluvia"
-        )
+        return "tormenta_con_lluvia"
 
-    return (
-        "tormenta_activa"
-    )
+    return "tormenta_activa"
 
 
 # ============================================================
-# SEVERIDAD CLIMAAR
+# SEVERIDAD
 # ============================================================
 
 def severity(
     nowcast,
     hazards,
-    confidence
+    confidence,
+    impact
 ):
 
     if not nowcast.get(
@@ -1394,10 +1200,6 @@ def severity(
 
     max_hazard = max(
         hazards.values()
-    )
-
-    impact = impact_probability(
-        nowcast
     )
 
     raw = (
@@ -1427,16 +1229,9 @@ def severity(
 
         level = "verde"
 
-    # --------------------------------------------------------
-    # LIMITACION CIENTIFICA ACTUAL
-    #
-    # El V7 todavía no extrae dBZ cuantitativo ni tiene
-    # observación directa de rayos.
-    #
-    # Por eso NO permitimos rojo en esta primera versión.
-    # Cuando integremos reflectividad + rayos + mejores
-    # variables convectivas, se habilita la clasificación roja.
-    # --------------------------------------------------------
+    # Se mantiene bloqueado el rojo hasta contar con
+    # reflectividad cuantitativa y observacion directa
+    # de rayos correctamente integradas.
 
     if level == "rojo":
 
@@ -1467,19 +1262,29 @@ def duration_estimate(
         )
     )
 
-    distance = finite(
-        nowcast.get(
-            "distancia_km"
-        )
+    rain = finite(
+        env.get("rain")
+        if env
+        else None,
+        0
+    )
+
+    showers = finite(
+        env.get("showers")
+        if env
+        else None,
+        0
     )
 
     if (
-        speed is not None
-        and
-        speed > 5
-        and
-        distance is not None
+        speed is None
+        or
+        speed <= 5
     ):
+
+        passage = 60.0
+
+    else:
 
         passage = max(
             20.0,
@@ -1492,28 +1297,6 @@ def duration_estimate(
                 speed
             )
         )
-
-    else:
-
-        passage = 60.0
-
-    rain = finite(
-        env.get(
-            "rain"
-        )
-        if env
-        else None,
-        0.0
-    )
-
-    showers = finite(
-        env.get(
-            "showers"
-        )
-        if env
-        else None,
-        0.0
-    )
 
     if (
         rain > 0
@@ -1550,20 +1333,33 @@ def confidence_score(
     env
 ):
 
-    quality = finite(
+    quality_data = (
         fusion.get(
             "calidad_datos",
             {}
-        ).get(
-            "score"
-        ),
-        0.0
-    ) / 100.0
-
-    radar_confidence = clamp(
-        nowcast.get(
-            "confianza_movimiento"
         )
+        if isinstance(
+            fusion.get(
+                "calidad_datos",
+                {}
+            ),
+            dict
+        )
+        else {}
+    )
+
+    quality = clamp(
+        finite(
+            quality_data.get(
+                "score"
+            ),
+            0
+        )
+        / 100.0
+    )
+
+    tracking = movement_quality(
+        nowcast
     )
 
     has_environment = (
@@ -1572,28 +1368,23 @@ def confidence_score(
         else 0.0
     )
 
-    # No superar 70% en esta etapa.
-    #
-    # Falta todavía:
-    #   - dBZ cuantitativo
-    #   - rayos observados
-    #   - dataset histórico etiquetado
-    #   - calibración estadística
-    #   - modelo ML entrenado
-    #
+    # Limite conservador actual.
+    # Todavia falta:
+    # - dBZ cuantitativo validado
+    # - rayos observados
+    # - historico radar etiquetado
+    # - calibracion temporal
+    # - validacion operacional del modelo ML
 
     return round(
         min(
-            0.70,
+            0.75,
             (
-                0.45
-                * quality
+                0.45 * quality
                 +
-                0.35
-                * radar_confidence
+                0.35 * tracking
                 +
-                0.20
-                * has_environment
+                0.20 * has_environment
             )
         ),
         2
@@ -1660,51 +1451,43 @@ def build_reasons(
                 "El area radar esta disminuyendo."
             )
 
-    cape = finite(
-        env.get(
-            "cape"
-        )
-        if env
-        else None
-    )
+    if env:
 
-    gust = finite(
-        env.get(
-            "wind_gusts_10m"
-        )
-        if env
-        else None
-    )
-
-    rain = finite(
-        env.get(
-            "rain"
-        )
-        if env
-        else None
-    )
-
-    if cape is not None:
-
-        reasons.append(
-            f"CAPE ECMWF: {cape:.0f} J/kg."
+        cape = finite(
+            env.get("cape")
         )
 
-    if gust is not None:
-
-        reasons.append(
-            f"Rafaga prevista ECMWF: {gust:.1f} km/h."
+        gust = finite(
+            env.get(
+                "wind_gusts_10m"
+            )
         )
 
-    if (
-        rain is not None
-        and
-        rain > 0
-    ):
-
-        reasons.append(
-            f"Lluvia prevista: {rain:.1f} mm."
+        rain = finite(
+            env.get("rain")
         )
+
+        if cape is not None:
+
+            reasons.append(
+                f"CAPE ECMWF: {cape:.0f} J/kg."
+            )
+
+        if gust is not None:
+
+            reasons.append(
+                f"Rafaga prevista ECMWF: {gust:.1f} km/h."
+            )
+
+        if (
+            rain is not None
+            and
+            rain > 0
+        ):
+
+            reasons.append(
+                f"Lluvia prevista: {rain:.1f} mm."
+            )
 
     reasons.append(
         "Probabilidad estimada de impacto en Bahia Blanca: "
@@ -1715,16 +1498,6 @@ def build_reasons(
         "La severidad es una estimacion independiente y no reemplaza avisos oficiales."
     )
 
-    if (
-        class_name
-        ==
-        "sin_tormenta_activa"
-    ):
-
-        reasons.append(
-            "El motor no inventa una tormenta cuando el radar no la observa."
-        )
-
     return reasons
 
 
@@ -1732,17 +1505,37 @@ def build_reasons(
 # HISTORICO
 # ============================================================
 
-def append_history(
-    result
-):
+def append_history(result):
 
     HISTORY_FILE.parent.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    exists = (
-        HISTORY_FILE.exists()
+    exists = HISTORY_FILE.exists()
+
+    probabilities = result[
+        "probabilidades"
+    ]
+
+    hazards = result[
+        "peligros"
+    ]
+
+    environment = (
+        result.get(
+            "ambiente"
+        )
+        or
+        {}
+    )
+
+    radar = (
+        result.get(
+            "radar"
+        )
+        or
+        {}
     )
 
     row = {
@@ -1763,58 +1556,42 @@ def append_history(
             ],
 
         "prob_tormenta":
-            result[
-                "probabilidades"
-            ][
+            probabilities[
                 "tormenta"
             ],
 
         "prob_llegada_bahia":
-            result[
-                "probabilidades"
-            ][
+            probabilities[
                 "llegada_bahia"
             ],
 
         "prob_fortalecimiento":
-            result[
-                "probabilidades"
-            ][
+            probabilities[
                 "fortalecimiento"
             ],
 
         "prob_debilitamiento":
-            result[
-                "probabilidades"
-            ][
+            probabilities[
                 "debilitamiento"
             ],
 
         "prob_lluvia_fuerte":
-            result[
-                "peligros"
-            ][
+            hazards[
                 "lluvia_fuerte"
             ],
 
         "prob_viento_fuerte":
-            result[
-                "peligros"
-            ][
+            hazards[
                 "viento_fuerte"
             ],
 
         "prob_granizo":
-            result[
-                "peligros"
-            ][
+            hazards[
                 "granizo"
             ],
 
         "prob_rayo":
-            result[
-                "peligros"
-            ][
+            hazards[
                 "rayo"
             ],
 
@@ -1829,56 +1606,28 @@ def append_history(
             ],
 
         "velocidad_kmh":
-            result[
-                "radar"
-            ].get(
+            radar.get(
                 "velocidad_kmh"
             ),
 
         "direccion_grados":
-            result[
-                "radar"
-            ].get(
+            radar.get(
                 "direccion_grados"
             ),
 
         "cape":
-            (
-                result[
-                    "ambiente"
-                ].get(
-                    "cape"
-                )
-                if result[
-                    "ambiente"
-                ]
-                else None
+            environment.get(
+                "cape"
             ),
 
         "humedad":
-            (
-                result[
-                    "ambiente"
-                ].get(
-                    "relative_humidity_2m"
-                )
-                if result[
-                    "ambiente"
-                ]
-                else None
+            environment.get(
+                "relative_humidity_2m"
             ),
 
         "rafaga_kmh":
-            (
-                result[
-                    "ambiente"
-                ].get(
-                    "wind_gusts_10m"
-                )
-                if result[
-                    "ambiente"
-                ]
-                else None
+            environment.get(
+                "wind_gusts_10m"
             ),
 
         "calidad_datos":
@@ -1907,9 +1656,7 @@ def append_history(
 
             writer.writeheader()
 
-        writer.writerow(
-            row
-        )
+        writer.writerow(row)
 
 
 # ============================================================
@@ -1935,10 +1682,6 @@ def main():
     future = future_points(
         fusion
     )
-
-    # --------------------------------------------------------
-    # PROBABILIDADES
-    # --------------------------------------------------------
 
     storm_probability = (
         active_storm_probability(
@@ -1967,14 +1710,8 @@ def main():
     else:
 
         weakening = clamp(
-            1.0
-            -
-            strengthening
+            1.0 - strengthening
         )
-
-    # --------------------------------------------------------
-    # PELIGROS
-    # --------------------------------------------------------
 
     hazards = (
         hazard_probabilities(
@@ -1982,10 +1719,6 @@ def main():
             environment
         )
     )
-
-    # --------------------------------------------------------
-    # CLASIFICACION
-    # --------------------------------------------------------
 
     storm_class = (
         classify_storm(
@@ -1995,10 +1728,6 @@ def main():
         )
     )
 
-    # --------------------------------------------------------
-    # CONFIANZA
-    # --------------------------------------------------------
-
     confidence = (
         confidence_score(
             fusion,
@@ -2007,21 +1736,14 @@ def main():
         )
     )
 
-    # --------------------------------------------------------
-    # SEVERIDAD
-    # --------------------------------------------------------
-
     severity_level = (
         severity(
             nowcast,
             hazards,
-            confidence
+            confidence,
+            impact_probability_value
         )
     )
-
-    # --------------------------------------------------------
-    # DURACION
-    # --------------------------------------------------------
 
     duration = (
         duration_estimate(
@@ -2031,25 +1753,14 @@ def main():
         )
     )
 
-    # --------------------------------------------------------
-    # AMBIENTE SOBRE TRAYECTORIA
-    # --------------------------------------------------------
-
     trajectory_environment = {}
 
     for (
         key,
         projection
-    ) in projection_map(
+    ) in projections(
         nowcast
     ).items():
-
-        if not isinstance(
-            projection,
-            dict
-        ):
-
-            continue
 
         projected_environment = (
             environment_along_projection(
@@ -2083,9 +1794,11 @@ def main():
                     projected_environment,
             }
 
-    # --------------------------------------------------------
-    # RAZONES
-    # --------------------------------------------------------
+    tracking_quality = (
+        movement_quality(
+            nowcast
+        )
+    )
 
     reasons = build_reasons(
         nowcast,
@@ -2094,10 +1807,6 @@ def main():
         storm_class,
         impact_probability_value
     )
-
-    # --------------------------------------------------------
-    # RESULTADO
-    # --------------------------------------------------------
 
     result = {
 
@@ -2194,13 +1903,29 @@ def main():
 
         "calidad_datos":
             finite(
-                fusion.get(
-                    "calidad_datos",
-                    {}
-                ).get(
-                    "score"
+                (
+                    fusion.get(
+                        "calidad_datos",
+                        {}
+                    ).get(
+                        "score"
+                    )
+                    if isinstance(
+                        fusion.get(
+                            "calidad_datos",
+                            {}
+                        ),
+                        dict
+                    )
+                    else None
                 ),
                 0
+            ),
+
+        "calidad_tracking":
+            round(
+                tracking_quality,
+                3
             ),
 
         "confianza_modelo":
@@ -2208,23 +1933,19 @@ def main():
 
         "limitaciones": [
 
-            "El radar V7 actual no extrae dBZ cuantitativo.",
+            "El radar V7 actual no aporta dBZ cuantitativo utilizable en este motor.",
 
             "No hay observacion directa de rayos integrada en esta etapa.",
 
             "No se debe interpretar como alerta oficial.",
 
-            "Las probabilidades son estimaciones calibrables y no certezas.",
+            "Las probabilidades son estimaciones y requieren calibracion con historico temporal.",
 
         ],
 
         "razones":
             reasons,
     }
-
-    # --------------------------------------------------------
-    # GUARDAR
-    # --------------------------------------------------------
 
     save_json(
         OUTPUT_FILE,
@@ -2234,10 +1955,6 @@ def main():
     append_history(
         result
     )
-
-    # --------------------------------------------------------
-    # CONSOLA
-    # --------------------------------------------------------
 
     print(
         "============================================"
@@ -2273,12 +1990,10 @@ def main():
         f"{impact_probability_value:.0%}"
     )
 
-    if strengthening is not None:
-
-        print(
-            "Fortalecimiento: "
-            f"{strengthening:.0%}"
-        )
+    print(
+        "Calidad tracking: "
+        f"{tracking_quality:.0%}"
+    )
 
     print(
         "Confianza modelo: "
@@ -2296,4 +2011,4 @@ if __name__ == "__main__":
 
     sys.exit(
         main()
-  )
+        )
