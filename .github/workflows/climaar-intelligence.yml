@@ -3,8 +3,14 @@ name: ClimaAR Intelligence
 on:
   schedule:
     - cron: '*/10 * * * *'
-
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: climaar-intelligence-main
+  cancel-in-progress: false
 
 jobs:
 
@@ -12,16 +18,13 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: write
-
     steps:
 
       # ======================================================
-      # BAJAR REPOSITORIO
+      # REPOSITORIO
       # ======================================================
 
-      - name: Bajar codigo
+      - name: Descargar repositorio
 
         uses: actions/checkout@v4
 
@@ -42,10 +45,10 @@ jobs:
 
 
       # ======================================================
-      # LIBRERIAS
+      # DEPENDENCIAS
       # ======================================================
 
-      - name: Instalar librerias
+      - name: Instalar dependencias
 
         run: |
 
@@ -57,10 +60,27 @@ jobs:
 
 
       # ======================================================
-      # FUSION METEOROLOGICA
+      # 1. OBSERVACION SAZB
       # ======================================================
 
-      - name: Ejecutar fusion meteorologica
+      - name: Actualizar SAZB
+
+        id: sazb
+
+        continue-on-error: true
+
+        run: |
+
+          set -e
+
+          python scripts/smn_observaciones.py
+
+
+      # ======================================================
+      # 2. FUSION METEOROLOGICA
+      # ======================================================
+
+      - name: Actualizar meteorologia
 
         run: |
 
@@ -69,8 +89,6 @@ jobs:
           python scripts/meteorologia_fusion.py
 
           test -s data/ia/estado_meteorologico.json
-
-          test -s data/ia/historial_meteorologico.csv
 
           test -s data/meteorologia/ambiente_futuro.json
 
@@ -86,7 +104,7 @@ jobs:
 
 
       # ======================================================
-      # MOTOR DE INTELIGENCIA DE TORMENTAS
+      # 3. INTELIGENCIA DE TORMENTAS
       # ======================================================
 
       - name: Ejecutar Storm Engine
@@ -113,10 +131,10 @@ jobs:
 
 
       # ======================================================
-      # VALIDACION FINAL
+      # 4. VALIDACION INTEGRADA
       # ======================================================
 
-      - name: Verificacion final
+      - name: Validar cadena ClimaAR
 
         run: |
 
@@ -125,16 +143,73 @@ jobs:
           python - <<'PY'
 
           import json
+          from pathlib import Path
+
+
+          archivos = [
+
+              Path(
+                  "data/radar/radar_nowcast.json"
+              ),
+
+              Path(
+                  "data/sazb/status.json"
+              ),
+
+              Path(
+                  "data/ia/estado_meteorologico.json"
+              ),
+
+              Path(
+                  "data/meteorologia/ambiente_futuro.json"
+              ),
+
+              Path(
+                  "data/ia/inteligencia_tormenta.json"
+              ),
+
+          ]
+
+
+          # --------------------------------------------------
+          # EXISTENCIA Y JSON VALIDO
+          # --------------------------------------------------
+
+          for path in archivos:
+
+              if (
+                  not path.exists()
+                  or
+                  path.stat().st_size == 0
+              ):
+
+                  raise SystemExit(
+                      f"Falta archivo operativo: {path}"
+                  )
+
+
+              with path.open(
+                  "r",
+                  encoding="utf-8"
+              ) as f:
+
+                  json.load(f)
+
+
+          # --------------------------------------------------
+          # INTELLIGENCE
+          # --------------------------------------------------
 
           with open(
               "data/ia/inteligencia_tormenta.json",
-              "r",
               encoding="utf-8"
           ) as f:
 
-              data = json.load(f)
+              intelligence = json.load(f)
+
 
           required = [
+
               "version",
               "motor",
               "estado",
@@ -142,71 +217,135 @@ jobs:
               "probabilidades",
               "peligros",
               "confianza_modelo",
-              "razones"
+              "razones",
+
           ]
+
 
           for key in required:
 
-              if key not in data:
+              if key not in intelligence:
 
                   raise SystemExit(
-                      f"Falta campo obligatorio: {key}"
+                      "Falta campo obligatorio "
+                      f"en Intelligence: {key}"
                   )
 
-          probabilities = data[
-              "probabilidades"
-          ]
 
-          hazards = data[
-              "peligros"
-          ]
+          probabilities = (
+              intelligence[
+                  "probabilidades"
+              ]
+          )
 
-          for key in [
+
+          hazards = (
+              intelligence[
+                  "peligros"
+              ]
+          )
+
+
+          # --------------------------------------------------
+          # PROBABILIDADES
+          # --------------------------------------------------
+
+          for key in (
               "tormenta",
               "llegada_bahia"
-          ]:
+          ):
 
-              value = probabilities[key]
+              value = float(
+                  probabilities[key]
+              )
+
 
               if not (
                   0 <= value <= 1
               ):
 
                   raise SystemExit(
-                      f"Probabilidad invalida: {key}"
+                      f"Probabilidad invalida: "
+                      f"{key}={value}"
                   )
+
+
+          # --------------------------------------------------
+          # PELIGROS
+          # --------------------------------------------------
 
           for key, value in hazards.items():
 
+              value = float(value)
+
+
               if not (
                   0 <= value <= 1
               ):
 
                   raise SystemExit(
-                      f"Peligro invalido: {key}"
+                      f"Peligro invalido: "
+                      f"{key}={value}"
                   )
 
-          if data[
+
+          # --------------------------------------------------
+          # SEVERIDAD
+          # --------------------------------------------------
+
+          if intelligence[
               "severidad"
-          ] not in [
+          ] not in (
               "verde",
               "amarillo",
               "naranja",
               "rojo"
-          ]:
+          ):
 
               raise SystemExit(
-                  "Severidad invalida."
+                  "Severidad invalida"
               )
+
+
+          # --------------------------------------------------
+          # INFORMACION DE DIAGNOSTICO
+          # --------------------------------------------------
+
+          with open(
+              "data/sazb/status.json",
+              encoding="utf-8"
+          ) as f:
+
+              sazb = json.load(f)
+
+
+          with open(
+              "data/radar/radar_nowcast.json",
+              encoding="utf-8"
+          ) as f:
+
+              radar = json.load(f)
+
+
+          radar_nowcast = radar.get(
+              "nowcast",
+              {}
+          )
+
+
+          print("")
+          print("================================")
+          print("       CLIMAAR INTEGRADO")
+          print("================================")
 
           print(
               "Estado:",
-              data["estado"]
+              intelligence["estado"]
           )
 
           print(
               "Severidad:",
-              data["severidad"]
+              intelligence["severidad"]
           )
 
           print(
@@ -216,70 +355,124 @@ jobs:
 
           print(
               "Confianza:",
-              data["confianza_modelo"]
+              intelligence["confianza_modelo"]
           )
 
           print(
-              "Validacion final OK"
+              "SAZB:",
+              sazb.get(
+                  "obsTime_utc"
+              )
           )
+
+          print(
+              "Estado SAZB:",
+              sazb.get(
+                  "estado"
+              )
+          )
+
+          print(
+              "Edad SAZB:",
+              sazb.get(
+                  "edad_minutos"
+              )
+          )
+
+          print(
+              "Radar:",
+              radar_nowcast.get(
+                  "frame_actual_utc"
+              )
+          )
+
+          print(
+              "Actividad radar:",
+              radar_nowcast.get(
+                  "actividad"
+              )
+          )
+
+          print(
+              "Confianza movimiento:",
+              radar_nowcast.get(
+                  "confianza_movimiento"
+              )
+          )
+
+          print("================================")
+          print("VALIDACION INTEGRADA OK")
+          print("================================")
 
           PY
 
 
       # ======================================================
-      # GUARDAR DATOS
+      # 5. PREPARAR RESULTADOS
       # ======================================================
 
-      - name: Guardar datos
+      - name: Preparar commit
 
         run: |
 
           set -e
 
-          git config user.name "climaar-bot"
+          git config \
+            user.name \
+            "climaar-bot"
 
-          git config user.email "bot@climaar.com.ar"
+          git config \
+            user.email \
+            "bot@climaar.com.ar"
+
 
           git add \
+            data/sazb/status.json \
             data/ia/estado_meteorologico.json \
-            data/ia/historial_meteorologico.csv \
             data/meteorologia/ambiente_futuro.json \
             data/ia/inteligencia_tormenta.json \
+            data/ia/historial_meteorologico.csv \
             data/ia/historial_inteligencia_tormenta.csv
+
 
           if git diff --cached --quiet; then
 
-            echo "Sin cambios de Intelligence."
+            echo "Sin cambios para publicar."
 
-            exit 0
+          else
+
+            git commit \
+              -m "ClimaAR inteligencia integrada"
 
           fi
 
-          git commit \
-            -m "ClimaAR Intelligence storm engine"
-
 
       # ======================================================
-      # PUSH CON REINTENTOS
+      # 6. PUBLICAR CON REINTENTOS
       # ======================================================
 
-      - name: Subir resultados
+      - name: Publicar resultados
 
         run: |
 
           set -e
 
+
           for intento in 1 2 3 4 5; do
 
+            echo ""
             echo "Intento de push: $intento"
 
+
             git fetch origin main
+
 
             if git rebase origin/main; then
 
               if git push origin HEAD:main; then
 
-                echo "Push Intelligence correcto."
+                echo ""
+                echo "Publicacion correcta."
 
                 exit 0
 
@@ -293,14 +486,15 @@ jobs:
 
             fi
 
-            echo "Otro workflow modifico main."
 
-            echo "Esperando..."
+            echo "Esperando antes de reintentar..."
 
             sleep 10
 
           done
 
-          echo "No se pudo subir Intelligence."
+
+          echo ""
+          echo "No se pudo publicar ClimaAR Intelligence."
 
           exit 1
