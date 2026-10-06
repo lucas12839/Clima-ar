@@ -1,0 +1,56 @@
+name: Reconstruir variables convectivas
+
+on:
+  workflow_dispatch:
+
+jobs:
+  reconstruir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Reconstruir variables convectivas
+        run: python scripts/reconstruir_variables_convectivas.py
+
+      - name: Validar resultados
+        run: |
+          test -s data/eventos_severos/variables_convectivas_2023-12-16.csv
+          test -s data/eventos_severos/variables_convectivas_2025-03-07.csv
+          test -s data/eventos_severos/variables_convectivas_2023_2025.csv
+          test -s data/eventos_severos/resumen_variables_convectivas.json
+
+          python - <<'PY'
+          import json
+
+          p = "data/eventos_severos/resumen_variables_convectivas.json"
+
+          with open(p, encoding="utf-8") as f:
+              data = json.load(f)
+
+          print("Resumen válido:", data.get("version"))
+          print("Eventos:", data.get("eventos"))
+          PY
+
+      - name: Guardar resultados
+        run: |
+          git config user.name "climaar-bot"
+          git config user.email "climaar-bot@users.noreply.github.com"
+
+          git add data/eventos_severos
+
+          git diff --cached --quiet || git commit -m "Reconstruir variables convectivas eventos severos"
+
+          git push
