@@ -19,8 +19,13 @@ warnings.filterwarnings("ignore")
 OUT = Path("modelo")
 OUT.mkdir(exist_ok=True)
 
-SURFACE_DATA = Path("data/historico/clima_horario_1980_2026.csv")
-CONV_DATA = Path("data/eventos_severos/variables_convectivas_2023_2025.csv")
+SURFACE_DATA = Path(
+    "data/historico/clima_horario_1980_2026.csv"
+)
+
+CONV_DATA = Path(
+    "data/eventos_severos/variables_convectivas_2023_2025.csv"
+)
 
 EVENT_DATES = pd.to_datetime([
     "2019-12-30",
@@ -32,34 +37,60 @@ EVENT_DATES = pd.to_datetime([
 def safe_auc(y, p):
     if len(np.unique(y)) < 2:
         return None
-    return float(roc_auc_score(y, p))
+
+    return float(
+        roc_auc_score(y, p)
+    )
 
 
 def metrics(y, p, threshold=0.50):
-    pred = (p >= threshold).astype(int)
+    pred = (
+        p >= threshold
+    ).astype(int)
 
     return {
         "roc_auc": safe_auc(y, p),
         "average_precision": (
-            float(average_precision_score(y, p))
-            if len(np.unique(y)) >= 2 else None
+            float(
+                average_precision_score(y, p)
+            )
+            if len(np.unique(y)) >= 2
+            else None
         ),
         "precision": float(
-            precision_score(y, pred, zero_division=0)
+            precision_score(
+                y,
+                pred,
+                zero_division=0,
+            )
         ),
         "recall": float(
-            recall_score(y, pred, zero_division=0)
+            recall_score(
+                y,
+                pred,
+                zero_division=0,
+            )
         ),
         "f1": float(
-            f1_score(y, pred, zero_division=0)
+            f1_score(
+                y,
+                pred,
+                zero_division=0,
+            )
         ),
-        "threshold": float(threshold),
+        "threshold": float(
+            threshold
+        ),
     }
 
 
 def best_threshold(y, p):
     candidates = np.unique(
-        np.clip(p, 0.05, 0.90)
+        np.clip(
+            p,
+            0.05,
+            0.90,
+        )
     )
 
     candidates = np.unique(
@@ -75,7 +106,10 @@ def best_threshold(y, p):
         ]
     )
 
-    best = (0.20, -1.0)
+    best = (
+        0.20,
+        -1.0,
+    )
 
     for t in candidates:
         f = f1_score(
@@ -118,7 +152,9 @@ def build_features(raw):
     )
 
     df = (
-        df.dropna(subset=["time"])
+        df.dropna(
+            subset=["time"]
+        )
         .sort_values("time")
         .drop_duplicates("time")
         .reset_index(drop=True)
@@ -156,7 +192,9 @@ def build_features(raw):
             - df["dew_point_2m"]
         )
 
-        base.append("dew_spread")
+        base.append(
+            "dew_spread"
+        )
 
     if {
         "wind_speed_10m",
@@ -297,7 +335,10 @@ def add_targets(df):
         )
         |
         (
-            (future_gust_3 >= current_gust + 10.0)
+            (
+                future_gust_3
+                >= current_gust + 10.0
+            )
             &
             (future_gust_3 >= 45.0)
         )
@@ -341,7 +382,10 @@ def make_matrix(df, target):
     ]
 
     X = df[cols].replace(
-        [np.inf, -np.inf],
+        [
+            np.inf,
+            -np.inf,
+        ],
         np.nan,
     )
 
@@ -356,10 +400,18 @@ def make_matrix(df, target):
         .fillna(0.0)
     )
 
-    return X, cols, med
+    return (
+        X,
+        cols,
+        med,
+    )
 
 
-def train_target(df, target, seed):
+def train_target(
+    df,
+    target,
+    seed,
+):
     work = df.dropna(
         subset=[target]
     ).copy()
@@ -395,10 +447,12 @@ def train_target(df, target, seed):
             "falta una clase."
         )
 
+    # Modelo de validacion compacto
     model = RandomForestClassifier(
-        n_estimators=700,
+        n_estimators=120,
+        max_depth=10,
         max_features="sqrt",
-        min_samples_leaf=4,
+        min_samples_leaf=5,
         class_weight="balanced_subsample",
         random_state=seed,
         n_jobs=-1,
@@ -427,18 +481,32 @@ def train_target(df, target, seed):
     )
 
     report.update({
-        "rows": int(len(work)),
-        "positive": int(y.sum()),
-        "train_rows": int(len(X_train)),
-        "test_rows": int(len(X_test)),
-        "train_positive": int(y_train.sum()),
-        "test_positive": int(y_test.sum()),
+        "rows": int(
+            len(work)
+        ),
+        "positive": int(
+            y.sum()
+        ),
+        "train_rows": int(
+            len(X_train)
+        ),
+        "test_rows": int(
+            len(X_test)
+        ),
+        "train_positive": int(
+            y_train.sum()
+        ),
+        "test_positive": int(
+            y_test.sum()
+        ),
     })
 
+    # Modelo final compacto
     final = RandomForestClassifier(
-        n_estimators=900,
+        n_estimators=120,
+        max_depth=10,
         max_features="sqrt",
-        min_samples_leaf=4,
+        min_samples_leaf=5,
         class_weight="balanced_subsample",
         random_state=seed,
         n_jobs=-1,
@@ -493,11 +561,15 @@ def convective_reference():
 
     return {
         "available": True,
-        "rows": int(len(c)),
+        "rows": int(
+            len(c)
+        ),
         "events": sorted(
             c["event_date"]
             .dropna()
-            .dt.strftime("%Y-%m-%d")
+            .dt.strftime(
+                "%Y-%m-%d"
+            )
             .unique()
             .tolist()
         ),
@@ -516,10 +588,12 @@ def main():
         )
 
     print("=" * 72)
+
     print(
         "CLIMAAR V8 - IA CENTRAL DE "
         "FORMACION / INTENSIFICACION / IMPACTO"
     )
+
     print("=" * 72)
 
     raw = pd.read_csv(
@@ -608,20 +682,27 @@ def main():
         {
             "version":
                 "climaar_predictor_hibrido_superficie_v8",
+
             "model":
                 models["impacto"]["model"],
+
             "features":
                 models["impacto"]["features"],
+
             "medians":
                 models["impacto"]["medians"],
+
             "target":
                 models["impacto"]["target"],
+
             "horizon_hours": 6,
+
             "location": {
                 "name": "Bahia Blanca",
                 "lat": -38.71,
                 "lon": -62.26,
             },
+
             "role": "impacto",
         },
         surface_path,
@@ -663,32 +744,44 @@ def main():
 
     report = {
         "version": "ClimaAR V8",
+
         "estado": "OK",
+
         "motor":
             "IA temporal multiobjetivo "
             "con validacion cronologica",
+
         "filas_originales": int(
             len(raw)
         ),
+
         "eventos_extremos_referencia": [
             str(x.date())
             for x in EVENT_DATES
         ],
+
         "objetivo": {
             "formacion":
                 "precipitacion futura 1-3h "
                 "partiendo de ausencia de lluvia",
+
             "intensificacion":
                 "aumento futuro de lluvia "
                 "o rafagas",
+
             "impacto":
                 "lluvia futura 3-6h "
                 "o rafaga >= 50 km/h",
         },
+
         "modelos": reports,
+
         "referencia_convectiva":
             conv_ref,
-        "sin_fuga_temporal": True,
+
+        "sin_fuga_temporal":
+            True,
+
         "nota":
             "Los eventos extremos se usan "
             "como referencia de calibracion "
