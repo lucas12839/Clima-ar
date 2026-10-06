@@ -767,4 +767,370 @@ jobs:
                   "convective_inhibition",
                   "freezing_level_height",
                   "boundary_layer_height",
-                  "total_column_integrated_water_v
+                  "total_column_integrated_water_vapour"
+              ]:
+
+                  if c not in df.columns:
+                      continue
+
+                  df[f"{c}_chg3h"] = (
+                      df[c] -
+                      df[c].shift(3)
+                  )
+
+              features = [
+                  c for c in df.columns
+                  if c not in {
+                      "time",
+                      "evento"
+                  }
+              ]
+
+              df = (
+                  df
+                  .replace(
+                      [np.inf, -np.inf],
+                      np.nan
+                  )
+                  .dropna(
+                      subset=features +
+                      ["evento"]
+                  )
+                  .sort_values("time")
+                  .reset_index(drop=True)
+              )
+
+              print(
+                  "Filas utilizables:",
+                  len(df)
+              )
+
+              print(
+                  "Variables:",
+                  len(features)
+              )
+
+              print(
+                  "Positivos:",
+                  int(df["evento"].sum())
+              )
+
+              # --------------------------------------------------------
+              # LEAVE-ONE-EVENT-OUT
+              # --------------------------------------------------------
+
+              validation = {}
+
+              for event_date in [
+                  pd.Timestamp("2023-12-16"),
+                  pd.Timestamp("2025-03-07")
+              ]:
+
+                  test_start = (
+                      event_date -
+                      pd.Timedelta(hours=72)
+                  )
+
+                  test_end = (
+                      event_date +
+                      pd.Timedelta(hours=24)
+                  )
+
+                  test_mask = (
+                      (df["time"] >= test_start) &
+                      (df["time"] <= test_end)
+                  )
+
+                  test = df[test_mask]
+                  train = df[~test_mask]
+
+                  train_pos = int(
+                      train["evento"].sum()
+                  )
+
+                  test_pos = int(
+                      test["evento"].sum()
+                  )
+
+                  print("")
+                  print(
+                      "Validando convectivo:",
+                      event_date.date()
+                  )
+
+                  print(
+                      "Train:",
+                      len(train),
+                      "Test:",
+                      len(test)
+                  )
+
+                  print(
+                      "Positivos train:",
+                      train_pos,
+                      "Positivos test:",
+                      test_pos
+                  )
+
+                  if train_pos < 5:
+                      continue
+
+                  if test_pos < 5:
+                      continue
+
+                  model = RandomForestClassifier(
+                      n_estimators=500,
+                      max_features="sqrt",
+                      min_samples_leaf=3,
+                      class_weight="balanced_subsample",
+                      random_state=42,
+                      n_jobs=-1
+                  )
+
+                  model.fit(
+                      train[features],
+                      train["evento"]
+                  )
+
+                  probability = (
+                      model.predict_proba(
+                          test[features]
+                      )[:, 1]
+                  )
+
+                  m = metrics_binary(
+                      test["evento"],
+                      probability
+                  )
+
+                  m["train_rows"] = int(
+                      len(train)
+                  )
+
+                  m["test_rows"] = int(
+                      len(test)
+                  )
+
+                  m["train_positive"] = train_pos
+                  m["test_positive"] = test_pos
+
+                  validation[
+                      str(event_date.date())
+                  ] = m
+
+                  print(
+                      json.dumps(
+                          m,
+                          indent=2
+                      )
+                  )
+
+              # --------------------------------------------------------
+              # MODELO CONVECTIVO FINAL
+              # --------------------------------------------------------
+
+              print("")
+              print(
+                  "Entrenando modelo convectivo final..."
+              )
+
+              final_model = RandomForestClassifier(
+                  n_estimators=700,
+                  max_features="sqrt",
+                  min_samples_leaf=3,
+                  class_weight="balanced_subsample",
+                  random_state=42,
+                  n_jobs=-1
+              )
+
+              final_model.fit(
+                  df[features],
+                  df["evento"]
+              )
+
+              artifact = {
+                  "version":
+                      "climaar_predictor_convectivo_v2",
+
+                  "model":
+                      final_model,
+
+                  "features":
+                      features,
+
+                  "location": {
+                      "name":
+                          "Bahia Blanca",
+                      "lat":
+                          LAT,
+                      "lon":
+                          LON
+                  },
+
+                  "events":
+                      [
+                          "2023-12-16",
+                          "2025-03-07"
+                      ],
+
+                  "validation":
+                      validation
+              }
+
+              joblib.dump(
+                  artifact,
+                  OUT /
+                  "climaar_predictor_convectivo_v2.joblib"
+              )
+
+              importance = pd.DataFrame({
+                  "variable":
+                      features,
+                  "importancia":
+                      final_model.feature_importances_
+              }).sort_values(
+                  "importancia",
+                  ascending=False
+              )
+
+              importance.to_csv(
+                  OUT /
+                  "importancia_convectiva_v2.csv",
+                  index=False
+              )
+
+              return {
+                  "rows":
+                      int(len(df)),
+
+                  "positive":
+                      int(
+                          df["evento"].sum()
+                      ),
+
+                  "variables":
+                      len(features),
+
+                  "validation":
+                      validation
+              }
+
+
+          # ============================================================
+          # EJECUCION FINAL
+          # ============================================================
+
+          surface_result = train_surface()
+
+          convective_result = train_convective()
+
+          report = {
+              "version":
+                  "climaar_modelo_hibrido_v5",
+
+              "ubicacion": {
+                  "nombre":
+                      "Bahia Blanca",
+
+                  "latitud":
+                      LAT,
+
+                  "longitud":
+                      LON
+              },
+
+              "eventos": EVENT_TYPES,
+
+              "superficie":
+                  surface_result,
+
+              "convectivo":
+                  convective_result,
+
+              "referencias_oficiales": {
+                  "2023_rafaga_max_kmh":
+                      155,
+
+                  "2025_lluvia_6h_mm":
+                      210,
+
+                  "2025_lluvia_12h_mm":
+                      290,
+
+                  "2025_total_evento_mm":
+                      312
+              },
+
+              "criterios": [
+                  "La prediccion de superficie representa "
+                  "un evento en las proximas 24 horas.",
+
+                  "La validacion utiliza "
+                  "Leave-One-Event-Out.",
+
+                  "2019 se usa como evento regional "
+                  "solamente en superficie.",
+
+                  "No se inventan variables convectivas "
+                  "para 2019.",
+
+                  "El modelo final se entrena con "
+                  "todos los eventos disponibles.",
+
+                  "El radar se incorporara posteriormente "
+                  "como capa de nowcasting."
+              ]
+          }
+
+          with open(
+              OUT /
+              "reporte_modelo_hibrido_v5.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              json.dump(
+                  report,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          print("")
+          print("=" * 70)
+          print("ENTRENAMIENTO COMPLETADO")
+          print("=" * 70)
+
+          print(
+              json.dumps(
+                  report,
+                  indent=2,
+                  ensure_ascii=False
+              )
+          )
+
+          PY
+
+          python /tmp/entrenar_modelo.py
+
+      - name: Validar artefactos
+        run: |
+          test -s modelo/climaar_predictor_hibrido_superficie_v5.joblib
+          test -s modelo/climaar_predictor_convectivo_v2.joblib
+          test -s modelo/importancia_hibrido_superficie_v5.csv
+          test -s modelo/importancia_convectiva_v2.csv
+          test -s modelo/reporte_modelo_hibrido_v5.json
+
+      - name: Guardar resultados
+        run: |
+          git config user.name "climaar-bot"
+          git config user.email "climaar-bot@users.noreply.github.com"
+
+          git add modelo
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios nuevos."
+          else
+            git commit -m "Entrenar modelo hibrido V5"
+            git push
+          fi
