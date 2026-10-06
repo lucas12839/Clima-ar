@@ -1,373 +1,220 @@
-name: ClimaAR Intelligence
+name: ClimaAR Intelligence Central
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
 
-concurrency:
-  group: climaar-intelligence-main
-  cancel-in-progress: false
-
 jobs:
-
   intelligence:
-
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Descargar repositorio
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Preparar Python
+      - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Instalar dependencias
         run: |
-          set -e
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests numpy joblib scikit-learn
 
-      - name: Actualizar SAZB
-        id: sazb
+      - name: Actualizar observación SAZB
         continue-on-error: true
         run: |
-          set -e
           python scripts/smn_observaciones.py
 
-      - name: Actualizar meteorologia
+      - name: Actualizar fusión meteorológica
         run: |
-          set -e
-
           python scripts/meteorologia_fusion.py
 
+      - name: Verificar datos meteorológicos
+        run: |
           test -s data/ia/estado_meteorologico.json
           test -s data/meteorologia/ambiente_futuro.json
 
-          python -m json.tool \
-            data/ia/estado_meteorologico.json \
-            >/dev/null
-
-          python -m json.tool \
-            data/meteorologia/ambiente_futuro.json \
-            >/dev/null
-
-          echo "Fusion meteorologica OK"
-
-      - name: Ejecutar Storm Engine
+      - name: Ejecutar Storm Engine Central
         run: |
-          set -e
-
-          test -s data/radar/radar_nowcast.json
-          test -s data/ia/estado_meteorologico.json
-
           python scripts/tormenta_intelligence.py
 
-          test -s data/ia/inteligencia_tormenta.json
-          test -s data/ia/historial_inteligencia_tormenta.csv
-
-          python -m json.tool \
-            data/ia/inteligencia_tormenta.json \
-            >/dev/null
-
-          echo "Storm Engine OK"
-
-      - name: Validar cadena ClimaAR
+      - name: Validar salida de Intelligence
         run: |
-          set -e
-
           python - <<'PY'
           import json
           from pathlib import Path
 
-          archivos = [
-              Path("data/radar/radar_nowcast.json"),
-              Path("data/sazb/status.json"),
-              Path("data/ia/estado_meteorologico.json"),
-              Path("data/meteorologia/ambiente_futuro.json"),
-              Path("data/ia/inteligencia_tormenta.json"),
-          ]
+          archivo = Path("data/ia/tormenta_intelligence.json")
 
-          for path in archivos:
+          if not archivo.exists():
+              raise SystemExit("ERROR: no existe tormenta_intelligence.json")
 
-              if not path.exists():
-                  raise SystemExit(
-                      f"Falta archivo operativo: {path}"
-                  )
+          if archivo.stat().st_size == 0:
+              raise SystemExit("ERROR: tormenta_intelligence.json está vacío")
 
-              if path.stat().st_size == 0:
-                  raise SystemExit(
-                      f"Archivo vacio: {path}"
-                  )
+          with archivo.open("r", encoding="utf-8") as f:
+              data = json.load(f)
 
-              try:
-                  with path.open(
-                      "r",
-                      encoding="utf-8"
-                  ) as f:
-                      json.load(f)
+          print("Archivo Intelligence cargado correctamente")
 
-              except Exception as exc:
-                  raise SystemExit(
-                      f"JSON invalido en {path}: {exc}"
-                  )
+          if data.get("version") != "4.0.0":
+              raise SystemExit(
+                  f"ERROR: versión incorrecta: {data.get('version')}"
+              )
 
-          with open(
-              "data/ia/inteligencia_tormenta.json",
-              encoding="utf-8"
-          ) as f:
-              intelligence = json.load(f)
+          if data.get("motor") != "ClimaAR Intelligence - Storm Engine Central":
+              raise SystemExit("ERROR: motor incorrecto")
 
-          required = [
-              "version",
-              "motor",
-              "estado",
-              "severidad",
-              "probabilidades",
-              "peligros",
-              "confianza_modelo",
-              "razones",
-          ]
+          estados = {
+              "sin_tormenta",
+              "tormenta_lejana",
+              "tormenta_acercandose",
+              "tormenta_sobre_bahia",
+              "tormenta_severa",
+              "tormenta_debilitandose",
+              "tormenta_saliendo",
+          }
 
-          for key in required:
-              if key not in intelligence:
-                  raise SystemExit(
-                      f"Falta campo obligatorio "
-                      f"en Intelligence: {key}"
-                  )
-
-          probabilities = intelligence["probabilidades"]
-          hazards = intelligence["peligros"]
-
-          for key in (
-              "tormenta",
-              "llegada_bahia"
-          ):
-              if key not in probabilities:
-                  raise SystemExit(
-                      f"Falta probabilidad: {key}"
-                  )
-
-              value = float(probabilities[key])
-
-              if not 0 <= value <= 1:
-                  raise SystemExit(
-                      f"Probabilidad invalida: "
-                      f"{key}={value}"
-                  )
-
-          for key, value in hazards.items():
-
-              value = float(value)
-
-              if not 0 <= value <= 1:
-                  raise SystemExit(
-                      f"Peligro invalido: "
-                      f"{key}={value}"
-                  )
-
-          if intelligence["severidad"] not in (
+          severidades = {
               "verde",
               "amarillo",
               "naranja",
-              "rojo",
-          ):
+              "roja",
+          }
+
+          estado = data.get("estado")
+          severidad = data.get("severidad")
+
+          if estado not in estados:
+              raise SystemExit(f"ERROR: estado inválido: {estado}")
+
+          if severidad not in severidades:
               raise SystemExit(
-                  "Severidad invalida"
+                  f"ERROR: severidad inválida: {severidad}"
               )
 
-          with open(
-              "data/sazb/status.json",
-              encoding="utf-8"
-          ) as f:
-              sazb = json.load(f)
+          probabilidades = data.get("probabilidades", {})
 
-          with open(
-              "data/radar/radar_nowcast.json",
-              encoding="utf-8"
-          ) as f:
-              radar = json.load(f)
+          for nombre, valor in probabilidades.items():
+              if valor is None:
+                  continue
 
-          radar_nowcast = radar.get(
-              "nowcast",
-              {}
+              if not isinstance(valor, (int, float)):
+                  raise SystemExit(
+                      f"ERROR: probabilidad inválida: {nombre}"
+                  )
+
+              if not 0 <= float(valor) <= 1:
+                  raise SystemExit(
+                      f"ERROR: probabilidad fuera de rango: {nombre}"
+                  )
+
+          peligros = data.get("peligros", {})
+
+          for nombre, valor in peligros.items():
+              if not isinstance(valor, (int, float)):
+                  raise SystemExit(
+                      f"ERROR: peligro inválido: {nombre}"
+                  )
+
+              if not 0 <= float(valor) <= 1:
+                  raise SystemExit(
+                      f"ERROR: peligro fuera de rango: {nombre}"
+                  )
+
+          confianza = data.get("confianza_modelo")
+
+          if not isinstance(confianza, (int, float)):
+              raise SystemExit("ERROR: confianza_modelo inválida")
+
+          if not 0 <= float(confianza) <= 1:
+              raise SystemExit("ERROR: confianza_modelo fuera de rango")
+
+          calidad_datos = data.get("calidad_datos")
+
+          if calidad_datos is not None:
+              if not isinstance(calidad_datos, (int, float)):
+                  raise SystemExit("ERROR: calidad_datos inválida")
+
+              if not 0 <= float(calidad_datos) <= 100:
+                  raise SystemExit("ERROR: calidad_datos fuera de rango")
+
+          calidad_tracking = data.get("calidad_tracking")
+
+          if calidad_tracking is not None:
+              if not isinstance(calidad_tracking, (int, float)):
+                  raise SystemExit("ERROR: calidad_tracking inválida")
+
+              if not 0 <= float(calidad_tracking) <= 1:
+                  raise SystemExit(
+                      "ERROR: calidad_tracking fuera de rango"
+                  )
+
+          razones = data.get("razones")
+
+          if not isinstance(razones, list):
+              raise SystemExit("ERROR: razones no es una lista")
+
+          ia = data.get("ia_v8", {})
+
+          if not isinstance(ia, dict):
+              raise SystemExit("ERROR: ia_v8 inválido")
+
+          modelo = Path(
+              "modelo/climaar_predictor_impacto_v8.joblib"
           )
 
-          print("")
-          print("================================")
-          print("       CLIMAAR INTEGRADO")
-          print("================================")
-
-          print(
-              "Estado:",
-              intelligence["estado"]
-          )
-
-          print(
-              "Severidad:",
-              intelligence["severidad"]
-          )
-
-          print(
-              "Probabilidad tormenta:",
-              probabilities["tormenta"]
-          )
-
-          print(
-              "Confianza:",
-              intelligence["confianza_modelo"]
-          )
-
-          print(
-              "SAZB:",
-              sazb.get("obsTime_utc")
-          )
-
-          print(
-              "Estado SAZB:",
-              sazb.get("estado")
-          )
-
-          print(
-              "Edad SAZB:",
-              sazb.get("edad_minutos")
-          )
-
-          print(
-              "Radar:",
-              radar_nowcast.get(
-                  "frame_actual_utc"
+          if modelo.exists():
+              if ia.get("disponible") is not True:
+                  raise SystemExit(
+                      "ERROR: el modelo V8 existe pero no fue cargado"
+                  )
+              print("IA V8: modelo cargado correctamente")
+          else:
+              print(
+                  "AVISO: todavía no existe el modelo V8. "
+                  "Storm Engine continúa con análisis meteorológico."
               )
-          )
 
-          print(
-              "Actividad radar:",
-              radar_nowcast.get(
-                  "actividad"
-              )
-          )
-
-          print(
-              "Confianza movimiento:",
-              radar_nowcast.get(
-                  "confianza_movimiento"
-              )
-          )
-
-          print("================================")
-          print("VALIDACION INTEGRADA OK")
-          print("================================")
+          print("====================================")
+          print("CLIMAAR INTELLIGENCE VALIDADO")
+          print("Versión:", data.get("version"))
+          print("Estado:", estado)
+          print("Severidad:", severidad)
+          print("Confianza:", confianza)
+          print("IA disponible:", ia.get("disponible"))
+          print("Razones:", len(razones))
+          print("====================================")
           PY
 
-      - name: Preparar commit
+      - name: Verificar cambios
         run: |
-          set -e
+          git diff --check
 
-          git config user.name "climaar-bot"
-          git config user.email "bot@climaar.com.ar"
-
-          echo "Preparando cambios generados..."
+      - name: Guardar resultados
+        run: |
+          git config user.name "ClimaAR Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -A
 
-          echo ""
-          echo "Estado antes del commit:"
-          git status --short
-
           if git diff --cached --quiet; then
-            echo "Sin cambios para publicar."
-          else
-            git commit -m "ClimaAR inteligencia integrada"
+            echo "No hay cambios nuevos para guardar."
+            exit 0
           fi
 
-          echo ""
-          echo "Estado despues del commit:"
-          git status --short
+          git commit -m "Actualizar ClimaAR Intelligence"
 
-      - name: Publicar resultados
+      - name: Sincronizar y publicar
         run: |
-          set -e
-
-          for intento in 1 2 3 4 5; do
-
-            echo ""
-            echo "================================"
-            echo "Intento de publicacion: $intento"
-            echo "================================"
-
-            git fetch origin main
-
-            echo ""
-            echo "Verificando estado local..."
-
-            if ! git diff --quiet; then
-              echo "Hay cambios sin guardar."
-
-              git add -A
-
-              if ! git diff --cached --quiet; then
-                git commit -m "ClimaAR inteligencia integrada"
-              fi
-            fi
-
-            if ! git diff --cached --quiet; then
-              echo "Hay cambios staged pendientes."
-
-              git commit -m "ClimaAR inteligencia integrada"
-            fi
-
-            echo ""
-            echo "Estado antes del rebase:"
-            git status --short
-
-            if git rebase origin/main; then
-
-              echo ""
-              echo "Rebase correcto."
-
-              if git push origin HEAD:main; then
-
-                echo ""
-                echo "================================"
-                echo "PUBLICACION CORRECTA"
-                echo "================================"
-
-                exit 0
-
-              else
-
-                echo ""
-                echo "Push rechazado."
-                echo "Probablemente otro workflow publico cambios."
-
-              fi
-
-            else
-
-              echo ""
-              echo "Rebase con conflicto."
-
-              git rebase --abort || true
-
-            fi
-
-            echo ""
-            echo "Esperando antes de reintentar..."
-            sleep 10
-
-          done
-
-          echo ""
-          echo "================================"
-          echo "NO SE PUDO PUBLICAR"
-          echo "================================"
-
-          exit 1
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
