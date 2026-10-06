@@ -3,17 +3,21 @@ name: Reconstruir Dataset Historico Radar
 on:
   workflow_dispatch:
 
-jobs:
-  reconstruir:
-    runs-on: ubuntu-latest
+permissions:
+  contents: write
 
-    permissions:
-      contents: write
+jobs:
+
+  reconstruir:
+
+    runs-on: ubuntu-latest
 
     steps:
 
       - name: Descargar repositorio
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -27,17 +31,26 @@ jobs:
 
       - name: Verificar historico radar
         run: |
+          set -e
+
           test -d data/radar/historico
+
           echo "PNG históricos encontrados:"
-          find data/radar/historico -name "radar_*.png" | wc -l
+          find data/radar/historico \
+            -name "radar_*.png" \
+            | wc -l
 
       - name: Reconstruir dataset
         run: |
+          set -e
+
           python scripts/reconstruir_dataset_radar.py
 
       - name: Verificar dataset generado
         run: |
-          test -f data/radar/radar_features_rainviewer.csv
+          set -e
+
+          test -s data/radar/radar_features_rainviewer.csv
 
           echo ""
           echo "Dataset generado:"
@@ -53,11 +66,57 @@ jobs:
 
       - name: Guardar dataset en GitHub
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          set -e
 
-          git add data/radar/radar_features_rainviewer.csv
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.com.ar"
 
-          git diff --cached --quiet || git commit -m "ai: reconstruir dataset historico radar"
+          git add \
+            data/radar/radar_features_rainviewer.csv
 
-          git push
+          if git diff --cached --quiet; then
+            echo "Sin cambios en el dataset."
+            exit 0
+          fi
+
+          git commit \
+            -m "ai: reconstruir dataset historico radar"
+
+          for intento in 1 2 3 4 5; do
+
+            echo ""
+            echo "======================================"
+            echo "Intento de push: $intento"
+            echo "======================================"
+
+            git fetch origin main
+
+            if git rebase -X ours origin/main; then
+
+              echo "Rebase correcto."
+
+              if git push origin HEAD:main; then
+                echo "Dataset guardado correctamente."
+                exit 0
+              fi
+
+            else
+
+              echo "El rebase encontró un conflicto."
+
+              git rebase --abort || true
+
+            fi
+
+            echo ""
+            echo "Otro workflow modificó main."
+            echo "Esperando 15 segundos..."
+            sleep 15
+
+          done
+
+          echo ""
+          echo "ERROR: no se pudo guardar el dataset"
+          echo "después de 5 intentos."
+
+          exit 1
