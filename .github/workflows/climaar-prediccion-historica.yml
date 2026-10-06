@@ -1,4 +1,4 @@
-name: ClimaAR - Prediccion Historica Pre-Evento V2
+name: ClimaAR - Prediccion Historica Pre-Evento V3
 
 on:
   workflow_dispatch:
@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
@@ -24,15 +25,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy scikit-learn joblib
 
-      - name: Entrenar predictor 24h V2
+      - name: Entrenar predictor 24h V3
         run: |
+
           python - <<'PY'
+
           from pathlib import Path
           import json
           import joblib
           import numpy as np
           import pandas as pd
+
           from sklearn.ensemble import RandomForestClassifier
+
           from sklearn.metrics import (
               roc_auc_score,
               average_precision_score,
@@ -41,18 +46,57 @@ jobs:
               f1_score,
           )
 
-          CLIMA = Path("data/historico/clima_horario_1980_2026.csv")
-          EVENTOS = Path("data/historico/eventos_severos.csv")
+
+          # ============================================================
+          # RUTAS
+          # ============================================================
+
+          CLIMA = Path(
+              "data/historico/clima_horario_1980_2026.csv"
+          )
+
+          EVENTOS = Path(
+              "data/historico/eventos_severos.csv"
+          )
+
           OUT = Path("modelo")
+
           OUT.mkdir(exist_ok=True)
 
+
+          # ============================================================
+          # COMPROBAR ARCHIVOS
+          # ============================================================
+
           if not CLIMA.exists():
-              raise SystemExit(f"ERROR: no existe {CLIMA}")
+              raise SystemExit(
+                  f"ERROR: no existe {CLIMA}"
+              )
+
           if not EVENTOS.exists():
-              raise SystemExit(f"ERROR: no existe {EVENTOS}")
+              raise SystemExit(
+                  f"ERROR: no existe {EVENTOS}"
+              )
+
+
+          # ============================================================
+          # CARGAR DATOS
+          # ============================================================
 
           clima = pd.read_csv(CLIMA)
+
           eventos = pd.read_csv(EVENTOS)
+
+
+          print("========================================")
+          print("COLUMNAS DEL HISTORICO")
+          print(list(clima.columns))
+          print("========================================")
+
+
+          # ============================================================
+          # COLUMNAS METEOROLOGICAS NECESARIAS
+          # ============================================================
 
           required = [
               "time",
@@ -66,15 +110,24 @@ jobs:
               "wind_gusts_10m",
           ]
 
-          missing = [c for c in required if c not in clima.columns]
+
+          missing = [
+              c
+              for c in required
+              if c not in clima.columns
+          ]
+
 
           if missing:
+
               raise SystemExit(
-                  f"ERROR: faltan columnas meteorologicas: {missing}"
+                  "ERROR: faltan columnas meteorologicas: "
+                  f"{missing}"
               )
 
+
           # ============================================================
-          # IDENTIFICAR BAHIA BLANCA
+          # IDENTIFICAR ESTACION
           # ============================================================
 
           station_candidates = [
@@ -94,10 +147,6 @@ jobs:
               "icao_code",
           ]
 
-          station_col = next(
-              (c for c in station_candidates if c in clima.columns),
-              None
-          )
 
           lat_candidates = [
               "latitude",
@@ -105,33 +154,76 @@ jobs:
               "latitud",
           ]
 
+
           lon_candidates = [
               "longitude",
               "lon",
               "longitud",
           ]
 
-          lat_col = next(
-              (c for c in lat_candidates if c in clima.columns),
+
+          station_col = next(
+              (
+                  c
+                  for c in station_candidates
+                  if c in clima.columns
+              ),
               None
           )
+
+
+          lat_col = next(
+              (
+                  c
+                  for c in lat_candidates
+                  if c in clima.columns
+              ),
+              None
+          )
+
 
           lon_col = next(
-              (c for c in lon_candidates if c in clima.columns),
+              (
+                  c
+                  for c in lon_candidates
+                  if c in clima.columns
+              ),
               None
           )
 
-          if station_col is None and not (lat_col and lon_col):
-              raise SystemExit(
-                  "ERROR: no se pudo identificar la estacion. "
-                  f"Columnas disponibles: {list(clima.columns)}"
+
+          # ============================================================
+          # CASO 1:
+          # EL ARCHIVO YA ES EXCLUSIVAMENTE BAHIA BLANCA
+          # ============================================================
+
+          if station_col is None and not (
+              lat_col and lon_col
+          ):
+
+              print(
+                  "No existe columna de estacion ni coordenadas."
               )
 
+              print(
+                  "Se asume que el archivo es la serie "
+                  "exclusiva de Bahia Blanca."
+              )
+
+              seleccion = {
+                  "metodo": "archivo_exclusivo_bahia_blanca",
+                  "fuente": "Open-Meteo",
+                  "latitud": -38.71,
+                  "longitud": -62.26,
+              }
+
+
           # ============================================================
-          # METODO 1: COLUMNA DE ESTACION
+          # CASO 2:
+          # EXISTE COLUMNA DE ESTACION
           # ============================================================
 
-          if station_col is not None:
+          elif station_col is not None:
 
               s = (
                   clima[station_col]
@@ -140,26 +232,35 @@ jobs:
                   .str.strip()
               )
 
+
               normalized = (
-                  s.str.normalize("NFKD")
-                  .str.encode("ascii", errors="ignore")
+                  s
+                  .str.normalize("NFKD")
+                  .str.encode(
+                      "ascii",
+                      errors="ignore"
+                  )
                   .str.decode("ascii")
               )
+
 
               mask_bb = (
                   normalized.str.contains(
                       "sazb",
                       na=False
                   )
-                  | normalized.str.contains(
+                  |
+                  normalized.str.contains(
                       "bahia blanca",
                       na=False
                   )
-                  | normalized.str.contains(
+                  |
+                  normalized.str.contains(
                       "87750",
                       na=False
                   )
               )
+
 
               if int(mask_bb.sum()) == 0:
 
@@ -172,14 +273,19 @@ jobs:
                       .tolist()
                   )
 
+
                   raise SystemExit(
-                      "ERROR: existe una columna de estacion pero "
-                      "no se encontro SAZB/Bahia Blanca/87750. "
+                      "ERROR: existe una columna de estacion "
+                      "pero no se encontro Bahia Blanca. "
                       f"Columna={station_col}; "
-                      f"valores_muestra={valores}"
+                      f"valores={valores}"
                   )
 
-              clima = clima.loc[mask_bb].copy()
+
+              clima = clima.loc[
+                  mask_bb
+              ].copy()
+
 
               estaciones = (
                   clima[station_col]
@@ -188,14 +294,17 @@ jobs:
                   .tolist()
               )
 
+
               seleccion = {
                   "metodo": "columna_estacion",
                   "columna": station_col,
-                  "valores_seleccionados": estaciones[:20],
+                  "valores": estaciones[:20],
               }
 
+
           # ============================================================
-          # METODO 2: COORDENADAS
+          # CASO 3:
+          # EXISTEN COORDENADAS
           # ============================================================
 
           else:
@@ -205,10 +314,12 @@ jobs:
                   errors="coerce"
               )
 
+
               clima[lon_col] = pd.to_numeric(
                   clima[lon_col],
                   errors="coerce"
               )
+
 
               clima = clima.dropna(
                   subset=[
@@ -216,6 +327,7 @@ jobs:
                       lon_col
                   ]
               ).copy()
+
 
               distancia = np.sqrt(
                   (
@@ -227,29 +339,38 @@ jobs:
                   ) ** 2
               )
 
+
               if distancia.empty:
+
                   raise SystemExit(
                       "ERROR: no hay coordenadas validas."
                   )
+
 
               min_dist = float(
                   distancia.min()
               )
 
+
               if min_dist > 0.50:
+
                   raise SystemExit(
-                      "ERROR: no hay una estacion suficientemente "
-                      "cercana a Bahia Blanca. "
-                      f"Distancia minima={min_dist:.4f} grados."
+                      "ERROR: no hay una estacion "
+                      "suficientemente cercana a "
+                      "Bahia Blanca. "
+                      f"Distancia={min_dist:.4f}"
                   )
 
+
               clima["_dist_bb"] = distancia
+
 
               clima = clima.loc[
                   clima["_dist_bb"]
                   ==
                   clima["_dist_bb"].min()
               ].copy()
+
 
               seleccion = {
                   "metodo": "coordenadas",
@@ -258,28 +379,46 @@ jobs:
                   "distancia_grados": min_dist,
               }
 
+
+          # ============================================================
+          # COMPROBAR CANTIDAD
+          # ============================================================
+
           if len(clima) < 500:
+
               raise SystemExit(
-                  "ERROR: la serie de Bahia Blanca tiene solo "
-                  f"{len(clima)} filas."
+                  "ERROR: la serie de Bahia Blanca "
+                  f"tiene solo {len(clima)} filas."
               )
+
+
+          # ============================================================
+          # FECHA Y NUMERICOS
+          # ============================================================
 
           clima["time"] = pd.to_datetime(
               clima["time"],
               errors="coerce"
           )
 
+
           clima = clima.dropna(
               subset=["time"]
           ).copy()
 
+
           for c in required[1:]:
+
               clima[c] = pd.to_numeric(
                   clima[c],
                   errors="coerce"
               )
 
-          # Orden temporal.
+
+          # ============================================================
+          # ORDENAR
+          # ============================================================
+
           clima = (
               clima
               .sort_values("time")
@@ -290,21 +429,42 @@ jobs:
               .reset_index(drop=True)
           )
 
+
+          print("")
           print("========================================")
-          print("ESTACION SELECCIONADA")
-          print(json.dumps(
-              seleccion,
-              indent=2,
-              ensure_ascii=False
-          ))
-          print("FILAS BAHIA BLANCA:", len(clima))
+          print("ESTACION / FUENTE SELECCIONADA")
+          print(
+              json.dumps(
+                  seleccion,
+                  indent=2,
+                  ensure_ascii=False
+              )
+          )
           print("========================================")
 
+          print(
+              "FILAS BAHIA BLANCA:",
+              len(clima)
+          )
+
+          print(
+              "INICIO:",
+              clima["time"].min()
+          )
+
+          print(
+              "FIN:",
+              clima["time"].max()
+          )
+
+          print("========================================")
+
+
           # ============================================================
-          # EVENTOS SEVEROS
+          # EVENTOS
           # ============================================================
 
-          event_cols = [
+          event_required = [
               "fecha",
               "tormenta_severa",
               "viento_severo",
@@ -314,37 +474,45 @@ jobs:
               "tornado",
           ]
 
-          missing = [
+
+          missing_events = [
               c
-              for c in event_cols
+              for c in event_required
               if c not in eventos.columns
           ]
 
-          if missing:
+
+          if missing_events:
+
               raise SystemExit(
-                  f"ERROR: faltan columnas de eventos: {missing}"
+                  "ERROR: faltan columnas de eventos: "
+                  f"{missing_events}"
               )
+
 
           eventos["fecha"] = pd.to_datetime(
               eventos["fecha"],
               errors="coerce"
           ).dt.normalize()
 
+
           eventos = eventos.dropna(
               subset=["fecha"]
           ).copy()
 
+
+          flag_cols = [
+              "tormenta_severa",
+              "viento_severo",
+              "precipitacion_extrema",
+              "inundacion",
+              "granizo",
+              "tornado",
+          ]
+
+
           flags = (
-              eventos[
-                  [
-                      "tormenta_severa",
-                      "viento_severo",
-                      "precipitacion_extrema",
-                      "inundacion",
-                      "granizo",
-                      "tornado",
-                  ]
-              ]
+              eventos[flag_cols]
               .apply(
                   pd.to_numeric,
                   errors="coerce"
@@ -352,9 +520,11 @@ jobs:
               .fillna(0)
           )
 
+
           eventos["severo"] = (
               flags.sum(axis=1) > 0
           ).astype(int)
+
 
           fechas_evento = sorted(
               set(
@@ -365,74 +535,111 @@ jobs:
               )
           )
 
+
           if len(fechas_evento) < 3:
+
               raise SystemExit(
                   "ERROR: solo hay "
                   f"{len(fechas_evento)} fechas severas."
               )
 
+
+          print("")
+          print("========================================")
+          print("FECHAS SEVERAS")
           print(
-              "FECHAS SEVERAS:",
               [
                   str(x.date())
                   for x in fechas_evento
               ]
           )
+          print("========================================")
+
 
           # ============================================================
           # FEATURES
-          # SOLO SOBRE BAHIA BLANCA
           # ============================================================
 
           df = clima.copy()
 
-          df["hour_sin"] = np.sin(
-              2
-              * np.pi
-              * df["time"].dt.hour
-              / 24
+
+          # Hora
+          df["hour_sin"] = (
+              np.sin(
+                  2
+                  * np.pi
+                  * df["time"].dt.hour
+                  / 24
+              )
           )
 
-          df["hour_cos"] = np.cos(
-              2
-              * np.pi
-              * df["time"].dt.hour
-              / 24
+
+          df["hour_cos"] = (
+              np.cos(
+                  2
+                  * np.pi
+                  * df["time"].dt.hour
+                  / 24
+              )
           )
 
-          df["month_sin"] = np.sin(
-              2
-              * np.pi
-              * df["time"].dt.month
-              / 12
+
+          # Mes
+          df["month_sin"] = (
+              np.sin(
+                  2
+                  * np.pi
+                  * df["time"].dt.month
+                  / 12
+              )
           )
 
-          df["month_cos"] = np.cos(
-              2
-              * np.pi
-              * df["time"].dt.month
-              / 12
+
+          df["month_cos"] = (
+              np.cos(
+                  2
+                  * np.pi
+                  * df["time"].dt.month
+                  / 12
+              )
           )
+
+
+          # ============================================================
+          # VIENTO
+          # ============================================================
 
           rad = np.deg2rad(
               df["wind_direction_10m"]
           )
+
 
           df["wind_u"] = (
               df["wind_speed_10m"]
               * np.sin(rad)
           )
 
+
           df["wind_v"] = (
               df["wind_speed_10m"]
               * np.cos(rad)
           )
+
+
+          # ============================================================
+          # DIFERENCIA TEMPERATURA / ROCIO
+          # ============================================================
 
           df["dew_spread"] = (
               df["temperature_2m"]
               -
               df["dew_point_2m"]
           )
+
+
+          # ============================================================
+          # FEATURES TEMPORALES
+          # ============================================================
 
           base = [
               "temperature_2m",
@@ -445,15 +652,18 @@ jobs:
               "dew_spread",
           ]
 
+
           for c in base:
 
               df[f"{c}_chg1h"] = (
                   df[c].diff(1)
               )
 
+
               df[f"{c}_chg3h"] = (
                   df[c].diff(3)
               )
+
 
               df[f"{c}_mean3h"] = (
                   df[c]
@@ -464,6 +674,7 @@ jobs:
                   .mean()
               )
 
+
               df[f"{c}_mean6h"] = (
                   df[c]
                   .rolling(
@@ -472,6 +683,7 @@ jobs:
                   )
                   .mean()
               )
+
 
               df[f"{c}_max6h"] = (
                   df[c]
@@ -482,6 +694,11 @@ jobs:
                   .max()
               )
 
+
+          # ============================================================
+          # LLUVIA ACUMULADA
+          # ============================================================
+
           df["rain3h"] = (
               df["precipitation"]
               .rolling(
@@ -490,6 +707,7 @@ jobs:
               )
               .sum()
           )
+
 
           df["rain6h"] = (
               df["precipitation"]
@@ -500,6 +718,7 @@ jobs:
               .sum()
           )
 
+
           df["rain12h"] = (
               df["precipitation"]
               .rolling(
@@ -509,15 +728,21 @@ jobs:
               .sum()
           )
 
+
+          # ============================================================
+          # CAMBIO DE PRESION
+          # ============================================================
+
           df["pressure_drop6h"] = (
               df["pressure_msl"]
               -
               df["pressure_msl"].shift(6)
           )
 
+
           # ============================================================
           # OBJETIVO
-          # EVENTO SEVERO DENTRO DE LAS PROXIMAS 24 HORAS
+          # EVENTO SEVERO EN LAS PROXIMAS 24 HORAS
           # ============================================================
 
           event_day = (
@@ -527,10 +752,12 @@ jobs:
               .astype(np.int8)
           )
 
+
           future_label = np.zeros(
               len(df),
               dtype=np.int8
           )
+
 
           for h in range(1, 25):
 
@@ -539,22 +766,31 @@ jobs:
                   event_day.iloc[h:].to_numpy()
               )
 
+
           df["evento_24h"] = future_label
+
 
           # ============================================================
           # FEATURES FINALES
           # ============================================================
 
+          excluded = {
+              "time",
+              "evento_24h",
+              "_dist_bb",
+          }
+
+
+          if station_col is not None:
+              excluded.add(station_col)
+
+
           feature_cols = [
               c
               for c in df.columns
-              if c not in {
-                  "time",
-                  "evento_24h",
-                  "_dist_bb",
-                  station_col,
-              }
+              if c not in excluded
           ]
+
 
           df = (
               df
@@ -571,86 +807,125 @@ jobs:
               .reset_index(drop=True)
           )
 
+
           positivos = int(
               df["evento_24h"].sum()
           )
+
 
           negativos = int(
               len(df) - positivos
           )
 
+
+          print("")
+          print("========================================")
+          print("DATASET FINAL")
+          print("FILAS:", len(df))
+          print("POSITIVOS 24H:", positivos)
+          print("NEGATIVOS:", negativos)
+          print(
+              "VARIABLES:",
+              len(feature_cols)
+          )
+          print("========================================")
+
+
           if len(df) < 500:
+
               raise SystemExit(
-                  "ERROR: dataset demasiado pequeno "
-                  "tras limpieza: "
-                  f"{len(df)}"
+                  "ERROR: dataset demasiado pequeño "
+                  f"despues de limpieza: {len(df)}"
               )
 
+
           if positivos < 20:
+
               raise SystemExit(
                   "ERROR: solo hay "
                   f"{positivos} positivos. "
-                  "No se entrenara el predictor "
-                  "con tan pocos ejemplos."
+                  "No se entrenara con tan pocos ejemplos."
               )
 
+
           # ============================================================
-          # HOLDOUT TEMPORAL 80 / 20
+          # HOLDOUT TEMPORAL
           # ============================================================
 
           cutoff = df["time"].quantile(
               0.80
           )
 
+
           train = df[
               df["time"] < cutoff
           ].copy()
+
 
           test = df[
               df["time"] >= cutoff
           ].copy()
 
+
           train_pos = int(
               train["evento_24h"].sum()
           )
+
 
           test_pos = int(
               test["evento_24h"].sum()
           )
 
+
+          print("")
+          print("========================================")
+          print("HOLDOUT TEMPORAL")
+          print("TRAIN:", len(train))
+          print("TEST:", len(test))
+          print("TRAIN POSITIVOS:", train_pos)
+          print("TEST POSITIVOS:", test_pos)
+          print("========================================")
+
+
           if train_pos < 10:
+
               raise SystemExit(
                   "ERROR: entrenamiento sin "
-                  "suficientes positivos: "
-                  f"{train_pos}"
+                  f"suficientes positivos: {train_pos}"
               )
 
+
           if test_pos < 10:
+
               raise SystemExit(
                   "ERROR: prueba temporal sin "
-                  "suficientes positivos: "
-                  f"{test_pos}"
+                  f"suficientes positivos: {test_pos}"
               )
+
+
+          # ============================================================
+          # ENTRENAMIENTO
+          # ============================================================
 
           X_train = train[
               feature_cols
           ]
 
+
           y_train = train[
               "evento_24h"
           ]
+
 
           X_test = test[
               feature_cols
           ]
 
+
           y_test = test[
               "evento_24h"
           ]
 
-          # ============================================================
-          # RANDOM FOREST V2
-          # ============================================================
 
           model = RandomForestClassifier(
               n_estimators=600,
@@ -661,176 +936,224 @@ jobs:
               n_jobs=-1,
           )
 
+
+          print("")
+          print("========================================")
+          print("ENTRENANDO RANDOM FOREST")
+          print("========================================")
+
+
           model.fit(
               X_train,
               y_train
           )
 
+
+          # ============================================================
+          # PREDICCIONES
+          # ============================================================
+
           proba = model.predict_proba(
               X_test
           )[:, 1]
+
 
           pred = (
               proba >= 0.50
           ).astype(int)
 
+
           # ============================================================
           # METRICAS
           # ============================================================
 
-          metrics = {
-              "version":
-                  "pre_evento_24h_v2",
+          roc_auc = roc_auc_score(
+              y_test,
+              proba
+          )
 
-              "objetivo":
-                  "evento severo en las proximas 24 horas",
 
-              "estacion":
-                  seleccion,
+          average_precision = (
+              average_precision_score(
+                  y_test,
+                  proba
+              )
+          )
 
-              "periodo_inicio":
-                  str(df["time"].min()),
 
-              "periodo_fin":
-                  str(df["time"].max()),
+          precision = precision_score(
+              y_test,
+              pred,
+              zero_division=0
+          )
 
-              "fechas_evento_utilizadas": [
-                  str(x.date())
-                  for x in fechas_evento
-              ],
 
-              "filas_validas":
-                  int(len(df)),
+          recall = recall_score(
+              y_test,
+              pred,
+              zero_division=0
+          )
 
-              "positivos_24h":
-                  positivos,
 
-              "negativos_24h":
-                  negativos,
+          f1 = f1_score(
+              y_test,
+              pred,
+              zero_division=0
+          )
 
-              "train_filas":
-                  int(len(train)),
 
-              "test_filas":
-                  int(len(test)),
+          print("")
+          print("========================================")
+          print("RESULTADOS")
+          print("ROC AUC:", roc_auc)
+          print(
+              "AVERAGE PRECISION:",
+              average_precision
+          )
+          print("PRECISION:", precision)
+          print("RECALL:", recall)
+          print("F1:", f1)
+          print("========================================")
 
-              "train_positivos":
-                  train_pos,
 
-              "test_positivos":
-                  test_pos,
+          # ============================================================
+          # IMPORTANCIA DE VARIABLES
+          # ============================================================
 
-              "roc_auc":
-                  float(
-                      roc_auc_score(
-                          y_test,
-                          proba
-                      )
-                  ),
+          importancia = (
+              pd.DataFrame({
+                  "variable": feature_cols,
+                  "importancia": model.feature_importances_,
+              })
+              .sort_values(
+                  "importancia",
+                  ascending=False
+              )
+          )
 
-              "average_precision":
-                  float(
-                      average_precision_score(
-                          y_test,
-                          proba
-                      )
-                  ),
 
-              "precision_0_50":
-                  float(
-                      precision_score(
-                          y_test,
-                          pred,
-                          zero_division=0
-                      )
-                  ),
+          importancia.to_csv(
+              OUT /
+              "importancia_predictor_pre_evento_24h_v3.csv",
+              index=False
+          )
 
-              "recall_0_50":
-                  float(
-                      recall_score(
-                          y_test,
-                          pred,
-                          zero_division=0
-                      )
-                  ),
 
-              "f1_0_50":
-                  float(
-                      f1_score(
-                          y_test,
-                          pred,
-                          zero_division=0
-                      )
-                  ),
+          # ============================================================
+          # GUARDAR MODELO
+          # ============================================================
 
-              "features":
-                  feature_cols,
+          artifact = {
+              "version": "pre_evento_24h_v3",
+              "modelo": model,
+              "features": feature_cols,
+              "fuente": "Open-Meteo",
+              "ubicacion": {
+                  "nombre": "Bahia Blanca",
+                  "latitud": -38.71,
+                  "longitud": -62.26,
+              },
+              "horizonte_horas": 24,
+              "periodo_inicio": str(
+                  df["time"].min()
+              ),
+              "periodo_fin": str(
+                  df["time"].max()
+              ),
           }
 
-          model_path = (
-              OUT
-              /
-              "climaar_predictor_pre_evento_24h_v2.joblib"
-          )
-
-          metrics_path = (
-              OUT
-              /
-              "metricas_predictor_pre_evento_24h_v2.json"
-          )
 
           joblib.dump(
-              model,
-              model_path
+              artifact,
+              OUT /
+              "climaar_predictor_pre_evento_24h_v3.joblib"
           )
 
-          metrics_path.write_text(
-              json.dumps(
-                  metrics,
-                  indent=2,
-                  ensure_ascii=False
+
+          # ============================================================
+          # METRICAS JSON
+          # ============================================================
+
+          metricas = {
+              "version": "pre_evento_24h_v3",
+              "fuente": "Open-Meteo",
+              "ubicacion": "Bahia Blanca",
+              "latitud": -38.71,
+              "longitud": -62.26,
+              "periodo_inicio": str(
+                  df["time"].min()
               ),
-              encoding="utf-8"
-          )
+              "periodo_fin": str(
+                  df["time"].max()
+              ),
+              "filas_validas": int(len(df)),
+              "variables": int(len(feature_cols)),
+              "positivos_24h": positivos,
+              "negativos": negativos,
+              "train_filas": int(len(train)),
+              "test_filas": int(len(test)),
+              "train_positivos": train_pos,
+              "test_positivos": test_pos,
+              "roc_auc": float(roc_auc),
+              "average_precision": float(
+                  average_precision
+              ),
+              "precision_0_50": float(
+                  precision
+              ),
+              "recall_0_50": float(
+                  recall
+              ),
+              "f1_0_50": float(
+                  f1
+              ),
+          }
 
-          print(
-              json.dumps(
-                  metrics,
+
+          with open(
+              OUT /
+              "metricas_predictor_pre_evento_24h_v3.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              json.dump(
+                  metricas,
+                  f,
                   indent=2,
                   ensure_ascii=False
               )
-          )
 
-          if (
-              not model_path.exists()
-              or model_path.stat().st_size < 1000
-          ):
-              raise SystemExit(
-                  "ERROR: modelo V2 no generado correctamente."
-              )
 
-          if not metrics_path.exists():
-              raise SystemExit(
-                  "ERROR: metricas V2 no generadas."
-              )
-
+          print("")
+          print("========================================")
+          print("MODELO GUARDADO")
           print(
-              "OK: predictor historico V2 "
-              "entrenado y artefactos validados."
+              OUT /
+              "climaar_predictor_pre_evento_24h_v3.joblib"
           )
+          print("========================================")
+
+          print("")
+          print("ENTRENAMIENTO COMPLETADO")
+
+
           PY
 
-      - name: Guardar modelo V2
+
+      - name: Guardar modelo V3
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add modelo/climaar_predictor_pre_evento_24h_v2.joblib
-          git add modelo/metricas_predictor_pre_evento_24h_v2.json
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.com.ar"
 
-          if git diff --cached --quiet; then
-            echo "Sin cambios para guardar."
-          else
-            git commit -m "Entrenar predictor historico pre-evento V2"
-            git push
-          fi
+          git add \
+            modelo/climaar_predictor_pre_evento_24h_v3.joblib \
+            modelo/metricas_predictor_pre_evento_24h_v3.json \
+            modelo/importancia_predictor_pre_evento_24h_v3.csv
+
+          git commit \
+            -m "Entrenar predictor historico pre-evento V3" \
+            || echo "sin cambios"
+
+          git push
