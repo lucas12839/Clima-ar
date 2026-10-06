@@ -1,34 +1,26 @@
 #!/usr/bin/env python3
 
 """
-ClimaAR - Entrenamiento del modelo de nowcasting radar.
+ClimaAR - Entrenamiento Nowcast Radar V3.
 
-Fuente:
-    data/radar/radar_features_rainviewer.csv
-
-Utiliza secuencias temporales de radar para predecir
-la evolución del siguiente frame.
-
-Targets:
-    - dbz_max
-    - area_px
-
-Validación:
-    Temporal holdout 80/20
-
-IMPORTANTE:
-    No se mezclan datos futuros con el entrenamiento.
+Mejoras:
+- secuencias temporales realmente continuas;
+- variables de estado + tendencias de los últimos 30 min;
+- separación temporal con gap;
+- rechazo de datasets completamente secos;
+- métricas de error y dirección del cambio;
+- no publica un modelo si no existe señal real.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
-
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
@@ -51,10 +43,10 @@ METRICS = Path(
 
 
 # ============================================================
-# VARIABLES DEL RADAR V7.1
+# VARIABLES BASE DEL RADAR
 # ============================================================
 
-FEATURES = [
+BASE_FEATURES = [
     "area_px",
     "distance_km",
     "dbz_max",
@@ -66,8 +58,38 @@ FEATURES = [
 ]
 
 
+# Variables para calcular evolución
+DELTA_FEATURES = [
+    "area_px",
+    "distance_km",
+    "dbz_max",
+    "dbz_mean",
+    "dbz_p90",
+    "dbz_pixels",
+    "nucleos",
+]
+
+
 # ============================================================
-# CONVERSIÓN DE NÚCLEOS
+# REQUISITOS DEL DATASET
+# ============================================================
+
+MIN_FRAMES = 50
+
+MIN_SEQUENCES = 30
+
+MIN_PRECIP_FRAMES = 10
+
+FRAME_MIN_MINUTES = 5
+
+FRAME_MAX_MINUTES = 20
+
+# Separación de seguridad entre entrenamiento y prueba
+SEQUENCE_GAP = 4
+
+
+# ============================================================
+# CONVERTIR NÚCLEOS
 # ============================================================
 
 def parse_nucleos(value):
@@ -77,14 +99,23 @@ def parse_nucleos(value):
 
     text = str(value).strip()
 
-    if text in ("", "[]", "nan", "None"):
+    if text in (
+        "",
+        "[]",
+        "nan",
+        "None"
+    ):
         return 0.0
 
     try:
+
         parsed = json.loads(text)
 
         if isinstance(parsed, list):
-            return float(len(parsed))
+
+            return float(
+                len(parsed)
+            )
 
     except Exception:
         pass
@@ -98,14 +129,6 @@ def parse_nucleos(value):
 
 def prepare_dataframe(df):
 
-    print("Columnas encontradas:")
-
-    for column in df.columns:
-        print(f"  - {column}")
-
-    print("")
-
-    # Compatibilidad con posibles nombres del radar.
     aliases = {
         "area_px": "area",
         "nucleos": "components",
@@ -113,23 +136,25 @@ def prepare_dataframe(df):
 
     for target, source in aliases.items():
 
-        if target not in df.columns and source in df.columns:
+        if (
+            target not in df.columns
+            and
+            source in df.columns
+        ):
 
             df[target] = df[source]
 
-    # Crear columnas faltantes de forma segura.
-    for column in FEATURES:
+    # Crear columnas faltantes
+    # solamente como fallback.
+
+    for column in BASE_FEATURES:
 
         if column not in df.columns:
 
-            print(
-                f"Aviso: falta {column}. "
-                "Se rellenará con 0."
-            )
-
             df[column] = 0.0
 
-    # Timestamp.
+    # Timestamp
+
     if "frame_time" in df.columns:
 
         df["frame_time"] = pd.to_numeric(
@@ -147,52 +172,201 @@ def prepare_dataframe(df):
     else:
 
         raise SystemExit(
-            "ERROR: el dataset no contiene "
-            "frame_time ni timestamp."
+            "ERROR: falta frame_time/timestamp."
         )
 
-    # Conversión numérica.
-    numeric_columns = [
-        column
-        for column in FEATURES
-        if column != "nucleos"
-    ]
+    # Conversión numérica
 
-    for column in numeric_columns:
+    for column in BASE_FEATURES:
+
+        if column == "nucleos":
+            continue
 
         df[column] = pd.to_numeric(
             df[column],
             errors="coerce"
         )
 
-    # Núcleos.
-    if "nucleos" in df.columns:
+    # Núcleos
 
-        df["nucleos"] = df["nucleos"].apply(
-            parse_nucleos
-        )
+    df["nucleos"] = df[
+        "nucleos"
+    ].apply(
+        parse_nucleos
+    )
 
-    # Limpiar infinitos.
+    # Limpiar infinitos
+
     df = df.replace(
-        [np.inf, -np.inf],
+        [
+            np.inf,
+            -np.inf
+        ],
         np.nan
     )
 
-    # Orden temporal.
+    # Los NaN de las variables radar
+    # se interpretan como ausencia de señal.
+
+    df[
+        BASE_FEATURES
+    ] = df[
+        BASE_FEATURES
+    ].fillna(0.0)
+
+    # El timestamp sí debe ser válido.
+
+    df = df.dropna(
+        subset=[
+            "frame_time"
+        ]
+    )
+
+    # Orden temporal
+
     df = df.sort_values(
         "frame_time"
     )
 
-    # Eliminar frames duplicados.
+    # Evitar frames duplicados
+
     df = df.drop_duplicates(
-        subset=["frame_time"]
+        subset=[
+            "frame_time"
+        ]
     )
 
-    df = df.reset_index(
+    return df.reset_index(
         drop=True
     )
 
-    return df
+
+# ============================================================
+# CONTROL DE CALIDAD
+# ============================================================
+
+def dataset_quality(df):
+
+    precipitation = (
+        df["area_px"] > 0
+    )
+
+    precipitation_frames = int(
+        precipitation.sum()
+    )
+
+    dbz_frames = int(
+        (
+            df["dbz_pixels"] > 0
+        ).sum()
+    )
+
+    unique_area = int(
+        df["area_px"].nunique()
+    )
+
+    max_area = float(
+        df["area_px"].max()
+    )
+
+    if len(df) < MIN_FRAMES:
+
+        raise SystemExit(
+            f"ERROR: hay {len(df)} frames. "
+            f"Se necesitan al menos "
+            f"{MIN_FRAMES}."
+        )
+
+    if (
+        precipitation_frames
+        <
+        MIN_PRECIP_FRAMES
+    ):
+
+        raise SystemExit(
+            f"ERROR: solo hay "
+            f"{precipitation_frames} "
+            "frames con precipitación. "
+            f"Se necesitan al menos "
+            f"{MIN_PRECIP_FRAMES}. "
+            "No se entrenará un modelo "
+            "artificialmente seco."
+        )
+
+    if (
+        dbz_frames
+        <
+        MIN_PRECIP_FRAMES
+    ):
+
+        raise SystemExit(
+            "ERROR: hay precipitación "
+            "pero no suficiente señal "
+            "dBZ válida."
+        )
+
+    if (
+        unique_area < 3
+        or
+        max_area <= 0
+    ):
+
+        raise SystemExit(
+            "ERROR: no existe variación "
+            "espacial suficiente en el radar."
+        )
+
+    return {
+
+        "frames":
+            len(df),
+
+        "frames_precipitacion":
+            precipitation_frames,
+
+        "frames_dbz":
+            dbz_frames,
+
+        "areas_distintas":
+            unique_area,
+
+        "area_max":
+            max_area,
+
+        "porcentaje_precipitacion":
+            round(
+                100.0
+                *
+                precipitation_frames
+                /
+                len(df),
+                2
+            ),
+    }
+
+
+# ============================================================
+# COMPROBAR CONTINUIDAD TEMPORAL
+# ============================================================
+
+def continuous(
+    a,
+    b
+):
+
+    minutes = (
+        float(b)
+        -
+        float(a)
+    ) / 60.0
+
+    return (
+        FRAME_MIN_MINUTES
+        <=
+        minutes
+        <=
+        FRAME_MAX_MINUTES
+    )
 
 
 # ============================================================
@@ -203,54 +377,91 @@ def build_sequences(df):
 
     rows = []
 
-    # Utilizamos cuatro observaciones:
+    feature_names = []
+
+    # Los cuatro frames utilizados:
     #
     # t-30
     # t-20
     # t-10
     # t
     #
-    # para predecir:
+    # predicen:
     #
     # t+10
+
+    for offset in (
+        -30,
+        -20,
+        -10,
+        0
+    ):
+
+        for feature in BASE_FEATURES:
+
+            feature_names.append(
+                f"t{offset}_{feature}"
+            )
+
+    # Variables de tendencia
+
+    for offset in (
+        -20,
+        -10,
+        0
+    ):
+
+        for feature in DELTA_FEATURES:
+
+            feature_names.append(
+                f"delta{offset}_{feature}"
+            )
+
+    # Recorrer frames
 
     for i in range(
         3,
         len(df) - 1
     ):
 
-        current = df.iloc[i]
-        future = df.iloc[i + 1]
-
-        current_time = float(
-            current["frame_time"]
-        )
-
-        future_time = float(
-            future["frame_time"]
-        )
-
-        delta_minutes = (
-            future_time
-            -
-            current_time
-        ) / 60.0
-
-        # Aceptamos aproximadamente un frame
-        # cada 10 minutos.
+        # Cinco frames:
         #
-        # Permitimos retrasos normales del radar.
+        # t-30
+        # t-20
+        # t-10
+        # t
+        # t+10
 
-        if (
-            delta_minutes < 5
-            or
-            delta_minutes > 20
+        times = [
+
+            float(
+                df.iloc[j][
+                    "frame_time"
+                ]
+            )
+
+            for j in range(
+                i - 3,
+                i + 2
+            )
+        ]
+
+        # TODOS deben estar temporalmente
+        # próximos.
+
+        if not all(
+            continuous(
+                times[j],
+                times[j + 1]
+            )
+            for j in range(4)
         ):
+
             continue
 
         values = []
 
-        valid = True
+        # Estado de los cuatro frames
 
         for j in range(
             i - 3,
@@ -259,71 +470,74 @@ def build_sequences(df):
 
             frame = df.iloc[j]
 
-            for feature in FEATURES:
-
-                value = frame[feature]
-
-                if pd.isna(value):
-
-                    value = 0.0
-
-                try:
-
-                    value = float(value)
-
-                except Exception:
-
-                    valid = False
-                    value = 0.0
+            for feature in BASE_FEATURES:
 
                 values.append(
-                    value
+                    float(
+                        frame[feature]
+                    )
                 )
 
-        if not valid:
-            continue
+        # Tendencias entre frames
 
-        target_dbz = future["dbz_max"]
+        for j in range(
+            i - 2,
+            i + 1
+        ):
 
-        target_area = future["area_px"]
+            current = df.iloc[j]
 
-        if pd.isna(target_dbz):
-            target_dbz = 0.0
+            previous = df.iloc[
+                j - 1
+            ]
 
-        if pd.isna(target_area):
-            target_area = 0.0
+            for feature in DELTA_FEATURES:
+
+                values.append(
+
+                    float(
+                        current[
+                            feature
+                        ]
+                    )
+                    -
+                    float(
+                        previous[
+                            feature
+                        ]
+                    )
+
+                )
+
+        # Target: siguiente frame
+
+        future = df.iloc[
+            i + 1
+        ]
+
+        values.extend([
+
+            float(
+                future[
+                    "dbz_max"
+                ]
+            ),
+
+            float(
+                future[
+                    "area_px"
+                ]
+            ),
+
+        ])
 
         rows.append(
             values
-            +
-            [
-                float(target_dbz),
-                float(target_area),
-            ]
         )
 
-    if not rows:
-
-        return pd.DataFrame()
-
-    columns = []
-
-    offsets = [
-        -30,
-        -20,
-        -10,
-        0,
-    ]
-
-    for offset in offsets:
-
-        for feature in FEATURES:
-
-            columns.append(
-                f"t{offset}_{feature}"
-            )
-
-    columns.extend(
+    columns = (
+        feature_names
+        +
         [
             "target_dbz_max",
             "target_area_px",
@@ -337,21 +551,29 @@ def build_sequences(df):
 
 
 # ============================================================
-# ENTRENAR Y MEDIR
+# ENTRENAMIENTO
 # ============================================================
 
 def train_target(
     X_train,
     X_test,
     y_train,
-    y_test
+    y_test,
+    target
 ):
 
     model = HistGradientBoostingRegressor(
-        max_iter=250,
-        learning_rate=0.05,
+
+        max_iter=300,
+
+        learning_rate=0.04,
+
         max_leaf_nodes=31,
-        l2_regularization=1.0,
+
+        min_samples_leaf=5,
+
+        l2_regularization=1.5,
+
         random_state=42,
     )
 
@@ -369,19 +591,75 @@ def train_target(
         prediction
     )
 
-    rmse = np.sqrt(
+    rmse = math.sqrt(
         mean_squared_error(
             y_test,
             prediction
         )
     )
 
+    # --------------------------------------------------------
+    # DIRECCIÓN DEL CAMBIO
+    # --------------------------------------------------------
+
+    if target == "target_dbz_max":
+
+        reference = np.asarray(
+            X_test[
+                "t0_dbz_max"
+            ]
+        )
+
+    else:
+
+        reference = np.asarray(
+            X_test[
+                "t0_area_px"
+            ]
+        )
+
+    actual_change = (
+        np.asarray(y_test)
+        -
+        reference
+    )
+
+    predicted_change = (
+        np.asarray(prediction)
+        -
+        reference
+    )
+
+    direction = float(
+        np.mean(
+            np.sign(
+                actual_change
+            )
+            ==
+            np.sign(
+                predicted_change
+            )
+        )
+    )
+
     return (
+
         model,
+
         {
-            "MAE": float(mae),
-            "RMSE": float(rmse),
+            "MAE":
+                float(mae),
+
+            "RMSE":
+                float(rmse),
+
+            "direccion_cambio_correcta":
+                round(
+                    direction,
+                    4
+                ),
         }
+
     )
 
 
@@ -392,13 +670,15 @@ def train_target(
 def main():
 
     print("")
-    print("==============================================")
-    print("CLIMAAR - ENTRENAMIENTO NOWCAST")
-    print("==============================================")
+    print("=" * 50)
+    print(
+        "CLIMAAR - ENTRENAMIENTO NOWCAST V3"
+    )
+    print("=" * 50)
     print("")
 
     # --------------------------------------------------------
-    # COMPROBAR CSV
+    # CSV
     # --------------------------------------------------------
 
     if not CSV.exists():
@@ -407,10 +687,6 @@ def main():
             f"ERROR: no existe {CSV}"
         )
 
-    print(
-        f"Archivo: {CSV}"
-    )
-
     df = pd.read_csv(
         CSV
     )
@@ -418,15 +694,6 @@ def main():
     print(
         f"Filas originales: {len(df)}"
     )
-
-    if len(df) < 50:
-
-        raise SystemExit(
-            f"ERROR: solamente hay {len(df)} frames. "
-            "Se necesitan al menos 50."
-        )
-
-    print("")
 
     # --------------------------------------------------------
     # PREPARAR
@@ -440,7 +707,26 @@ def main():
         f"Frames válidos: {len(df)}"
     )
 
+    # --------------------------------------------------------
+    # CALIDAD
+    # --------------------------------------------------------
+
+    quality = dataset_quality(
+        df
+    )
+
     print("")
+    print(
+        "CALIDAD DEL DATASET:"
+    )
+
+    print(
+        json.dumps(
+            quality,
+            indent=2,
+            ensure_ascii=False
+        )
+    )
 
     # --------------------------------------------------------
     # SECUENCIAS
@@ -450,77 +736,125 @@ def main():
         df
     )
 
-    if sequences.empty:
-
-        raise SystemExit(
-            "ERROR: no se pudieron construir "
-            "secuencias temporales válidas."
-        )
-
+    print("")
     print(
-        f"Secuencias construidas: {len(sequences)}"
+        f"Secuencias continuas: "
+        f"{len(sequences)}"
     )
 
-    if len(sequences) < 30:
+    if len(sequences) < MIN_SEQUENCES:
 
         raise SystemExit(
-            f"ERROR: solamente hay "
-            f"{len(sequences)} secuencias. "
-            "Se necesitan al menos 30."
+            f"ERROR: solo hay "
+            f"{len(sequences)} "
+            "secuencias continuas. "
+            f"Se necesitan al menos "
+            f"{MIN_SEQUENCES}."
         )
 
-    print("")
-
     # --------------------------------------------------------
-    # FEATURES
+    # FEATURES / TARGETS
     # --------------------------------------------------------
 
     target_columns = [
+
         "target_dbz_max",
+
         "target_area_px",
+
     ]
 
     feature_columns = [
+
         column
+
         for column in sequences.columns
-        if column not in target_columns
+
+        if column
+        not in target_columns
+
     ]
 
     X = sequences[
         feature_columns
-    ]
+    ].copy()
 
     # --------------------------------------------------------
-    # VALIDACIÓN TEMPORAL
+    # HOLDOUT TEMPORAL
     # --------------------------------------------------------
 
     split = int(
-        len(sequences) * 0.80
+        len(sequences)
+        *
+        0.80
     )
 
-    if split <= 0 or split >= len(sequences):
+    train_end = (
+        split
+        -
+        SEQUENCE_GAP
+    )
+
+    if (
+        train_end < 15
+        or
+        split >= len(sequences)
+    ):
 
         raise SystemExit(
-            "ERROR: división temporal inválida."
+            "ERROR: dataset demasiado "
+            "pequeño para realizar "
+            "un holdout temporal seguro."
         )
 
     X_train = X.iloc[
-        :split
+        :train_end
     ]
 
     X_test = X.iloc[
         split:
     ]
 
-    print(
-        f"Entrenamiento: {len(X_train)}"
-    )
-
-    print(
-        f"Prueba temporal: {len(X_test)}"
-    )
-
     print("")
+    print(
+        f"Entrenamiento: "
+        f"{len(X_train)}"
+    )
+
+    print(
+        f"Gap temporal: "
+        f"{SEQUENCE_GAP} secuencias"
+    )
+
+    print(
+        f"Prueba: "
+        f"{len(X_test)}"
+    )
+
+    # --------------------------------------------------------
+    # VERIFICAR QUE EL TEST TENGA LLUVIA
+    # --------------------------------------------------------
+
+    if not (
+        sequences.iloc[
+            split:
+        ][
+            "target_area_px"
+        ]
+        > 0
+    ).any():
+
+        raise SystemExit(
+
+            "ERROR: el bloque temporal "
+            "de prueba no contiene "
+            "precipitación. "
+
+            "Se necesita otro período "
+            "con lluvia para validar "
+            "el modelo correctamente."
+
+        )
 
     # --------------------------------------------------------
     # MODELOS
@@ -530,16 +864,11 @@ def main():
 
     metrics = {
 
-        "version": "2.0",
-
-        "modelo":
-            "HistGradientBoostingRegressor",
+        "version":
+            "3.0",
 
         "fuente":
             "RainViewer V7.1",
-
-        "archivo_entrada":
-            str(CSV),
 
         "horizonte_minutos":
             10,
@@ -547,58 +876,63 @@ def main():
         "frames_por_secuencia":
             4,
 
-        "secuencias":
-            int(len(sequences)),
+        "secuencias_totales":
+            int(
+                len(sequences)
+            ),
 
         "entrenamiento":
-            int(len(X_train)),
+            int(
+                len(X_train)
+            ),
 
         "prueba":
-            int(len(X_test)),
+            int(
+                len(X_test)
+            ),
 
-        "validacion": {
+        "gap_secuencias":
+            SEQUENCE_GAP,
 
-            "tipo":
-                "temporal_holdout",
+        "calidad_dataset":
+            quality,
 
-            "porcentaje_entrenamiento":
-                0.80,
+        "validacion":
+            "temporal_holdout_con_gap",
 
-            "porcentaje_prueba":
-                0.20,
-        },
-
-        "targets": target_columns,
+        "targets":
+            target_columns,
     }
 
     # --------------------------------------------------------
     # DBZ
     # --------------------------------------------------------
 
+    print("")
     print(
-        "Entrenando predicción de dbz_max..."
+        "Entrenando dbz_max..."
     )
 
     y_dbz = sequences[
         "target_dbz_max"
     ]
 
-    y_train_dbz = y_dbz.iloc[
-        :split
-    ]
+    model_dbz, result_dbz = train_target(
 
-    y_test_dbz = y_dbz.iloc[
-        split:
-    ]
-
-    (
-        model_dbz,
-        metrics_dbz
-    ) = train_target(
         X_train,
+
         X_test,
-        y_train_dbz,
-        y_test_dbz
+
+        y_dbz.iloc[
+            :train_end
+        ],
+
+        y_dbz.iloc[
+            split:
+        ],
+
+        "target_dbz_max"
+
     )
 
     models[
@@ -607,46 +941,45 @@ def main():
 
     metrics[
         "target_dbz_max"
-    ] = metrics_dbz
+    ] = result_dbz
 
     print(
-        f"DBZ MAE: {metrics_dbz['MAE']:.4f}"
+        json.dumps(
+            result_dbz,
+            indent=2,
+            ensure_ascii=False
+        )
     )
-
-    print(
-        f"DBZ RMSE: {metrics_dbz['RMSE']:.4f}"
-    )
-
-    print("")
 
     # --------------------------------------------------------
     # AREA
     # --------------------------------------------------------
 
+    print("")
     print(
-        "Entrenando predicción de area_px..."
+        "Entrenando area_px..."
     )
 
     y_area = sequences[
         "target_area_px"
     ]
 
-    y_train_area = y_area.iloc[
-        :split
-    ]
+    model_area, result_area = train_target(
 
-    y_test_area = y_area.iloc[
-        split:
-    ]
-
-    (
-        model_area,
-        metrics_area
-    ) = train_target(
         X_train,
+
         X_test,
-        y_train_area,
-        y_test_area
+
+        y_area.iloc[
+            :train_end
+        ],
+
+        y_area.iloc[
+            split:
+        ],
+
+        "target_area_px"
+
     )
 
     models[
@@ -655,31 +988,24 @@ def main():
 
     metrics[
         "target_area_px"
-    ] = metrics_area
+    ] = result_area
 
     print(
-        f"AREA MAE: {metrics_area['MAE']:.4f}"
+        json.dumps(
+            result_area,
+            indent=2,
+            ensure_ascii=False
+        )
     )
-
-    print(
-        f"AREA RMSE: {metrics_area['RMSE']:.4f}"
-    )
-
-    print("")
 
     # --------------------------------------------------------
     # GUARDAR MODELO
     # --------------------------------------------------------
 
-    MODEL.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
     artifact = {
 
         "version":
-            "2.0",
+            "3.0",
 
         "source":
             "RainViewer V7.1",
@@ -699,18 +1025,29 @@ def main():
         "frames":
             4,
 
+        "delta_features":
+            DELTA_FEATURES,
+
         "validation": {
 
             "type":
-                "temporal_holdout",
+                "temporal_holdout_with_gap",
 
             "train_fraction":
                 0.80,
+
+            "gap_sequences":
+                SEQUENCE_GAP,
 
             "test_fraction":
                 0.20,
         },
     }
+
+    MODEL.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
     joblib.dump(
         artifact,
@@ -718,34 +1055,33 @@ def main():
     )
 
     METRICS.write_text(
+
         json.dumps(
             metrics,
-            indent=2
+            indent=2,
+            ensure_ascii=False
         ),
+
         encoding="utf-8"
+
     )
 
     # --------------------------------------------------------
-    # RESULTADO
+    # FINAL
     # --------------------------------------------------------
 
     print("")
-    print("==============================================")
-    print("ENTRENAMIENTO COMPLETADO")
-    print("==============================================")
+    print("=" * 50)
+    print(
+        "ENTRENAMIENTO NOWCAST V3 COMPLETADO"
+    )
+    print("=" * 50)
     print("")
     print(
         f"Modelo: {MODEL}"
     )
     print(
         f"Métricas: {METRICS}"
-    )
-    print("")
-    print(
-        json.dumps(
-            metrics,
-            indent=2
-        )
     )
     print("")
 
