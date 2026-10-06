@@ -1,0 +1,53 @@
+name: Reconstruir 3 eventos severos
+
+on:
+  workflow_dispatch:
+
+jobs:
+  reconstruir:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Ejecutar reconstruccion
+        run: |
+          python scripts/reconstruir_eventos_severos.py
+
+      - name: Validar archivos
+        run: |
+          test -s data/eventos_severos/meteorologia_2019-12-30.csv
+          test -s data/eventos_severos/meteorologia_2023-12-16.csv
+          test -s data/eventos_severos/meteorologia_2025-03-07.csv
+          test -s data/eventos_severos/meteorologia_tres_eventos.csv
+          test -s data/eventos_severos/resumen_eventos.json
+
+          echo "Todos los archivos fueron creados correctamente."
+
+      - name: Guardar resultados
+        run: |
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.com.ar"
+
+          git add data/eventos_severos/
+
+          git commit \
+            -m "Reconstruir meteorologia de 3 eventos severos" \
+            || echo "sin cambios"
+
+          git push
