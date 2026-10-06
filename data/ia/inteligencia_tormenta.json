@@ -1,7 +1,7 @@
 {
-  "version": "2.0.0",
-  "motor": "ClimaAR Intelligence - Storm Engine",
-  "actualizado_utc": "2026-10-06T18:33:31.990556+00:00",
+  "version": "3.0.0",
+  "motor": "ClimaAR Intelligence - Storm Engine Central",
+  "actualizado_utc": "2026-10-06T19:36:59.174497+00:00",
   "ubicacion": {
     "ciudad": "Bahia Blanca",
     "latitud": -38.71,
@@ -10,7 +10,7 @@
   "estado": "sin_tormenta_activa",
   "severidad": "verde",
   "probabilidades": {
-    "tormenta": 0.328,
+    "tormenta": 0.384,
     "llegada_bahia": 0.0,
     "fortalecimiento": null,
     "debilitamiento": null
@@ -20,6 +20,24 @@
     "viento_fuerte": 0.02,
     "granizo": 0.01,
     "rayo": 0.01
+  },
+  "indice_hibrido_severidad": 0.055,
+  "referencia_historica": {
+    "eventos": [
+      {
+        "fecha": "2019-12-30",
+        "tipo": "extremo"
+      },
+      {
+        "fecha": "2023-12-16",
+        "tipo": "extremo"
+      },
+      {
+        "fecha": "2025-03-07",
+        "tipo": "extremo"
+      }
+    ],
+    "score_ambiente_compatible": 0.25
   },
   "eta_minutos": null,
   "duracion_estimada_minutos": null,
@@ -56,15 +74,15 @@
     "estado": "sin_precipitacion_detectada"
   },
   "ambiente": {
-    "tiempo_utc": "2026-10-06T19:00",
+    "tiempo_utc": "2026-10-06T20:00",
     "punto": "BB_CENTRO",
     "latitud": -38.71,
     "longitud": -62.26,
-    "temperature_2m": 17.1,
-    "relative_humidity_2m": 72.0,
-    "dew_point_2m": 12.1,
-    "pressure_msl": 1014.9,
-    "surface_pressure": 1011.9,
+    "temperature_2m": 15.9,
+    "relative_humidity_2m": 84.0,
+    "dew_point_2m": 13.2,
+    "pressure_msl": 1014.8,
+    "surface_pressure": 1011.8,
     "precipitation": 1.0,
     "rain": 1.0,
     "showers": 0.0,
@@ -73,18 +91,18 @@
     "cloud_cover_mid": 100.0,
     "cloud_cover_high": 100.0,
     "visibility": null,
-    "wind_speed_10m": 4.7,
-    "wind_direction_10m": 337.0,
-    "wind_gusts_10m": 17.3,
-    "wind_speed_100m": 9.2,
-    "wind_direction_100m": 349.0,
+    "wind_speed_10m": 3.1,
+    "wind_direction_10m": 111.0,
+    "wind_gusts_10m": 15.1,
+    "wind_speed_100m": 6.1,
+    "wind_direction_100m": 90.0,
     "wind_speed_200m": null,
     "wind_direction_200m": null,
     "cape": 70.0,
     "convective_inhibition": null,
-    "vapour_pressure_deficit": 0.55,
+    "vapour_pressure_deficit": 0.29,
     "boundary_layer_height": null,
-    "total_column_integrated_water_vapour": 24.5,
+    "total_column_integrated_water_vapour": 25.0,
     "freezing_level_height": null,
     "lightning_density": null
   },
@@ -93,17 +111,20 @@
   "calidad_tracking": 0.0,
   "confianza_modelo": 0.65,
   "limitaciones": [
-    "El radar V7 actual no aporta dBZ cuantitativo utilizable en este motor.",
+    "El radar actual no aporta dBZ cuantitativo validado en este motor.",
     "No hay observacion directa de rayos integrada en esta etapa.",
-    "No se debe interpretar como alerta oficial.",
-    "Las probabilidades son estimaciones y requieren calibracion con historico temporal."
+    "La referencia historica no sustituye observaciones radar en tiempo real.",
+    "La severidad es una estimacion y no reemplaza avisos oficiales.",
+    "Las probabilidades requieren calibracion continua con historico temporal."
   ],
   "razones": [
-    "No se detecta precipitacion activa en el radar V7.",
+    "No se detecta precipitacion activa en el radar.",
     "CAPE ECMWF: 70 J/kg.",
-    "Rafaga prevista ECMWF: 17.3 km/h.",
+    "Rafaga prevista ECMWF: 15.1 km/h.",
     "Lluvia prevista: 1.0 mm.",
-    "Probabilidad estimada de impacto en Bahia Blanca: 0%.",
-    "La severidad es una estimacion independiente y no reemplaza avisos oficiales."
+    "Indice hibrido de severidad: 6%.",
+    "Probabilidad estimada de impacto: 0%.",
+    "La severidad y la trayectoria se calculan como dimensiones separadas.",
+    "La estimacion no reemplaza avisos oficiales y requiere validacion continua."
   ]
 }
