@@ -1,0 +1,537 @@
+name: ClimaAR - Prediccion Historica Pre-Evento
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  entrenamiento:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scikit-learn joblib
+
+      - name: Entrenar predictor 24h
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import joblib
+          import numpy as np
+          import pandas as pd
+          from sklearn.ensemble import RandomForestClassifier
+          from sklearn.metrics import roc_auc_score, average_precision_score, precision_score, recall_score, f1_score
+
+          CLIMA = Path('data/historico/clima_horario_1980_2026.csv')
+          EVENTOS = Path('data/historico/eventos_severos.csv')
+          OUT = Path('modelo')
+          OUT.mkdir(exist_ok=True)
+
+          if not CLIMA.exists():
+              raise SystemExit(f'ERROR: no existe {CLIMA}')
+          if not EVENTOS.exists():
+              raise SystemExit(f'ERROR: no existe {EVENTOS}')
+
+          clima = pd.read_csv(CLIMA)
+          eventos = pd.read_csv(EVENTOS)
+
+          required = [
+              'time',
+              'temperature_2m',
+              'relative_humidity_2m',
+              'dew_point_2m',
+              'pressure_msl',
+              'precipitation',
+              'wind_speed_10m',
+              'wind_direction_10m',
+              'wind_gusts_10m'
+          ]
+
+          missing = [c for c in required if c not in clima.columns]
+
+          if missing:
+              raise SystemExit(
+                  f'Faltan columnas meteorologicas: {missing}'
+              )
+
+          clima['time'] = pd.to_datetime(
+              clima['time'],
+              errors='coerce'
+          )
+
+          clima = (
+              clima
+              .dropna(subset=['time'])
+              .sort_values('time')
+              .drop_duplicates('time')
+              .reset_index(drop=True)
+          )
+
+          for c in required[1:]:
+              clima[c] = pd.to_numeric(
+                  clima[c],
+                  errors='coerce'
+              )
+
+          event_cols = [
+              'fecha',
+              'tormenta_severa',
+              'viento_severo',
+              'precipitacion_extrema',
+              'inundacion',
+              'granizo',
+              'tornado'
+          ]
+
+          missing = [
+              c for c in event_cols
+              if c not in eventos.columns
+          ]
+
+          if missing:
+              raise SystemExit(
+                  f'Faltan columnas de eventos: {missing}'
+              )
+
+          eventos['fecha'] = pd.to_datetime(
+              eventos['fecha'],
+              errors='coerce'
+          ).dt.normalize()
+
+          eventos = eventos.dropna(
+              subset=['fecha']
+          ).copy()
+
+          flags = eventos[
+              [
+                  'tormenta_severa',
+                  'viento_severo',
+                  'precipitacion_extrema',
+                  'inundacion',
+                  'granizo',
+                  'tornado'
+              ]
+          ].apply(
+              pd.to_numeric,
+              errors='coerce'
+          ).fillna(0)
+
+          eventos['severo'] = (
+              flags.sum(axis=1) > 0
+          ).astype(int)
+
+          fechas_evento = set(
+              eventos.loc[
+                  eventos['severo'] == 1,
+                  'fecha'
+              ]
+          )
+
+          if len(fechas_evento) < 3:
+              raise SystemExit(
+                  'ERROR: hay menos de 3 fechas de eventos severos.'
+              )
+
+          # ============================================================
+          # VARIABLES TEMPORALES
+          # ============================================================
+
+          df = clima.copy()
+
+          df['hour_sin'] = np.sin(
+              2 * np.pi * df['time'].dt.hour / 24
+          )
+
+          df['hour_cos'] = np.cos(
+              2 * np.pi * df['time'].dt.hour / 24
+          )
+
+          df['month_sin'] = np.sin(
+              2 * np.pi * df['time'].dt.month / 12
+          )
+
+          df['month_cos'] = np.cos(
+              2 * np.pi * df['time'].dt.month / 12
+          )
+
+          # ============================================================
+          # VIENTO VECTORIAL
+          # ============================================================
+
+          rad = np.deg2rad(
+              df['wind_direction_10m']
+          )
+
+          df['wind_u'] = (
+              df['wind_speed_10m']
+              * np.sin(rad)
+          )
+
+          df['wind_v'] = (
+              df['wind_speed_10m']
+              * np.cos(rad)
+          )
+
+          # ============================================================
+          # VARIABLES FISICAS
+          # ============================================================
+
+          df['dew_spread'] = (
+              df['temperature_2m']
+              - df['dew_point_2m']
+          )
+
+          base = [
+              'temperature_2m',
+              'relative_humidity_2m',
+              'dew_point_2m',
+              'pressure_msl',
+              'precipitation',
+              'wind_speed_10m',
+              'wind_gusts_10m',
+              'dew_spread'
+          ]
+
+          # ============================================================
+          # TENDENCIAS Y VENTANAS
+          # ============================================================
+
+          for c in base:
+
+              df[f'{c}_chg1h'] = (
+                  df[c].diff(1)
+              )
+
+              df[f'{c}_chg3h'] = (
+                  df[c].diff(3)
+              )
+
+              df[f'{c}_mean3h'] = (
+                  df[c]
+                  .rolling(3, min_periods=3)
+                  .mean()
+              )
+
+              df[f'{c}_mean6h'] = (
+                  df[c]
+                  .rolling(6, min_periods=6)
+                  .mean()
+              )
+
+              df[f'{c}_max6h'] = (
+                  df[c]
+                  .rolling(6, min_periods=6)
+                  .max()
+              )
+
+          df['rain3h'] = (
+              df['precipitation']
+              .rolling(3, min_periods=3)
+              .sum()
+          )
+
+          df['rain6h'] = (
+              df['precipitation']
+              .rolling(6, min_periods=6)
+              .sum()
+          )
+
+          df['rain12h'] = (
+              df['precipitation']
+              .rolling(12, min_periods=12)
+              .sum()
+          )
+
+          df['pressure_drop6h'] = (
+              df['pressure_msl']
+              - df['pressure_msl'].shift(6)
+          )
+
+          # ============================================================
+          # OBJETIVO
+          #
+          # 1 = existe evento severo durante las proximas 24 horas
+          # 0 = no existe evento severo durante las proximas 24 horas
+          # ============================================================
+
+          event_series = pd.Series(
+              df['time']
+              .dt.normalize()
+              .isin(fechas_evento)
+              .astype(int)
+              .to_numpy(),
+              index=df.index
+          )
+
+          future_label = np.zeros(
+              len(df),
+              dtype=np.int8
+          )
+
+          for h in range(1, 25):
+
+              future_label[:-h] = np.maximum(
+                  future_label[:-h],
+                  event_series.iloc[h:].to_numpy()
+              )
+
+          df['evento_24h'] = future_label
+
+          # ============================================================
+          # FEATURES
+          # ============================================================
+
+          feature_cols = [
+              c
+              for c in df.columns
+              if c not in [
+                  'time',
+                  'evento_24h'
+              ]
+          ]
+
+          df = (
+              df
+              .replace(
+                  [np.inf, -np.inf],
+                  np.nan
+              )
+              .dropna(
+                  subset=feature_cols
+              )
+              .reset_index(drop=True)
+          )
+
+          if len(df) < 500:
+              raise SystemExit(
+                  f'ERROR: dataset demasiado pequeno '
+                  f'tras limpieza: {len(df)} filas.'
+              )
+
+          positivos = int(
+              df['evento_24h'].sum()
+          )
+
+          if positivos < 10:
+              raise SystemExit(
+                  f'ERROR: solo hay {positivos} '
+                  f'muestras positivas de pre-evento.'
+              )
+
+          # ============================================================
+          # HOLDOUT TEMPORAL
+          #
+          # 80% pasado = entrenamiento
+          # 20% futuro = prueba
+          # ============================================================
+
+          cutoff = df['time'].quantile(0.80)
+
+          train = df[
+              df['time'] < cutoff
+          ].copy()
+
+          test = df[
+              df['time'] >= cutoff
+          ].copy()
+
+          if train['evento_24h'].sum() < 5:
+              raise SystemExit(
+                  'ERROR: entrenamiento sin suficientes positivos.'
+              )
+
+          if test['evento_24h'].sum() < 5:
+              raise SystemExit(
+                  'ERROR: prueba temporal sin suficientes positivos.'
+              )
+
+          X_train = train[
+              feature_cols
+          ]
+
+          y_train = train[
+              'evento_24h'
+          ]
+
+          X_test = test[
+              feature_cols
+          ]
+
+          y_test = test[
+              'evento_24h'
+          ]
+
+          # ============================================================
+          # MODELO
+          # ============================================================
+
+          model = RandomForestClassifier(
+              n_estimators=500,
+              max_features='sqrt',
+              min_samples_leaf=4,
+              class_weight='balanced_subsample',
+              random_state=42,
+              n_jobs=-1
+          )
+
+          model.fit(
+              X_train,
+              y_train
+          )
+
+          proba = model.predict_proba(
+              X_test
+          )[:, 1]
+
+          pred = (
+              proba >= 0.50
+          ).astype(int)
+
+          # ============================================================
+          # METRICAS
+          # ============================================================
+
+          metrics = {
+              'version': 'pre_evento_24h_v1',
+
+              'periodo_inicio': str(
+                  df['time'].min()
+              ),
+
+              'periodo_fin': str(
+                  df['time'].max()
+              ),
+
+              'filas_validas': int(
+                  len(df)
+              ),
+
+              'positivos_24h': positivos,
+
+              'train_filas': int(
+                  len(train)
+              ),
+
+              'test_filas': int(
+                  len(test)
+              ),
+
+              'train_positivos': int(
+                  y_train.sum()
+              ),
+
+              'test_positivos': int(
+                  y_test.sum()
+              ),
+
+              'roc_auc': float(
+                  roc_auc_score(
+                      y_test,
+                      proba
+                  )
+              ),
+
+              'average_precision': float(
+                  average_precision_score(
+                      y_test,
+                      proba
+                  )
+              ),
+
+              'precision_0_50': float(
+                  precision_score(
+                      y_test,
+                      pred,
+                      zero_division=0
+                  )
+              ),
+
+              'recall_0_50': float(
+                  recall_score(
+                      y_test,
+                      pred,
+                      zero_division=0
+                  )
+              ),
+
+              'f1_0_50': float(
+                  f1_score(
+                      y_test,
+                      pred,
+                      zero_division=0
+                  )
+              ),
+
+              'features': feature_cols
+          }
+
+          # ============================================================
+          # GUARDAR MODELO
+          # ============================================================
+
+          artifact = {
+              'model': model,
+              'features': feature_cols,
+              'horizon_hours': 24,
+              'threshold': 0.50,
+              'version': 'pre_evento_24h_v1'
+          }
+
+          joblib.dump(
+              artifact,
+              OUT / 'climaar_predictor_pre_evento_24h.joblib'
+          )
+
+          (
+              OUT / 'metricas_predictor_pre_evento_24h.json'
+          ).write_text(
+              json.dumps(
+                  metrics,
+                  indent=2,
+                  ensure_ascii=False
+              ),
+              encoding='utf-8'
+          )
+
+          print(
+              json.dumps(
+                  metrics,
+                  indent=2,
+                  ensure_ascii=False
+              )
+          )
+          PY
+
+      - name: Validar artefactos
+        run: |
+          test -s modelo/climaar_predictor_pre_evento_24h.joblib
+          test -s modelo/metricas_predictor_pre_evento_24h.json
+
+      - name: Guardar modelo
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git add \
+            modelo/climaar_predictor_pre_evento_24h.joblib \
+            modelo/metricas_predictor_pre_evento_24h.json
+
+          if git diff --cached --quiet; then
+            echo 'Sin cambios para guardar.'
+          else
+            git commit -m 'Entrenar predictor pre-evento 24h con historico meteorologico'
+            git push
+          fi
