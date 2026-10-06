@@ -1,0 +1,811 @@
+name: ClimaAR - Entrenamiento Hibrido V4
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  entrenamiento:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scikit-learn joblib requests
+
+      - name: Entrenar modelo hibrido
+        shell: bash
+        run: |
+          cat > /tmp/entrenar.py <<'PY'
+          from pathlib import Path
+          import json
+          import requests
+          import numpy as np
+          import pandas as pd
+          import joblib
+
+          from sklearn.ensemble import RandomForestClassifier
+          from sklearn.metrics import (
+              roc_auc_score,
+              average_precision_score,
+              precision_score,
+              recall_score,
+              f1_score
+          )
+
+          LAT = -38.71
+          LON = -62.26
+          TZ = "America/Argentina/Buenos_Aires"
+
+          API = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+
+          OUT = Path("modelo")
+          CACHE = Path("data/modelo_hibrido")
+
+          OUT.mkdir(exist_ok=True)
+          CACHE.mkdir(parents=True, exist_ok=True)
+
+          CONV = [
+              "cape",
+              "lifted_index",
+              "convective_inhibition",
+              "freezing_level_height",
+              "boundary_layer_height",
+              "total_column_integrated_water_vapour",
+              "temperature_850hPa",
+              "relative_humidity_850hPa",
+              "wind_speed_850hPa",
+              "wind_direction_850hPa",
+              "temperature_500hPa",
+              "relative_humidity_500hPa",
+              "wind_speed_500hPa",
+              "wind_direction_500hPa",
+              "temperature_300hPa",
+              "wind_speed_300hPa",
+              "wind_direction_300hPa"
+          ]
+
+          EVENTS = {
+              "2019-12-30": {
+                  "hours": 24,
+                  "type": "regional_severe_storm"
+              },
+              "2023-12-16": {
+                  "hours": 24,
+                  "type": "damaging_wind"
+              },
+              "2025-03-07": {
+                  "hours": 48,
+                  "type": "extreme_rain_flood"
+              }
+          }
+
+          def get_chunk(start, end):
+              cache = CACHE / f"conv_{start:%Y%m%d}_{end:%Y%m%d}.csv"
+
+              if cache.exists():
+                  print(f"Usando cache: {cache}")
+                  return pd.read_csv(cache)
+
+              params = {
+                  "latitude": LAT,
+                  "longitude": LON,
+                  "start_date": start.strftime("%Y-%m-%d"),
+                  "end_date": end.strftime("%Y-%m-%d"),
+                  "hourly": ",".join(CONV),
+                  "timezone": TZ
+              }
+
+              print(f"Descargando: {start.date()} -> {end.date()}")
+
+              r = requests.get(
+                  API,
+                  params=params,
+                  timeout=180
+              )
+
+              r.raise_for_status()
+
+              data = r.json()
+              hourly = data.get("hourly")
+
+              if not hourly or "time" not in hourly:
+                  raise RuntimeError(
+                      f"Sin datos Historical Forecast: {start} -> {end}"
+                  )
+
+              df = pd.DataFrame(hourly)
+              df.to_csv(cache, index=False)
+
+              return df
+
+          def load_convective():
+
+              parts = []
+
+              cur = pd.Timestamp("2022-01-01")
+              end = pd.Timestamp("2026-10-06")
+
+              while cur <= end:
+
+                  nxt = min(
+                      cur + pd.DateOffset(months=5) - pd.Timedelta(days=1),
+                      end
+                  )
+
+                  print(
+                      f"Historical Forecast: "
+                      f"{cur.date()} -> {nxt.date()}"
+                  )
+
+                  parts.append(
+                      get_chunk(cur, nxt)
+                  )
+
+                  cur = nxt + pd.Timedelta(days=1)
+
+              df = pd.concat(
+                  parts,
+                  ignore_index=True
+              )
+
+              df["time"] = pd.to_datetime(df["time"])
+
+              df = (
+                  df
+                  .drop_duplicates("time")
+                  .sort_values("time")
+                  .reset_index(drop=True)
+              )
+
+              df.to_csv(
+                  CACHE / "historico_convectivo_2022_2026.csv",
+                  index=False
+              )
+
+              print(
+                  f"Datos convectivos: {len(df)} filas"
+              )
+
+              return df
+
+          def surface_features(df):
+
+              df = df.copy()
+
+              df["time"] = pd.to_datetime(
+                  df["time"],
+                  errors="coerce"
+              )
+
+              for c in df.columns:
+
+                  if c != "time":
+
+                      df[c] = pd.to_numeric(
+                          df[c],
+                          errors="coerce"
+                      )
+
+              if {
+                  "wind_speed_10m",
+                  "wind_direction_10m"
+              }.issubset(df.columns):
+
+                  rad = np.deg2rad(
+                      df["wind_direction_10m"]
+                  )
+
+                  df["wind_u"] = (
+                      df["wind_speed_10m"] *
+                      np.sin(rad)
+                  )
+
+                  df["wind_v"] = (
+                      df["wind_speed_10m"] *
+                      np.cos(rad)
+                  )
+
+              if {
+                  "temperature_2m",
+                  "dew_point_2m"
+              }.issubset(df.columns):
+
+                  df["dew_spread"] = (
+                      df["temperature_2m"] -
+                      df["dew_point_2m"]
+                  )
+
+              base = [
+                  "temperature_2m",
+                  "relative_humidity_2m",
+                  "dew_point_2m",
+                  "pressure_msl",
+                  "precipitation",
+                  "wind_speed_10m",
+                  "wind_gusts_10m",
+                  "dew_spread"
+              ]
+
+              for c in base:
+
+                  if c not in df.columns:
+                      continue
+
+                  for lag in (1, 3, 6, 12, 24):
+
+                      df[f"{c}_chg{lag}h"] = (
+                          df[c] -
+                          df[c].shift(lag)
+                      )
+
+                  for win in (3, 6, 12, 24):
+
+                      df[f"{c}_mean{win}h"] = (
+                          df[c]
+                          .rolling(
+                              win,
+                              min_periods=win
+                          )
+                          .mean()
+                      )
+
+              if "precipitation" in df.columns:
+
+                  for win in (3, 6, 12, 24):
+
+                      df[f"rain{win}h"] = (
+                          df["precipitation"]
+                          .rolling(
+                              win,
+                              min_periods=win
+                          )
+                          .sum()
+                      )
+
+              if "pressure_msl" in df.columns:
+
+                  df["pressure_drop6h"] = (
+                      df["pressure_msl"] -
+                      df["pressure_msl"].shift(6)
+                  )
+
+                  df["pressure_drop12h"] = (
+                      df["pressure_msl"] -
+                      df["pressure_msl"].shift(12)
+                  )
+
+              df["hour_sin"] = np.sin(
+                  2 * np.pi *
+                  df["time"].dt.hour / 24
+              )
+
+              df["hour_cos"] = np.cos(
+                  2 * np.pi *
+                  df["time"].dt.hour / 24
+              )
+
+              df["month_sin"] = np.sin(
+                  2 * np.pi *
+                  df["time"].dt.month / 12
+              )
+
+              df["month_cos"] = np.cos(
+                  2 * np.pi *
+                  df["time"].dt.month / 12
+              )
+
+              return df
+
+          def label_surface(df):
+
+              df = df.copy()
+
+              df["evento_24h"] = 0
+
+              for date, meta in EVENTS.items():
+
+                  d = pd.Timestamp(date)
+                  h = meta["hours"]
+
+                  mask = (
+                      (df.time >= d - pd.Timedelta(hours=h)) &
+                      (df.time <= d + pd.Timedelta(hours=h))
+                  )
+
+                  df.loc[
+                      mask,
+                      "evento_24h"
+                  ] = 1
+
+              return df
+
+          def train_surface():
+
+              path = Path(
+                  "data/historico/clima_horario_1980_2026.csv"
+              )
+
+              if not path.exists():
+
+                  raise RuntimeError(
+                      f"No existe {path}"
+                  )
+
+              print("Cargando histórico de superficie...")
+
+              raw = pd.read_csv(path)
+
+              df = surface_features(raw)
+              df = label_surface(df)
+
+              exclude = {
+                  "time",
+                  "evento_24h",
+                  "station",
+                  "station_id",
+                  "station_name",
+                  "estacion",
+                  "estacion_id",
+                  "location",
+                  "city",
+                  "wmo",
+                  "wmo_id",
+                  "icao",
+                  "icao_code",
+                  "_dist_bb"
+              }
+
+              features = [
+                  c for c in df.columns
+                  if c not in exclude
+              ]
+
+              df = (
+                  df
+                  .replace(
+                      [np.inf, -np.inf],
+                      np.nan
+                  )
+                  .dropna(
+                      subset=features + ["evento_24h"]
+                  )
+                  .sort_values("time")
+              )
+
+              positives = int(
+                  df["evento_24h"].sum()
+              )
+
+              print(
+                  f"Superficie: {len(df)} filas"
+              )
+
+              print(
+                  f"Positivos: {positives}"
+              )
+
+              if positives < 50:
+
+                  raise RuntimeError(
+                      f"Muy pocos positivos: {positives}"
+                  )
+
+              cutoff = df.time.quantile(0.80)
+
+              tr = df[df.time < cutoff]
+              te = df[df.time >= cutoff]
+
+              if tr.evento_24h.sum() < 20:
+
+                  raise RuntimeError(
+                      "Holdout temporal insuficiente: "
+                      "pocos positivos en entrenamiento"
+                  )
+
+              if te.evento_24h.sum() < 10:
+
+                  raise RuntimeError(
+                      "Holdout temporal insuficiente: "
+                      "pocos positivos en prueba"
+                  )
+
+              model = RandomForestClassifier(
+                  n_estimators=800,
+                  max_features="sqrt",
+                  min_samples_leaf=5,
+                  class_weight="balanced_subsample",
+                  random_state=42,
+                  n_jobs=-1
+              )
+
+              print("Entrenando modelo de superficie...")
+
+              model.fit(
+                  tr[features],
+                  tr["evento_24h"]
+              )
+
+              p = model.predict_proba(
+                  te[features]
+              )[:, 1]
+
+              pred = (
+                  p >= 0.50
+              ).astype(int)
+
+              metrics = {
+                  "roc_auc": float(
+                      roc_auc_score(
+                          te.evento_24h,
+                          p
+                      )
+                  ),
+                  "average_precision": float(
+                      average_precision_score(
+                          te.evento_24h,
+                          p
+                      )
+                  ),
+                  "precision_0_50": float(
+                      precision_score(
+                          te.evento_24h,
+                          pred,
+                          zero_division=0
+                      )
+                  ),
+                  "recall_0_50": float(
+                      recall_score(
+                          te.evento_24h,
+                          pred,
+                          zero_division=0
+                      )
+                  ),
+                  "f1_0_50": float(
+                      f1_score(
+                          te.evento_24h,
+                          pred,
+                          zero_division=0
+                      )
+                  ),
+                  "train_rows": int(len(tr)),
+                  "test_rows": int(len(te)),
+                  "train_positive": int(
+                      tr.evento_24h.sum()
+                  ),
+                  "test_positive": int(
+                      te.evento_24h.sum()
+                  )
+              }
+
+              joblib.dump(
+                  {
+                      "version":
+                          "hibrido_surface_v4",
+                      "model": model,
+                      "features": features,
+                      "horizon_hours": 24,
+                      "location": {
+                          "lat": LAT,
+                          "lon": LON
+                      },
+                      "metrics": metrics
+                  },
+                  OUT /
+                  "climaar_predictor_hibrido_superficie_v4.joblib"
+              )
+
+              pd.DataFrame(
+                  {
+                      "variable": features,
+                      "importancia":
+                          model.feature_importances_
+                  }
+              ).sort_values(
+                  "importancia",
+                  ascending=False
+              ).to_csv(
+                  OUT /
+                  "importancia_hibrido_superficie_v4.csv",
+                  index=False
+              )
+
+              return metrics
+
+          def train_convective(df):
+
+              df = df.copy()
+
+              for c in df.columns:
+
+                  if c != "time":
+
+                      df[c] = pd.to_numeric(
+                          df[c],
+                          errors="coerce"
+                      )
+
+              df["evento"] = 0
+
+              for date, hours in [
+                  ("2023-12-16", 24),
+                  ("2025-03-07", 48)
+              ]:
+
+                  d = pd.Timestamp(date)
+
+                  mask = (
+                      (df.time >= d - pd.Timedelta(hours=hours)) &
+                      (df.time <= d + pd.Timedelta(hours=12))
+                  )
+
+                  df.loc[
+                      mask,
+                      "evento"
+                  ] = 1
+
+              if {
+                  "wind_speed_850hPa",
+                  "wind_speed_500hPa"
+              }.issubset(df.columns):
+
+                  df["shear_speed_850_500"] = (
+                      df["wind_speed_850hPa"] -
+                      df["wind_speed_500hPa"]
+                  ).abs()
+
+              if {
+                  "temperature_850hPa",
+                  "temperature_500hPa"
+              }.issubset(df.columns):
+
+                  df["lapse_850_500"] = (
+                      df["temperature_850hPa"] -
+                      df["temperature_500hPa"]
+                  )
+
+              features = [
+                  c for c in df.columns
+                  if c not in {"time", "evento"}
+              ]
+
+              df = (
+                  df
+                  .replace(
+                      [np.inf, -np.inf],
+                      np.nan
+                  )
+                  .dropna(
+                      subset=features + ["evento"]
+                  )
+                  .sort_values("time")
+              )
+
+              results = {}
+
+              for date in (
+                  "2023-12-16",
+                  "2025-03-07"
+              ):
+
+                  d = pd.Timestamp(date)
+
+                  block = (
+                      (df.time >= d - pd.Timedelta(hours=72)) &
+                      (df.time <= d + pd.Timedelta(hours=24))
+                  )
+
+                  tr = df[~block]
+                  te = df[block]
+
+                  if tr.evento.sum() < 20:
+                      continue
+
+                  if te.evento.sum() < 10:
+                      continue
+
+                  m = RandomForestClassifier(
+                      n_estimators=500,
+                      max_features="sqrt",
+                      min_samples_leaf=3,
+                      class_weight="balanced_subsample",
+                      random_state=42,
+                      n_jobs=-1
+                  )
+
+                  m.fit(
+                      tr[features],
+                      tr.evento
+                  )
+
+                  p = m.predict_proba(
+                      te[features]
+                  )[:, 1]
+
+                  results[date] = {
+                      "roc_auc": float(
+                          roc_auc_score(
+                              te.evento,
+                              p
+                          )
+                      ),
+                      "average_precision": float(
+                          average_precision_score(
+                              te.evento,
+                              p
+                          )
+                      ),
+                      "test_rows": int(
+                          len(te)
+                      ),
+                      "test_positive": int(
+                          te.evento.sum()
+                      )
+                  }
+
+              final = RandomForestClassifier(
+                  n_estimators=700,
+                  max_features="sqrt",
+                  min_samples_leaf=3,
+                  class_weight="balanced_subsample",
+                  random_state=42,
+                  n_jobs=-1
+              )
+
+              print(
+                  "Treinando modelo convectivo final..."
+              )
+
+              final.fit(
+                  df[features],
+                  df.evento
+              )
+
+              joblib.dump(
+                  {
+                      "version":
+                          "hibrido_convectivo_v1",
+                      "model": final,
+                      "features": features,
+                      "location": {
+                          "lat": LAT,
+                          "lon": LON
+                      },
+                      "validation": results
+                  },
+                  OUT /
+                  "climaar_predictor_convectivo_v1.joblib"
+              )
+
+              pd.DataFrame(
+                  {
+                      "variable": features,
+                      "importancia":
+                          final.feature_importances_
+                  }
+              ).sort_values(
+                  "importancia",
+                  ascending=False
+              ).to_csv(
+                  OUT /
+                  "importancia_convectiva_v1.csv",
+                  index=False
+              )
+
+              return (
+                  results,
+                  len(df),
+                  int(df.evento.sum()),
+                  len(features)
+              )
+
+          print("=" * 60)
+          print("CLIMAAR - ENTRENAMIENTO HIBRIDO V4")
+          print("=" * 60)
+
+          conv = load_convective()
+
+          surface_metrics = train_surface()
+
+          (
+              conv_metrics,
+              conv_rows,
+              conv_pos,
+              conv_features
+          ) = train_convective(conv)
+
+          report = {
+              "version":
+                  "climaar_modelo_hibrido_v4",
+
+              "ubicacion": {
+                  "nombre": "Bahia Blanca",
+                  "latitud": LAT,
+                  "longitud": LON
+              },
+
+              "eventos": EVENTS,
+
+              "superficie":
+                  surface_metrics,
+
+              "convectivo": {
+                  "filas": conv_rows,
+                  "positivos": conv_pos,
+                  "variables": conv_features,
+                  "validacion_leave_one_event_out":
+                      conv_metrics
+              },
+
+              "referencias_oficiales": {
+                  "2023_rafaga_max_kmh": 155,
+                  "2025_lluvia_6h_mm": 210,
+                  "2025_lluvia_12h_mm": 290,
+                  "2025_total_evento_mm": 312
+              },
+
+              "nota":
+                  "2019 se usa solo en superficie; "
+                  "no se inventan variables convectivas "
+                  "para 2019."
+          }
+
+          with open(
+              OUT /
+              "reporte_modelo_hibrido_v4.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              json.dump(
+                  report,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          print(
+              json.dumps(
+                  report,
+                  indent=2,
+                  ensure_ascii=False
+              )
+          )
+
+          PY
+
+          python /tmp/entrenar.py
+
+      - name: Validar artefactos
+        run: |
+          test -s modelo/climaar_predictor_hibrido_superficie_v4.joblib
+          test -s modelo/climaar_predictor_convectivo_v1.joblib
+          test -s modelo/importancia_hibrido_superficie_v4.csv
+          test -s modelo/importancia_convectiva_v1.csv
+          test -s modelo/reporte_modelo_hibrido_v4.json
+
+      - name: Guardar resultados
+        run: |
+          git config user.name "climaar-bot"
+          git config user.email "climaar-bot@users.noreply.github.com"
+
+          git add modelo data/modelo_hibrido
+
+          git diff --cached --quiet || \
+            git commit -m "Entrenar modelo hibrido V4"
+
+          git push
