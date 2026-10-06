@@ -4,13 +4,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from io import BytesIO
 from zoneinfo import ZoneInfo
-import json, math, time
+import json
+import math
+import time
 
 import requests
 from PIL import Image
 
 
-VERSION = "5.0.1"
+VERSION = "5.0.2"
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -32,20 +34,17 @@ LON = -62.26
 RADAR_ZOOM = 7
 TILE_SIZE = 256
 
-RAINVIEWER_API = (
-    "https://api.rainviewer.com/public/weather-maps.json"
-)
+RAINVIEWER_API = "https://api.rainviewer.com/public/weather-maps.json"
 
 HEADERS = {
     "User-Agent": f"ClimaAR/{VERSION}",
-    "Referer": "https://www.rainviewer.com/"
+    "Referer": "https://www.rainviewer.com/",
 }
-
 
 app = FastAPI(
     title="ClimaAR",
     description="Radar meteorológico y seguimiento de tormentas para Bahía Blanca",
-    version=VERSION
+    version=VERSION,
 )
 
 
@@ -63,33 +62,21 @@ def argentina_time(dt):
 
 
 def clean(value):
-
     if isinstance(value, float):
-
         if not math.isfinite(value):
             return None
 
     if isinstance(value, dict):
-
-        return {
-            str(k): clean(v)
-            for k, v in value.items()
-        }
+        return {str(k): clean(v) for k, v in value.items()}
 
     if isinstance(value, list):
-
-        return [
-            clean(v)
-            for v in value
-        ]
+        return [clean(v) for v in value]
 
     return value
 
 
 def load_json(path):
-
     try:
-
         if not path.exists():
             return None
 
@@ -100,27 +87,23 @@ def load_json(path):
                 )
             )
         )
-
     except Exception:
-
         return None
 
 
 def save_json(path, data):
-
     path.write_text(
         json.dumps(
             clean(data),
             ensure_ascii=False,
             indent=2,
-            allow_nan=False
+            allow_nan=False,
         ),
-        encoding="utf-8"
+        encoding="utf-8",
     )
 
 
 def lon_to_x(lon):
-
     return int(
         (lon + 180.0)
         / 360.0
@@ -129,17 +112,14 @@ def lon_to_x(lon):
 
 
 def lat_to_y(lat):
-
     return int(
         (
             1
-            -
-            math.asinh(
+            - math.asinh(
                 math.tan(
                     math.radians(lat)
                 )
-            )
-            / math.pi
+            ) / math.pi
         )
         / 2
         * (2 ** RADAR_ZOOM)
@@ -147,7 +127,6 @@ def lat_to_y(lat):
 
 
 def x_to_lon(x):
-
     return (
         x
         / (2 ** RADAR_ZOOM)
@@ -157,16 +136,13 @@ def x_to_lon(x):
 
 
 def y_to_lat(y):
-
     return math.degrees(
         math.atan(
             math.sinh(
                 math.pi
-                *
-                (
+                * (
                     1
-                    -
-                    2 * y
+                    - 2 * y
                     / (2 ** RADAR_ZOOM)
                 )
             )
@@ -193,7 +169,6 @@ def rainviewer_data():
     )
 
     if not past:
-
         raise RuntimeError(
             "RainViewer no devolvió frames históricos."
         )
@@ -201,27 +176,18 @@ def rainviewer_data():
     frame = past[-1]
 
     if not frame.get("path"):
-
         raise RuntimeError(
             "RainViewer no devolvió path para el frame."
         )
 
     return {
-
-        "host":
-            data.get(
-                "host",
-                "https://tilecache.rainviewer.com"
-            ),
-
-        "path":
-            frame["path"],
-
-        "time":
-            frame.get("time"),
-
-        "frames":
-            len(past)
+        "host": data.get(
+            "host",
+            "https://tilecache.rainviewer.com"
+        ),
+        "path": frame["path"],
+        "time": frame.get("time"),
+        "frames": len(past)
     }
 
 
@@ -465,7 +431,6 @@ def cargar_nowcast():
         data,
         dict
     ):
-
         return None
 
     return data
@@ -476,30 +441,17 @@ def cargar_nowcast():
     response_class=HTMLResponse
 )
 def home():
-
-    return (
-        "<h1>ClimaAR</h1>"
-        "<p><a href='/radar'>Abrir radar</a></p>"
-        "<p><a href='/health'>Estado</a></p>"
-    )
+    return radar_page()
 
 
 @app.get("/health")
 def health():
 
     return {
-
-        "estado":
-            "ok",
-
-        "servicio":
-            "ClimaAR",
-
-        "version":
-            VERSION,
-
-        "hora_utc":
-            iso_now()
+        "estado": "ok",
+        "servicio": "ClimaAR",
+        "version": VERSION,
+        "hora_utc": iso_now()
     }
 
 
@@ -513,18 +465,10 @@ def radar_9tiles():
     except Exception as exc:
 
         return {
-
-            "estado":
-                "error",
-
-            "fuente":
-                "RainViewer",
-
-            "error":
-                str(exc),
-
-            "hora_utc":
-                iso_now()
+            "estado": "error",
+            "fuente": "RainViewer",
+            "error": str(exc),
+            "hora_utc": iso_now()
         }
 
 
@@ -537,11 +481,8 @@ def radar_status():
         )
         or
         {
-            "estado":
-                "sin_datos",
-
-            "fuente":
-                "RainViewer"
+            "estado": "sin_datos",
+            "fuente": "RainViewer"
         }
     )
 
@@ -579,11 +520,9 @@ def radar_debug():
 
         return {
 
-            "estado":
-                "ok",
+            "estado": "ok",
 
-            "api_http":
-                200,
+            "api_http": 200,
 
             "tile_http":
                 response.status_code,
@@ -591,11 +530,9 @@ def radar_debug():
             "tile_url":
                 url,
 
-            "x":
-                x,
+            "x": x,
 
-            "y":
-                y,
+            "y": y,
 
             "zoom":
                 RADAR_ZOOM,
@@ -627,12 +564,8 @@ def radar_debug():
     except Exception as exc:
 
         return {
-
-            "estado":
-                "error",
-
-            "error":
-                str(exc)
+            "estado": "error",
+            "error": str(exc)
         }
 
 
@@ -665,7 +598,6 @@ def radar_png():
 
 @app.get("/radar/preview.png")
 def radar_preview():
-
     return radar_png()
 
 
@@ -785,7 +717,6 @@ def tormenta():
     if not data:
 
         return {
-
             "estado":
                 "sin_datos",
 
@@ -795,7 +726,7 @@ def tormenta():
 
     n = data.get(
         "nowcast",
-        {}
+        data
     )
 
     return {
@@ -837,27 +768,27 @@ def tormenta():
     }
 
 
-HTML = r'''
+def radar_page():
+
+    return r"""
 <!doctype html>
 <html lang="es">
 
 <head>
 
-<meta charset="UTF-8">
+<meta charset="utf-8">
 
 <meta
     name="viewport"
     content="width=device-width,initial-scale=1"
 >
 
-<title>
-ClimaAR — Radar Bahía Blanca
-</title>
+<title>ClimaAR — Radar Bahía Blanca</title>
 
 <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
->
+/>
 
 <style>
 
@@ -867,219 +798,292 @@ ClimaAR — Radar Bahía Blanca
 
 html,
 body {
+
     margin: 0;
+    padding: 0;
+
+    width: 100%;
+    height: 100%;
+
+    overflow: hidden;
+
     background: #111;
+
     color: #fff;
+
     font-family: Arial, sans-serif;
 }
 
-.top {
-    padding: 12px;
-    background: #171717;
-    border-bottom: 1px solid #333;
-    position: relative;
-    z-index: 1000;
-}
-
-h1 {
-    margin: 0 0 5px;
-    font-size: 20px;
-}
-
-#estado {
-    font-size: 13px;
-    color: #ccc;
-    margin-bottom: 9px;
-}
-
-button {
-    width: 100%;
-    padding: 12px;
-    border: 0;
-    border-radius: 8px;
-    background: #1976d2;
-    color: #fff;
-    font-size: 16px;
-    font-weight: bold;
-}
-
-#resultado {
-    margin-top: 7px;
-    font-size: 13px;
-    min-height: 18px;
-}
-
 #map {
-    width: 100%;
-    height: calc(100vh - 150px);
-    min-height: 520px;
-}
 
-.panel {
     position: absolute;
-    left: 10px;
-    right: 10px;
-    bottom: 15px;
-    z-index: 999;
-    background: rgba(17,17,17,.95);
-    border: 1px solid #444;
-    border-radius: 12px;
-    padding: 12px;
-    box-shadow: 0 4px 16px rgba(0,0,0,.45);
-    max-width: 600px;
-    margin: auto;
-    max-height: 65vh;
-    overflow-y: auto;
+
+    inset: 0;
+
+    width: 100%;
+    height: 100%;
+
+    z-index: 1;
 }
 
-.main {
-    font-size: 18px;
+.top {
+
+    position: absolute;
+
+    top: 0;
+    left: 0;
+    right: 0;
+
+    z-index: 1000;
+
+    padding: 10px;
+
+    background:
+        rgba(17,17,17,.94);
+
+    border-bottom:
+        1px solid #333;
+}
+
+.title {
+
+    font-size: 20px;
+
     font-weight: bold;
-    margin-bottom: 5px;
 }
 
 .sub {
-    font-size: 12px;
-    color: #bbb;
-    margin-bottom: 10px;
-}
 
-.grid {
-    display: grid;
-    grid-template-columns: repeat(2,1fr);
-    gap: 7px;
-}
-
-.dato {
-    background: #222;
-    border-radius: 8px;
-    padding: 8px;
-}
-
-.dt {
-    font-size: 10px;
-    color: #999;
-    margin-bottom: 3px;
-}
-
-.dv {
-    font-size: 14px;
-    font-weight: bold;
-}
-
-.sep {
-    margin: 10px 0 8px;
-    border-top: 1px solid #333;
-}
-
-.section-title {
-    font-size: 12px;
-    font-weight: bold;
-    color: #ddd;
-    margin: 9px 0 6px;
-}
-
-.core {
-    background: #202020;
-    border: 1px solid #383838;
-    border-radius: 9px;
-    padding: 9px;
-    margin-bottom: 7px;
-}
-
-.core-main {
-    font-size: 14px;
-    font-weight: bold;
-    margin-bottom: 5px;
-}
-
-.core-sub {
     color: #aaa;
-    font-size: 11px;
-    margin-bottom: 6px;
-}
 
-.proj {
-    display: grid;
-    grid-template-columns: repeat(3,1fr);
-    gap: 5px;
-}
+    font-size: 12px;
 
-.proj-item {
-    background: #292929;
-    border-radius: 6px;
-    padding: 6px;
-    text-align: center;
-}
-
-.proj-time {
-    font-size: 9px;
-    color: #999;
-}
-
-.proj-value {
-    font-size: 11px;
-    font-weight: bold;
-    margin-top: 2px;
-}
-
-.fuentes,
-.obs {
-    font-size: 10px;
-    color: #888;
-    margin-top: 7px;
-}
-
-.legend {
-    font-size: 11px;
-    font-weight: bold;
-    margin: 8px 0 5px;
-}
-
-.bar {
-    display: flex;
-    height: 14px;
-    border-radius: 4px;
-    overflow: hidden;
-}
-
-.bar span {
-    flex: 1;
-}
-
-.labels {
-    display: flex;
-    justify-content: space-between;
-    font-size: 9px;
-    color: #aaa;
     margin-top: 3px;
 }
 
+.actions {
+
+    display: flex;
+
+    gap: 8px;
+
+    margin-top: 8px;
+}
+
+.actions button {
+
+    flex: 1;
+
+    border: 0;
+
+    border-radius: 8px;
+
+    padding: 10px;
+
+    background: #1976d2;
+
+    color: #fff;
+
+    font-size: 15px;
+
+    font-weight: bold;
+}
+
+.actions button.secondary {
+
+    background: #444;
+}
+
+.panel {
+
+    position: absolute;
+
+    left: 10px;
+    right: 10px;
+
+    bottom: 10px;
+
+    z-index: 999;
+
+    max-width: 620px;
+
+    max-height: 58vh;
+
+    overflow-y: auto;
+
+    background:
+        rgba(17,17,17,.94);
+
+    border:
+        1px solid #444;
+
+    border-radius: 14px;
+
+    padding: 12px;
+
+    box-shadow:
+        0 4px 18px
+        rgba(0,0,0,.55);
+}
+
+.panel.hidden {
+
+    display: none;
+}
+
+.panel-header {
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    gap: 10px;
+
+    margin-bottom: 8px;
+}
+
+.panel-header strong {
+
+    font-size: 17px;
+}
+
+.close-btn {
+
+    width: 42px;
+    height: 42px;
+
+    border: 0;
+
+    border-radius: 50%;
+
+    background: #333;
+
+    color: #fff;
+
+    font-size: 24px;
+
+    line-height: 42px;
+
+    text-align: center;
+}
+
+.status {
+
+    font-size: 20px;
+
+    font-weight: bold;
+
+    margin: 5px 0;
+}
+
 .ok {
-    color: #58d68d;
+    color: #55e08a;
 }
 
 .warn {
-    color: #ffb84d;
+    color: #ffd45a;
 }
 
-.bad {
-    color: #ff6b6b;
+.danger {
+    color: #ff6868;
+}
+
+.info {
+
+    color: #aaa;
+
+    font-size: 13px;
+
+    margin: 5px 0 10px;
+}
+
+.grid {
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(2, 1fr);
+
+    gap: 7px;
+}
+
+.card {
+
+    background: #222;
+
+    border-radius: 9px;
+
+    padding: 9px;
+}
+
+.label {
+
+    color: #999;
+
+    font-size: 11px;
+
+    text-transform: uppercase;
+}
+
+.value {
+
+    margin-top: 3px;
+
+    font-size: 17px;
+
+    font-weight: bold;
+}
+
+.legend-title {
+
+    margin-top: 12px;
+
+    font-size: 12px;
+
+    font-weight: bold;
+}
+
+.legend {
+
+    display: flex;
+
+    height: 18px;
+
+    border-radius: 5px;
+
+    overflow: hidden;
+
+    margin-top: 5px;
+}
+
+.legend span {
+
+    flex: 1;
+}
+
+.leaflet-control-attribution {
+
+    font-size: 9px !important;
 }
 
 @media (max-width: 520px) {
 
     .panel {
+
+        max-height: 55vh;
+
         bottom: 8px;
+
         left: 7px;
         right: 7px;
-        max-height: 68vh;
     }
 
-    .proj {
-        grid-template-columns: repeat(2,1fr);
-    }
+    .title {
 
+        font-size: 18px;
+    }
 }
 
 </style>
@@ -1088,938 +1092,744 @@ button {
 
 <body>
 
-<div class="top">
-
-<h1>
-ClimaAR — Radar Bahía Blanca
-</h1>
-
-<div id="estado">
-RainViewer · cargando radar...
-</div>
-
-<button onclick="actualizarRadar()">
-Actualizar radar
-</button>
-
-<div id="resultado"></div>
-
-</div>
-
 <div id="map"></div>
 
-<div class="panel">
+<div class="top">
+
+    <div class="title">
+        ClimaAR — Radar Bahía Blanca
+    </div>
+
+    <div
+        class="sub"
+        id="frame"
+    >
+        Cargando radar...
+    </div>
+
+    <div class="actions">
+
+        <button
+            onclick="actualizarRadar()"
+        >
+            Actualizar radar
+        </button>
+
+        <button
+            class="secondary"
+            onclick="mostrarPanel()"
+        >
+            Mostrar información
+        </button>
+
+    </div>
+
+</div>
+
 
 <div
-    id="principal"
-    class="main"
+    class="panel"
+    id="panel"
 >
-Analizando condiciones...
+
+    <div class="panel-header">
+
+        <strong>
+            Estado meteorológico
+        </strong>
+
+        <button
+            class="close-btn"
+            onclick="ocultarPanel()"
+            aria-label="Ocultar"
+        >
+            ×
+        </button>
+
+    </div>
+
+
+    <div
+        id="estado"
+        class="status"
+    >
+        Cargando...
+    </div>
+
+    <div
+        id="detalle"
+        class="info"
+    ></div>
+
+
+    <div class="grid">
+
+        <div class="card">
+
+            <div class="label">
+                Temperatura
+            </div>
+
+            <div
+                class="value"
+                id="temp"
+            >
+                —
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <div class="label">
+                Punto de rocío
+            </div>
+
+            <div
+                class="value"
+                id="dew"
+            >
+                —
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <div class="label">
+                Viento
+            </div>
+
+            <div
+                class="value"
+                id="wind"
+            >
+                —
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <div class="label">
+                Presión
+            </div>
+
+            <div
+                class="value"
+                id="pressure"
+            >
+                —
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <div class="label">
+                Distancia
+            </div>
+
+            <div
+                class="value"
+                id="distance"
+            >
+                —
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <div class="label">
+                Velocidad célula
+            </div>
+
+            <div
+                class="value"
+                id="speed"
+            >
+                —
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <div class="label">
+                Dirección célula
+            </div>
+
+            <div
+                class="value"
+                id="direction"
+            >
+                —
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <div class="label">
+                Tendencia
+            </div>
+
+            <div
+                class="value"
+                id="trend"
+            >
+                —
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <div class="label">
+                ETA
+            </div>
+
+            <div
+                class="value"
+                id="eta"
+            >
+                —
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <div class="label">
+                Confianza tracking
+            </div>
+
+            <div
+                class="value"
+                id="confidence"
+            >
+                —
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <div class="legend-title">
+
+        REFLECTIVIDAD RADAR · dBZ ·
+        RAINVIEWER UNIVERSAL BLUE
+
+    </div>
+
+
+    <div class="legend">
+
+        <span style="background:#cec087"></span>
+        <span style="background:#6e0dc6"></span>
+        <span style="background:#c06487"></span>
+        <span style="background:#fac431"></span>
+        <span style="background:#fe9a58"></span>
+        <span style="background:#fd341c"></span>
+        <span style="background:#bebebe"></span>
+
+    </div>
+
 </div>
 
-<div
-    id="sub"
-    class="sub"
->
-Cargando datos...
-</div>
 
-<div class="grid">
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+></script>
 
-<div class="dato">
-<div class="dt">TEMPERATURA</div>
-<div id="temp" class="dv">—</div>
-</div>
-
-<div class="dato">
-<div class="dt">PUNTO DE ROCÍO</div>
-<div id="rocio" class="dv">—</div>
-</div>
-
-<div class="dato">
-<div class="dt">VIENTO</div>
-<div id="viento" class="dv">—</div>
-</div>
-
-<div class="dato">
-<div class="dt">DIRECCIÓN</div>
-<div id="dir" class="dv">—</div>
-</div>
-
-<div class="dato">
-<div class="dt">PRESIÓN</div>
-<div id="presion" class="dv">—</div>
-</div>
-
-<div class="dato">
-<div class="dt">VISIBILIDAD</div>
-<div id="vis" class="dv">—</div>
-</div>
-
-</div>
-
-<div class="sep"></div>
-
-<div class="grid">
-
-<div class="dato">
-<div class="dt">DISTANCIA</div>
-<div id="dist" class="dv">—</div>
-</div>
-
-<div class="dato">
-<div class="dt">VELOCIDAD</div>
-<div id="vel" class="dv">—</div>
-</div>
-
-<div class="dato">
-<div class="dt">DIRECCIÓN CÉLULA</div>
-<div id="celldir" class="dv">—</div>
-</div>
-
-<div class="dato">
-<div class="dt">TENDENCIA</div>
-<div id="trend" class="dv">—</div>
-</div>
-
-<div class="dato">
-<div class="dt">ETA</div>
-<div id="eta" class="dv">—</div>
-</div>
-
-<div class="dato">
-<div class="dt">CONFIANZA</div>
-<div id="conf" class="dv">—</div>
-</div>
-
-</div>
-
-<div class="sep"></div>
-
-<div class="section-title">
-NÚCLEOS DE PRECIPITACIÓN
-</div>
-
-<div id="cores">
-Sin núcleos detectados.
-</div>
-
-<div class="sep"></div>
-
-<div class="legend">
-REFLECTIVIDAD RADAR · dBZ · RAINVIEWER UNIVERSAL BLUE
-</div>
-
-<div class="bar">
-
-<span style="background:#cec087"></span>
-<span style="background:#6e0dc6"></span>
-<span style="background:#c06487"></span>
-<span style="background:#fac431"></span>
-<span style="background:#fe9a58"></span>
-<span style="background:#fd341c"></span>
-<span style="background:#bebebe"></span>
-
-</div>
-
-<div class="labels">
-
-<span>10</span>
-<span>20</span>
-<span>30</span>
-<span>40</span>
-<span>50</span>
-<span>60</span>
-<span>65+</span>
-
-</div>
-
-<div
-    id="obs"
-    class="obs"
->
-SAZB · cargando observación...
-</div>
-
-<div class="fuentes">
-Radar: RainViewer · Observación: Aviation Weather Center SAZB · Seguimiento: ClimaAR V7
-</div>
-
-</div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
 
-const center = [
-    -38.71,
-    -62.26
-];
+let map;
 
-const map = L.map(
-    'map'
-).setView(
-    center,
-    9
-);
+let radarOverlay = null;
 
-L.tileLayer(
-    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    {
-        maxZoom: 19,
-        attribution:
-            '&copy; OpenStreetMap contributors'
-    }
-).addTo(map);
 
-L.marker(
-    center
-).addTo(map)
-.bindTooltip(
-    'Bahía Blanca'
-);
+function mostrarPanel() {
 
-let radar = null;
+    document
+        .getElementById("panel")
+        .classList
+        .remove("hidden");
+}
 
-const el = id =>
-    document.getElementById(id);
 
-const val = (
+function ocultarPanel() {
+
+    document
+        .getElementById("panel")
+        .classList
+        .add("hidden");
+}
+
+
+function val(
     v,
-    suffix = ''
-) => {
+    suffix = ""
+) {
 
     if (
         v === null ||
         v === undefined ||
-        v === ''
+        v === ""
     ) {
-        return '—';
+
+        return "—";
     }
 
     return String(v) + suffix;
-};
+}
 
 
-function direction(value) {
+function fmtConfidence(v) {
 
     if (
-        value === null ||
-        value === undefined ||
-        value === ''
-    ) {
-        return '—';
-    }
-
-    const n = Number(value);
-
-    if (!Number.isFinite(n)) {
-        return String(value);
-    }
-
-    return [
-        'N',
-        'NE',
-        'E',
-        'SE',
-        'S',
-        'SO',
-        'O',
-        'NO'
-    ][
-        Math.round(n / 45) % 8
-    ];
-}
-
-
-function trendText(value) {
-
-    if (!value) {
-        return '—';
-    }
-
-    const s = String(value)
-        .toLowerCase();
-
-    if (s.includes('fortal')) {
-        return 'Fortaleciendo';
-    }
-
-    if (s.includes('debil')) {
-        return 'Debilitando';
-    }
-
-    if (s.includes('estable')) {
-        return 'Estable';
-    }
-
-    return String(value);
-}
-
-
-function confidence(value) {
-
-    if (
-        value === null ||
-        value === undefined
-    ) {
-        return '—';
-    }
-
-    const n = Number(value);
-
-    return Number.isFinite(n)
-        ? Math.round(n * 100) + '%'
-        : '—';
-}
-
-
-function formatDistance(value) {
-
-    const n = Number(value);
-
-    if (
-        value === null ||
-        value === undefined ||
-        !Number.isFinite(n)
-    ) {
-        return '—';
-    }
-
-    return n.toFixed(1) + ' km';
-}
-
-
-function formatSpeed(value) {
-
-    const n = Number(value);
-
-    if (
-        value === null ||
-        value === undefined ||
-        !Number.isFinite(n)
-    ) {
-        return '—';
-    }
-
-    return n.toFixed(1) + ' km/h';
-}
-
-
-function formatEta(value) {
-
-    const n = Number(value);
-
-    if (
-        value === null ||
-        value === undefined ||
-        !Number.isFinite(n)
-    ) {
-        return '—';
-    }
-
-    return Math.round(n) + ' min';
-}
-
-
-function projectionValue(projection) {
-
-    if (!projection) {
-        return '—';
-    }
-
-    if (
-        projection.distancia_km !== null &&
-        projection.distancia_km !== undefined
+        v === null ||
+        v === undefined
     ) {
 
-        return Number(
-            projection.distancia_km
-        ).toFixed(1) + ' km';
+        return "—";
     }
 
-    if (
-        projection.latitud !== null &&
-        projection.latitud !== undefined
-    ) {
+    let n = Number(v);
 
-        return Number(
-            projection.latitud
-        ).toFixed(2);
+    if (n <= 1) {
+        n *= 100;
     }
 
-    return '—';
+    return Math.round(n) + "%";
 }
 
 
-function renderProjections(projections) {
-
-    if (
-        !projections ||
-        typeof projections !== 'object'
-    ) {
-        return '';
-    }
-
-    let html = '';
-
-    for (
-        const minutes of [
-            '15',
-            '30',
-            '45',
-            '60',
-            '90'
-        ]
-    ) {
-
-        const p =
-            projections[minutes] ??
-            projections[minutes + '_min'];
-
-        if (!p) {
-            continue;
-        }
-
-        html += `
-            <div class="proj-item">
-                <div class="proj-time">
-                    +${minutes} min
-                </div>
-
-                <div class="proj-value">
-                    ${projectionValue(p)}
-                </div>
-
-                <div class="proj-time">
-                    ${
-                        p.en_zona_radar === true
-                        ? 'zona radar'
-                        : 'fuera'
-                    }
-                </div>
-            </div>
-        `;
-    }
-
-    return html;
-}
-
-
-function renderCores(n) {
-
-    const container =
-        el('cores');
-
-    const cores =
-        Array.isArray(n.nucleos)
-        ? n.nucleos
-        : [];
-
-    if (!cores.length) {
-
-        container.innerHTML =
-            '<div class="sub">Sin núcleos de precipitación detectados en los frames analizados.</div>';
-
-        return;
-    }
-
-    let html = '';
-
-    cores.forEach(
-        (core, index) => {
-
-            const id =
-                core.track_id ??
-                core.id ??
-                index + 1;
-
-            const principal =
-                Number(id) ===
-                Number(
-                    n.nucleo_principal_id
-                );
-
-            const hacia =
-                core.movimiento_hacia_bahia === true;
-
-            const dir =
-                core.direccion_grados ??
-                core.direccion;
-
-            const conf =
-                core.confianza ??
-                core.confianza_movimiento;
-
-            const projections =
-                core.proyecciones ??
-                core.projection ??
-                {};
-
-            html += `
-
-                <div class="core">
-
-                    <div class="core-main">
-                        Núcleo ${id}
-                        ${
-                            principal
-                            ? ' · PRINCIPAL'
-                            : ''
-                        }
-                    </div>
-
-                    <div class="core-sub">
-                        ${
-                            hacia
-                            ? '🟠 Movimiento hacia Bahía Blanca'
-                            : 'Movimiento no dirigido hacia Bahía Blanca'
-                        }
-                    </div>
-
-                    <div class="grid">
-
-                        <div class="dato">
-                            <div class="dt">
-                                DISTANCIA
-                            </div>
-                            <div class="dv">
-                                ${formatDistance(
-                                    core.distancia_km
-                                )}
-                            </div>
-                        </div>
-
-                        <div class="dato">
-                            <div class="dt">
-                                VELOCIDAD
-                            </div>
-                            <div class="dv">
-                                ${formatSpeed(
-                                    core.velocidad_kmh
-                                )}
-                            </div>
-                        </div>
-
-                        <div class="dato">
-                            <div class="dt">
-                                DIRECCIÓN
-                            </div>
-                            <div class="dv">
-                                ${direction(dir)}
-                            </div>
-                        </div>
-
-                        <div class="dato">
-                            <div class="dt">
-                                ETA
-                            </div>
-                            <div class="dv">
-                                ${formatEta(
-                                    core.eta_minutos
-                                )}
-                            </div>
-                        </div>
-
-                    </div>
-
-                    <div class="section-title">
-                        PROYECCIÓN
-                    </div>
-
-                    <div class="proj">
-                        ${renderProjections(
-                            projections
-                        )}
-                    </div>
-
-                    <div class="core-sub">
-                        Confianza:
-                        ${confidence(conf)}
-                    </div>
-
-                </div>
-            `;
-        }
-    );
-
-    container.innerHTML = html;
-}
-
-
-/*
-   CORRECCIÓN IMPORTANTE:
-
-   radar_nowcast.json tiene esta estructura:
-
-   {
-       "version": "7.0",
-       "nowcast": {
-           "frames_analizados": 12,
-           ...
-       }
-   }
-
-   Por eso ahora entramos primero a .nowcast.
-*/
-
-function nowcast(data) {
-
-    const wrapper =
-        data?.nowcast_radar?.datos;
-
-    const n =
-        wrapper?.nowcast ??
-        wrapper;
-
-    if (!n) {
-
-        el('principal')
-            .textContent =
-            'Nowcast no disponible';
-
-        el('principal')
-            .className =
-            'main bad';
-
-        el('sub')
-            .textContent =
-            'No hay datos del motor V7.';
-
-        el('cores')
-            .textContent =
-            'No hay datos del motor V7.';
-
-        return;
-    }
-
-    const active =
-        n.actividad === true;
-
-    el('principal')
-        .textContent =
-        active
-        ? '🟠 Precipitación detectada'
-        : '🟢 Sin precipitación detectada';
-
-    el('principal')
-        .className =
-        'main ' +
-        (
-            active
-            ? 'warn'
-            : 'ok'
-        );
-
-    el('sub')
-        .textContent =
-        'Nowcast V7 · ' +
-        val(
-            n.frames_analizados
-        ) +
-        ' frames · ' +
-        val(
-            n.tiles_ok
-        ) +
-        '/9 teselas';
-
-    el('dist')
-        .textContent =
-        formatDistance(
-            n.distancia_km
-        );
-
-    el('vel')
-        .textContent =
-        formatSpeed(
-            n.velocidad_kmh
-        );
-
-    el('celldir')
-        .textContent =
-        direction(
-            n.direccion_grados ??
-            n.direccion
-        );
-
-    el('trend')
-        .textContent =
-        trendText(
-            n.fortalecimiento
-        );
-
-    el('eta')
-        .textContent =
-        formatEta(
-            n.eta_minutos
-        );
-
-    el('conf')
-        .textContent =
-        confidence(
-            n.confianza_movimiento
-        );
-
-    renderCores(n);
-}
-
-
-function sazb(s) {
-
-    if (
-        !s ||
-        s.observacion_valida !== true
-    ) {
-
-        el('obs')
-            .textContent =
-            'SAZB · sin observación válida';
-
-        return;
-    }
-
-    const kmh =
-        s.viento_kt != null
-        ? Number(s.viento_kt) * 1.852
-        : null;
-
-    el('temp')
-        .textContent =
-        val(
-            s.temperatura_c,
-            ' °C'
-        );
-
-    el('rocio')
-        .textContent =
-        val(
-            s.punto_rocio_c,
-            ' °C'
-        );
-
-    el('viento')
-        .textContent =
-        kmh != null
-        ? kmh.toFixed(1) + ' km/h'
-        : '—';
-
-    el('dir')
-        .textContent =
-        direction(
-            s.direccion_viento
-        );
-
-    el('presion')
-        .textContent =
-        s.presion_hpa != null
-        ? Number(
-            s.presion_hpa
-        ).toFixed(1) + ' hPa'
-        : '—';
-
-    el('vis')
-        .textContent =
-        val(
-            s.visibilidad_millas,
-            ' mi'
-        );
-
-    el('obs')
-        .textContent =
-        'SAZB · observación hace ' +
-        val(
-            s.edad_minutos,
-            ' min'
-        );
-}
-
-
-function overlay(radarData) {
-
-    if (!radarData?.bounds) {
-        return;
-    }
-
-    const bounds = [
-
-        [
-            radarData.bounds.south,
-            radarData.bounds.west
-        ],
-
-        [
-            radarData.bounds.north,
-            radarData.bounds.east
-        ]
-    ];
-
-    if (!radar) {
-
-        radar =
-            L.imageOverlay(
-                '/radar.png?ts=' +
-                Date.now(),
-                bounds,
-                {
-                    opacity: .65,
-                    interactive: false
-                }
-            ).addTo(map);
-
-    } else {
-
-        radar.setBounds(
-            bounds
-        );
-
-        radar.setUrl(
-            '/radar.png?ts=' +
-            Date.now()
-        );
-    }
-}
-
-
-async function load() {
+async function cargarEstado() {
 
     try {
 
         const response =
             await fetch(
-                '/estado?ts=' +
-                Date.now()
+                "/radar/status?t="
+                + Date.now()
             );
 
-        const data =
+        const status =
             await response.json();
 
-        if (!data.radar) {
+        const bounds =
+            status.bounds;
 
-            const radarResponse =
-                await fetch(
-                    '/radar/9tiles?ts=' +
-                    Date.now()
-                );
-
-            data.radar =
-                await radarResponse.json();
-        }
-
-        nowcast(data);
-
-        sazb(
-            data.observacion_sazb
-        );
-
-        overlay(
-            data.radar
-        );
 
         if (
-            data.radar?.frame_argentina
+
+            bounds &&
+
+            bounds.north !== undefined &&
+
+            bounds.south !== undefined &&
+
+            bounds.west !== undefined &&
+
+            bounds.east !== undefined
+
         ) {
 
-            el('estado')
-                .textContent =
-                'RainViewer · último frame: ' +
-                data.radar.frame_argentina +
-                ' · teselas: ' +
-                val(
-                    data.radar.teselas_ok
-                ) +
-                '/' +
-                val(
-                    data.radar.teselas_total
+            const imageBounds = [
+
+                [
+                    bounds.south,
+                    bounds.west
+                ],
+
+                [
+                    bounds.north,
+                    bounds.east
+                ]
+
+            ];
+
+
+            if (radarOverlay) {
+
+                map.removeLayer(
+                    radarOverlay
                 );
+            }
+
+
+            radarOverlay =
+                L.imageOverlay(
+
+                    "/radar.png?t="
+                    + Date.now(),
+
+                    imageBounds,
+
+                    {
+                        opacity: 0.88,
+
+                        interactive: false
+                    }
+
+                );
+
+
+            radarOverlay.addTo(
+                map
+            );
         }
 
-    } catch (error) {
 
-        el('resultado')
+        const frame =
+            status.frame_argentina ||
+            status.frame_utc ||
+            "sin frame";
+
+
+        document
+            .getElementById("frame")
             .textContent =
-            'No se pudo actualizar el análisis.';
+                "RainViewer · último frame: "
+                + frame
+                + " · teselas: "
+                + (
+                    status.teselas_ok ?? "—"
+                )
+                + "/"
+                + (
+                    status.teselas_total ?? "—"
+                );
 
-        console.log(error);
+    } catch (e) {
+
+        document
+            .getElementById("frame")
+            .textContent =
+                "No se pudo cargar el estado del radar";
+    }
+}
+
+
+async function cargarInformacion() {
+
+    try {
+
+        const [
+            nowcastResponse,
+            obsResponse
+        ] =
+            await Promise.all([
+
+                fetch(
+                    "/nowcast?t="
+                    + Date.now()
+                ),
+
+                fetch(
+                    "/observacion?t="
+                    + Date.now()
+                )
+
+            ]);
+
+
+        const nowcastData =
+            await nowcastResponse.json();
+
+        const obs =
+            await obsResponse.json();
+
+
+        const n =
+            nowcastData.nowcast || {};
+
+
+        const actividad =
+            n.actividad === true;
+
+
+        const estado =
+            document.getElementById(
+                "estado"
+            );
+
+
+        estado.textContent =
+            actividad
+            ? "Precipitación detectada"
+            : "Sin precipitación detectada";
+
+
+        estado.className =
+            "status "
+            + (
+                actividad
+                ? "warn"
+                : "ok"
+            );
+
+
+        document
+            .getElementById("detalle")
+            .textContent =
+
+                "Nowcast V7 · "
+                + (
+                    n.frames_analizados
+                    ?? "—"
+                )
+                + " frames · "
+                + (
+                    n.tiles_ok
+                    ?? "—"
+                )
+                + "/9 teselas";
+
+
+        const ambiente =
+            obs.ambiente ||
+            obs ||
+            {};
+
+
+        document
+            .getElementById("temp")
+            .textContent =
+                val(
+                    ambiente.temperature_2m,
+                    " °C"
+                );
+
+
+        document
+            .getElementById("dew")
+            .textContent =
+                val(
+                    ambiente.dew_point_2m,
+                    " °C"
+                );
+
+
+        document
+            .getElementById("wind")
+            .textContent =
+                val(
+                    ambiente.wind_speed_10m,
+                    " km/h"
+                );
+
+
+        document
+            .getElementById("pressure")
+            .textContent =
+                val(
+                    ambiente.pressure_msl,
+                    " hPa"
+                );
+
+
+        document
+            .getElementById("distance")
+            .textContent =
+                val(
+                    n.distancia_km,
+                    " km"
+                );
+
+
+        document
+            .getElementById("speed")
+            .textContent =
+                val(
+                    n.velocidad_kmh,
+                    " km/h"
+                );
+
+
+        document
+            .getElementById("direction")
+            .textContent =
+                n.direccion ||
+                val(
+                    n.direccion_grados,
+                    "°"
+                );
+
+
+        document
+            .getElementById("trend")
+            .textContent =
+                n.fortalecimiento ||
+                "sin_datos";
+
+
+        document
+            .getElementById("eta")
+            .textContent =
+                val(
+                    n.eta_minutos,
+                    " min"
+                );
+
+
+        document
+            .getElementById("confidence")
+            .textContent =
+                fmtConfidence(
+                    n.confianza_movimiento
+                );
+
+
+    } catch (e) {
+
+        document
+            .getElementById("estado")
+            .textContent =
+                "Error leyendo datos";
+
+        document
+            .getElementById("estado")
+            .className =
+                "status danger";
+
+        document
+            .getElementById("detalle")
+            .textContent =
+                String(e);
     }
 }
 
 
 async function actualizarRadar() {
 
-    el('resultado')
+    document
+        .getElementById("frame")
         .textContent =
-        'Actualizando radar...';
+            "Actualizando radar...";
+
 
     try {
 
-        const response =
-            await fetch(
-                '/radar/9tiles?ts=' +
-                Date.now()
-            );
+        await fetch(
+            "/radar/9tiles?t="
+            + Date.now(),
+            {
+                cache:
+                    "no-store"
+            }
+        );
 
-        const data =
-            await response.json();
+    } catch (e) {
 
-        if (
-            data.estado !== 'ok'
-        ) {
-
-            el('resultado')
-                .textContent =
-                'Error: ' +
-                (
-                    data.error ||
-                    'No se pudo actualizar.'
-                );
-
-            return;
-        }
-
-        overlay(data);
-
-        el('resultado')
-            .textContent =
-            'Radar actualizado · ' +
-            data.teselas_ok +
-            '/' +
-            data.teselas_total;
-
-        await load();
-
-    } catch (error) {
-
-        el('resultado')
-            .textContent =
-            'Error de conexión: ' +
-            error;
+        console.error(e);
     }
+
+
+    await cargarEstado();
+
+    await cargarInformacion();
 }
 
 
-setTimeout(
-    () => map.invalidateSize(),
-    300
-);
+function iniciarMapa() {
 
-load();
+    map =
+        L.map(
+            "map",
+            {
+                zoomControl:
+                    true,
 
-setInterval(
-    load,
-    60000
-);
+                attributionControl:
+                    true
+            }
+        )
+        .setView(
+            [
+                -38.71,
+                -62.26
+            ],
+            7
+        );
+
+
+    L.tileLayer(
+
+        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+
+        {
+            maxZoom: 18,
+
+            attribution:
+                "&copy; OpenStreetMap contributors"
+        }
+
+    ).addTo(map);
+
+
+    L.marker(
+        [
+            -38.71,
+            -62.26
+        ]
+    )
+    .addTo(map)
+    .bindTooltip(
+        "Bahía Blanca"
+    );
+
+
+    cargarEstado();
+
+    cargarInformacion();
+
+
+    setInterval(
+
+        () => {
+
+            cargarEstado();
+
+            cargarInformacion();
+
+        },
+
+        60000
+
+    );
+}
+
+
+iniciarMapa();
 
 </script>
 
 </body>
+
 </html>
-'''
+"""
 
 
-@app.get(
-    "/radar",
-    response_class=HTMLResponse
-)
-def radar_page():
+if __name__ == "__main__":
 
-    return HTML
+    import uvicorn
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000
+    )
