@@ -28,11 +28,28 @@ from __future__ import annotations
 import csv
 import json
 import re
+import sys
 from pathlib import Path
 
-from PIL import Image
 
-from scripts.radar_rainviewer import analyze_frame
+# ============================================================
+# IMPORTAR RADAR V7.1
+# ============================================================
+
+SCRIPT_DIR = Path(
+    __file__
+).resolve().parent
+
+sys.path.insert(
+    0,
+    str(SCRIPT_DIR)
+)
+
+from radar_rainviewer import (
+    analyze_frame,
+    LAT,
+    LON,
+)
 
 
 # ============================================================
@@ -51,12 +68,6 @@ OUTPUT_CSV = Path(
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
-
-# Los PNG históricos fueron generados como mosaicos
-# de 3 x 3 tiles.
-#
-# El radar V7.1 utiliza 9 tiles cuando todos fueron
-# descargados correctamente.
 
 TILES_OK = 9
 
@@ -81,7 +92,7 @@ def extract_timestamp(path: Path):
 
 
 # ============================================================
-# PROCESAR
+# MAIN
 # ============================================================
 
 def main():
@@ -92,11 +103,19 @@ def main():
     print("=" * 60)
     print("")
 
+    # --------------------------------------------------------
+    # COMPROBAR DIRECTORIO
+    # --------------------------------------------------------
+
     if not HISTORY_DIR.exists():
 
         raise SystemExit(
             f"ERROR: no existe {HISTORY_DIR}"
         )
+
+    # --------------------------------------------------------
+    # BUSCAR PNG
+    # --------------------------------------------------------
 
     files = []
 
@@ -135,11 +154,11 @@ def main():
 
     print("")
 
-    results = []
+    # --------------------------------------------------------
+    # PROCESAR
+    # --------------------------------------------------------
 
-    # ========================================================
-    # ANALIZAR CADA FRAME
-    # ========================================================
+    results = []
 
     for index, (
         timestamp,
@@ -156,6 +175,8 @@ def main():
 
         try:
 
+            from PIL import Image
+
             image = Image.open(
                 path
             ).convert(
@@ -166,7 +187,7 @@ def main():
                 image=image,
                 timestamp=timestamp,
                 tiles_ok=TILES_OK,
-                path=""
+                path=str(path)
             )
 
             results.append(
@@ -189,9 +210,9 @@ def main():
                 exc
             )
 
-    # ========================================================
-    # VALIDACIÓN
-    # ========================================================
+    # --------------------------------------------------------
+    # VALIDAR
+    # --------------------------------------------------------
 
     if not results:
 
@@ -209,9 +230,9 @@ def main():
         f"Frames reconstruidos: {len(results)}"
     )
 
-    # ========================================================
-    # GUARDAR CSV
-    # ========================================================
+    # --------------------------------------------------------
+    # CREAR CSV
+    # --------------------------------------------------------
 
     OUTPUT_CSV.parent.mkdir(
         parents=True,
@@ -263,10 +284,10 @@ def main():
                     "RainViewer",
 
                 "latitud":
-                    -38.71,
+                    LAT,
 
                 "longitud":
-                    -62.26,
+                    LON,
 
                 "area_px":
                     item["area"],
@@ -296,9 +317,15 @@ def main():
                     )
             })
 
-    # ========================================================
+    # --------------------------------------------------------
     # RESUMEN
-    # ========================================================
+    # --------------------------------------------------------
+
+    precipitation_frames = sum(
+        1
+        for item in results
+        if item["area"] > 0
+    )
 
     print("")
     print("=" * 60)
@@ -311,26 +338,14 @@ def main():
     print(
         f"Frames: {len(results)}"
     )
-    print("")
-
-    # Estadísticas rápidas
-
-    precipitation_frames = sum(
-        1
-        for item in results
-        if item["area"] > 0
-    )
-
     print(
         f"Frames con precipitación: "
         f"{precipitation_frames}"
     )
-
     print(
         f"Frames sin precipitación: "
         f"{len(results) - precipitation_frames}"
     )
-
     print("")
 
 
