@@ -12,43 +12,49 @@ import requests
 from PIL import Image
 
 
-VERSION = "5.0.2"
+VERSION = "5.1.0"
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE = Path(__file__).resolve().parent
 
-RADAR_DIR = BASE_DIR / "data" / "radar"
-SAZB_DIR = BASE_DIR / "data" / "sazb"
+RADAR = BASE / "data" / "radar"
+SAZB = BASE / "data" / "sazb"
 
-RADAR_DIR.mkdir(parents=True, exist_ok=True)
-SAZB_DIR.mkdir(parents=True, exist_ok=True)
+RADAR.mkdir(parents=True, exist_ok=True)
+SAZB.mkdir(parents=True, exist_ok=True)
 
-ACTUAL_FILE = RADAR_DIR / "actual.png"
-PREVIEW_FILE = RADAR_DIR / "preview.png"
-STATUS_FILE = RADAR_DIR / "status.json"
-NOWCAST_FILE = RADAR_DIR / "radar_nowcast.json"
-SAZB_STATUS_FILE = SAZB_DIR / "status.json"
+ACTUAL = RADAR / "actual.png"
+PREVIEW = RADAR / "preview.png"
+STATUS = RADAR / "status.json"
+NOWCAST = RADAR / "radar_nowcast.json"
+SAZB_STATUS = SAZB / "status.json"
 
 LAT = -38.71
 LON = -62.26
 
-RADAR_ZOOM = 7
-TILE_SIZE = 256
+ZOOM = 7
+TILE = 256
 
-RAINVIEWER_API = "https://api.rainviewer.com/public/weather-maps.json"
+RAINVIEWER_API = (
+    "https://api.rainviewer.com/public/weather-maps.json"
+)
 
-HEADERS = {
+HEAD = {
     "User-Agent": f"ClimaAR/{VERSION}",
     "Referer": "https://www.rainviewer.com/",
 }
 
+
 app = FastAPI(
     title="ClimaAR",
-    description="Radar meteorológico y seguimiento de tormentas para Bahía Blanca",
     version=VERSION,
+    description=(
+        "Radar meteorológico y seguimiento de tormentas "
+        "para Bahía Blanca"
+    ),
 )
 
 
-def iso_now():
+def now():
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -67,10 +73,16 @@ def clean(value):
             return None
 
     if isinstance(value, dict):
-        return {str(k): clean(v) for k, v in value.items()}
+        return {
+            str(k): clean(v)
+            for k, v in value.items()
+        }
 
     if isinstance(value, list):
-        return [clean(v) for v in value]
+        return [
+            clean(v)
+            for v in value
+        ]
 
     return value
 
@@ -87,6 +99,7 @@ def load_json(path):
                 )
             )
         )
+
     except Exception:
         return None
 
@@ -105,9 +118,9 @@ def save_json(path, data):
 
 def lon_to_x(lon):
     return int(
-        (lon + 180.0)
-        / 360.0
-        * (2 ** RADAR_ZOOM)
+        (lon + 180)
+        / 360
+        * (2 ** ZOOM)
     )
 
 
@@ -119,19 +132,20 @@ def lat_to_y(lat):
                 math.tan(
                     math.radians(lat)
                 )
-            ) / math.pi
+            )
+            / math.pi
         )
         / 2
-        * (2 ** RADAR_ZOOM)
+        * (2 ** ZOOM)
     )
 
 
 def x_to_lon(x):
     return (
         x
-        / (2 ** RADAR_ZOOM)
-        * 360.0
-        - 180.0
+        / (2 ** ZOOM)
+        * 360
+        - 180
     )
 
 
@@ -143,7 +157,7 @@ def y_to_lat(y):
                 * (
                     1
                     - 2 * y
-                    / (2 ** RADAR_ZOOM)
+                    / (2 ** ZOOM)
                 )
             )
         )
@@ -154,7 +168,7 @@ def rainviewer_data():
 
     response = requests.get(
         RAINVIEWER_API,
-        headers=HEADERS,
+        headers=HEAD,
         timeout=20
     )
 
@@ -181,33 +195,126 @@ def rainviewer_data():
         )
 
     return {
-        "host": data.get(
-            "host",
-            "https://tilecache.rainviewer.com"
+        "host": (
+            data.get("host")
+            or "https://tilecache.rainviewer.com"
         ),
         "path": frame["path"],
         "time": frame.get("time"),
-        "frames": len(past)
+        "frames": len(past),
     }
 
 
-def tile_url(
-    host,
-    path,
-    x,
-    y
-):
+def tile_url(host, path, x, y):
 
     return (
         f"{host}"
         f"{path}"
-        f"/{TILE_SIZE}"
-        f"/{RADAR_ZOOM}"
+        f"/{TILE}"
+        f"/{ZOOM}"
         f"/{x}"
         f"/{y}"
         f"/2"
         f"/1_1.png"
     )
+
+
+def analyze_radar_image(path):
+
+    if not path.exists():
+        return {
+            "precipitacion": False,
+            "cobertura_pct": 0.0,
+            "intensidad": "sin_datos",
+            "pixeles_radar": 0,
+        }
+
+    image = Image.open(path).convert("RGBA")
+
+    pixels = image.load()
+
+    width, height = image.size
+
+    radar_pixels = 0
+    moderate_pixels = 0
+    strong_pixels = 0
+
+    for y in range(height):
+
+        for x in range(width):
+
+            r, g, b, a = pixels[x, y]
+
+            if (
+                a >= 20
+                and (r + g + b) > 25
+            ):
+
+                radar_pixels += 1
+
+                brightness = (
+                    r + g + b
+                ) / 3
+
+                if brightness >= 150:
+                    strong_pixels += 1
+
+                elif brightness >= 80:
+                    moderate_pixels += 1
+
+    total = width * height
+
+    coverage = (
+        radar_pixels
+        / total
+        * 100
+        if total
+        else 0
+    )
+
+    if radar_pixels == 0:
+
+        intensity = "sin_precipitacion"
+
+    elif (
+        strong_pixels
+        / max(radar_pixels, 1)
+        > 0.08
+    ):
+
+        intensity = "fuerte"
+
+    elif (
+        moderate_pixels
+        / max(radar_pixels, 1)
+        > 0.12
+    ):
+
+        intensity = "moderada"
+
+    else:
+
+        intensity = "debil"
+
+    return {
+        "precipitacion":
+            radar_pixels > 0,
+
+        "cobertura_pct":
+            round(coverage, 3),
+
+        "intensidad":
+            intensity,
+
+        "pixeles_radar":
+            radar_pixels,
+
+        "pixeles_moderados":
+            moderate_pixels,
+
+        "pixeles_fuertes":
+            strong_pixels,
+    }
 
 
 def build_radar():
@@ -216,14 +323,14 @@ def build_radar():
 
     rv = rainviewer_data()
 
-    cx = lon_to_x(LON)
-    cy = lat_to_y(LAT)
+    center_x = lon_to_x(LON)
+    center_y = lat_to_y(LAT)
 
     canvas = Image.new(
         "RGBA",
         (
-            TILE_SIZE * 3,
-            TILE_SIZE * 3
+            TILE * 3,
+            TILE * 3
         ),
         (
             0,
@@ -240,8 +347,8 @@ def build_radar():
 
         for dx in range(-1, 2):
 
-            x = cx + dx
-            y = cy + dy
+            x = center_x + dx
+            y = center_y + dy
 
             url = tile_url(
                 rv["host"],
@@ -264,7 +371,7 @@ def build_radar():
 
                 response = requests.get(
                     url,
-                    headers=HEADERS,
+                    headers=HEAD,
                     timeout=20
                 )
 
@@ -276,18 +383,32 @@ def build_radar():
                     )
                 ).convert("RGBA")
 
+                if image.size != (
+                    TILE,
+                    TILE
+                ):
+
+                    image = image.resize(
+                        (TILE, TILE)
+                    )
+
                 canvas.alpha_composite(
                     image,
                     (
-                        (dx + 1) * TILE_SIZE,
-                        (dy + 1) * TILE_SIZE
+                        (dx + 1) * TILE,
+                        (dy + 1) * TILE
                     )
                 )
 
                 item.update({
-                    "http": response.status_code,
-                    "valid_png": True,
-                    "size": len(response.content)
+                    "http":
+                        response.status_code,
+
+                    "valid_png":
+                        True,
+
+                    "size":
+                        len(response.content)
                 })
 
                 ok += 1
@@ -299,13 +420,17 @@ def build_radar():
             tiles.append(item)
 
     canvas.save(
-        ACTUAL_FILE,
+        ACTUAL,
         "PNG"
     )
 
     canvas.save(
-        PREVIEW_FILE,
+        PREVIEW,
         "PNG"
+    )
+
+    analysis = analyze_radar_image(
+        ACTUAL
     )
 
     frame_utc = None
@@ -355,7 +480,7 @@ def build_radar():
             "Universal Blue",
 
         "actualizado_utc":
-            iso_now(),
+            now(),
 
         "frame_utc":
             frame_utc,
@@ -373,7 +498,7 @@ def build_radar():
             9,
 
         "zoom":
-            RADAR_ZOOM,
+            ZOOM,
 
         "centro": {
             "lat": LAT,
@@ -384,22 +509,22 @@ def build_radar():
 
             "north":
                 y_to_lat(
-                    cy - 1
+                    center_y - 1
                 ),
 
             "south":
                 y_to_lat(
-                    cy + 2
+                    center_y + 2
                 ),
 
             "west":
                 x_to_lon(
-                    cx - 1
+                    center_x - 1
                 ),
 
             "east":
                 x_to_lon(
-                    cx + 2
+                    center_x + 2
                 )
         },
 
@@ -409,12 +534,15 @@ def build_radar():
                 2
             ),
 
+        "analisis":
+            analysis,
+
         "tiles":
             tiles
     }
 
     save_json(
-        STATUS_FILE,
+        STATUS,
         status
     )
 
@@ -424,16 +552,37 @@ def build_radar():
 def cargar_nowcast():
 
     data = load_json(
-        NOWCAST_FILE
+        NOWCAST
     )
 
-    if not isinstance(
+    if isinstance(
         data,
         dict
     ):
-        return None
+        return data
 
-    return data
+    return None
+
+
+def radar_analysis():
+
+    status = load_json(
+        STATUS
+    ) or {}
+
+    analysis = status.get(
+        "analisis"
+    )
+
+    if isinstance(
+        analysis,
+        dict
+    ):
+        return analysis
+
+    return analyze_radar_image(
+        ACTUAL
+    )
 
 
 @app.get(
@@ -441,6 +590,7 @@ def cargar_nowcast():
     response_class=HTMLResponse
 )
 def home():
+
     return radar_page()
 
 
@@ -451,7 +601,7 @@ def health():
         "estado": "ok",
         "servicio": "ClimaAR",
         "version": VERSION,
-        "hora_utc": iso_now()
+        "hora_utc": now()
     }
 
 
@@ -468,7 +618,7 @@ def radar_9tiles():
             "estado": "error",
             "fuente": "RainViewer",
             "error": str(exc),
-            "hora_utc": iso_now()
+            "hora_utc": now()
         }
 
 
@@ -476,15 +626,29 @@ def radar_9tiles():
 def radar_status():
 
     return (
-        load_json(
-            STATUS_FILE
-        )
+        load_json(STATUS)
         or
         {
-            "estado": "sin_datos",
-            "fuente": "RainViewer"
+            "estado":
+                "sin_datos",
+
+            "fuente":
+                "RainViewer"
         }
     )
+
+
+@app.get("/radar/analysis")
+def radar_analysis_endpoint():
+
+    return {
+        "estado": "ok",
+        "fuente": "RainViewer",
+        "analisis":
+            radar_analysis(),
+        "hora_utc":
+            now()
+    }
 
 
 @app.get("/radar/debug")
@@ -506,7 +670,7 @@ def radar_debug():
 
         response = requests.get(
             url,
-            headers=HEADERS,
+            headers=HEAD,
             timeout=20
         )
 
@@ -531,21 +695,15 @@ def radar_debug():
                 url,
 
             "x": x,
-
             "y": y,
-
-            "zoom":
-                RADAR_ZOOM,
+            "zoom": ZOOM,
 
             "bytes":
-                len(
-                    response.content
-                ),
+                len(response.content),
 
             "png": {
 
-                "valido":
-                    True,
+                "valido": True,
 
                 "formato":
                     image.format,
@@ -558,7 +716,10 @@ def radar_debug():
 
                 "alto":
                     image.height
-            }
+            },
+
+            "analisis":
+                radar_analysis()
         }
 
     except Exception as exc:
@@ -572,7 +733,7 @@ def radar_debug():
 @app.get("/radar.png")
 def radar_png():
 
-    if not ACTUAL_FILE.exists():
+    if not ACTUAL.exists():
 
         try:
             build_radar()
@@ -580,7 +741,7 @@ def radar_png():
         except Exception:
             pass
 
-    if not ACTUAL_FILE.exists():
+    if not ACTUAL.exists():
 
         return JSONResponse(
             {
@@ -591,13 +752,18 @@ def radar_png():
         )
 
     return FileResponse(
-        ACTUAL_FILE,
-        media_type="image/png"
+        ACTUAL,
+        media_type="image/png",
+        headers={
+            "Cache-Control":
+                "no-store"
+        }
     )
 
 
 @app.get("/radar/preview.png")
 def radar_preview():
+
     return radar_png()
 
 
@@ -632,7 +798,7 @@ def observacion():
 
     return (
         load_json(
-            SAZB_STATUS_FILE
+            SAZB_STATUS
         )
         or
         {
@@ -651,7 +817,7 @@ def observacion():
 @app.get("/estado")
 def estado():
 
-    nowcast_data = cargar_nowcast()
+    data = cargar_nowcast()
 
     return clean({
 
@@ -662,37 +828,33 @@ def estado():
             VERSION,
 
         "radar":
-            load_json(
-                STATUS_FILE
-            ),
+            load_json(STATUS),
 
         "observacion_sazb":
-            load_json(
-                SAZB_STATUS_FILE
-            ),
+            load_json(SAZB_STATUS),
 
         "nowcast_radar": {
 
             "disponible":
-                nowcast_data is not None,
+                data is not None,
 
             "estado":
                 "ok"
-                if nowcast_data is not None
+                if data is not None
                 else "sin_datos",
 
             "datos":
-                nowcast_data
+                data
         },
 
         "nowcast_radar_operativo":
-            nowcast_data is not None,
+            data is not None,
 
         "nowcast_radar_ia":
             False,
 
         "hora_utc":
-            iso_now()
+            now()
     })
 
 
@@ -717,11 +879,24 @@ def tormenta():
     if not data:
 
         return {
+
             "estado":
                 "sin_datos",
 
             "zona":
-                "Bahía Blanca"
+                "Bahía Blanca",
+
+            "actividad":
+                False,
+
+            "nucleos":
+                [],
+
+            "proyecciones":
+                {},
+
+            "confianza":
+                0
         }
 
     n = data.get(
@@ -770,8 +945,7 @@ def tormenta():
 
 def radar_page():
 
-    return r"""
-<!doctype html>
+    return '''<!doctype html>
 <html lang="es">
 
 <head>
@@ -780,7 +954,7 @@ def radar_page():
 
 <meta
     name="viewport"
-    content="width=device-width,initial-scale=1"
+    content="width=device-width,initial-scale=1,viewport-fit=cover"
 >
 
 <title>ClimaAR — Radar Bahía Blanca</title>
@@ -788,7 +962,7 @@ def radar_page():
 <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
+>
 
 <style>
 
@@ -800,14 +974,13 @@ html,
 body {
 
     margin: 0;
-    padding: 0;
 
     width: 100%;
     height: 100%;
 
     overflow: hidden;
 
-    background: #111;
+    background: #08111b;
 
     color: #fff;
 
@@ -816,187 +989,189 @@ body {
 
 #map {
 
-    position: absolute;
+    position: fixed;
 
     inset: 0;
-
-    width: 100%;
-    height: 100%;
 
     z-index: 1;
 }
 
 .top {
 
-    position: absolute;
+    position: fixed;
+
+    z-index: 1000;
 
     top: 0;
     left: 0;
     right: 0;
 
-    z-index: 1000;
+    min-height: 58px;
 
-    padding: 10px;
+    padding: 8px 10px;
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 10px;
 
     background:
-        rgba(17,17,17,.94);
+        rgba(5,12,20,.92);
 
-    border-bottom:
-        1px solid #333;
+    backdrop-filter:
+        blur(8px);
+
+    box-shadow:
+        0 2px 12px
+        rgba(0,0,0,.35);
 }
 
-.title {
+.brand {
 
-    font-size: 20px;
+    font-weight: 800;
 
-    font-weight: bold;
+    font-size: 15px;
 }
 
 .sub {
 
-    color: #aaa;
+    font-size: 10px;
 
-    font-size: 12px;
+    color: #aebdcc;
 
     margin-top: 3px;
 }
 
 .actions {
 
+    margin-left: auto;
+
     display: flex;
 
-    gap: 8px;
-
-    margin-top: 8px;
+    gap: 6px;
 }
 
-.actions button {
-
-    flex: 1;
+button {
 
     border: 0;
 
-    border-radius: 8px;
+    border-radius: 9px;
 
-    padding: 10px;
+    padding: 9px 11px;
 
-    background: #1976d2;
+    font-weight: 700;
+
+    cursor: pointer;
+}
+
+#refresh {
+
+    background: #1677ff;
 
     color: #fff;
-
-    font-size: 15px;
-
-    font-weight: bold;
 }
 
-.actions button.secondary {
+#toggle {
 
-    background: #444;
+    background: #293847;
+
+    color: #fff;
 }
 
-.panel {
+.sheet {
 
-    position: absolute;
+    position: fixed;
 
-    left: 10px;
-    right: 10px;
+    z-index: 1100;
 
-    bottom: 10px;
+    left: 9px;
+    right: 9px;
 
-    z-index: 999;
+    bottom: 9px;
 
-    max-width: 620px;
+    max-height: 39vh;
 
-    max-height: 58vh;
-
-    overflow-y: auto;
+    overflow: auto;
 
     background:
-        rgba(17,17,17,.94);
+        rgba(8,13,19,.95);
 
     border:
-        1px solid #444;
+        1px solid
+        rgba(255,255,255,.14);
 
-    border-radius: 14px;
-
-    padding: 12px;
+    border-radius: 16px;
 
     box-shadow:
-        0 4px 18px
-        rgba(0,0,0,.55);
+        0 10px 35px
+        rgba(0,0,0,.5);
+
+    backdrop-filter:
+        blur(12px);
+
+    transition:
+        transform .22s ease,
+        opacity .22s ease;
 }
 
-.panel.hidden {
+.sheet.closed {
 
-    display: none;
+    transform:
+        translateY(
+            calc(100% + 20px)
+        );
+
+    opacity: .1;
+
+    pointer-events: none;
 }
 
-.panel-header {
+.head {
+
+    position: sticky;
+
+    top: 0;
+
+    z-index: 2;
 
     display: flex;
-
-    align-items: center;
 
     justify-content: space-between;
 
-    gap: 10px;
+    align-items: center;
 
-    margin-bottom: 8px;
+    padding: 9px 12px;
+
+    background:
+        rgba(8,13,19,.99);
+
+    border-bottom:
+        1px solid
+        rgba(255,255,255,.08);
 }
 
-.panel-header strong {
+.title {
 
-    font-size: 17px;
+    font-weight: 800;
+
+    font-size: 14px;
 }
 
-.close-btn {
+.close {
 
-    width: 42px;
-    height: 42px;
+    width: 34px;
+    height: 34px;
 
-    border: 0;
+    padding: 0;
 
     border-radius: 50%;
 
-    background: #333;
+    background: #3a4857;
 
     color: #fff;
 
-    font-size: 24px;
-
-    line-height: 42px;
-
-    text-align: center;
-}
-
-.status {
-
-    font-size: 20px;
-
-    font-weight: bold;
-
-    margin: 5px 0;
-}
-
-.ok {
-    color: #55e08a;
-}
-
-.warn {
-    color: #ffd45a;
-}
-
-.danger {
-    color: #ff6868;
-}
-
-.info {
-
-    color: #aaa;
-
-    font-size: 13px;
-
-    margin: 5px 0 10px;
+    font-size: 21px;
 }
 
 .grid {
@@ -1004,85 +1179,110 @@ body {
     display: grid;
 
     grid-template-columns:
-        repeat(2, 1fr);
+        repeat(4,1fr);
 
     gap: 7px;
+
+    padding: 9px 11px;
 }
 
 .card {
 
-    background: #222;
+    background:
+        rgba(255,255,255,.055);
 
-    border-radius: 9px;
+    border-radius: 10px;
 
-    padding: 9px;
+    padding: 8px;
+
+    min-height: 50px;
 }
 
 .label {
 
-    color: #999;
+    font-size: 9px;
 
-    font-size: 11px;
+    color: #91a0ae;
 
     text-transform: uppercase;
 }
 
 .value {
 
-    margin-top: 3px;
+    font-size: 13px;
 
-    font-size: 17px;
+    font-weight: 800;
 
-    font-weight: bold;
+    margin-top: 4px;
 }
 
-.legend-title {
+.status {
 
-    margin-top: 12px;
+    padding:
+        0 11px 10px;
 
     font-size: 12px;
-
-    font-weight: bold;
 }
 
-.legend {
-
-    display: flex;
-
-    height: 18px;
-
-    border-radius: 5px;
-
-    overflow: hidden;
-
-    margin-top: 5px;
+.good {
+    color: #72e3a0;
 }
 
-.legend span {
-
-    flex: 1;
+.warn {
+    color: #ffd166;
 }
 
-.leaflet-control-attribution {
-
-    font-size: 9px !important;
+.bad {
+    color: #ff7777;
 }
 
-@media (max-width: 520px) {
+#open {
 
-    .panel {
+    display: none;
 
-        max-height: 55vh;
+    position: fixed;
 
-        bottom: 8px;
+    z-index: 1050;
 
-        left: 7px;
-        right: 7px;
+    right: 10px;
+    bottom: 10px;
+
+    background: #111d29;
+
+    color: #fff;
+
+    border:
+        1px solid
+        #44515f;
+}
+
+@media(max-width:700px) {
+
+    .brand {
+        font-size: 14px;
     }
 
-    .title {
+    .sub {
+        display: none;
+    }
 
-        font-size: 18px;
+    .actions button {
+
+        padding:
+            8px 9px;
+
+        font-size: 11px;
+    }
+
+    .sheet {
+
+        max-height: 43vh;
+    }
+
+    .grid {
+
+        grid-template-columns:
+            repeat(2,1fr);
     }
 }
 
@@ -1094,734 +1294,615 @@ body {
 
 <div id="map"></div>
 
-<div class="top">
+<header class="top">
 
-    <div class="title">
-        ClimaAR — Radar Bahía Blanca
-    </div>
+    <div>
 
-    <div
-        class="sub"
-        id="frame"
-    >
-        Cargando radar...
+        <div class="brand">
+            ClimaAR — Radar Bahía Blanca
+        </div>
+
+        <div
+            class="sub"
+            id="frame"
+        >
+            Cargando radar…
+        </div>
+
     </div>
 
     <div class="actions">
 
-        <button
-            onclick="actualizarRadar()"
-        >
+        <button id="refresh">
             Actualizar radar
         </button>
 
-        <button
-            class="secondary"
-            onclick="mostrarPanel()"
-        >
-            Mostrar información
+        <button id="toggle">
+            Ocultar datos
         </button>
 
     </div>
 
-</div>
+</header>
 
-
-<div
-    class="panel"
-    id="panel"
+<section
+    class="sheet"
+    id="sheet"
 >
 
-    <div class="panel-header">
+    <div class="head">
 
-        <strong>
+        <div
+            class="title"
+            id="title"
+        >
             Estado meteorológico
-        </strong>
+        </div>
 
         <button
-            class="close-btn"
-            onclick="ocultarPanel()"
-            aria-label="Ocultar"
+            class="close"
+            id="close"
         >
             ×
         </button>
 
     </div>
 
-
     <div
-        id="estado"
         class="status"
+        id="main"
     >
-        Cargando...
+        Cargando…
     </div>
-
-    <div
-        id="detalle"
-        class="info"
-    ></div>
-
 
     <div class="grid">
 
         <div class="card">
-
             <div class="label">
                 Temperatura
             </div>
-
             <div
                 class="value"
                 id="temp"
             >
                 —
             </div>
-
         </div>
 
-
         <div class="card">
-
             <div class="label">
                 Punto de rocío
             </div>
-
             <div
                 class="value"
                 id="dew"
             >
                 —
             </div>
-
         </div>
 
-
         <div class="card">
-
             <div class="label">
                 Viento
             </div>
-
             <div
                 class="value"
                 id="wind"
             >
                 —
             </div>
-
         </div>
 
-
         <div class="card">
-
             <div class="label">
                 Presión
             </div>
-
             <div
                 class="value"
-                id="pressure"
+                id="press"
             >
                 —
             </div>
-
         </div>
 
-
         <div class="card">
-
             <div class="label">
-                Distancia
+                Cobertura radar
             </div>
-
             <div
                 class="value"
-                id="distance"
+                id="cov"
             >
                 —
             </div>
-
         </div>
 
-
         <div class="card">
-
             <div class="label">
-                Velocidad célula
+                Intensidad
             </div>
-
             <div
                 class="value"
-                id="speed"
+                id="int"
             >
                 —
             </div>
-
         </div>
 
-
         <div class="card">
-
             <div class="label">
-                Dirección célula
+                Teselas
             </div>
-
             <div
                 class="value"
-                id="direction"
+                id="tiles"
             >
                 —
             </div>
-
         </div>
 
-
         <div class="card">
-
             <div class="label">
-                Tendencia
+                Actualizado
             </div>
-
             <div
                 class="value"
-                id="trend"
+                id="upd"
             >
                 —
             </div>
-
-        </div>
-
-
-        <div class="card">
-
-            <div class="label">
-                ETA
-            </div>
-
-            <div
-                class="value"
-                id="eta"
-            >
-                —
-            </div>
-
-        </div>
-
-
-        <div class="card">
-
-            <div class="label">
-                Confianza tracking
-            </div>
-
-            <div
-                class="value"
-                id="confidence"
-            >
-                —
-            </div>
-
         </div>
 
     </div>
 
+    <div class="status">
 
-    <div class="legend-title">
+        <b>Nowcast:</b>
+        <span id="nc">
+            —
+        </span>
 
-        REFLECTIVIDAD RADAR · dBZ ·
-        RAINVIEWER UNIVERSAL BLUE
+        <br>
 
-    </div>
-
-
-    <div class="legend">
-
-        <span style="background:#cec087"></span>
-        <span style="background:#6e0dc6"></span>
-        <span style="background:#c06487"></span>
-        <span style="background:#fac431"></span>
-        <span style="background:#fe9a58"></span>
-        <span style="background:#fd341c"></span>
-        <span style="background:#bebebe"></span>
+        <b>Movimiento:</b>
+        <span id="motion">
+            —
+        </span>
 
     </div>
 
-</div>
+</section>
 
+<button id="open">
+    Mostrar datos
+</button>
 
 <script
     src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
 ></script>
 
-
 <script>
 
-let map;
+const map =
+    L.map(
+        'map',
+        {
+            zoomControl: true,
+            preferCanvas: true
+        }
+    ).setView(
+        [-38.71,-62.26],
+        8
+    );
 
-let radarOverlay = null;
+L.tileLayer(
+    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {
+        maxZoom: 18,
+        attribution:
+            '© OpenStreetMap'
+    }
+).addTo(map);
+
+let layer = null;
+
+const $ =
+    id =>
+        document.getElementById(id);
+
+const text =
+    value =>
+        value == null
+            ? '—'
+            : String(value);
 
 
-function mostrarPanel() {
+function overlay(status) {
 
-    document
-        .getElementById("panel")
-        .classList
-        .remove("hidden");
+    if (layer) {
+
+        map.removeLayer(
+            layer
+        );
+    }
+
+    if (!status.bounds) {
+        return;
+    }
+
+    layer =
+        L.imageOverlay(
+            '/radar.png?ts='
+                + Date.now(),
+
+            [
+                [
+                    status.bounds.south,
+                    status.bounds.west
+                ],
+
+                [
+                    status.bounds.north,
+                    status.bounds.east
+                ]
+            ],
+
+            {
+                opacity: .84,
+                interactive: false
+            }
+        );
+
+    layer.addTo(map);
 }
 
 
-function ocultarPanel() {
+function renderRadar(status) {
 
-    document
-        .getElementById("panel")
-        .classList
-        .add("hidden");
+    overlay(status);
+
+    const analysis =
+        status.analisis || {};
+
+    const rain =
+        !!analysis.precipitacion;
+
+    $('frame').textContent =
+        'RainViewer · último frame: '
+        + text(
+            status.frame_argentina
+            || status.frame_utc
+        )
+        + ' · teselas: '
+        + text(status.teselas_ok)
+        + '/'
+        + text(status.teselas_total);
+
+    $('tiles').textContent =
+        text(status.teselas_ok)
+        + '/'
+        + text(status.teselas_total);
+
+    $('cov').textContent =
+        text(
+            analysis.cobertura_pct
+        )
+        + '%';
+
+    const intensities = {
+
+        sin_precipitacion:
+            'Sin precipitación',
+
+        debil:
+            'Débil',
+
+        moderada:
+            'Moderada',
+
+        fuerte:
+            'Fuerte'
+    };
+
+    $('int').textContent =
+        intensities[
+            analysis.intensidad
+        ] || '—';
+
+    $('upd').textContent =
+        status.actualizado_utc
+            ? new Date(
+                status.actualizado_utc
+              ).toLocaleTimeString(
+                'es-AR'
+              )
+            : '—';
+
+    $('title').textContent =
+        rain
+            ? 'Precipitación detectada'
+            : 'Estado meteorológico';
+
+    $('main').innerHTML =
+        rain
+            ? '<span class="warn">'
+              + '● Precipitación detectada '
+              + 'en el mosaico actual.'
+              + '</span>'
+            : '<span class="good">'
+              + '● Sin precipitación detectada '
+              + 'en el mosaico actual.'
+              + '</span>';
 }
 
 
-function val(
-    v,
-    suffix = ""
+function renderObservation(data) {
+
+    const d =
+        data &&
+        (
+            data.observacion
+            || data
+        ) || {};
+
+    const temperature =
+        d.temperatura_c
+        ?? d.temperature_c
+        ?? d.temp_c
+        ?? d.temperatura;
+
+    const dew =
+        d.punto_rocio_c
+        ?? d.dewpoint_c
+        ?? d.dew_point_c
+        ?? d.dewpoint;
+
+    const wind =
+        d.viento_kmh
+        ?? d.wind_kmh
+        ?? d.wind_speed_kmh
+        ?? d.viento;
+
+    const pressure =
+        d.presion_hpa
+        ?? d.pressure_hpa
+        ?? d.presion;
+
+    $('temp').textContent =
+        temperature != null
+            ? Number(
+                temperature
+              ).toFixed(1)
+              + ' °C'
+            : '—';
+
+    $('dew').textContent =
+        dew != null
+            ? Number(
+                dew
+              ).toFixed(1)
+              + ' °C'
+            : '—';
+
+    $('wind').textContent =
+        wind != null
+            ? Number(
+                wind
+              ).toFixed(1)
+              + ' km/h'
+            : '—';
+
+    $('press').textContent =
+        pressure != null
+            ? Number(
+                pressure
+              ).toFixed(1)
+              + ' hPa'
+            : '—';
+}
+
+
+function renderNowcast(data) {
+
+    const value =
+        data &&
+        data.nowcast;
+
+    if (!value) {
+
+        $('nc').textContent =
+            'sin datos';
+
+        $('motion').textContent =
+            'sin datos';
+
+        return;
+    }
+
+    const n =
+        value.nowcast
+        || value;
+
+    $('nc').textContent =
+        n.actividad === true
+            ? 'actividad detectada'
+            : n.actividad === false
+                ? 'sin actividad'
+                : 'datos disponibles';
+
+    const confidence =
+        n.confianza_movimiento;
+
+    $('motion').textContent =
+        confidence != null
+            ? 'confianza '
+              + Math.round(
+                    Number(
+                        confidence
+                    )
+                )
+              + '%'
+            : 'sin datos';
+}
+
+
+async function loadRadar(
+    full
 ) {
 
-    if (
-        v === null ||
-        v === undefined ||
-        v === ""
-    ) {
+    $('refresh').disabled =
+        true;
 
-        return "—";
-    }
-
-    return String(v) + suffix;
-}
-
-
-function fmtConfidence(v) {
-
-    if (
-        v === null ||
-        v === undefined
-    ) {
-
-        return "—";
-    }
-
-    let n = Number(v);
-
-    if (n <= 1) {
-        n *= 100;
-    }
-
-    return Math.round(n) + "%";
-}
-
-
-async function cargarEstado() {
+    $('main').textContent =
+        'Actualizando radar…';
 
     try {
 
         const response =
             await fetch(
-                "/radar/status?t="
-                + Date.now()
+                (
+                    full
+                        ? '/radar/9tiles'
+                        : '/radar/status'
+                )
+                + '?ts='
+                + Date.now(),
+                {
+                    cache:
+                        'no-store'
+                }
             );
 
         const status =
             await response.json();
 
-        const bounds =
-            status.bounds;
-
-
         if (
-
-            bounds &&
-
-            bounds.north !== undefined &&
-
-            bounds.south !== undefined &&
-
-            bounds.west !== undefined &&
-
-            bounds.east !== undefined
-
+            status.estado
+            === 'error'
         ) {
 
-            const imageBounds = [
+            throw new Error(
+                status.error
+                || 'Error de radar'
+            );
+        }
 
-                [
-                    bounds.south,
-                    bounds.west
-                ],
+        renderRadar(
+            status
+        );
 
+        const results =
+            await Promise.all(
                 [
-                    bounds.north,
-                    bounds.east
+                    fetch(
+                        '/observacion?ts='
+                        + Date.now(),
+                        {
+                            cache:
+                                'no-store'
+                        }
+                    ).then(
+                        r => r.json()
+                    ),
+
+                    fetch(
+                        '/nowcast?ts='
+                        + Date.now(),
+                        {
+                            cache:
+                                'no-store'
+                        }
+                    ).then(
+                        r => r.json()
+                    )
                 ]
-
-            ];
-
-
-            if (radarOverlay) {
-
-                map.removeLayer(
-                    radarOverlay
-                );
-            }
-
-
-            radarOverlay =
-                L.imageOverlay(
-
-                    "/radar.png?t="
-                    + Date.now(),
-
-                    imageBounds,
-
-                    {
-                        opacity: 0.88,
-
-                        interactive: false
-                    }
-
-                );
-
-
-            radarOverlay.addTo(
-                map
-            );
-        }
-
-
-        const frame =
-            status.frame_argentina ||
-            status.frame_utc ||
-            "sin frame";
-
-
-        document
-            .getElementById("frame")
-            .textContent =
-                "RainViewer · último frame: "
-                + frame
-                + " · teselas: "
-                + (
-                    status.teselas_ok ?? "—"
-                )
-                + "/"
-                + (
-                    status.teselas_total ?? "—"
-                );
-
-    } catch (e) {
-
-        document
-            .getElementById("frame")
-            .textContent =
-                "No se pudo cargar el estado del radar";
-    }
-}
-
-
-async function cargarInformacion() {
-
-    try {
-
-        const [
-            nowcastResponse,
-            obsResponse
-        ] =
-            await Promise.all([
-
-                fetch(
-                    "/nowcast?t="
-                    + Date.now()
-                ),
-
-                fetch(
-                    "/observacion?t="
-                    + Date.now()
-                )
-
-            ]);
-
-
-        const nowcastData =
-            await nowcastResponse.json();
-
-        const obs =
-            await obsResponse.json();
-
-
-        const n =
-            nowcastData.nowcast || {};
-
-
-        const actividad =
-            n.actividad === true;
-
-
-        const estado =
-            document.getElementById(
-                "estado"
             );
 
-
-        estado.textContent =
-            actividad
-            ? "Precipitación detectada"
-            : "Sin precipitación detectada";
-
-
-        estado.className =
-            "status "
-            + (
-                actividad
-                ? "warn"
-                : "ok"
-            );
-
-
-        document
-            .getElementById("detalle")
-            .textContent =
-
-                "Nowcast V7 · "
-                + (
-                    n.frames_analizados
-                    ?? "—"
-                )
-                + " frames · "
-                + (
-                    n.tiles_ok
-                    ?? "—"
-                )
-                + "/9 teselas";
-
-
-        const ambiente =
-            obs.ambiente ||
-            obs ||
-            {};
-
-
-        document
-            .getElementById("temp")
-            .textContent =
-                val(
-                    ambiente.temperature_2m,
-                    " °C"
-                );
-
-
-        document
-            .getElementById("dew")
-            .textContent =
-                val(
-                    ambiente.dew_point_2m,
-                    " °C"
-                );
-
-
-        document
-            .getElementById("wind")
-            .textContent =
-                val(
-                    ambiente.wind_speed_10m,
-                    " km/h"
-                );
-
-
-        document
-            .getElementById("pressure")
-            .textContent =
-                val(
-                    ambiente.pressure_msl,
-                    " hPa"
-                );
-
-
-        document
-            .getElementById("distance")
-            .textContent =
-                val(
-                    n.distancia_km,
-                    " km"
-                );
-
-
-        document
-            .getElementById("speed")
-            .textContent =
-                val(
-                    n.velocidad_kmh,
-                    " km/h"
-                );
-
-
-        document
-            .getElementById("direction")
-            .textContent =
-                n.direccion ||
-                val(
-                    n.direccion_grados,
-                    "°"
-                );
-
-
-        document
-            .getElementById("trend")
-            .textContent =
-                n.fortalecimiento ||
-                "sin_datos";
-
-
-        document
-            .getElementById("eta")
-            .textContent =
-                val(
-                    n.eta_minutos,
-                    " min"
-                );
-
-
-        document
-            .getElementById("confidence")
-            .textContent =
-                fmtConfidence(
-                    n.confianza_movimiento
-                );
-
-
-    } catch (e) {
-
-        document
-            .getElementById("estado")
-            .textContent =
-                "Error leyendo datos";
-
-        document
-            .getElementById("estado")
-            .className =
-                "status danger";
-
-        document
-            .getElementById("detalle")
-            .textContent =
-                String(e);
-    }
-}
-
-
-async function actualizarRadar() {
-
-    document
-        .getElementById("frame")
-        .textContent =
-            "Actualizando radar...";
-
-
-    try {
-
-        await fetch(
-            "/radar/9tiles?t="
-            + Date.now(),
-            {
-                cache:
-                    "no-store"
-            }
+        renderObservation(
+            results[0]
         );
 
-    } catch (e) {
+        renderNowcast(
+            results[1]
+        );
 
-        console.error(e);
+    } catch (error) {
+
+        $('main').innerHTML =
+            '<span class="bad">'
+            + 'No se pudo actualizar: '
+            + text(error.message)
+            + '</span>';
+
+    } finally {
+
+        $('refresh').disabled =
+            false;
     }
-
-
-    await cargarEstado();
-
-    await cargarInformacion();
 }
 
 
-function iniciarMapa() {
+function closeSheet() {
 
-    map =
-        L.map(
-            "map",
-            {
-                zoomControl:
-                    true,
+    $('sheet')
+        .classList
+        .add('closed');
 
-                attributionControl:
-                    true
-            }
-        )
-        .setView(
-            [
-                -38.71,
-                -62.26
-            ],
-            7
-        );
+    $('open').style.display =
+        'block';
 
-
-    L.tileLayer(
-
-        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-
-        {
-            maxZoom: 18,
-
-            attribution:
-                "&copy; OpenStreetMap contributors"
-        }
-
-    ).addTo(map);
-
-
-    L.marker(
-        [
-            -38.71,
-            -62.26
-        ]
-    )
-    .addTo(map)
-    .bindTooltip(
-        "Bahía Blanca"
-    );
-
-
-    cargarEstado();
-
-    cargarInformacion();
-
-
-    setInterval(
-
-        () => {
-
-            cargarEstado();
-
-            cargarInformacion();
-
-        },
-
-        60000
-
+    setTimeout(
+        () => map.invalidateSize(),
+        250
     );
 }
 
 
-iniciarMapa();
+function openSheet() {
+
+    $('sheet')
+        .classList
+        .remove('closed');
+
+    $('open').style.display =
+        'none';
+
+    setTimeout(
+        () => map.invalidateSize(),
+        250
+    );
+}
+
+
+$('refresh').onclick =
+    () => loadRadar(true);
+
+$('close').onclick =
+    closeSheet;
+
+$('open').onclick =
+    openSheet;
+
+$('toggle').onclick =
+    () =>
+        $('sheet')
+            .classList
+            .contains('closed')
+            ? openSheet()
+            : closeSheet;
+
+
+loadRadar(true);
+
+setInterval(
+    () => loadRadar(false),
+    60000
+);
 
 </script>
 
 </body>
-
-</html>
-"""
+</html>'''
 
 
 if __name__ == "__main__":
