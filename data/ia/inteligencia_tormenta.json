@@ -1,7 +1,7 @@
 {
-  "version": "3.0.0",
+  "version": "4.0.0",
   "motor": "ClimaAR Intelligence - Storm Engine Central",
-  "actualizado_utc": "2026-10-06T19:40:11.702652+00:00",
+  "actualizado_utc": "2026-10-06T21:53:58.122979+00:00",
   "ubicacion": {
     "ciudad": "Bahia Blanca",
     "latitud": -38.71,
@@ -10,7 +10,7 @@
   "estado": "sin_tormenta_activa",
   "severidad": "verde",
   "probabilidades": {
-    "tormenta": 0.384,
+    "tormenta": 0.104,
     "llegada_bahia": 0.0,
     "fortalecimiento": null,
     "debilitamiento": null
@@ -21,7 +21,11 @@
     "granizo": 0.01,
     "rayo": 0.01
   },
-  "indice_hibrido_severidad": 0.055,
+  "indice_hibrido_severidad": 0.138,
+  "ia_v8": {
+    "disponible": true,
+    "probabilidad_impacto": 0.415
+  },
   "referencia_historica": {
     "eventos": [
       {
@@ -43,12 +47,12 @@
   "duracion_estimada_minutos": null,
   "radar": {
     "fuente": "RainViewer",
-    "actualizado": "2026-10-06T15:01:42.492607+00:00",
+    "actualizado": "2026-10-06T20:09:43.127064+00:00",
     "latitud": -38.71,
     "longitud": -62.26,
     "frames_analizados": 12,
-    "frame_actual": 1791298200,
-    "frame_actual_utc": "2026-10-06T14:50:00+00:00",
+    "frame_actual": 1791316800,
+    "frame_actual_utc": "2026-10-06T20:00:00+00:00",
     "tiles_ok": 9,
     "actividad": false,
     "area_px": 0,
@@ -74,57 +78,58 @@
     "estado": "sin_precipitacion_detectada"
   },
   "ambiente": {
-    "tiempo_utc": "2026-10-06T20:00",
+    "tiempo_utc": "2026-10-06T22:00",
     "punto": "BB_CENTRO",
     "latitud": -38.71,
     "longitud": -62.26,
-    "temperature_2m": 15.9,
-    "relative_humidity_2m": 84.0,
-    "dew_point_2m": 13.2,
-    "pressure_msl": 1014.8,
-    "surface_pressure": 1011.8,
-    "precipitation": 1.0,
-    "rain": 1.0,
+    "temperature_2m": 13.9,
+    "relative_humidity_2m": 88.0,
+    "dew_point_2m": 12.0,
+    "pressure_msl": 1014.9,
+    "surface_pressure": 1011.9,
+    "precipitation": 0.1,
+    "rain": 0.1,
     "showers": 0.0,
     "cloud_cover": 100.0,
     "cloud_cover_low": 0.0,
     "cloud_cover_mid": 100.0,
-    "cloud_cover_high": 100.0,
+    "cloud_cover_high": 62.0,
     "visibility": null,
-    "wind_speed_10m": 3.1,
-    "wind_direction_10m": 111.0,
-    "wind_gusts_10m": 15.1,
-    "wind_speed_100m": 6.1,
-    "wind_direction_100m": 90.0,
+    "wind_speed_10m": 14.5,
+    "wind_direction_10m": 117.0,
+    "wind_gusts_10m": 24.8,
+    "wind_speed_100m": 24.7,
+    "wind_direction_100m": 109.0,
     "wind_speed_200m": null,
     "wind_direction_200m": null,
-    "cape": 70.0,
+    "cape": 0.0,
     "convective_inhibition": null,
-    "vapour_pressure_deficit": 0.29,
+    "vapour_pressure_deficit": 0.19,
     "boundary_layer_height": null,
-    "total_column_integrated_water_vapour": 25.0,
+    "total_column_integrated_water_vapour": 25.5,
     "freezing_level_height": null,
     "lightning_density": null
   },
   "ambiente_en_trayectoria": {},
   "calidad_datos": 100.0,
   "calidad_tracking": 0.0,
-  "confianza_modelo": 0.65,
+  "confianza_modelo": 0.75,
   "limitaciones": [
     "El radar actual no aporta dBZ cuantitativo validado en este motor.",
     "No hay observacion directa de rayos integrada en esta etapa.",
     "La referencia historica no sustituye observaciones radar en tiempo real.",
-    "La severidad es una estimacion y no reemplaza avisos oficiales.",
-    "Las probabilidades requieren calibracion continua con historico temporal."
+    "La IA V8 requiere calibracion continua con nuevos eventos.",
+    "La severidad es una estimacion y no reemplaza avisos oficiales."
   ],
   "razones": [
     "No se detecta precipitacion activa en el radar.",
-    "CAPE ECMWF: 70 J/kg.",
-    "Rafaga prevista ECMWF: 15.1 km/h.",
-    "Lluvia prevista: 1.0 mm.",
-    "Indice hibrido de severidad: 6%.",
+    "IA V8 impacto 3-6h: 41%.",
+    "CAPE ECMWF: 0 J/kg.",
+    "Rafaga prevista ECMWF: 24.8 km/h.",
+    "Lluvia prevista: 0.1 mm.",
+    "Indice hibrido de severidad: 14%.",
     "Probabilidad estimada de impacto: 0%.",
-    "La severidad y la trayectoria se calculan como dimensiones separadas.",
+    "Radar, evolucion, meteorologia, IA e historial se combinan en un unico Storm Engine.",
     "La estimacion no reemplaza avisos oficiales y requiere validacion continua."
   ]
 }
