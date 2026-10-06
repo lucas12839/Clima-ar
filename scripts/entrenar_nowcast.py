@@ -3,18 +3,21 @@
 """
 ClimaAR - Entrenamiento del modelo de nowcasting radar.
 
-Usa el histórico real generado por RainViewer V7.1:
-data/radar/radar_features_rainviewer.csv
+Fuente:
+    data/radar/radar_features_rainviewer.csv
 
-Predice:
-- dbz_max del próximo frame
-- area_px del próximo frame
+Utiliza secuencias temporales de radar para predecir
+la evolución del siguiente frame.
 
-La validación es temporal:
-80% entrenamiento
-20% prueba
+Targets:
+    - dbz_max
+    - area_px
 
-No mezcla datos futuros con datos de entrenamiento.
+Validación:
+    Temporal holdout 80/20
+
+IMPORTANTE:
+    No se mezclan datos futuros con el entrenamiento.
 """
 
 from __future__ import annotations
@@ -48,10 +51,10 @@ METRICS = Path(
 
 
 # ============================================================
-# VARIABLES DISPONIBLES EN RADAR V7.1
+# VARIABLES DEL RADAR V7.1
 # ============================================================
 
-BASE_FEATURES = [
+FEATURES = [
     "area_px",
     "distance_km",
     "dbz_max",
@@ -64,81 +67,125 @@ BASE_FEATURES = [
 
 
 # ============================================================
-# LIMPIEZA
+# CONVERSIÓN DE NÚCLEOS
 # ============================================================
 
-def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+def parse_nucleos(value):
 
-    required = [
-        "frame_time",
-        *BASE_FEATURES,
-    ]
+    if pd.isna(value):
+        return 0.0
 
-    for column in required:
+    text = str(value).strip()
+
+    if text in ("", "[]", "nan", "None"):
+        return 0.0
+
+    try:
+        parsed = json.loads(text)
+
+        if isinstance(parsed, list):
+            return float(len(parsed))
+
+    except Exception:
+        pass
+
+    return 0.0
+
+
+# ============================================================
+# PREPARAR DATASET
+# ============================================================
+
+def prepare_dataframe(df):
+
+    print("Columnas encontradas:")
+
+    for column in df.columns:
+        print(f"  - {column}")
+
+    print("")
+
+    # Compatibilidad con posibles nombres del radar.
+    aliases = {
+        "area_px": "area",
+        "nucleos": "components",
+    }
+
+    for target, source in aliases.items():
+
+        if target not in df.columns and source in df.columns:
+
+            df[target] = df[source]
+
+    # Crear columnas faltantes de forma segura.
+    for column in FEATURES:
 
         if column not in df.columns:
 
-            if column == "nucleos":
-                df[column] = 0
-
-            else:
-                df[column] = np.nan
-
-    df["frame_time"] = pd.to_numeric(
-        df["frame_time"],
-        errors="coerce"
-    )
-
-    for column in BASE_FEATURES:
-
-        if column == "nucleos":
-
-            # La columna actual puede contener una lista
-            # como [] o una lista de núcleos.
-            def count_nucleos(value):
-
-                if pd.isna(value):
-                    return 0
-
-                text = str(value).strip()
-
-                if text in ("", "[]", "nan"):
-                    return 0
-
-                try:
-
-                    parsed = json.loads(text)
-
-                    if isinstance(parsed, list):
-                        return len(parsed)
-
-                except Exception:
-                    pass
-
-                return 0
-
-            df[column] = df[column].apply(
-                count_nucleos
+            print(
+                f"Aviso: falta {column}. "
+                "Se rellenará con 0."
             )
 
-        else:
+            df[column] = 0.0
 
-            df[column] = pd.to_numeric(
-                df[column],
-                errors="coerce"
-            )
+    # Timestamp.
+    if "frame_time" in df.columns:
 
+        df["frame_time"] = pd.to_numeric(
+            df["frame_time"],
+            errors="coerce"
+        )
+
+    elif "timestamp" in df.columns:
+
+        df["frame_time"] = pd.to_numeric(
+            df["timestamp"],
+            errors="coerce"
+        )
+
+    else:
+
+        raise SystemExit(
+            "ERROR: el dataset no contiene "
+            "frame_time ni timestamp."
+        )
+
+    # Conversión numérica.
+    numeric_columns = [
+        column
+        for column in FEATURES
+        if column != "nucleos"
+    ]
+
+    for column in numeric_columns:
+
+        df[column] = pd.to_numeric(
+            df[column],
+            errors="coerce"
+        )
+
+    # Núcleos.
+    if "nucleos" in df.columns:
+
+        df["nucleos"] = df["nucleos"].apply(
+            parse_nucleos
+        )
+
+    # Limpiar infinitos.
     df = df.replace(
         [np.inf, -np.inf],
         np.nan
     )
 
+    # Orden temporal.
     df = df.sort_values(
         "frame_time"
     )
 
+    # Eliminar frames duplicados.
     df = df.drop_duplicates(
-        "frame_time"
+        subset=["frame_time"]
     )
 
     df = df.reset_index(
@@ -149,16 +196,14 @@ def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ============================================================
-# CONSTRUCCIÓN DE SECUENCIAS
+# CONSTRUIR SECUENCIAS
 # ============================================================
 
-def build_sequences(
-    df: pd.DataFrame
-) -> pd.DataFrame:
+def build_sequences(df):
 
     rows = []
 
-    # Usamos los últimos 4 frames:
+    # Utilizamos cuatro observaciones:
     #
     # t-30
     # t-20
@@ -175,7 +220,6 @@ def build_sequences(
     ):
 
         current = df.iloc[i]
-
         future = df.iloc[i + 1]
 
         current_time = float(
@@ -186,28 +230,27 @@ def build_sequences(
             future["frame_time"]
         )
 
-        delta_seconds = (
+        delta_minutes = (
             future_time
             -
             current_time
-        )
+        ) / 60.0
 
-        # El radar debería actualizar aproximadamente
+        # Aceptamos aproximadamente un frame
         # cada 10 minutos.
         #
-        # Permitimos entre 5 y 20 minutos para tolerar
-        # pequeños retrasos de RainViewer.
+        # Permitimos retrasos normales del radar.
 
         if (
-            delta_seconds < 5 * 60
+            delta_minutes < 5
             or
-            delta_seconds > 20 * 60
+            delta_minutes > 20
         ):
             continue
 
         values = []
 
-        valid_sequence = True
+        valid = True
 
         for j in range(
             i - 3,
@@ -216,9 +259,7 @@ def build_sequences(
 
             frame = df.iloc[j]
 
-            frame_values = []
-
-            for feature in BASE_FEATURES:
+            for feature in FEATURES:
 
                 value = frame[feature]
 
@@ -226,13 +267,21 @@ def build_sequences(
 
                     value = 0.0
 
-                frame_values.append(
-                    float(value)
+                try:
+
+                    value = float(value)
+
+                except Exception:
+
+                    valid = False
+                    value = 0.0
+
+                values.append(
+                    value
                 )
 
-            values.extend(
-                frame_values
-            )
+        if not valid:
+            continue
 
         target_dbz = future["dbz_max"]
 
@@ -243,9 +292,6 @@ def build_sequences(
 
         if pd.isna(target_area):
             target_area = 0.0
-
-        if not valid_sequence:
-            continue
 
         rows.append(
             values
@@ -271,7 +317,7 @@ def build_sequences(
 
     for offset in offsets:
 
-        for feature in BASE_FEATURES:
+        for feature in FEATURES:
 
             columns.append(
                 f"t{offset}_{feature}"
@@ -291,14 +337,28 @@ def build_sequences(
 
 
 # ============================================================
-# MÉTRICAS
+# ENTRENAR Y MEDIR
 # ============================================================
 
-def calculate_metrics(
-    model,
+def train_target(
+    X_train,
     X_test,
+    y_train,
     y_test
 ):
+
+    model = HistGradientBoostingRegressor(
+        max_iter=250,
+        learning_rate=0.05,
+        max_leaf_nodes=31,
+        l2_regularization=1.0,
+        random_state=42,
+    )
+
+    model.fit(
+        X_train,
+        y_train
+    )
 
     prediction = model.predict(
         X_test
@@ -309,15 +369,20 @@ def calculate_metrics(
         prediction
     )
 
-    rmse = mean_squared_error(
-        y_test,
-        prediction
-    ) ** 0.5
+    rmse = np.sqrt(
+        mean_squared_error(
+            y_test,
+            prediction
+        )
+    )
 
-    return {
-        "MAE": float(mae),
-        "RMSE": float(rmse),
-    }
+    return (
+        model,
+        {
+            "MAE": float(mae),
+            "RMSE": float(rmse),
+        }
+    )
 
 
 # ============================================================
@@ -326,26 +391,24 @@ def calculate_metrics(
 
 def main():
 
-    print(
-        "============================================"
-    )
+    print("")
+    print("==============================================")
+    print("CLIMAAR - ENTRENAMIENTO NOWCAST")
+    print("==============================================")
+    print("")
 
-    print(
-        "CLIMAAR - ENTRENAMIENTO NOWCAST V7.1"
-    )
-
-    print(
-        "============================================"
-    )
+    # --------------------------------------------------------
+    # COMPROBAR CSV
+    # --------------------------------------------------------
 
     if not CSV.exists():
 
         raise SystemExit(
-            f"No existe el archivo: {CSV}"
+            f"ERROR: no existe {CSV}"
         )
 
     print(
-        f"Archivo de entrada: {CSV}"
+        f"Archivo: {CSV}"
     )
 
     df = pd.read_csv(
@@ -359,77 +422,86 @@ def main():
     if len(df) < 50:
 
         raise SystemExit(
-            f"
-Solo hay {len(df)} frames.
-
-Se necesitan al menos 50 frames
-para intentar entrenar el modelo.
-"
+            f"ERROR: solamente hay {len(df)} frames. "
+            "Se necesitan al menos 50."
         )
+
+    print("")
+
+    # --------------------------------------------------------
+    # PREPARAR
+    # --------------------------------------------------------
 
     df = prepare_dataframe(
         df
     )
 
     print(
-        f"Frames después de limpieza: {len(df)}"
+        f"Frames válidos: {len(df)}"
     )
+
+    print("")
+
+    # --------------------------------------------------------
+    # SECUENCIAS
+    # --------------------------------------------------------
 
     sequences = build_sequences(
         df
     )
 
-    if len(sequences) < 30:
+    if sequences.empty:
 
         raise SystemExit(
-            f"
-Solo se pudieron construir "
-            f"{len(sequences)} secuencias válidas.
-
-Se necesitan al menos 30.
-"
+            "ERROR: no se pudieron construir "
+            "secuencias temporales válidas."
         )
 
     print(
-        f"Secuencias válidas: {len(sequences)}"
+        f"Secuencias construidas: {len(sequences)}"
     )
 
-    # ========================================================
-    # FEATURES / TARGETS
-    # ========================================================
+    if len(sequences) < 30:
 
-    feature_columns = [
-        column
-        for column in sequences.columns
-        if column not in (
-            "target_dbz_max",
-            "target_area_px",
+        raise SystemExit(
+            f"ERROR: solamente hay "
+            f"{len(sequences)} secuencias. "
+            "Se necesitan al menos 30."
         )
-    ]
+
+    print("")
+
+    # --------------------------------------------------------
+    # FEATURES
+    # --------------------------------------------------------
 
     target_columns = [
         "target_dbz_max",
         "target_area_px",
     ]
 
+    feature_columns = [
+        column
+        for column in sequences.columns
+        if column not in target_columns
+    ]
+
     X = sequences[
         feature_columns
     ]
 
-    # ========================================================
+    # --------------------------------------------------------
     # VALIDACIÓN TEMPORAL
-    # ========================================================
+    # --------------------------------------------------------
 
     split = int(
-        len(sequences)
-        *
-        0.80
+        len(sequences) * 0.80
     )
 
     if split <= 0 or split >= len(sequences):
 
         raise SystemExit(
-            "No se pudo construir una división temporal válida."
+            "ERROR: división temporal inválida."
         )
 
     X_train = X.iloc[
@@ -448,6 +520,12 @@ Se necesitan al menos 30.
         f"Prueba temporal: {len(X_test)}"
     )
 
+    print("")
+
+    # --------------------------------------------------------
+    # MODELOS
+    # --------------------------------------------------------
+
     models = {}
 
     metrics = {
@@ -463,14 +541,11 @@ Se necesitan al menos 30.
         "archivo_entrada":
             str(CSV),
 
-        "entrada":
-            "4 frames consecutivos de radar",
-
-        "intervalo_minutos":
-            10,
-
         "horizonte_minutos":
             10,
+
+        "frames_por_secuencia":
+            4,
 
         "secuencias":
             int(len(sequences)),
@@ -481,83 +556,125 @@ Se necesitan al menos 30.
         "prueba":
             int(len(X_test)),
 
-        "validacion":
-            {
-                "tipo":
-                    "temporal_holdout",
+        "validacion": {
 
-                "porcentaje_entrenamiento":
-                    0.80,
+            "tipo":
+                "temporal_holdout",
 
-                "porcentaje_prueba":
-                    0.20,
-            },
+            "porcentaje_entrenamiento":
+                0.80,
 
-        "targets":
-            target_columns,
+            "porcentaje_prueba":
+                0.20,
+        },
+
+        "targets": target_columns,
     }
 
-    # ========================================================
-    # ENTRENAMIENTO
-    # ========================================================
+    # --------------------------------------------------------
+    # DBZ
+    # --------------------------------------------------------
 
-    for target in target_columns:
+    print(
+        "Entrenando predicción de dbz_max..."
+    )
 
-        print(
-            f"Entrenando objetivo: {target}"
-        )
+    y_dbz = sequences[
+        "target_dbz_max"
+    ]
 
-        y = sequences[
-            target
-        ]
+    y_train_dbz = y_dbz.iloc[
+        :split
+    ]
 
-        y_train = y.iloc[
-            :split
-        ]
+    y_test_dbz = y_dbz.iloc[
+        split:
+    ]
 
-        y_test = y.iloc[
-            split:
-        ]
+    (
+        model_dbz,
+        metrics_dbz
+    ) = train_target(
+        X_train,
+        X_test,
+        y_train_dbz,
+        y_test_dbz
+    )
 
-        model = HistGradientBoostingRegressor(
+    models[
+        "target_dbz_max"
+    ] = model_dbz
 
-            max_iter=250,
+    metrics[
+        "target_dbz_max"
+    ] = metrics_dbz
 
-            learning_rate=0.05,
+    print(
+        f"DBZ MAE: {metrics_dbz['MAE']:.4f}"
+    )
 
-            max_leaf_nodes=31,
+    print(
+        f"DBZ RMSE: {metrics_dbz['RMSE']:.4f}"
+    )
 
-            l2_regularization=1.0,
+    print("")
 
-            random_state=42,
-        )
+    # --------------------------------------------------------
+    # AREA
+    # --------------------------------------------------------
 
-        model.fit(
-            X_train,
-            y_train
-        )
+    print(
+        "Entrenando predicción de area_px..."
+    )
 
-        result = calculate_metrics(
-            model,
-            X_test,
-            y_test
-        )
+    y_area = sequences[
+        "target_area_px"
+    ]
 
-        metrics[target] = result
+    y_train_area = y_area.iloc[
+        :split
+    ]
 
-        models[target] = model
+    y_test_area = y_area.iloc[
+        split:
+    ]
 
-        print(
-            f"MAE: {result['MAE']:.4f}"
-        )
+    (
+        model_area,
+        metrics_area
+    ) = train_target(
+        X_train,
+        X_test,
+        y_train_area,
+        y_test_area
+    )
 
-        print(
-            f"RMSE: {result['RMSE']:.4f}"
-        )
+    models[
+        "target_area_px"
+    ] = model_area
 
-    # ========================================================
+    metrics[
+        "target_area_px"
+    ] = metrics_area
+
+    print(
+        f"AREA MAE: {metrics_area['MAE']:.4f}"
+    )
+
+    print(
+        f"AREA RMSE: {metrics_area['RMSE']:.4f}"
+    )
+
+    print("")
+
+    # --------------------------------------------------------
     # GUARDAR MODELO
-    # ========================================================
+    # --------------------------------------------------------
+
+    MODEL.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
     artifact = {
 
@@ -576,29 +693,24 @@ Se necesitan al menos 30.
         "targets":
             target_columns,
 
-        "interval_minutes":
-            10,
-
         "horizon_minutes":
             10,
 
-        "validation":
-            {
-                "type":
-                    "temporal_holdout",
+        "frames":
+            4,
 
-                "train_fraction":
-                    0.80,
+        "validation": {
 
-                "test_fraction":
-                    0.20,
-            },
+            "type":
+                "temporal_holdout",
+
+            "train_fraction":
+                0.80,
+
+            "test_fraction":
+                0.20,
+        },
     }
-
-    MODEL.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
 
     joblib.dump(
         artifact,
@@ -613,32 +725,29 @@ Se necesitan al menos 30.
         encoding="utf-8"
     )
 
-    print(
-        "============================================"
-    )
+    # --------------------------------------------------------
+    # RESULTADO
+    # --------------------------------------------------------
 
-    print(
-        "MODELO NOWCAST ENTRENADO"
-    )
-
+    print("")
+    print("==============================================")
+    print("ENTRENAMIENTO COMPLETADO")
+    print("==============================================")
+    print("")
     print(
         f"Modelo: {MODEL}"
     )
-
     print(
         f"Métricas: {METRICS}"
     )
-
-    print(
-        "============================================"
-    )
-
+    print("")
     print(
         json.dumps(
             metrics,
             indent=2
         )
     )
+    print("")
 
 
 if __name__ == "__main__":
