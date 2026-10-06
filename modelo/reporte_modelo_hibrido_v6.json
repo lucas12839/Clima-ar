@@ -1,82 +1,72 @@
 {
-  "version": "ClimaAR V7",
+  "version": "ClimaAR V8",
   "estado": "OK",
-  "motor": "RandomForest balanceado con validacion por evento",
-  "superficie": {
-    "version": "v7",
-    "rows_originales": 409872,
-    "rows_entrenamiento": 2072,
-    "positive": 72,
-    "variables": 113,
-    "validation": {
-      "2019-12-30": {
-        "roc_auc": 0.27338435374149656,
-        "average_precision": 0.23865184770895442,
-        "precision": 0.0,
-        "recall": 0.0,
-        "f1": 0.0,
-        "threshold": 0.1,
-        "train_rows": 2048,
-        "test_rows": 73,
-        "train_positive": 48,
-        "test_positive": 24
-      },
-      "2023-12-16": {
-        "roc_auc": 0.5722789115646258,
-        "average_precision": 0.3939746498237467,
-        "precision": 0.0,
-        "recall": 0.0,
-        "f1": 0.0,
-        "threshold": 0.1,
-        "train_rows": 2048,
-        "test_rows": 73,
-        "train_positive": 48,
-        "test_positive": 24
-      },
-      "2025-03-07": {
-        "roc_auc": 0.40476190476190477,
-        "average_precision": 0.3172938521834365,
-        "precision": 0.0,
-        "recall": 0.0,
-        "f1": 0.0,
-        "threshold": 0.1,
-        "train_rows": 2048,
-        "test_rows": 73,
-        "train_positive": 48,
-        "test_positive": 24
-      }
+  "motor": "IA temporal multiobjetivo con validacion cronologica",
+  "filas_originales": 409872,
+  "eventos_extremos_referencia": [
+    "2019-12-30",
+    "2023-12-16",
+    "2025-03-07"
+  ],
+  "objetivo": {
+    "formacion": "precipitacion futura 1-3h partiendo de ausencia de lluvia",
+    "intensificacion": "aumento futuro de lluvia o rafagas",
+    "impacto": "lluvia futura 3-6h o rafaga >= 50 km/h"
+  },
+  "modelos": {
+    "formacion": {
+      "roc_auc": 0.8289197150317431,
+      "average_precision": 0.08641001255349086,
+      "precision": 0.10951008645533142,
+      "recall": 0.31932773109243695,
+      "f1": 0.1630901287553648,
+      "threshold": 0.6952167259458687,
+      "rows": 409866,
+      "positive": 5912,
+      "train_rows": 327892,
+      "test_rows": 81974,
+      "train_positive": 4484,
+      "test_positive": 1428
+    },
+    "intensificacion": {
+      "roc_auc": 0.8019987100578542,
+      "average_precision": 0.21078220473527548,
+      "precision": 0.22316194137433926,
+      "recall": 0.45360421957413555,
+      "f1": 0.29914970368461735,
+      "threshold": 0.5398793000650693,
+      "rows": 409866,
+      "positive": 18214,
+      "train_rows": 327892,
+      "test_rows": 81974,
+      "train_positive": 13095,
+      "test_positive": 5119
+    },
+    "impacto": {
+      "roc_auc": 0.9261899160059274,
+      "average_precision": 0.7454590735485559,
+      "precision": 0.6727443609022556,
+      "recall": 0.6725547308089824,
+      "f1": 0.6726495324907203,
+      "threshold": 0.5020658032688833,
+      "rows": 409866,
+      "positive": 42605,
+      "train_rows": 327892,
+      "test_rows": 81974,
+      "train_positive": 31962,
+      "test_positive": 10643
     }
   },
-  "convectivo": {
-    "version": "v3",
+  "referencia_convectiva": {
+    "available": true,
     "rows": 240,
-    "positive": 48,
-    "variables": 19,
-    "validation": {
-      "2023-12-16": {
-        "roc_auc": 0.5792100694444444,
-        "average_precision": 0.2443766442951531,
-        "precision": 0.2,
-        "recall": 0.125,
-        "f1": 0.15384615384615385,
-        "threshold": 0.1,
-        "train_rows": 120,
-        "test_rows": 120,
-        "train_positive": 24,
-        "test_positive": 24
-      },
-      "2025-03-07": {
-        "roc_auc": 0.6263020833333334,
-        "average_precision": 0.24977550138901877,
-        "precision": 0.21621621621621623,
-        "recall": 0.3333333333333333,
-        "f1": 0.26229508196721313,
-        "threshold": 0.1,
-        "train_rows": 120,
-        "test_rows": 120,
-        "train_positive": 24,
-        "test_positive": 24
-      }
-    }
-  }
+    "events": [
+      "2023-12-16",
+      "2025-03-07"
+    ],
+    "variables": 17,
+    "role": "referencia_extremos_documentados"
+  },
+  "sin_fuga_temporal": true,
+  "nota": "Los eventos extremos se usan como referencia de calibracion y no como unica definicion de tormenta."
 }
