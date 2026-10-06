@@ -1864,7 +1864,7 @@ def main():
     )
 
     reasons.append(
-        f"Probabilidad estimada de impacto: {impact:.0%}."
+        f"Impacto inmediato estimado por radar: {impact:.0%}."
     )
 
     reasons.append(
