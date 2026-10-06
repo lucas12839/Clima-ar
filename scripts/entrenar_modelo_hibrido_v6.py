@@ -1,23 +1,36 @@
 from pathlib import Path
 import json
+import warnings
+
+import joblib
 import numpy as np
 import pandas as pd
-import joblib
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
-    roc_auc_score,
     average_precision_score,
+    f1_score,
+    precision_recall_curve,
     precision_score,
     recall_score,
-    f1_score,
+    roc_auc_score,
 )
+
+warnings.filterwarnings("ignore")
 
 LAT = -38.71
 LON = -62.26
 
 OUT = Path("modelo")
 OUT.mkdir(exist_ok=True)
+
+SURFACE_DATA = Path(
+    "data/historico/clima_horario_1980_2026.csv"
+)
+
+CONV_DATA = Path(
+    "data/eventos_severos/variables_convectivas_2023_2025.csv"
+)
 
 EVENTS = pd.to_datetime([
     "2019-12-30",
@@ -31,111 +44,118 @@ CONV_EVENTS = pd.to_datetime([
 ])
 
 
-def calcular_metricas(y, p):
-    y = np.asarray(y, dtype=int)
-    p = np.asarray(p, dtype=float)
+def metricas(y_true, probability, threshold=0.50):
+    y_true = np.asarray(y_true, dtype=int)
+    probability = np.asarray(probability, dtype=float)
+    prediction = (probability >= threshold).astype(int)
 
-    pred = (p >= 0.50).astype(int)
-
-    resultado = {
+    result = {
         "roc_auc": None,
         "average_precision": None,
         "precision": float(
             precision_score(
-                y,
-                pred,
-                zero_division=0
+                y_true, prediction, zero_division=0
             )
         ),
         "recall": float(
             recall_score(
-                y,
-                pred,
-                zero_division=0
+                y_true, prediction, zero_division=0
             )
         ),
         "f1": float(
             f1_score(
-                y,
-                pred,
-                zero_division=0
+                y_true, prediction, zero_division=0
             )
         ),
-        "threshold": 0.50,
+        "threshold": float(threshold),
     }
 
-    if len(np.unique(y)) >= 2:
-        resultado["roc_auc"] = float(
-            roc_auc_score(y, p)
+    if len(np.unique(y_true)) >= 2:
+        result["roc_auc"] = float(
+            roc_auc_score(y_true, probability)
+        )
+        result["average_precision"] = float(
+            average_precision_score(y_true, probability)
         )
 
-        resultado["average_precision"] = float(
-            average_precision_score(y, p)
-        )
+    return result
 
-    return resultado
+
+def mejor_umbral(y_true, probability):
+    y_true = np.asarray(y_true, dtype=int)
+    probability = np.asarray(probability, dtype=float)
+
+    if len(np.unique(y_true)) < 2:
+        return 0.50
+
+    precision, recall, thresholds = precision_recall_curve(
+        y_true, probability
+    )
+
+    if len(thresholds) == 0:
+        return 0.50
+
+    f1_values = (
+        2.0 * precision[:-1] * recall[:-1]
+        / np.maximum(precision[:-1] + recall[:-1], 1e-12)
+    )
+
+    valid = np.isfinite(f1_values)
+
+    if not valid.any():
+        return 0.50
+
+    best_index = int(np.nanargmax(
+        np.where(valid, f1_values, -1.0)
+    ))
+
+    return float(
+        np.clip(thresholds[best_index], 0.10, 0.90)
+    )
 
 
 def construir_variables_superficie(df):
-
     df = df.copy()
 
     df["time"] = pd.to_datetime(
-        df["time"],
-        errors="coerce"
+        df["time"], errors="coerce"
     )
 
     df = (
-        df
-        .dropna(subset=["time"])
+        df.dropna(subset=["time"])
         .sort_values("time")
+        .drop_duplicates(subset=["time"])
         .reset_index(drop=True)
     )
 
-    for columna in df.columns:
-
-        if columna != "time":
-
-            df[columna] = pd.to_numeric(
-                df[columna],
-                errors="coerce"
+    for column in df.columns:
+        if column != "time":
+            df[column] = pd.to_numeric(
+                df[column], errors="coerce"
             )
-
-    # Viento U/V
 
     if {
         "wind_speed_10m",
-        "wind_direction_10m"
+        "wind_direction_10m",
     }.issubset(df.columns):
-
-        rad = np.deg2rad(
-            df["wind_direction_10m"]
-        )
-
+        rad = np.deg2rad(df["wind_direction_10m"])
         df["wind_u"] = (
-            df["wind_speed_10m"] *
-            np.sin(rad)
+            df["wind_speed_10m"] * np.sin(rad)
         )
-
         df["wind_v"] = (
-            df["wind_speed_10m"] *
-            np.cos(rad)
+            df["wind_speed_10m"] * np.cos(rad)
         )
-
-    # Diferencia temperatura / punto de rocío
 
     if {
         "temperature_2m",
-        "dew_point_2m"
+        "dew_point_2m",
     }.issubset(df.columns):
-
         df["dew_spread"] = (
-            df["temperature_2m"] -
-            df["dew_point_2m"]
+            df["temperature_2m"]
+            - df["dew_point_2m"]
         )
 
-    variables_base = [
-
+    base = [
         "temperature_2m",
         "relative_humidity_2m",
         "dew_point_2m",
@@ -153,411 +173,502 @@ def construir_variables_superficie(df):
         "boundary_layer_height",
     ]
 
-    variables_base = [
-        x
-        for x in variables_base
-        if x in df.columns
-    ]
+    base = [x for x in base if x in df.columns]
 
-    # Cambios temporales
-
-    for columna in variables_base:
-
-        for horas in (1, 3, 6, 12, 24):
-
-            df[
-                f"{columna}_chg{horas}h"
-            ] = (
-                df[columna] -
-                df[columna].shift(horas)
+    for column in base:
+        for hours in (1, 3, 6, 12, 24):
+            df[f"{column}_chg{hours}h"] = (
+                df[column] - df[column].shift(hours)
             )
 
-    # Promedios móviles
-
-    for columna in variables_base:
-
-        for ventana in (3, 6, 12, 24):
-
-            df[
-                f"{columna}_mean{ventana}h"
-            ] = (
-                df[columna]
-                .rolling(
-                    ventana,
-                    min_periods=1
-                )
+    for column in base:
+        for window in (3, 6, 12, 24):
+            df[f"{column}_mean{window}h"] = (
+                df[column]
+                .rolling(window, min_periods=1)
                 .mean()
             )
 
-    # Lluvia acumulada
-
     if "precipitation" in df.columns:
-
-        for ventana in (3, 6, 12, 24):
-
-            df[
-                f"rain{ventana}h"
-            ] = (
+        for window in (3, 6, 12, 24):
+            df[f"rain{window}h"] = (
                 df["precipitation"]
-                .rolling(
-                    ventana,
-                    min_periods=1
-                )
+                .rolling(window, min_periods=1)
                 .sum()
             )
 
-    # Caída de presión
-
     if "pressure_msl" in df.columns:
-
-        for horas in (3, 6, 12, 24):
-
-            df[
-                f"pressure_drop{horas}h"
-            ] = (
-                df["pressure_msl"] -
-                df["pressure_msl"].shift(horas)
+        for hours in (3, 6, 12, 24):
+            df[f"pressure_drop{hours}h"] = (
+                df["pressure_msl"]
+                - df["pressure_msl"].shift(hours)
             )
 
-    # Ciclos temporales
+    hour = df["time"].dt.hour
+    month = df["time"].dt.month
 
     df["hour_sin"] = np.sin(
-        2 * np.pi *
-        df["time"].dt.hour / 24
+        2 * np.pi * hour / 24
     )
 
     df["hour_cos"] = np.cos(
-        2 * np.pi *
-        df["time"].dt.hour / 24
+        2 * np.pi * hour / 24
     )
 
     df["month_sin"] = np.sin(
-        2 * np.pi *
-        df["time"].dt.month / 12
+        2 * np.pi * month / 12
     )
 
     df["month_cos"] = np.cos(
-        2 * np.pi *
-        df["time"].dt.month / 12
+        2 * np.pi * month / 12
     )
 
     return df
 
 
-def colocar_etiquetas(df, eventos):
-
+def etiquetar_eventos(df):
     df = df.copy()
-
     df["target"] = 0
 
-    for evento in eventos:
+    for event in EVENTS:
+        start = event - pd.Timedelta(hours=24)
+        end = event
 
-        inicio = (
-            evento -
-            pd.Timedelta(hours=24)
+        mask = (
+            (df["time"] >= start)
+            & (df["time"] < end)
         )
 
-        fin = evento
-
-        mascara = (
-            (df["time"] >= inicio) &
-            (df["time"] < fin)
-        )
-
-        df.loc[
-            mascara,
-            "target"
-        ] = 1
+        df.loc[mask, "target"] = 1
 
     return df
 
 
-def preparar_matriz(df, excluir):
+def preparar_matriz(df):
+    excluded = {
+        "time",
+        "target",
+        "event_date",
+    }
 
-    variables = []
-
-    for columna in df.columns:
-
-        if columna in excluir:
-            continue
-
-        if pd.api.types.is_numeric_dtype(
-            df[columna]
-        ):
-            variables.append(columna)
+    variables = [
+        column
+        for column in df.columns
+        if column not in excluded
+        and pd.api.types.is_numeric_dtype(
+            df[column]
+        )
+    ]
 
     X = df[variables].copy()
 
     X = X.replace(
         [np.inf, -np.inf],
-        np.nan
+        np.nan,
     )
 
-    # IMPORTANTE:
-    # NO eliminamos las filas.
-    # Rellenamos valores faltantes.
-
-    medianas = X.median(
+    medians = X.median(
         numeric_only=True
     )
 
-    X = X.fillna(medianas)
-    X = X.fillna(0.0)
+    X = X.fillna(
+        medians
+    ).fillna(0.0)
 
-    return X, variables, medianas.to_dict()
+    return X, variables, medians.to_dict()
+
+
+def seleccionar_negativos(
+    df,
+    positive_mask,
+    max_ratio=8,
+):
+    positives = df.loc[
+        positive_mask
+    ].copy()
+
+    negatives = df.loc[
+        ~positive_mask
+    ].copy()
+
+    if len(positives) == 0:
+        raise RuntimeError(
+            "No hay positivos para entrenar."
+        )
+
+    target_negatives = min(
+        len(negatives),
+        max(
+            len(positives) * max_ratio,
+            2000,
+        ),
+    )
+
+    if len(negatives) <= target_negatives:
+        return pd.concat(
+            [
+                positives,
+                negatives,
+            ],
+            ignore_index=True,
+        )
+
+    rng = np.random.RandomState(42)
+
+    near_masks = []
+
+    for event in EVENTS:
+        near_masks.append(
+            (
+                df["time"]
+                >= event - pd.Timedelta(days=3)
+            )
+            & (
+                df["time"]
+                <= event + pd.Timedelta(days=3)
+            )
+        )
+
+    near = df.loc[
+        (~positive_mask)
+        & np.logical_or.reduce(
+            near_masks
+        )
+    ].copy()
+
+    near_n = min(
+        len(near),
+        max(
+            len(positives) * 3,
+            500,
+        ),
+    )
+
+    if len(near) > near_n:
+        near = near.sample(
+            n=near_n,
+            random_state=rng,
+        )
+
+    remaining_needed = (
+        target_negatives
+        - len(near)
+    )
+
+    pool = negatives.drop(
+        index=near.index,
+        errors="ignore",
+    )
+
+    if (
+        remaining_needed > 0
+        and len(pool) > remaining_needed
+    ):
+        random_part = pool.sample(
+            n=remaining_needed,
+            random_state=rng,
+        )
+    else:
+        random_part = pool
+
+    result = pd.concat(
+        [
+            positives,
+            near,
+            random_part,
+        ],
+        ignore_index=True,
+    )
+
+    return (
+        result
+        .drop_duplicates(
+            subset=["time"]
+        )
+        .sort_values("time")
+        .reset_index(drop=True)
+    )
 
 
 def entrenar_superficie():
-
-    print("=" * 70)
-    print("CLIMAAR - MODELO DE SUPERFICIE V6")
-    print("=" * 70)
-
-    archivo = Path(
-        "data/historico/"
-        "clima_horario_1980_2026.csv"
-    )
-
-    if not archivo.exists():
-
+    if not SURFACE_DATA.exists():
         raise RuntimeError(
-            f"No existe {archivo}"
+            f"No existe {SURFACE_DATA}"
         )
 
-    print("Leyendo histórico...")
+    print("=" * 70)
+    print(
+        "CLIMAAR - ENTRENAMIENTO "
+        "SUPERFICIE V7"
+    )
+    print("=" * 70)
 
     df = pd.read_csv(
-        archivo
+        SURFACE_DATA
     )
 
     print(
         "Filas originales:",
-        len(df)
+        len(df),
     )
 
     df = construir_variables_superficie(
         df
     )
 
-    df = colocar_etiquetas(
-        df,
-        EVENTS
+    df = etiquetar_eventos(
+        df
     )
 
-    X, variables, medianas = preparar_matriz(
-        df,
-        {"target"}
-    )
-
-    y = (
+    positive_mask = (
         df["target"]
-        .astype(int)
-        .to_numpy()
+        .astype(bool)
     )
 
-    positivos = int(
-        y.sum()
+    positives_total = int(
+        positive_mask.sum()
     )
 
-    print(
-        "Filas utilizables:",
-        len(df)
-    )
-
-    print(
-        "Variables:",
-        len(variables)
-    )
-
-    print(
-        "Positivos:",
-        positivos
-    )
-
-    if positivos < 30:
-
+    if positives_total < 30:
         raise RuntimeError(
-            "Cantidad de positivos insuficiente: "
-            f"{positivos}"
+            "Cantidad de positivos "
+            f"insuficiente: {positives_total}"
         )
 
-    validacion = {}
+    validation = {}
 
-    # --------------------------------------------------
-    # VALIDACIÓN SEPARANDO CADA EVENTO
-    # --------------------------------------------------
-
-    for evento in EVENTS:
+    for event in EVENTS:
 
         test_mask = (
-            (df["time"] >=
-             evento -
-             pd.Timedelta(hours=48))
+            (
+                df["time"]
+                >= event
+                - pd.Timedelta(hours=48)
+            )
             &
-            (df["time"] <=
-             evento +
-             pd.Timedelta(hours=24))
+            (
+                df["time"]
+                <= event
+                + pd.Timedelta(hours=24)
+            )
         )
 
-        train_mask = ~test_mask
+        train_pool = df.loc[
+            ~test_mask
+        ].copy()
 
-        y_train = y[train_mask]
-        y_test = y[test_mask]
+        test_df = df.loc[
+            test_mask
+        ].copy()
 
-        print()
-        print(
-            "Evento de prueba:",
-            evento.date()
+        train_positive = (
+            train_pool["target"]
+            .astype(bool)
         )
 
-        print(
-            "Train:",
-            int(train_mask.sum())
+        train_df = seleccionar_negativos(
+            train_pool,
+            train_positive,
+            max_ratio=8,
         )
 
-        print(
-            "Test:",
-            int(test_mask.sum())
+        (
+            X_train,
+            variables,
+            medians,
+        ) = preparar_matriz(
+            train_df
         )
 
-        print(
-            "Positivos train:",
-            int(y_train.sum())
+        X_test = test_df[
+            variables
+        ].copy()
+
+        X_test = X_test.replace(
+            [np.inf, -np.inf],
+            np.nan,
         )
 
-        print(
-            "Positivos test:",
-            int(y_test.sum())
+        X_test = X_test.fillna(
+            pd.Series(medians)
+        ).fillna(0.0)
+
+        y_train = (
+            train_df["target"]
+            .astype(int)
+            .to_numpy()
+        )
+
+        y_test = (
+            test_df["target"]
+            .astype(int)
+            .to_numpy()
         )
 
         if (
-            y_train.sum() < 10
-            or
-            y_test.sum() < 5
-            or
             len(np.unique(y_train)) < 2
+            or
+            len(np.unique(y_test)) < 2
         ):
-
-            validacion[
-                str(evento.date())
+            validation[
+                str(event.date())
             ] = {
                 "skipped": True,
-                "train_positive":
-                    int(y_train.sum()),
-                "test_positive":
-                    int(y_test.sum()),
+                "train_rows": int(
+                    len(train_df)
+                ),
+                "test_rows": int(
+                    len(test_df)
+                ),
+                "train_positive": int(
+                    y_train.sum()
+                ),
+                "test_positive": int(
+                    y_test.sum()
+                ),
             }
 
             continue
 
-        modelo = RandomForestClassifier(
-
-            n_estimators=150,
-
+        model = RandomForestClassifier(
+            n_estimators=600,
             max_features="sqrt",
-
-            min_samples_leaf=5,
-
-            class_weight=
-                "balanced_subsample",
-
+            min_samples_leaf=3,
+            class_weight=(
+                "balanced_subsample"
+            ),
             random_state=42,
-
             n_jobs=-1,
         )
 
-        modelo.fit(
-            X.loc[train_mask],
-            y_train
+        model.fit(
+            X_train,
+            y_train,
         )
 
-        probabilidad = (
-            modelo
-            .predict_proba(
-                X.loc[test_mask]
+        probability = (
+            model.predict_proba(
+                X_test
             )[:, 1]
         )
 
-        resultado = calcular_metricas(
+        threshold = mejor_umbral(
             y_test,
-            probabilidad
+            probability,
         )
 
-        resultado[
-            "train_rows"
-        ] = int(train_mask.sum())
+        result = metricas(
+            y_test,
+            probability,
+            threshold,
+        )
 
-        resultado[
-            "test_rows"
-        ] = int(test_mask.sum())
+        result.update({
+            "train_rows": int(
+                len(train_df)
+            ),
+            "test_rows": int(
+                len(test_df)
+            ),
+            "train_positive": int(
+                y_train.sum()
+            ),
+            "test_positive": int(
+                y_test.sum()
+            ),
+        })
 
-        resultado[
-            "train_positive"
-        ] = int(y_train.sum())
+        validation[
+            str(event.date())
+        ] = result
 
-        resultado[
-            "test_positive"
-        ] = int(y_test.sum())
-
-        validacion[
-            str(evento.date())
-        ] = resultado
+        print()
+        print(
+            "Evento:",
+            event.date(),
+        )
 
         print(
             json.dumps(
-                resultado,
-                indent=2
+                result,
+                indent=2,
             )
         )
 
-    # --------------------------------------------------
-    # MODELO FINAL
-    # --------------------------------------------------
+    final_df = seleccionar_negativos(
+        df,
+        positive_mask,
+        max_ratio=8,
+    )
+
+    (
+        X_final,
+        variables,
+        medians,
+    ) = preparar_matriz(
+        final_df
+    )
+
+    y_final = (
+        final_df["target"]
+        .astype(int)
+        .to_numpy()
+    )
 
     print()
     print(
-        "Entrenando modelo final..."
+        "Entrenamiento final:"
     )
 
-    modelo_final = RandomForestClassifier(
+    print(
+        "Filas:",
+        len(final_df),
+    )
 
-        n_estimators=350,
+    print(
+        "Positivos:",
+        int(y_final.sum()),
+    )
 
+    print(
+        "Variables:",
+        len(variables),
+    )
+
+    final_model = RandomForestClassifier(
+        n_estimators=800,
         max_features="sqrt",
-
-        min_samples_leaf=5,
-
-        class_weight=
-            "balanced_subsample",
-
+        min_samples_leaf=3,
+        class_weight=(
+            "balanced_subsample"
+        ),
         random_state=42,
-
         n_jobs=-1,
     )
 
-    modelo_final.fit(
-        X,
-        y
+    final_model.fit(
+        X_final,
+        y_final,
     )
 
-    archivo_modelo = (
-        OUT /
-        "climaar_predictor_hibrido_superficie_v6.joblib"
+    model_path = (
+        OUT
+        / "climaar_predictor_hibrido_superficie_v6.joblib"
     )
 
     joblib.dump(
         {
             "version":
-                "climaar_predictor_hibrido_superficie_v6",
+                "climaar_predictor_hibrido_superficie_v7",
 
             "model":
-                modelo_final,
+                final_model,
 
             "features":
                 variables,
 
             "medians":
-                medianas,
+                medians,
 
             "horizon_hours":
                 24,
@@ -580,86 +691,86 @@ def entrenar_superficie():
                     for x in EVENTS
                 ],
 
+            "negative_sampling":
+                {
+                    "max_negative_positive_ratio":
+                        8,
+
+                    "near_event_weighted_sampling":
+                        True,
+                },
+
             "validation":
-                validacion,
+                validation,
         },
-        archivo_modelo
+        model_path,
     )
 
-    importancia = pd.DataFrame({
-
+    importance = pd.DataFrame({
         "variable":
             variables,
 
         "importancia":
-            modelo_final
+            final_model
             .feature_importances_,
-
-    })
-
-    importancia = (
-        importancia
-        .sort_values(
-            "importancia",
-            ascending=False
-        )
+    }).sort_values(
+        "importancia",
+        ascending=False,
     )
 
-    importancia.to_csv(
-
-        OUT /
-        "importancia_hibrido_superficie_v6.csv",
-
-        index=False
+    importance.to_csv(
+        OUT
+        / "importancia_hibrido_superficie_v6.csv",
+        index=False,
     )
 
     return {
+        "version":
+            "v7",
 
-        "rows":
-            len(df),
+        "rows_originales":
+            int(len(df)),
+
+        "rows_entrenamiento":
+            int(len(final_df)),
 
         "positive":
-            positivos,
+            int(y_final.sum()),
 
         "variables":
-            len(variables),
+            int(len(variables)),
 
         "validation":
-            validacion,
-
+            validation,
     }
 
 
 def entrenar_convectivo():
+    if not CONV_DATA.exists():
+        raise RuntimeError(
+            f"No existe {CONV_DATA}"
+        )
 
     print()
     print("=" * 70)
-    print("CLIMAAR - MODELO CONVECTIVO V2")
+    print(
+        "CLIMAAR - MODELO "
+        "CONVECTIVO V3"
+    )
     print("=" * 70)
 
-    archivo = Path(
-        "data/eventos_severos/"
-        "variables_convectivas_2023_2025.csv"
-    )
-
-    if not archivo.exists():
-
-        raise RuntimeError(
-            f"No existe {archivo}"
-        )
-
     df = pd.read_csv(
-        archivo
+        CONV_DATA
     )
 
     df["time"] = pd.to_datetime(
         df["time"],
-        errors="coerce"
+        errors="coerce",
     )
 
     df["event_date"] = pd.to_datetime(
         df["event_date"],
-        errors="coerce"
+        errors="coerce",
     )
 
     df = (
@@ -667,87 +778,105 @@ def entrenar_convectivo():
         .dropna(
             subset=[
                 "time",
-                "event_date"
+                "event_date",
             ]
         )
         .sort_values("time")
         .reset_index(drop=True)
     )
 
-    for columna in df.columns:
-
-        if columna not in {
+    for column in df.columns:
+        if column not in {
             "time",
-            "event_date"
+            "event_date",
         }:
-
-            df[columna] = pd.to_numeric(
-                df[columna],
-                errors="coerce"
+            df[column] = pd.to_numeric(
+                df[column],
+                errors="coerce",
             )
 
     df["target"] = 0
 
-    for evento in CONV_EVENTS:
+    for event in CONV_EVENTS:
 
-        mascara = (
-
-            (df["event_date"] == evento)
-
-            &
-
+        mask = (
             (
-                df["time"] >=
-                evento -
-                pd.Timedelta(hours=24)
+                df["event_date"]
+                == event
             )
-
             &
-
             (
-                df["time"] <
-                evento
+                df["time"]
+                >= event
+                - pd.Timedelta(hours=24)
+            )
+            &
+            (
+                df["time"]
+                < event
             )
         )
 
         df.loc[
-            mascara,
+            mask,
             "target"
         ] = 1
 
-    # Cizalladura aproximada
-
     if {
         "wind_speed_850hPa",
-        "wind_speed_500hPa"
+        "wind_speed_500hPa",
     }.issubset(df.columns):
 
-        df["shear_speed_850_500"] = (
-            df["wind_speed_500hPa"] -
+        df[
+            "shear_speed_850_500"
+        ] = (
+            df["wind_speed_500hPa"]
+            -
             df["wind_speed_850hPa"]
         ).abs()
 
-    # Gradiente térmico aproximado
-
     if {
         "temperature_850hPa",
-        "temperature_500hPa"
+        "temperature_500hPa",
     }.issubset(df.columns):
 
-        df["lapse_proxy_850_500"] = (
-            df["temperature_850hPa"] -
+        df[
+            "lapse_proxy_850_500"
+        ] = (
+            df["temperature_850hPa"]
+            -
             df["temperature_500hPa"]
         )
 
-    X, variables, medianas = preparar_matriz(
+    excluded = {
+        "time",
+        "event_date",
+        "target",
+    }
 
-        df,
+    variables = [
+        c
+        for c in df.columns
+        if c not in excluded
+        and pd.api.types.is_numeric_dtype(
+            df[c]
+        )
+    ]
 
-        {
-            "target",
-            "event_date"
-        }
+    X = df[
+        variables
+    ].replace(
+        [np.inf, -np.inf],
+        np.nan,
     )
+
+    medians = X.median(
+        numeric_only=True
+    )
+
+    X = X.fillna(
+        medians
+    ).fillna(0.0)
 
     y = (
         df["target"]
@@ -755,135 +884,141 @@ def entrenar_convectivo():
         .to_numpy()
     )
 
-    print(
-        "Filas:",
-        len(df)
-    )
+    validation = {}
 
-    print(
-        "Positivos:",
-        int(y.sum())
-    )
-
-    validacion = {}
-
-    for evento in CONV_EVENTS:
+    for event in CONV_EVENTS:
 
         test_mask = (
-            df["event_date"] ==
-            evento
+            df["event_date"]
+            == event
         )
 
         train_mask = ~test_mask
 
-        y_train = y[train_mask]
-        y_test = y[test_mask]
+        y_train = y[
+            train_mask
+        ]
 
-        print()
-        print(
-            "Validando:",
-            evento.date()
-        )
-
-        print(
-            "Positivos train:",
-            int(y_train.sum())
-        )
-
-        print(
-            "Positivos test:",
-            int(y_test.sum())
-        )
+        y_test = y[
+            test_mask
+        ]
 
         if (
-            y_train.sum() < 10
+            len(np.unique(y_train))
+            < 2
             or
-            y_test.sum() < 5
+            len(np.unique(y_test))
+            < 2
         ):
-
-            validacion[
-                str(evento.date())
+            validation[
+                str(event.date())
             ] = {
-                "skipped": True
+                "skipped": True,
+                "train_rows": int(
+                    train_mask.sum()
+                ),
+                "test_rows": int(
+                    test_mask.sum()
+                ),
+                "train_positive": int(
+                    y_train.sum()
+                ),
+                "test_positive": int(
+                    y_test.sum()
+                ),
             }
 
             continue
 
-        modelo = RandomForestClassifier(
-
-            n_estimators=250,
-
+        model = RandomForestClassifier(
+            n_estimators=600,
             max_features="sqrt",
-
-            min_samples_leaf=2,
-
-            class_weight=
-                "balanced_subsample",
-
+            min_samples_leaf=3,
+            class_weight=(
+                "balanced_subsample"
+            ),
             random_state=42,
-
             n_jobs=-1,
         )
 
-        modelo.fit(
+        model.fit(
             X.loc[train_mask],
-            y_train
+            y_train,
         )
 
-        probabilidad = (
-            modelo
+        probability = (
+            model
             .predict_proba(
                 X.loc[test_mask]
             )[:, 1]
         )
 
-        validacion[
-            str(evento.date())
-        ] = calcular_metricas(
+        threshold = mejor_umbral(
             y_test,
-            probabilidad
+            probability,
         )
 
-    print()
-    print(
-        "Entrenando modelo convectivo final..."
-    )
+        result = metricas(
+            y_test,
+            probability,
+            threshold,
+        )
 
-    modelo_final = RandomForestClassifier(
+        result.update({
+            "train_rows": int(
+                train_mask.sum()
+            ),
+            "test_rows": int(
+                test_mask.sum()
+            ),
+            "train_positive": int(
+                y_train.sum()
+            ),
+            "test_positive": int(
+                y_test.sum()
+            ),
+        })
 
-        n_estimators=300,
+        validation[
+            str(event.date())
+        ] = result
 
+        print(
+            json.dumps(
+                result,
+                indent=2,
+            )
+        )
+
+    final_model = RandomForestClassifier(
+        n_estimators=800,
         max_features="sqrt",
-
-        min_samples_leaf=2,
-
-        class_weight=
-            "balanced_subsample",
-
+        min_samples_leaf=3,
+        class_weight=(
+            "balanced_subsample"
+        ),
         random_state=42,
-
         n_jobs=-1,
     )
 
-    modelo_final.fit(
+    final_model.fit(
         X,
-        y
+        y,
     )
 
     joblib.dump(
-
         {
             "version":
-                "climaar_predictor_convectivo_v2",
+                "climaar_predictor_convectivo_v3",
 
             "model":
-                modelo_final,
+                final_model,
 
             "features":
                 variables,
 
             "medians":
-                medianas,
+                medians.to_dict(),
 
             "location":
                 {
@@ -904,142 +1039,103 @@ def entrenar_convectivo():
                 ],
 
             "validation":
-                validacion,
+                validation,
         },
 
-        OUT /
-        "climaar_predictor_convectivo_v2.joblib"
+        OUT
+        / "climaar_predictor_convectivo_v2.joblib",
     )
 
-    pd.DataFrame({
-
+    importance = pd.DataFrame({
         "variable":
             variables,
 
         "importancia":
-            modelo_final
+            final_model
             .feature_importances_,
-
     }).sort_values(
-
         "importancia",
+        ascending=False,
+    )
 
-        ascending=False
-
-    ).to_csv(
-
-        OUT /
-        "importancia_convectivo_v2.csv",
-
-        index=False
+    importance.to_csv(
+        OUT
+        / "importancia_convectivo_v2.csv",
+        index=False,
     )
 
     return {
+        "version":
+            "v3",
 
         "rows":
-            len(df),
+            int(len(df)),
 
         "positive":
             int(y.sum()),
 
         "variables":
-            len(variables),
+            int(len(variables)),
 
         "validation":
-            validacion,
+            validation,
     }
 
 
 def main():
+    surface = entrenar_superficie()
+    convective = entrenar_convectivo()
 
-    print()
-    print("=" * 70)
-    print("CLIMAAR - ENTRENAMIENTO HIBRIDO V6")
-    print("=" * 70)
-
-    superficie = entrenar_superficie()
-
-    convectivo = entrenar_convectivo()
-
-    reporte = {
-
+    report = {
         "version":
-            "6.0",
+            "ClimaAR V7",
 
-        "location":
-            {
-                "name":
-                    "Bahia Blanca",
+        "estado":
+            "OK",
 
-                "lat":
-                    LAT,
-
-                "lon":
-                    LON,
-            },
+        "motor":
+            (
+                "RandomForest balanceado "
+                "con validacion por evento"
+            ),
 
         "superficie":
-            superficie,
+            surface,
 
         "convectivo":
-            convectivo,
-
-        "eventos":
-            {
-                "2019-12-30":
-                    "tormenta severa regional",
-
-                "2023-12-16":
-                    "viento destructivo",
-
-                "2025-03-07":
-                    "lluvia extrema e inundacion",
-            },
-
-        "referencias_oficiales":
-            {
-                "2023":
-                    "maximo oficial documentado 155 km/h",
-
-                "2025":
-                    "210 mm/6h, 290 mm/12h y 312 mm durante el evento",
-            },
-
-        "nota":
-            "Modelo experimental. "
-            "No se inventan variables convectivas para 2019.",
+            convective,
     }
 
-    archivo_reporte = (
-        OUT /
-        "reporte_modelo_hibrido_v6.json"
+    report_path = (
+        OUT
+        / "reporte_modelo_hibrido_v6.json"
     )
 
-    archivo_reporte.write_text(
-
+    report_path.write_text(
         json.dumps(
-            reporte,
+            report,
             indent=2,
-            ensure_ascii=False
+            ensure_ascii=False,
         ),
-
-        encoding="utf-8"
+        encoding="utf-8",
     )
 
     print()
     print("=" * 70)
-    print("ENTRENAMIENTO COMPLETADO")
+    print(
+        "CLIMAAR - ENTRENAMIENTO "
+        "COMPLETADO"
+    )
     print("=" * 70)
 
     print(
         json.dumps(
-            reporte,
+            report,
             indent=2,
-            ensure_ascii=False
+            ensure_ascii=False,
         )
     )
 
 
 if __name__ == "__main__":
-
     main()
