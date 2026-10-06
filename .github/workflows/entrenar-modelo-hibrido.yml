@@ -9,7 +9,7 @@ permissions:
 jobs:
   entrenamiento:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -17,23 +17,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Python
+      - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Dependencias
+      - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install pandas numpy scikit-learn joblib requests
+          pip install pandas numpy scikit-learn joblib
 
       - name: Entrenar modelo hibrido
         shell: bash
         run: |
-          cat > /tmp/entrenar.py <<'PY'
+          cat > /tmp/entrenar_modelo.py <<'PY'
           from pathlib import Path
           import json
-          import requests
           import numpy as np
           import pandas as pd
           import joblib
@@ -49,35 +48,9 @@ jobs:
 
           LAT = -38.71
           LON = -62.26
-          TZ = "America/Argentina/Buenos_Aires"
-
-          API = "https://historical-forecast-api.open-meteo.com/v1/forecast"
 
           OUT = Path("modelo")
-          CACHE = Path("data/modelo_hibrido")
-
           OUT.mkdir(exist_ok=True)
-          CACHE.mkdir(parents=True, exist_ok=True)
-
-          CONV = [
-              "cape",
-              "lifted_index",
-              "convective_inhibition",
-              "freezing_level_height",
-              "boundary_layer_height",
-              "total_column_integrated_water_vapour",
-              "temperature_850hPa",
-              "relative_humidity_850hPa",
-              "wind_speed_850hPa",
-              "wind_direction_850hPa",
-              "temperature_500hPa",
-              "relative_humidity_500hPa",
-              "wind_speed_500hPa",
-              "wind_direction_500hPa",
-              "temperature_300hPa",
-              "wind_speed_300hPa",
-              "wind_direction_300hPa"
-          ]
 
           EVENTS = {
               "2019-12-30": {
@@ -94,94 +67,13 @@ jobs:
               }
           }
 
-          def get_chunk(start, end):
-              cache = CACHE / f"conv_{start:%Y%m%d}_{end:%Y%m%d}.csv"
+          print("=" * 70)
+          print("CLIMAAR - ENTRENAMIENTO HIBRIDO V4")
+          print("=" * 70)
 
-              if cache.exists():
-                  print(f"Usando cache: {cache}")
-                  return pd.read_csv(cache)
-
-              params = {
-                  "latitude": LAT,
-                  "longitude": LON,
-                  "start_date": start.strftime("%Y-%m-%d"),
-                  "end_date": end.strftime("%Y-%m-%d"),
-                  "hourly": ",".join(CONV),
-                  "timezone": TZ
-              }
-
-              print(f"Descargando: {start.date()} -> {end.date()}")
-
-              r = requests.get(
-                  API,
-                  params=params,
-                  timeout=180
-              )
-
-              r.raise_for_status()
-
-              data = r.json()
-              hourly = data.get("hourly")
-
-              if not hourly or "time" not in hourly:
-                  raise RuntimeError(
-                      f"Sin datos Historical Forecast: {start} -> {end}"
-                  )
-
-              df = pd.DataFrame(hourly)
-              df.to_csv(cache, index=False)
-
-              return df
-
-          def load_convective():
-
-              parts = []
-
-              cur = pd.Timestamp("2022-01-01")
-              end = pd.Timestamp("2026-10-06")
-
-              while cur <= end:
-
-                  nxt = min(
-                      cur + pd.DateOffset(months=5) - pd.Timedelta(days=1),
-                      end
-                  )
-
-                  print(
-                      f"Historical Forecast: "
-                      f"{cur.date()} -> {nxt.date()}"
-                  )
-
-                  parts.append(
-                      get_chunk(cur, nxt)
-                  )
-
-                  cur = nxt + pd.Timedelta(days=1)
-
-              df = pd.concat(
-                  parts,
-                  ignore_index=True
-              )
-
-              df["time"] = pd.to_datetime(df["time"])
-
-              df = (
-                  df
-                  .drop_duplicates("time")
-                  .sort_values("time")
-                  .reset_index(drop=True)
-              )
-
-              df.to_csv(
-                  CACHE / "historico_convectivo_2022_2026.csv",
-                  index=False
-              )
-
-              print(
-                  f"Datos convectivos: {len(df)} filas"
-              )
-
-              return df
+          # ============================================================
+          # MODELO DE SUPERFICIE
+          # ============================================================
 
           def surface_features(df):
 
@@ -193,14 +85,13 @@ jobs:
               )
 
               for c in df.columns:
-
                   if c != "time":
-
                       df[c] = pd.to_numeric(
                           df[c],
                           errors="coerce"
                       )
 
+              # Componentes U/V del viento
               if {
                   "wind_speed_10m",
                   "wind_direction_10m"
@@ -220,6 +111,7 @@ jobs:
                       np.cos(rad)
                   )
 
+              # Diferencia temperatura - punto de rocío
               if {
                   "temperature_2m",
                   "dew_point_2m"
@@ -238,9 +130,12 @@ jobs:
                   "precipitation",
                   "wind_speed_10m",
                   "wind_gusts_10m",
-                  "dew_spread"
+                  "dew_spread",
+                  "wind_u",
+                  "wind_v"
               ]
 
+              # Cambios temporales
               for c in base:
 
                   if c not in df.columns:
@@ -253,6 +148,7 @@ jobs:
                           df[c].shift(lag)
                       )
 
+                  # Promedios móviles
                   for win in (3, 6, 12, 24):
 
                       df[f"{c}_mean{win}h"] = (
@@ -264,6 +160,7 @@ jobs:
                           .mean()
                       )
 
+              # Acumulaciones de precipitación
               if "precipitation" in df.columns:
 
                   for win in (3, 6, 12, 24):
@@ -277,6 +174,7 @@ jobs:
                           .sum()
                       )
 
+              # Cambios de presión
               if "pressure_msl" in df.columns:
 
                   df["pressure_drop6h"] = (
@@ -289,6 +187,7 @@ jobs:
                       df["pressure_msl"].shift(12)
                   )
 
+              # Variables cíclicas
               df["hour_sin"] = np.sin(
                   2 * np.pi *
                   df["time"].dt.hour / 24
@@ -311,6 +210,7 @@ jobs:
 
               return df
 
+
           def label_surface(df):
 
               df = df.copy()
@@ -323,8 +223,8 @@ jobs:
                   h = meta["hours"]
 
                   mask = (
-                      (df.time >= d - pd.Timedelta(hours=h)) &
-                      (df.time <= d + pd.Timedelta(hours=h))
+                      (df["time"] >= d - pd.Timedelta(hours=h)) &
+                      (df["time"] <= d + pd.Timedelta(hours=h))
                   )
 
                   df.loc[
@@ -333,6 +233,7 @@ jobs:
                   ] = 1
 
               return df
+
 
           def train_surface():
 
@@ -343,12 +244,18 @@ jobs:
               if not path.exists():
 
                   raise RuntimeError(
-                      f"No existe {path}"
+                      f"No existe el histórico: {path}"
                   )
 
-              print("Cargando histórico de superficie...")
+              print("")
+              print("MODELO 1 - SUPERFICIE")
+              print("-" * 50)
 
               raw = pd.read_csv(path)
+
+              print(
+                  f"Filas originales: {len(raw)}"
+              )
 
               df = surface_features(raw)
               df = label_surface(df)
@@ -385,6 +292,7 @@ jobs:
                       subset=features + ["evento_24h"]
                   )
                   .sort_values("time")
+                  .reset_index(drop=True)
               )
 
               positives = int(
@@ -392,36 +300,64 @@ jobs:
               )
 
               print(
-                  f"Superficie: {len(df)} filas"
+                  f"Filas utilizables: {len(df)}"
               )
 
               print(
                   f"Positivos: {positives}"
               )
 
-              if positives < 50:
+              print(
+                  f"Variables: {len(features)}"
+              )
+
+              if positives < 30:
 
                   raise RuntimeError(
-                      f"Muy pocos positivos: {positives}"
+                      f"Hay muy pocos positivos: {positives}"
                   )
 
-              cutoff = df.time.quantile(0.80)
+              # División temporal 80/20
+              cutoff = df["time"].quantile(0.80)
 
-              tr = df[df.time < cutoff]
-              te = df[df.time >= cutoff]
+              train = df[
+                  df["time"] < cutoff
+              ]
 
-              if tr.evento_24h.sum() < 20:
+              test = df[
+                  df["time"] >= cutoff
+              ]
+
+              print(
+                  f"Entrenamiento: {len(train)}"
+              )
+
+              print(
+                  f"Prueba: {len(test)}"
+              )
+
+              print(
+                  f"Positivos train: "
+                  f"{int(train['evento_24h'].sum())}"
+              )
+
+              print(
+                  f"Positivos test: "
+                  f"{int(test['evento_24h'].sum())}"
+              )
+
+              if train["evento_24h"].sum() < 10:
 
                   raise RuntimeError(
-                      "Holdout temporal insuficiente: "
-                      "pocos positivos en entrenamiento"
+                      "No hay suficientes eventos "
+                      "positivos en entrenamiento."
                   )
 
-              if te.evento_24h.sum() < 10:
+              if test["evento_24h"].sum() < 5:
 
                   raise RuntimeError(
-                      "Holdout temporal insuficiente: "
-                      "pocos positivos en prueba"
+                      "No hay suficientes eventos "
+                      "positivos en prueba."
                   )
 
               model = RandomForestClassifier(
@@ -433,103 +369,144 @@ jobs:
                   n_jobs=-1
               )
 
-              print("Entrenando modelo de superficie...")
+              print("")
+              print("Entrenando Random Forest de superficie...")
 
               model.fit(
-                  tr[features],
-                  tr["evento_24h"]
+                  train[features],
+                  train["evento_24h"]
               )
 
-              p = model.predict_proba(
-                  te[features]
+              probability = model.predict_proba(
+                  test[features]
               )[:, 1]
 
-              pred = (
-                  p >= 0.50
+              prediction = (
+                  probability >= 0.50
               ).astype(int)
 
               metrics = {
                   "roc_auc": float(
                       roc_auc_score(
-                          te.evento_24h,
-                          p
+                          test["evento_24h"],
+                          probability
                       )
                   ),
                   "average_precision": float(
                       average_precision_score(
-                          te.evento_24h,
-                          p
+                          test["evento_24h"],
+                          probability
                       )
                   ),
                   "precision_0_50": float(
                       precision_score(
-                          te.evento_24h,
-                          pred,
+                          test["evento_24h"],
+                          prediction,
                           zero_division=0
                       )
                   ),
                   "recall_0_50": float(
                       recall_score(
-                          te.evento_24h,
-                          pred,
+                          test["evento_24h"],
+                          prediction,
                           zero_division=0
                       )
                   ),
                   "f1_0_50": float(
                       f1_score(
-                          te.evento_24h,
-                          pred,
+                          test["evento_24h"],
+                          prediction,
                           zero_division=0
                       )
                   ),
-                  "train_rows": int(len(tr)),
-                  "test_rows": int(len(te)),
+                  "train_rows": int(len(train)),
+                  "test_rows": int(len(test)),
                   "train_positive": int(
-                      tr.evento_24h.sum()
+                      train["evento_24h"].sum()
                   ),
                   "test_positive": int(
-                      te.evento_24h.sum()
+                      test["evento_24h"].sum()
                   )
               }
 
-              joblib.dump(
-                  {
-                      "version":
-                          "hibrido_surface_v4",
-                      "model": model,
-                      "features": features,
-                      "horizon_hours": 24,
-                      "location": {
-                          "lat": LAT,
-                          "lon": LON
-                      },
-                      "metrics": metrics
+              artifact = {
+                  "version":
+                      "climaar_predictor_hibrido_superficie_v4",
+                  "model": model,
+                  "features": features,
+                  "horizon_hours": 24,
+                  "location": {
+                      "name": "Bahia Blanca",
+                      "lat": LAT,
+                      "lon": LON
                   },
+                  "metrics": metrics
+              }
+
+              joblib.dump(
+                  artifact,
                   OUT /
                   "climaar_predictor_hibrido_superficie_v4.joblib"
               )
 
-              pd.DataFrame(
-                  {
-                      "variable": features,
-                      "importancia":
-                          model.feature_importances_
-                  }
-              ).sort_values(
+              importance = pd.DataFrame({
+                  "variable": features,
+                  "importancia":
+                      model.feature_importances_
+              }).sort_values(
                   "importancia",
                   ascending=False
-              ).to_csv(
+              )
+
+              importance.to_csv(
                   OUT /
                   "importancia_hibrido_superficie_v4.csv",
                   index=False
               )
 
+              print("")
+              print("METRICAS SUPERFICIE")
+              print(json.dumps(
+                  metrics,
+                  indent=2
+              ))
+
               return metrics
 
-          def train_convective(df):
 
-              df = df.copy()
+          # ============================================================
+          # MODELO CONVECTIVO
+          # ============================================================
 
+          def train_convective():
+
+              path = Path(
+                  "data/eventos_severos/"
+                  "variables_convectivas_2023_2025.csv"
+              )
+
+              if not path.exists():
+
+                  raise RuntimeError(
+                      f"No existe el dataset convectivo: {path}"
+                  )
+
+              print("")
+              print("MODELO 2 - CONVECTIVO")
+              print("-" * 50)
+
+              df = pd.read_csv(path)
+
+              df["time"] = pd.to_datetime(
+                  df["time"],
+                  errors="coerce"
+              )
+
+              print(
+                  f"Filas convectivas: {len(df)}"
+              )
+
+              # Conversión numérica
               for c in df.columns:
 
                   if c != "time":
@@ -539,6 +516,7 @@ jobs:
                           errors="coerce"
                       )
 
+              # Etiqueta
               df["evento"] = 0
 
               for date, hours in [
@@ -549,8 +527,8 @@ jobs:
                   d = pd.Timestamp(date)
 
                   mask = (
-                      (df.time >= d - pd.Timedelta(hours=hours)) &
-                      (df.time <= d + pd.Timedelta(hours=12))
+                      (df["time"] >= d - pd.Timedelta(hours=hours)) &
+                      (df["time"] <= d + pd.Timedelta(hours=12))
                   )
 
                   df.loc[
@@ -558,6 +536,7 @@ jobs:
                       "evento"
                   ] = 1
 
+              # Shear 850-500
               if {
                   "wind_speed_850hPa",
                   "wind_speed_500hPa"
@@ -568,6 +547,7 @@ jobs:
                       df["wind_speed_500hPa"]
                   ).abs()
 
+              # Diferencia térmica 850-500
               if {
                   "temperature_850hPa",
                   "temperature_500hPa"
@@ -578,9 +558,30 @@ jobs:
                       df["temperature_500hPa"]
                   )
 
+              # Tendencias convectivas
+              for c in [
+                  "cape",
+                  "lifted_index",
+                  "convective_inhibition",
+                  "freezing_level_height",
+                  "boundary_layer_height",
+                  "total_column_integrated_water_vapour"
+              ]:
+
+                  if c not in df.columns:
+                      continue
+
+                  df[f"{c}_chg3h"] = (
+                      df[c] -
+                      df[c].shift(3)
+                  )
+
               features = [
                   c for c in df.columns
-                  if c not in {"time", "evento"}
+                  if c not in {
+                      "time",
+                      "evento"
+                  }
               ]
 
               df = (
@@ -593,32 +594,65 @@ jobs:
                       subset=features + ["evento"]
                   )
                   .sort_values("time")
+                  .reset_index(drop=True)
               )
 
-              results = {}
+              positives = int(
+                  df["evento"].sum()
+              )
 
-              for date in (
-                  "2023-12-16",
-                  "2025-03-07"
-              ):
+              print(
+                  f"Filas utilizables: {len(df)}"
+              )
 
-                  d = pd.Timestamp(date)
+              print(
+                  f"Positivos: {positives}"
+              )
 
-                  block = (
-                      (df.time >= d - pd.Timedelta(hours=72)) &
-                      (df.time <= d + pd.Timedelta(hours=24))
+              print(
+                  f"Variables: {len(features)}"
+              )
+
+              if positives < 20:
+
+                  raise RuntimeError(
+                      "Muy pocos positivos en "
+                      "modelo convectivo."
                   )
 
-                  tr = df[~block]
-                  te = df[block]
+              # --------------------------------------------------------
+              # VALIDACION DEJANDO UN EVENTO AFUERA
+              # --------------------------------------------------------
 
-                  if tr.evento.sum() < 20:
+              validation = {}
+
+              for event_date in [
+                  "2023-12-16",
+                  "2025-03-07"
+              ]:
+
+                  d = pd.Timestamp(event_date)
+
+                  event_window = (
+                      (df["time"] >= d - pd.Timedelta(hours=72)) &
+                      (df["time"] <= d + pd.Timedelta(hours=24))
+                  )
+
+                  train = df[
+                      ~event_window
+                  ]
+
+                  test = df[
+                      event_window
+                  ]
+
+                  if train["evento"].sum() < 10:
                       continue
 
-                  if te.evento.sum() < 10:
+                  if test["evento"].sum() < 5:
                       continue
 
-                  m = RandomForestClassifier(
+                  model = RandomForestClassifier(
                       n_estimators=500,
                       max_features="sqrt",
                       min_samples_leaf=3,
@@ -627,37 +661,53 @@ jobs:
                       n_jobs=-1
                   )
 
-                  m.fit(
-                      tr[features],
-                      tr.evento
+                  model.fit(
+                      train[features],
+                      train["evento"]
                   )
 
-                  p = m.predict_proba(
-                      te[features]
+                  probability = model.predict_proba(
+                      test[features]
                   )[:, 1]
 
-                  results[date] = {
+                  validation[event_date] = {
                       "roc_auc": float(
                           roc_auc_score(
-                              te.evento,
-                              p
+                              test["evento"],
+                              probability
                           )
                       ),
                       "average_precision": float(
                           average_precision_score(
-                              te.evento,
-                              p
+                              test["evento"],
+                              probability
                           )
                       ),
                       "test_rows": int(
-                          len(te)
+                          len(test)
                       ),
                       "test_positive": int(
-                          te.evento.sum()
+                          test["evento"].sum()
                       )
                   }
 
-              final = RandomForestClassifier(
+                  print("")
+                  print(
+                      f"Validacion {event_date}:"
+                  )
+
+                  print(
+                      json.dumps(
+                          validation[event_date],
+                          indent=2
+                      )
+                  )
+
+              # --------------------------------------------------------
+              # MODELO FINAL
+              # --------------------------------------------------------
+
+              final_model = RandomForestClassifier(
                   n_estimators=700,
                   max_features="sqrt",
                   min_samples_leaf=3,
@@ -666,67 +716,70 @@ jobs:
                   n_jobs=-1
               )
 
+              print("")
               print(
-                  "Treinando modelo convectivo final..."
+                  "Entrenando modelo convectivo final..."
               )
 
-              final.fit(
+              final_model.fit(
                   df[features],
-                  df.evento
+                  df["evento"]
               )
+
+              artifact = {
+                  "version":
+                      "climaar_predictor_convectivo_v1",
+                  "model": final_model,
+                  "features": features,
+                  "location": {
+                      "name": "Bahia Blanca",
+                      "lat": LAT,
+                      "lon": LON
+                  },
+                  "events_used": [
+                      "2023-12-16",
+                      "2025-03-07"
+                  ],
+                  "validation":
+                      validation
+              }
 
               joblib.dump(
-                  {
-                      "version":
-                          "hibrido_convectivo_v1",
-                      "model": final,
-                      "features": features,
-                      "location": {
-                          "lat": LAT,
-                          "lon": LON
-                      },
-                      "validation": results
-                  },
+                  artifact,
                   OUT /
                   "climaar_predictor_convectivo_v1.joblib"
               )
 
-              pd.DataFrame(
-                  {
-                      "variable": features,
-                      "importancia":
-                          final.feature_importances_
-                  }
-              ).sort_values(
+              importance = pd.DataFrame({
+                  "variable": features,
+                  "importancia":
+                      final_model.feature_importances_
+              }).sort_values(
                   "importancia",
                   ascending=False
-              ).to_csv(
+              )
+
+              importance.to_csv(
                   OUT /
                   "importancia_convectiva_v1.csv",
                   index=False
               )
 
-              return (
-                  results,
-                  len(df),
-                  int(df.evento.sum()),
-                  len(features)
-              )
+              return {
+                  "rows": int(len(df)),
+                  "positive": positives,
+                  "variables": len(features),
+                  "validation": validation
+              }
 
-          print("=" * 60)
-          print("CLIMAAR - ENTRENAMIENTO HIBRIDO V4")
-          print("=" * 60)
 
-          conv = load_convective()
+          # ============================================================
+          # EJECUCION
+          # ============================================================
 
           surface_metrics = train_surface()
 
-          (
-              conv_metrics,
-              conv_rows,
-              conv_pos,
-              conv_features
-          ) = train_convective(conv)
+          convective_metrics = train_convective()
 
           report = {
               "version":
@@ -738,18 +791,20 @@ jobs:
                   "longitud": LON
               },
 
-              "eventos": EVENTS,
+              "eventos": {
+                  "2019-12-30":
+                      "tormenta severa regional",
+                  "2023-12-16":
+                      "viento destructivo",
+                  "2025-03-07":
+                      "lluvia extrema e inundacion"
+              },
 
-              "superficie":
+              "modelo_superficie":
                   surface_metrics,
 
-              "convectivo": {
-                  "filas": conv_rows,
-                  "positivos": conv_pos,
-                  "variables": conv_features,
-                  "validacion_leave_one_event_out":
-                      conv_metrics
-              },
+              "modelo_convectivo":
+                  convective_metrics,
 
               "referencias_oficiales": {
                   "2023_rafaga_max_kmh": 155,
@@ -758,10 +813,14 @@ jobs:
                   "2025_total_evento_mm": 312
               },
 
-              "nota":
-                  "2019 se usa solo en superficie; "
-                  "no se inventan variables convectivas "
-                  "para 2019."
+              "criterios": [
+                  "2019 se utiliza solamente en superficie",
+                  "No se inventan variables convectivas para 2019",
+                  "La validacion es temporal",
+                  "El modelo convectivo utiliza 2023 y 2025",
+                  "El radar se incorporara posteriormente "
+                  "cuando exista una secuencia suficiente"
+              ]
           }
 
           with open(
@@ -778,6 +837,11 @@ jobs:
                   ensure_ascii=False
               )
 
+          print("")
+          print("=" * 70)
+          print("ENTRENAMIENTO COMPLETADO")
+          print("=" * 70)
+
           print(
               json.dumps(
                   report,
@@ -788,7 +852,7 @@ jobs:
 
           PY
 
-          python /tmp/entrenar.py
+          python /tmp/entrenar_modelo.py
 
       - name: Validar artefactos
         run: |
@@ -803,9 +867,11 @@ jobs:
           git config user.name "climaar-bot"
           git config user.email "climaar-bot@users.noreply.github.com"
 
-          git add modelo data/modelo_hibrido
+          git add modelo
 
-          git diff --cached --quiet || \
+          if git diff --cached --quiet; then
+            echo "No hay cambios nuevos para guardar."
+          else
             git commit -m "Entrenar modelo hibrido V4"
-
-          git push
+            git push
+          fi
