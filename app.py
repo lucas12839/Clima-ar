@@ -28,6 +28,13 @@ STATUS = RADAR / "status.json"
 NOWCAST = RADAR / "radar_nowcast.json"
 SAZB_STATUS = SAZB / "status.json"
 
+INTELLIGENCE = (
+    BASE
+    / "data"
+    / "ia"
+    / "inteligencia_tormenta.json"
+)
+
 LAT = -38.71
 LON = -62.26
 
@@ -814,6 +821,26 @@ def observacion():
     )
 
 
+@app.get("/intelligence")
+def intelligence():
+
+    data = load_json(
+        INTELLIGENCE
+    )
+
+    if not data:
+
+        return {
+            "estado":
+                "sin_datos",
+
+            "fuente":
+                "ClimaAR Intelligence"
+        }
+
+    return data
+
+
 @app.get("/estado")
 def estado():
 
@@ -832,6 +859,9 @@ def estado():
 
         "observacion_sazb":
             load_json(SAZB_STATUS),
+
+        "intelligence":
+            load_json(INTELLIGENCE),
 
         "nowcast_radar": {
 
