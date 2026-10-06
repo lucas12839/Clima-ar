@@ -1,4 +1,4 @@
-name: ClimaAR - Entrenamiento Hibrido V6
+name: Entrenar modelos ClimaAR V8
 
 on:
   workflow_dispatch:
@@ -7,13 +7,11 @@ permissions:
   contents: write
 
 jobs:
-  entrenamiento:
-    name: Entrenar modelos ClimaAR
+  entrenar:
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Checkout
+      - name: Descargar repositorio
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -28,74 +26,104 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy scikit-learn joblib
 
-      - name: Verificar datos
+      - name: Verificar datos históricos
         run: |
-          echo "=== DATOS HISTORICOS ==="
-          test -f data/historico/clima_horario_1980_2026.csv
-          echo "OK: histórico meteorológico"
+          test -s data/historico/clima_horario_1980_2026.csv
+          test -s data/eventos_severos/variables_convectivas_2023_2025.csv
 
-          echo "=== VARIABLES CONVECTIVAS ==="
-          test -f data/eventos_severos/variables_convectivas_2023_2025.csv
-          echo "OK: variables convectivas"
-
-          echo "=== ENTRENADOR ==="
-          test -f scripts/entrenar_modelo_hibrido_v6.py
-          echo "OK: entrenador V6"
+      - name: Verificar entrenador
+        run: |
+          test -s scripts/entrenar_modelo_hibrido_v6.py
 
       - name: Entrenar modelos ClimaAR
         run: |
-          set -e
           python scripts/entrenar_modelo_hibrido_v6.py
 
-      - name: Validar artefactos
+      - name: Validar modelos generados
         run: |
-          set -e
-
-          echo "=== VALIDANDO MODELO SUPERFICIE ==="
           test -s modelo/climaar_predictor_hibrido_superficie_v6.joblib
+          test -s modelo/climaar_predictor_formacion_v8.joblib
+          test -s modelo/climaar_predictor_intensificacion_v8.joblib
+          test -s modelo/climaar_predictor_impacto_v8.joblib
 
-          echo "=== VALIDANDO IMPORTANCIAS SUPERFICIE ==="
+      - name: Validar informes
+        run: |
           test -s modelo/importancia_hibrido_superficie_v6.csv
-
-          echo "=== VALIDANDO MODELO CONVECTIVO ==="
-          test -s modelo/climaar_predictor_convectivo_v2.joblib
-
-          echo "=== VALIDANDO IMPORTANCIAS CONVECTIVAS ==="
-          test -s modelo/importancia_convectivo_v2.csv
-
-          echo "=== VALIDANDO REPORTE ==="
           test -s modelo/reporte_modelo_hibrido_v6.json
+          test -s modelo/reporte_modelo_hibrido_v8.json
 
-          echo "TODOS LOS ARTEFACTOS SON VALIDOS."
-
-      - name: Mostrar resumen
+      - name: Verificar modelos con Python
         run: |
-          echo "=========================================="
-          echo "CLIMAAR - ENTRENAMIENTO V6 COMPLETADO"
-          echo "=========================================="
+          python - <<'PY'
+          import json
+          import joblib
+          from pathlib import Path
 
-          echo ""
-          echo "Archivos generados:"
-          ls -lh modelo/climaar_predictor_hibrido_superficie_v6.joblib
-          ls -lh modelo/climaar_predictor_convectivo_v2.joblib
-          ls -lh modelo/importancia_hibrido_superficie_v6.csv
-          ls -lh modelo/importancia_convectivo_v2.csv
-          ls -lh modelo/reporte_modelo_hibrido_v6.json
+          modelos = [
+              "modelo/climaar_predictor_hibrido_superficie_v6.joblib",
+              "modelo/climaar_predictor_formacion_v8.joblib",
+              "modelo/climaar_predictor_intensificacion_v8.joblib",
+              "modelo/climaar_predictor_impacto_v8.joblib",
+          ]
 
-          echo ""
-          echo "Reporte:"
-          cat modelo/reporte_modelo_hibrido_v6.json
+          for archivo in modelos:
+              ruta = Path(archivo)
 
-      - name: Guardar resultados
+              if not ruta.exists():
+                  raise SystemExit(f"ERROR: falta {archivo}")
+
+              modelo = joblib.load(ruta)
+
+              if modelo is None:
+                  raise SystemExit(f"ERROR: modelo vacío {archivo}")
+
+              print(f"OK: {archivo}")
+
+          reportes = [
+              "modelo/reporte_modelo_hibrido_v6.json",
+              "modelo/reporte_modelo_hibrido_v8.json",
+          ]
+
+          for archivo in reportes:
+              ruta = Path(archivo)
+
+              with ruta.open("r", encoding="utf-8") as f:
+                  datos = json.load(f)
+
+              if not isinstance(datos, dict):
+                  raise SystemExit(
+                      f"ERROR: reporte inválido {archivo}"
+                  )
+
+              print(f"OK: {archivo}")
+
+          print("====================================")
+          print("ENTRENAMIENTO CLIMAAR V8 VALIDADO")
+          print("Modelos:", len(modelos))
+          print("Reportes:", len(reportes))
+          print("====================================")
+          PY
+
+      - name: Verificar cambios
         run: |
-          git config user.name "climaar-bot"
-          git config user.email "climaar-bot@users.noreply.github.com"
+          git diff --check
+
+      - name: Guardar modelos
+        run: |
+          git config user.name "ClimaAR Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add modelo/
 
           if git diff --cached --quiet; then
-            echo "No hay cambios para guardar."
-          else
-            git commit -m "Entrenamiento ClimaAR Hibrido V6"
-            git push
+            echo "No hay nuevos modelos para guardar."
+            exit 0
           fi
+
+          git commit -m "Entrenar modelos predictivos ClimaAR V8"
+
+      - name: Sincronizar y publicar
+        run: |
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
