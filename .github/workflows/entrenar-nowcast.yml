@@ -1,76 +1,65 @@
-name: Entrenar nowcast RMA10
+name: Entrenamiento Nowcast ClimaAR
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "30 3 * * *"
-
-permissions:
-  contents: write
+  push:
+    paths:
+      - "scripts/entrenar_nowcast.py"
+      - "data/radar/radar_features_rainviewer.csv"
 
 jobs:
   entrenar:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout
+
+      - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Preparar Python
+      - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
       - name: Instalar dependencias
         run: |
-          pip install --quiet pandas numpy scikit-learn joblib
+          python -m pip install --upgrade pip
+          pip install pandas numpy scikit-learn joblib
 
-      - name: Verificar datos RMA10
+      - name: Verificar dataset radar
         run: |
-          if [ ! -f data/radar/radar_features.csv ]; then
-            echo "ERROR: no existe data/radar/radar_features.csv"
-            exit 1
-          fi
+          test -f data/radar/radar_features_rainviewer.csv
+          echo "Dataset encontrado:"
+          wc -l data/radar/radar_features_rainviewer.csv
 
-          echo "Frames disponibles:"
-          python - <<'PY'
-          import pandas as pd
-
-          path = "data/radar/radar_features.csv"
-          df = pd.read_csv(path)
-
-          print(f"Cantidad de frames: {len(df)}")
-
-          if len(df) < 50:
-              raise SystemExit(
-                  f"ERROR: hay {len(df)} frames. "
-                  "Se necesitan al menos 50 para entrenar."
-              )
-          PY
-
-      - name: Entrenar primer modelo RMA10
-        run: python scripts/entrenar_nowcast.py
+      - name: Entrenar modelo nowcast
+        run: |
+          python scripts/entrenar_nowcast.py
 
       - name: Verificar modelo generado
         run: |
-          test -s modelo/climaar_nowcast_features.joblib
-          test -s modelo/metricas_nowcast.json
+          test -f modelo/climaar_nowcast_features.joblib
+          test -f modelo/metricas_nowcast.json
 
           echo "Modelo generado correctamente."
+          ls -lh modelo/climaar_nowcast_features.joblib
+          ls -lh modelo/metricas_nowcast.json
+
+      - name: Mostrar métricas
+        run: |
           cat modelo/metricas_nowcast.json
 
-      - name: Guardar modelo
+      - name: Guardar modelo en GitHub
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add modelo/climaar_nowcast_features.joblib modelo/metricas_nowcast.json
+          git add modelo/climaar_nowcast_features.joblib
+          git add modelo/metricas_nowcast.json
 
-          if git diff --cached --quiet; then
-            echo "No hay cambios para guardar."
-            exit 0
-          fi
+          git diff --cached --quiet || git commit -m "ai: actualizar modelo nowcast"
 
-          git commit -m "model: actualizar nowcast RMA10"
           git push
