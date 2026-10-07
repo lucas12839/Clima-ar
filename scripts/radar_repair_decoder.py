@@ -12,16 +12,19 @@ except ImportError:
 
 
 # ============================================================
-# CLIMAAR - RADAR REPAIR DECODER V7.4
-#
-# Decoder robusto para RainViewer Universal Blue.
-#
-# IMPORTANTE:
-# RainViewer utiliza una tabla RGBA oficial.
-# Algunos valores bajos tienen alpha menor a 255.
-# Por eso NO usamos alpha como condición obligatoria
-# para detectar precipitación.
+# CLIMAAR - RADAR REPAIR DECODER V7.5
 # ============================================================
+# Decodificador de RainViewer Universal Blue (scheme 2).
+#
+# Correcciones:
+# 1) Usa la tabla RGBA oficial de RainViewer para 10-95 dBZ.
+# 2) No exige alpha > 0 para reconocer el color.
+# 3) Evita confundir el fondo negro/transparente con radar.
+# 4) Incluye todos los campos que espera rv.analyze_sequence().
+# 5) Incluye diagnostico detallado para saber si el PNG contiene
+#    datos radar reales.
+# ============================================================
+
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -32,19 +35,20 @@ NOWCAST_FILE = RADAR_DIR / "radar_nowcast.json"
 
 MAX_FRAMES = 13
 
-# Distancia máxima entre el RGB recibido y la tabla oficial.
+MIN_DBZ = 10.0
+
 PALETTE_MATCH_DISTANCE = 36.0
 
-# Umbral meteorológico mínimo.
-MIN_DBZ = 10.0
+REPAIR_VERSION = "7.5"
 
 
 # ============================================================
-# TABLA OFICIAL UNIVERSAL BLUE
+# RAINVIEWER UNIVERSAL BLUE - SCHEME 2
 #
-# RainViewer color scheme 2.
+# Exactamente 86 colores:
+# 10 dBZ ... 95 dBZ.
 #
-# Desde 10 dBZ hasta 95 dBZ.
+# Tabla oficial RainViewer.
 # ============================================================
 
 DBZ_HEX = [
@@ -119,50 +123,49 @@ DBZ_HEX = [
     "ffffffff",
     "ffffffff",
     "ffffffff",
-
     "ffffffff",
     "ffffffff",
     "ffffffff",
     "ffffffff",
     "ffffffff",
-
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
-    "00ff00ff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
 ]
 
 
 DBZ_VALUES = np.arange(
     10,
     96,
-    dtype=np.float32
+    dtype=np.float32,
 )
+
+
+# Verificación interna de la tabla.
+if len(DBZ_HEX) != len(DBZ_VALUES):
+    raise RuntimeError(
+        f"Tabla dBZ inválida: "
+        f"{len(DBZ_HEX)} colores para "
+        f"{len(DBZ_VALUES)} valores."
+    )
 
 
 DBZ_RGBA = np.array(
@@ -173,7 +176,7 @@ DBZ_RGBA = np.array(
         ]
         for value in DBZ_HEX
     ],
-    dtype=np.float32
+    dtype=np.float32,
 )
 
 
@@ -181,7 +184,7 @@ DBZ_RGB = DBZ_RGBA[:, :3]
 
 
 # ============================================================
-# DECODIFICADOR ROBUSTO
+# DECODIFICACIÓN
 # ============================================================
 
 def rgba_to_dbz_robusto(image):
@@ -192,8 +195,16 @@ def rgba_to_dbz_robusto(image):
         np.float32
     )
 
+    if (
+        array.ndim != 3
+        or array.shape[2] != 4
+    ):
+        raise ValueError(
+            f"Se esperaba imagen RGBA; "
+            f"recibido shape={array.shape}"
+        )
+
     rgb = array[:, :, :3]
-    alpha = array[:, :, 3]
 
     height, width = rgb.shape[:2]
 
@@ -203,7 +214,7 @@ def rgba_to_dbz_robusto(image):
     )
 
     # --------------------------------------------------------
-    # Distancia RGB contra toda la tabla oficial.
+    # Distancia RGB contra la tabla oficial.
     # --------------------------------------------------------
 
     distances = (
@@ -244,13 +255,10 @@ def rgba_to_dbz_robusto(image):
     )
 
     # --------------------------------------------------------
-    # Detección robusta.
-    #
-    # NO exigimos alpha > 0.
-    #
     # El color RGB es la señal principal.
-    # Esto permite recuperar píxeles radar cuyo alpha
-    # haya sido alterado durante el procesamiento PNG.
+    #
+    # NO exigimos alpha > 0 porque los primeros colores
+    # oficiales de RainViewer tienen alpha parcial.
     # --------------------------------------------------------
 
     valid_color = (
@@ -260,9 +268,7 @@ def rgba_to_dbz_robusto(image):
     )
 
     # --------------------------------------------------------
-    # Evitar confundir fondo negro/transparente con radar.
-    #
-    # El fondo habitual es aproximadamente 0,0,0.
+    # Evitar confundir fondo negro con radar.
     # --------------------------------------------------------
 
     background_black = (
@@ -355,6 +361,7 @@ def analyze_frame(
     )
 
     rgb = array[:, :, :3]
+
     alpha = array[:, :, 3]
 
     dbz = rgba_to_dbz_robusto(
@@ -375,6 +382,15 @@ def analyze_frame(
 
     valid_palette = np.isfinite(
         dbz
+    )
+
+    rgb_non_black = np.any(
+        rgb > 3,
+        axis=2
+    )
+
+    alpha_positive = (
+        alpha > 0
     )
 
     diagnostics = {
@@ -398,17 +414,21 @@ def analyze_frame(
         "pixeles_alpha":
             int(
                 np.count_nonzero(
-                    alpha > 0
+                    alpha_positive
+                )
+            ),
+
+        "pixeles_no_transparentes":
+            int(
+                np.count_nonzero(
+                    alpha_positive
                 )
             ),
 
         "pixeles_rgb_no_negros":
             int(
                 np.count_nonzero(
-                    np.any(
-                        rgb > 3,
-                        axis=2
-                    )
+                    rgb_non_black
                 )
             ),
 
@@ -428,17 +448,55 @@ def analyze_frame(
 
         "alpha_max":
             int(
-                np.max(alpha)
+                np.max(
+                    alpha
+                )
             ),
+
+        "rgb_max":
+            [
+                int(
+                    np.max(
+                        rgb[:, :, 0]
+                    )
+                ),
+                int(
+                    np.max(
+                        rgb[:, :, 1]
+                    )
+                ),
+                int(
+                    np.max(
+                        rgb[:, :, 2]
+                    )
+                ),
+            ],
 
         "tolerancia_color":
             PALETTE_MATCH_DISTANCE,
+
+        "tabla_colores":
+            len(
+                DBZ_HEX
+            ),
+
+        "rango_dbz":
+            "10-95",
     }
 
     return {
 
         "timestamp":
             int(timestamp),
+
+        # radar_rainviewer.analyze_sequence()
+        # exige este campo.
+        #
+        # Los archivos históricos son mosaicos ya construidos,
+        # por eso se conserva el valor equivalente al mosaico
+        # completo utilizado por el radar original.
+        "tiles_ok":
+            9,
 
         "frame_utc":
             datetime.fromtimestamp(
@@ -510,7 +568,8 @@ def load_history():
             )
 
     files.sort(
-        key=lambda item: item[0]
+        key=lambda item:
+        item[0]
     )
 
     return files[
@@ -537,12 +596,22 @@ def main():
     )
 
     print(
-        "CLIMAAR RADAR DECODER V7.4"
+        f"CLIMAAR RADAR DECODER V{REPAIR_VERSION}"
     )
 
     print(
         "Frames encontrados:",
         len(files)
+    )
+
+    print(
+        "Colores Universal Blue:",
+        len(DBZ_HEX)
+    )
+
+    print(
+        "Rango dBZ:",
+        "10-95"
     )
 
     print(
@@ -554,16 +623,19 @@ def main():
     for timestamp, path in files:
 
         print()
+
         print(
             "Analizando:",
             path.name
         )
 
-        image = Image.open(
+        with Image.open(
             path
-        ).convert(
-            "RGBA"
-        )
+        ) as source:
+
+            image = source.convert(
+                "RGBA"
+            )
 
         result = analyze_frame(
             image,
@@ -616,7 +688,7 @@ def main():
         )
 
     # --------------------------------------------------------
-    # Orden temporal
+    # Orden temporal.
     # --------------------------------------------------------
 
     results.sort(
@@ -625,19 +697,24 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Utilizamos el motor existente de movimiento.
+    # Utilizar el motor existente de movimiento.
+    #
+    # Ahora los resultados contienen todos los campos que
+    # analyze_sequence() espera.
     # --------------------------------------------------------
 
     nowcast = rv.analyze_sequence(
         results
     )
 
-    latest = results[-1]
+    latest = results[
+        -1
+    ]
 
     output = {
 
         "version":
-            "7.4",
+            REPAIR_VERSION,
 
         "app":
             "ClimaAR",
@@ -661,7 +738,11 @@ def main():
             "Universal Blue (2)",
 
         "dbz_decode":
-            "tabla oficial Universal Blue RGBA + deteccion RGB robusta",
+            (
+                "tabla oficial Universal Blue "
+                "RGBA 10-95 dBZ + deteccion "
+                "RGB robusta sin exigir alpha"
+            ),
 
         "nowcast":
             nowcast,
@@ -675,13 +756,17 @@ def main():
                 len(files),
 
             "max_history_frames":
-                rv.MAX_HISTORY_FRAMES,
+                getattr(
+                    rv,
+                    "MAX_HISTORY_FRAMES",
+                    144
+                ),
         },
 
         "diagnostico": {
 
             "metodo":
-                "decoder_rgb_robusto",
+                "decoder_rgb_robusto_v7_5",
 
             "tolerancia_color":
                 PALETTE_MATCH_DISTANCE,
@@ -693,6 +778,11 @@ def main():
         },
     }
 
+    NOWCAST_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
     NOWCAST_FILE.write_text(
         json.dumps(
             output,
@@ -703,12 +793,13 @@ def main():
     )
 
     print()
+
     print(
         "===================================="
     )
 
     print(
-        "NOWCAST REPARADO V7.4"
+        "NOWCAST REPARADO V7.5"
     )
 
     print(
@@ -725,4 +816,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
