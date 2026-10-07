@@ -1,9 +1,9 @@
 name: ClimaAR Intelligence Central
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "*/10 * * * *"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -26,170 +26,47 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install requests numpy opencv-python Pillow joblib scikit-learn
+          pip install requests numpy scipy opencv-python Pillow joblib scikit-learn
 
-      - name: Actualizar radar RainViewer
+      - name: Preparar directorios
         run: |
-          set -e
+          mkdir -p data/radar
+          mkdir -p data/radar/historico
+          mkdir -p data/ia
+          mkdir -p logs
+
+      # ============================================================
+      # 1. RADAR RAINVIEWER + NOWCAST
+      # ============================================================
+      - name: Obtener radar RainViewer y generar nowcast
+        run: |
           python scripts/radar_rainviewer.py
-          test -s data/radar/radar_nowcast.json
-          test -s data/radar/actual.png
-          python -m json.tool data/radar/radar_nowcast.json >/dev/null
 
-      - name: Reparar y validar decodificación dBZ
+      - name: Verificar radar RainViewer
         run: |
-          set -e
-          test -d data/radar/historico
+          echo "=== RADAR ==="
+          test -f data/radar/actual.png
+          test -f data/radar/radar_nowcast.json
+          ls -lh data/radar/actual.png
+          cat data/radar/radar_nowcast.json
+
+      # ============================================================
+      # 2. REPARADOR / DECODIFICADOR DE RADAR
+      # ============================================================
+      - name: Analizar radar con decoder ClimaAR
+        run: |
           python scripts/radar_repair_decoder.py
-          test -s data/radar/radar_nowcast.json
-          python -m json.tool data/radar/radar_nowcast.json >/dev/null
 
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          p = Path("data/radar/radar_nowcast.json")
-          data = json.loads(p.read_text(encoding="utf-8"))
-
-          n = data.get("nowcast", {})
-          d = data.get("diagnostico", {}).get("ultimo_frame", {})
-
-          print("====================================")
-          print("CLIMAAR RADAR DECODER VALIDADO")
-          print("Frame:", n.get("frame_actual_utc"))
-          print("Actividad:", n.get("actividad"))
-          print("dBZ máximo:", n.get("dbz_max"))
-          print("Pixeles precipitación:", n.get("dbz_pixels"))
-          print("Pixeles no transparentes:", d.get("pixeles_no_transparentes"))
-          print("Pixeles paleta detectados:", d.get("pixeles_paleta_detectados"))
-          print("====================================")
-          PY
-
-      - name: Actualizar observación SAZB
-        continue-on-error: true
+      # ============================================================
+      # 3. FUSIÓN METEOROLÓGICA
+      # ============================================================
+      - name: Fusion meteorologica
         run: |
-          python scripts/smn_observaciones.py
-
-      - name: Actualizar fusión meteorológica
-        run: |
-          set -e
-          python scripts/meteorologia_fusion.py
-          test -s data/ia/estado_meteorologico.json
-          test -s data/meteorologia/ambiente_futuro.json
-
-      - name: Ejecutar Storm Engine Central
-        run: |
-          set -e
-          test -s data/radar/radar_nowcast.json
-          test -s data/ia/estado_meteorologico.json
-          test -s modelo/climaar_predictor_impacto_v8.joblib
-          python scripts/tormenta_intelligence.py
-          test -s data/ia/inteligencia_tormenta.json
-
-      - name: Validar salida de Intelligence
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          archivo = Path("data/ia/inteligencia_tormenta.json")
-
-          if not archivo.exists() or archivo.stat().st_size == 0:
-              raise SystemExit(
-                  "ERROR: inteligencia_tormenta.json no existe o está vacío"
-              )
-
-          with archivo.open("r", encoding="utf-8") as f:
-              data = json.load(f)
-
-          if data.get("version") != "4.0.0":
-              raise SystemExit(
-                  f"ERROR: versión incorrecta: {data.get('version')}"
-              )
-
-          if data.get("motor") != (
-              "ClimaAR Intelligence - Storm Engine Central"
-          ):
-              raise SystemExit("ERROR: motor incorrecto")
-
-          estados = {
-              "sin_tormenta_activa",
-              "tormenta_severa_potencial",
-              "tormenta_convectiva_en_desarrollo",
-              "tormenta_con_lluvia",
-              "tormenta_activa",
-          }
-
-          severidades = {
-              "verde",
-              "amarillo",
-              "naranja",
-              "roja",
-          }
-
-          if data.get("estado") not in estados:
-              raise SystemExit(
-                  f"ERROR: estado inválido: {data.get('estado')}"
-              )
-
-          if data.get("severidad") not in severidades:
-              raise SystemExit(
-                  f"ERROR: severidad inválida: {data.get('severidad')}"
-              )
-
-          radar = data.get("radar", {})
-
-          if not isinstance(radar, dict):
-              raise SystemExit("ERROR: radar inválido")
-
-          # El Storm Engine puede entregar el frame directamente
-          # o dentro del bloque "nowcast". Aceptamos ambas estructuras.
-          frame = radar.get("frame_actual_utc")
-
-          if not frame:
-              nested = radar.get("nowcast", {})
-
-              if isinstance(nested, dict):
-                  frame = nested.get("frame_actual_utc")
-
-          if not frame:
-              raise SystemExit(
-                  "ERROR: el radar no contiene frame_actual_utc"
-              )
-
-          print("====================================")
-          print("CLIMAAR INTELLIGENCE VALIDADO")
-          print("Radar frame:", frame)
-          print("Radar actividad:", radar.get("actividad"))
-          print("Radar dBZ máximo:", radar.get("dbz_max"))
-          print("Radar intensidad:", radar.get("intensidad"))
-          print("Estado:", data.get("estado"))
-          print("Severidad:", data.get("severidad"))
-          print("IA V8:", data.get("ia_v8", {}).get("disponible"))
-          print("====================================")
-          PY
-
-      - name: Verificar cambios
-        run: |
-          git diff --check -- ':!data/ia/*.csv' ':!data/radar/*.csv'
-
-      - name: Guardar resultados
-        run: |
-          git config user.name "ClimaAR Bot"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A
-
-          if git diff --cached --quiet; then
-            echo "No hay cambios nuevos para guardar."
-            exit 0
+          if [ -f scripts/meteorologia_fusion.py ]; then
+            python scripts/meteorologia_fusion.py
+          else
+            echo "meteorologia_fusion.py no encontrado"
           fi
 
-          git commit -m "Actualizar ClimaAR Intelligence y radar"
-
-      - name: Sincronizar y publicar
-        run: |
-          git fetch origin main
-          git rebase origin/main
-          git push origin HEAD:main
+      # ============================================================
+      # 4. INT
