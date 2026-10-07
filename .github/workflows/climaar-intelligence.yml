@@ -36,6 +36,33 @@ jobs:
           test -s data/radar/actual.png
           python -m json.tool data/radar/radar_nowcast.json >/dev/null
 
+      - name: Reparar y validar decodificación dBZ
+        run: |
+          set -e
+          test -d data/radar/historico
+          python scripts/radar_repair_decoder.py
+          test -s data/radar/radar_nowcast.json
+          python -m json.tool data/radar/radar_nowcast.json >/dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path("data/radar/radar_nowcast.json")
+          data = json.loads(p.read_text(encoding="utf-8"))
+          n = data.get("nowcast", {})
+          d = data.get("diagnostico", {}).get("ultimo_frame", {})
+
+          print("====================================")
+          print("CLIMAAR RADAR DECODER VALIDADO")
+          print("Frame:", n.get("frame_actual_utc"))
+          print("Actividad:", n.get("actividad"))
+          print("dBZ máximo:", n.get("dbz_max"))
+          print("Pixeles precipitación:", n.get("dbz_pixels"))
+          print("Pixeles no transparentes:", d.get("pixeles_no_transparentes"))
+          print("Pixeles paleta detectados:", d.get("pixeles_paleta_detectados"))
+          print("====================================")
+          PY
+
       - name: Actualizar observación SAZB
         continue-on-error: true
         run: |
