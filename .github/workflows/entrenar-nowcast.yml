@@ -1,18 +1,20 @@
 name: Entrenamiento Nowcast ClimaAR
 
 on:
+
   workflow_dispatch:
-  push:
-    paths:
-      - "scripts/entrenar_nowcast.py"
-      - "data/radar/radar_features_rainviewer.csv"
+
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: write
 
 jobs:
-  entrenar:
-    runs-on: ubuntu-latest
 
-    permissions:
-      contents: write
+  entrenar:
+
+    runs-on: ubuntu-latest
 
     steps:
 
@@ -29,37 +31,66 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy scikit-learn joblib
 
-      - name: Verificar dataset radar
+      - name: Verificar dataset
         run: |
-          test -f data/radar/radar_features_rainviewer.csv
-          echo "Dataset encontrado:"
-          wc -l data/radar/radar_features_rainviewer.csv
 
-      - name: Entrenar modelo nowcast
+          test -f \
+            data/radar/radar_features_rainviewer.csv
+
+          echo "Dataset:"
+
+          wc -l \
+            data/radar/radar_features_rainviewer.csv
+
+      - name: Entrenar modelo
         run: |
           python scripts/entrenar_nowcast.py
 
-      - name: Verificar modelo generado
+      - name: Verificar modelo
         run: |
-          test -f modelo/climaar_nowcast_features.joblib
-          test -f modelo/metricas_nowcast.json
 
-          echo "Modelo generado correctamente."
-          ls -lh modelo/climaar_nowcast_features.joblib
-          ls -lh modelo/metricas_nowcast.json
+          test -f \
+            modelo/climaar_nowcast_features.joblib
+
+          test -f \
+            modelo/metricas_nowcast.json
+
+          echo "Modelo generado."
+
+          ls -lh \
+            modelo/climaar_nowcast_features.joblib
+
+          ls -lh \
+            modelo/metricas_nowcast.json
 
       - name: Mostrar métricas
         run: |
           cat modelo/metricas_nowcast.json
 
-      - name: Guardar modelo en GitHub
+      - name: Guardar modelo
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add modelo/climaar_nowcast_features.joblib
-          git add modelo/metricas_nowcast.json
+          git config \
+            user.name \
+            "github-actions[bot]"
 
-          git diff --cached --quiet || git commit -m "ai: actualizar modelo nowcast"
+          git config \
+            user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git push
+          git add \
+            modelo/climaar_nowcast_features.joblib
+
+          git add \
+            modelo/metricas_nowcast.json
+
+          if git diff --cached --quiet; then
+            echo "Sin cambios."
+          else
+
+            git commit \
+              -m "ai: actualizar modelo nowcast"
+
+            git push origin main
+
+          fi
