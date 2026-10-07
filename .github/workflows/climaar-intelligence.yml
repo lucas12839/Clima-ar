@@ -2,7 +2,6 @@ name: ClimaAR Intelligence Central
 
 on:
   workflow_dispatch:
-
   schedule:
     - cron: "*/10 * * * *"
 
@@ -15,83 +14,77 @@ jobs:
 
     steps:
 
-      # ============================================================
-      # 1. DESCARGAR REPOSITORIO
-      # ============================================================
-
       - name: Descargar repositorio
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      # ============================================================
-      # 2. PYTHON
-      # ============================================================
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # ============================================================
-      # 3. DEPENDENCIAS
-      # ============================================================
-
       - name: Instalar dependencias
         run: |
-          python -m pip install --upgrade pip
-          pip install \
-            requests \
-            numpy \
-            scipy \
-            opencv-python \
-            Pillow \
-            joblib \
-            scikit-learn
-
-      # ============================================================
-      # 4. DIRECTORIOS
-      # ============================================================
+          pip install requests numpy scipy opencv-python Pillow joblib scikit-learn
 
       - name: Preparar directorios
         run: |
-          mkdir -p data/radar
           mkdir -p data/radar/historico
           mkdir -p data/ia
           mkdir -p logs
 
-      # ============================================================
-      # 5. RAINVIEWER
-      # ============================================================
-
-      - name: Obtener radar RainViewer y generar nowcast
+      - name: Obtener radar RainViewer
         run: |
           python scripts/radar_rainviewer.py
 
-      # ============================================================
-      # 6. VERIFICAR RADAR
-      # ============================================================
-
-      - name: Verificar radar RainViewer
+      - name: Verificar radar
         run: |
-          echo "=========================================="
-          echo " VERIFICACION RAINVIEWER"
-          echo "=========================================="
-
           test -f data/radar/actual.png
           test -f data/radar/radar_nowcast.json
-
-          echo ""
-          echo "ARCHIVO ACTUAL:"
           ls -lh data/radar/actual.png
+          ls -lh data/radar/radar_nowcast.json
 
-          echo ""
-          echo "NOWCAST:"
-          cat data/radar/radar_nowcast.json
+      - name: Analizar radar
+        run: |
+          python scripts/radar_repair_decoder.py
 
-          echo ""
-          echo "FECHA DEL ARCHIVO:"
-          stat data/radar/actual.png
+      - name: Fusion meteorologica
+        run: |
+          if [ -f scripts/meteorologia_fusion.py ]; then
+            python scripts/meteorologia_fusion.py
+          fi
 
-      # ============================================================
-      # 7.
+      - name: Inteligencia de tormenta
+        run: |
+          if [ -f scripts/tormenta_intelligence.py ]; then
+            python scripts/tormenta_intelligence.py
+          fi
+
+      - name: Guardar cambios
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f data/radar/actual.png
+          git add -f data/radar/radar_nowcast.json
+          git add -f data/radar/status.json
+          git add -f data/radar/radar_features_rainviewer.csv
+          git add -f data/radar/historico/
+          git add -f data/ia/
+          git add -f logs/
+
+          if git diff --cached --quiet; then
+            echo "Sin cambios."
+          else
+            git commit -m "ClimaAR: actualizar radar e inteligencia"
+            git push origin main
+          fi
+
+      - name: Verificacion final
+        run: |
+          echo "================================"
+          echo " CLIMAAR OK"
+          echo "================================"
+          ls -lh data/radar/actual.png
+          ls -lh data/radar/radar_nowcast.json
