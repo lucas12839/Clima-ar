@@ -12,7 +12,7 @@ import cv2
 
 
 # ============================================================
-# CLIMAAR - RADAR RAINVIEWER V7.1
+# CLIMAAR - RADAR RAINVIEWER V7.2
 # dBZ REAL + SEGUIMIENTO DE NÚCLEOS + NOWCAST
 # ============================================================
 
@@ -46,7 +46,7 @@ API_URL = (
 )
 
 HEADERS = {
-    "User-Agent": "ClimaAR/7.1",
+    "User-Agent": "ClimaAR/7.2",
     "Referer": "https://www.rainviewer.com/",
     "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
 }
@@ -728,7 +728,80 @@ def intensity_label(
 
 
 # ============================================================
-# DISTANCIA DEL CENTRO DEL RADAR A BAHÍA BLANCA
+# POSICIÓN EXACTA DE BAHÍA BLANCA DENTRO DEL MOSAICO
+# ============================================================
+
+def bahia_pixel_position():
+
+    n = float(
+        2 ** ZOOM
+    )
+
+    lat_rad = math.radians(
+        LAT
+    )
+
+    world_x = (
+        (LON + 180.0)
+        / 360.0
+        * n
+        * TILE_SIZE
+    )
+
+    world_y = (
+        (
+            1.0
+            -
+            math.asinh(
+                math.tan(
+                    lat_rad
+                )
+            )
+            / math.pi
+        )
+        / 2.0
+        * n
+        * TILE_SIZE
+    )
+
+    tile_x = math.floor(
+        world_x / TILE_SIZE
+    )
+
+    tile_y = math.floor(
+        world_y / TILE_SIZE
+    )
+
+    local_x = (
+        world_x
+        -
+        tile_x * TILE_SIZE
+    )
+
+    local_y = (
+        world_y
+        -
+        tile_y * TILE_SIZE
+    )
+
+    mosaic_x = (
+        GRID_RADIUS * TILE_SIZE
+        + local_x
+    )
+
+    mosaic_y = (
+        GRID_RADIUS * TILE_SIZE
+        + local_y
+    )
+
+    return (
+        float(mosaic_x),
+        float(mosaic_y)
+    )
+
+
+# ============================================================
+# DISTANCIA DE UN PUNTO A BAHÍA BLANCA
 # ============================================================
 
 def distance_point_to_bahia(
@@ -736,16 +809,8 @@ def distance_point_to_bahia(
     cy
 ):
 
-    center_x = (
-        TILE_SIZE
-        *
-        1.5
-    )
-
-    center_y = (
-        TILE_SIZE
-        *
-        1.5
+    bahia_x, bahia_y = (
+        bahia_pixel_position()
     )
 
     km_x, km_y = (
@@ -758,17 +823,17 @@ def distance_point_to_bahia(
 
     return math.hypot(
         (
-            cx
+            float(cx)
             -
-            center_x
+            bahia_x
         )
         *
         km_x,
 
         (
-            cy
+            float(cy)
             -
-            center_y
+            bahia_y
         )
         *
         km_y
@@ -791,16 +856,8 @@ def distance_to_bahia(
 
         return None
 
-    center_x = (
-        TILE_SIZE
-        *
-        1.5
-    )
-
-    center_y = (
-        TILE_SIZE
-        *
-        1.5
+    bahia_x, bahia_y = (
+        bahia_pixel_position()
     )
 
     km_x, km_y = (
@@ -816,7 +873,7 @@ def distance_to_bahia(
             (
                 xs
                 -
-                center_x
+                bahia_x
             )
             *
             km_x
@@ -827,7 +884,7 @@ def distance_to_bahia(
             (
                 ys
                 -
-                center_y
+                bahia_y
             )
             *
             km_y
@@ -1780,8 +1837,12 @@ def movement_towards_bahia(
 
         return False
 
+    bahia_x, bahia_y = (
+        bahia_pixel_position()
+    )
+
     dx = (
-        TILE_SIZE * 1.5
+        bahia_x
         -
         component[
             "centroid_x"
@@ -1789,7 +1850,7 @@ def movement_towards_bahia(
     )
 
     dy = (
-        TILE_SIZE * 1.5
+        bahia_y
         -
         component[
             "centroid_y"
@@ -2766,7 +2827,7 @@ def main():
 
     print(
         "CLIMAAR - "
-        "RADAR RAINVIEWER NOWCAST 7.1 + dBZ"
+        "RADAR RAINVIEWER NOWCAST 7.2 + dBZ"
     )
 
     print(
@@ -2920,7 +2981,7 @@ def main():
     output = {
 
         "version":
-            "7.1",
+            "7.2",
 
         "app":
             "ClimaAR",
@@ -2951,6 +3012,11 @@ def main():
 
         "dbz_decode":
             "tabla oficial Universal Blue",
+
+        "bahia_pixel_mosaico": {
+            "x": round(bahia_pixel_position()[0], 2),
+            "y": round(bahia_pixel_position()[1], 2)
+        },
 
         "nowcast":
             nowcast,
