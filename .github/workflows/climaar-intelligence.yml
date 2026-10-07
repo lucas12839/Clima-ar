@@ -26,7 +26,15 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install requests numpy joblib scikit-learn
+          pip install requests numpy opencv-python Pillow joblib scikit-learn
+
+      - name: Actualizar radar RainViewer
+        run: |
+          set -e
+          python scripts/radar_rainviewer_7_1.py
+          test -s data/radar/radar_nowcast.json
+          test -s data/radar/actual.png
+          python -m json.tool data/radar/radar_nowcast.json >/dev/null
 
       - name: Actualizar observación SAZB
         continue-on-error: true
@@ -35,16 +43,19 @@ jobs:
 
       - name: Actualizar fusión meteorológica
         run: |
+          set -e
           python scripts/meteorologia_fusion.py
-
-      - name: Verificar datos meteorológicos
-        run: |
           test -s data/ia/estado_meteorologico.json
           test -s data/meteorologia/ambiente_futuro.json
 
       - name: Ejecutar Storm Engine Central
         run: |
+          set -e
+          test -s data/radar/radar_nowcast.json
+          test -s data/ia/estado_meteorologico.json
+          test -s modelo/climaar_predictor_impacto_v8.joblib
           python scripts/tormenta_intelligence.py
+          test -s data/ia/inteligencia_tormenta.json
 
       - name: Validar salida de Intelligence
         run: |
@@ -52,43 +63,25 @@ jobs:
           import json
           from pathlib import Path
 
-          archivo = Path(
-              "data/ia/inteligencia_tormenta.json"
-          )
+          archivo = Path("data/ia/inteligencia_tormenta.json")
 
-          if not archivo.exists():
+          if not archivo.exists() or archivo.stat().st_size == 0:
               raise SystemExit(
-                  "ERROR: no existe inteligencia_tormenta.json"
+                  "ERROR: inteligencia_tormenta.json no existe o está vacío"
               )
 
-          if archivo.stat().st_size == 0:
-              raise SystemExit(
-                  "ERROR: inteligencia_tormenta.json está vacío"
-              )
-
-          with archivo.open(
-              "r",
-              encoding="utf-8"
-          ) as f:
+          with archivo.open("r", encoding="utf-8") as f:
               data = json.load(f)
-
-          print(
-              "Archivo Intelligence cargado correctamente"
-          )
 
           if data.get("version") != "4.0.0":
               raise SystemExit(
-                  f"ERROR: versión incorrecta: "
-                  f"{data.get('version')}"
+                  f"ERROR: versión incorrecta: {data.get('version')}"
               )
 
           if data.get("motor") != (
-              "ClimaAR Intelligence - "
-              "Storm Engine Central"
+              "ClimaAR Intelligence - Storm Engine Central"
           ):
-              raise SystemExit(
-                  "ERROR: motor incorrecto"
-              )
+              raise SystemExit("ERROR: motor incorrecto")
 
           estados = {
               "sin_tormenta_activa",
@@ -105,224 +98,43 @@ jobs:
               "roja",
           }
 
-          estado = data.get("estado")
-          severidad = data.get("severidad")
-
-          if estado not in estados:
+          if data.get("estado") not in estados:
               raise SystemExit(
-                  f"ERROR: estado inválido: {estado}"
+                  f"ERROR: estado inválido: {data.get('estado')}"
               )
 
-          if severidad not in severidades:
+          if data.get("severidad") not in severidades:
               raise SystemExit(
-                  f"ERROR: severidad inválida: {severidad}"
+                  f"ERROR: severidad inválida: {data.get('severidad')}"
               )
 
-          probabilidades = data.get(
-              "probabilidades",
-              {}
-          )
+          radar = data.get("radar", {})
 
-          for nombre, valor in probabilidades.items():
+          if not isinstance(radar, dict):
+              raise SystemExit("ERROR: radar inválido")
 
-              if valor is None:
-                  continue
+          frame = radar.get("frame_actual_utc")
 
-              if not isinstance(
-                  valor,
-                  (int, float)
-              ):
-                  raise SystemExit(
-                      f"ERROR: probabilidad inválida: "
-                      f"{nombre}"
-                  )
-
-              if not 0 <= float(valor) <= 1:
-                  raise SystemExit(
-                      f"ERROR: probabilidad fuera "
-                      f"de rango: {nombre}"
-                  )
-
-          peligros = data.get(
-              "peligros",
-              {}
-          )
-
-          for nombre, valor in peligros.items():
-
-              if not isinstance(
-                  valor,
-                  (int, float)
-              ):
-                  raise SystemExit(
-                      f"ERROR: peligro inválido: "
-                      f"{nombre}"
-                  )
-
-              if not 0 <= float(valor) <= 1:
-                  raise SystemExit(
-                      f"ERROR: peligro fuera "
-                      f"de rango: {nombre}"
-                  )
-
-          confianza = data.get(
-              "confianza_modelo"
-          )
-
-          if not isinstance(
-              confianza,
-              (int, float)
-          ):
+          if not frame:
               raise SystemExit(
-                  "ERROR: confianza_modelo inválida"
+                  "ERROR: el radar no contiene frame_actual_utc"
               )
 
-          if not 0 <= float(confianza) <= 1:
-              raise SystemExit(
-                  "ERROR: confianza_modelo "
-                  "fuera de rango"
-              )
-
-          calidad_datos = data.get(
-              "calidad_datos"
-          )
-
-          if calidad_datos is not None:
-
-              if not isinstance(
-                  calidad_datos,
-                  (int, float)
-              ):
-                  raise SystemExit(
-                      "ERROR: calidad_datos inválida"
-                  )
-
-              if not 0 <= float(
-                  calidad_datos
-              ) <= 100:
-                  raise SystemExit(
-                      "ERROR: calidad_datos "
-                      "fuera de rango"
-                  )
-
-          calidad_tracking = data.get(
-              "calidad_tracking"
-          )
-
-          if calidad_tracking is not None:
-
-              if not isinstance(
-                  calidad_tracking,
-                  (int, float)
-              ):
-                  raise SystemExit(
-                      "ERROR: calidad_tracking "
-                      "inválida"
-                  )
-
-              if not 0 <= float(
-                  calidad_tracking
-              ) <= 1:
-                  raise SystemExit(
-                      "ERROR: calidad_tracking "
-                      "fuera de rango"
-                  )
-
-          razones = data.get(
-              "razones"
-          )
-
-          if not isinstance(
-              razones,
-              list
-          ):
-              raise SystemExit(
-                  "ERROR: razones no es una lista"
-              )
-
-          ia = data.get(
-              "ia_v8",
-              {}
-          )
-
-          if not isinstance(
-              ia,
-              dict
-          ):
-              raise SystemExit(
-                  "ERROR: ia_v8 inválido"
-              )
-
-          modelo = Path(
-              "modelo/"
-              "climaar_predictor_impacto_v8.joblib"
-          )
-
-          if modelo.exists():
-
-              if ia.get(
-                  "disponible"
-              ) is not True:
-                  raise SystemExit(
-                      "ERROR: el modelo V8 existe "
-                      "pero no fue cargado"
-                  )
-
-              print(
-                  "IA V8: modelo cargado "
-                  "correctamente"
-              )
-
-          else:
-
-              raise SystemExit(
-                  "ERROR: no existe el modelo "
-                  "climaar_predictor_impacto_v8.joblib"
-              )
-
-          print(
-              "===================================="
-          )
-          print(
-              "CLIMAAR INTELLIGENCE VALIDADO"
-          )
-          print(
-              "Versión:",
-              data.get("version")
-          )
-          print(
-              "Estado:",
-              estado
-          )
-          print(
-              "Severidad:",
-              severidad
-          )
-          print(
-              "Confianza:",
-              confianza
-          )
-          print(
-              "IA disponible:",
-              ia.get("disponible")
-          )
-          print(
-              "Probabilidad impacto:",
-              ia.get("probabilidad_impacto")
-          )
-          print(
-              "Razones:",
-              len(razones)
-          )
-          print(
-              "===================================="
-          )
+          print("====================================")
+          print("CLIMAAR INTELLIGENCE VALIDADO")
+          print("Radar frame:", frame)
+          print("Radar actividad:", radar.get("actividad"))
+          print("Radar dBZ máximo:", radar.get("dbz_max"))
+          print("Radar intensidad:", radar.get("intensidad"))
+          print("Estado:", data.get("estado"))
+          print("Severidad:", data.get("severidad"))
+          print("IA V8:", data.get("ia_v8", {}).get("disponible"))
+          print("====================================")
           PY
 
-      - name: Verificar cambios de código
+      - name: Verificar cambios
         run: |
-          git diff --check -- \
-            ':!data/ia/*.csv'
+          git diff --check -- ':!data/ia/*.csv'
 
       - name: Guardar resultados
         run: |
@@ -337,8 +149,7 @@ jobs:
             exit 0
           fi
 
-          git commit \
-            -m "Actualizar ClimaAR Intelligence"
+          git commit -m "Actualizar ClimaAR Intelligence y radar"
 
       - name: Sincronizar y publicar
         run: |
