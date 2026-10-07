@@ -2,6 +2,7 @@ name: ClimaAR Intelligence Central
 
 on:
   workflow_dispatch:
+
   schedule:
     - cron: "*/10 * * * *"
 
@@ -13,20 +14,44 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ============================================================
+      # 1. DESCARGAR REPOSITORIO
+      # ============================================================
+
       - name: Descargar repositorio
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # ============================================================
+      # 2. PYTHON
+      # ============================================================
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # ============================================================
+      # 3. DEPENDENCIAS
+      # ============================================================
+
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install requests numpy scipy opencv-python Pillow joblib scikit-learn
+          pip install \
+            requests \
+            numpy \
+            scipy \
+            opencv-python \
+            Pillow \
+            joblib \
+            scikit-learn
+
+      # ============================================================
+      # 4. DIRECTORIOS
+      # ============================================================
 
       - name: Preparar directorios
         run: |
@@ -36,37 +61,37 @@ jobs:
           mkdir -p logs
 
       # ============================================================
-      # 1. RADAR RAINVIEWER + NOWCAST
+      # 5. RAINVIEWER
       # ============================================================
+
       - name: Obtener radar RainViewer y generar nowcast
         run: |
           python scripts/radar_rainviewer.py
 
+      # ============================================================
+      # 6. VERIFICAR RADAR
+      # ============================================================
+
       - name: Verificar radar RainViewer
         run: |
-          echo "=== RADAR ==="
+          echo "=========================================="
+          echo " VERIFICACION RAINVIEWER"
+          echo "=========================================="
+
           test -f data/radar/actual.png
           test -f data/radar/radar_nowcast.json
+
+          echo ""
+          echo "ARCHIVO ACTUAL:"
           ls -lh data/radar/actual.png
+
+          echo ""
+          echo "NOWCAST:"
           cat data/radar/radar_nowcast.json
 
-      # ============================================================
-      # 2. REPARADOR / DECODIFICADOR DE RADAR
-      # ============================================================
-      - name: Analizar radar con decoder ClimaAR
-        run: |
-          python scripts/radar_repair_decoder.py
+          echo ""
+          echo "FECHA DEL ARCHIVO:"
+          stat data/radar/actual.png
 
       # ============================================================
-      # 3. FUSIÓN METEOROLÓGICA
-      # ============================================================
-      - name: Fusion meteorologica
-        run: |
-          if [ -f scripts/meteorologia_fusion.py ]; then
-            python scripts/meteorologia_fusion.py
-          else
-            echo "meteorologia_fusion.py no encontrado"
-          fi
-
-      # ============================================================
-      # 4. INT
+      # 7.
