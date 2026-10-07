@@ -57,7 +57,6 @@ jobs:
           import csv
 
           path = "data/radar/radar_features_rainviewer.csv"
-
           expected = 21
 
           with open(
@@ -68,11 +67,18 @@ jobs:
 
               reader = csv.reader(f)
 
-              header = next(reader)
+              try:
+                  header = next(reader)
+              except StopIteration:
+                  raise SystemExit(
+                      "ERROR: CSV vacío"
+                  )
 
               if len(header) != expected:
                   raise SystemExit(
-                      f"ERROR: encabezado tiene {len(header)} columnas"
+                      f"ERROR: encabezado tiene "
+                      f"{len(header)} columnas; "
+                      f"esperadas {expected}"
                   )
 
               rows = 0
@@ -81,6 +87,7 @@ jobs:
                   reader,
                   start=2
               ):
+
                   if not row:
                       continue
 
@@ -93,8 +100,14 @@ jobs:
 
                   rows += 1
 
+          if rows == 0:
+              raise SystemExit(
+                  "ERROR: CSV sin datos"
+              )
+
           print(
-              f"CSV OK: {rows} filas / {expected} columnas"
+              f"CSV OK: {rows} filas / "
+              f"{expected} columnas"
           )
           PY
 
@@ -129,6 +142,7 @@ jobs:
           import os
 
           path = "data/radar/radar_features_rainviewer.csv"
+          expected = 21
 
           with open(
               path,
@@ -138,44 +152,94 @@ jobs:
 
               reader = csv.reader(f)
 
-              header = next(reader)
+              try:
+                  header = next(reader)
+              except StopIteration:
+                  raise SystemExit(
+                      "ERROR: CSV vacío"
+                  )
 
-              assert len(header) == 21
+              if len(header) != expected:
+                  raise SystemExit(
+                      f"ERROR FINAL: encabezado tiene "
+                      f"{len(header)} columnas"
+                  )
 
               count = 0
 
-              for row in reader:
-                  if row:
-                      assert len(row) == 21
-                      count += 1
+              for line, row in enumerate(
+                  reader,
+                  start=2
+              ):
 
-          assert os.path.getsize(
+                  if not row:
+                      continue
+
+                  if len(row) != expected:
+                      raise SystemExit(
+                          f"ERROR FINAL: línea {line} tiene "
+                          f"{len(row)} columnas"
+                      )
+
+                  count += 1
+
+          if count == 0:
+              raise SystemExit(
+                  "ERROR FINAL: CSV sin filas"
+              )
+
+          if not os.path.isfile(
               "data/radar/actual.png"
-          ) > 0
+          ):
+              raise SystemExit(
+                  "ERROR FINAL: falta actual.png"
+              )
+
+          if os.path.getsize(
+              "data/radar/actual.png"
+          ) == 0:
+              raise SystemExit(
+                  "ERROR FINAL: actual.png está vacío"
+              )
+
+          if not os.path.isfile(
+              "data/radar/radar_nowcast.json"
+          ):
+              raise SystemExit(
+                  "ERROR FINAL: falta radar_nowcast.json"
+              )
+
+          if not os.path.isfile(
+              "data/radar/status.json"
+          ):
+              raise SystemExit(
+                  "ERROR FINAL: falta status.json"
+              )
 
           print(
-              f"VALIDACIÓN OK: {count} filas"
+              f"VALIDACIÓN FINAL OK: "
+              f"{count} filas / "
+              f"{expected} columnas"
           )
           PY
 
-      - name: Guardar cambios
+      - name: Preparar cambios
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add \
-            data/radar/actual.png \
-            data/radar/radar_nowcast.json \
-            data/radar/status.json \
-            data/radar/radar_features_rainviewer.csv \
-            data/radar/historico \
-            data/ia \
-            logs
+          git add -A
 
-          git diff --cached --quiet || \
+          if ! git diff --cached --quiet; then
             git commit -m "ClimaAR: actualización radar e inteligencia"
+          else
+            echo "No hay cambios para guardar."
+          fi
 
       - name: Sincronizar y publicar
         run: |
-          git pull --rebase origin main
+          git fetch origin main
+
+          git rebase origin/main
+
           git push origin HEAD:main
