@@ -1,22 +1,22 @@
-name: ClimaAR Operativo
+name: ClimaAR Operativo Manual
 
 on:
-  schedule:
-    - cron: '*/10 * * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
+
   operativo:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: write
-
     steps:
+
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Preparar Python
+      - name: Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -24,16 +24,14 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install requests pillow numpy opencv-python pandas joblib scikit-learn
+          pip install requests Pillow numpy opencv-python-headless pandas joblib scikit-learn
 
-      - name: Ejecutar ClimaAR
+      - name: Ejecutar
         run: |
           python scripts/climaar_operativo.py
 
-      - name: Verificar resultado
+      - name: Verificar
         run: |
-          set -e
-
           test -s data/radar/actual.png
           test -s data/radar/status.json
 
@@ -42,12 +40,17 @@ jobs:
             >/dev/null
 
           echo "Radar OK"
-          echo "Estado operativo OK"
 
-      - name: Guardar resultado
+      - name: Guardar
         run: |
-          git config user.name "climaar-bot"
-          git config user.email "bot@climaar.com.ar"
+
+          git config \
+            user.name \
+            "github-actions[bot]"
+
+          git config \
+            user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
             data/radar/actual.png \
@@ -56,6 +59,8 @@ jobs:
           if git diff --cached --quiet; then
             echo "Sin cambios."
           else
-            git commit -m "ClimaAR actualizacion operativa"
-            git push
+            git commit \
+              -m "ClimaAR: actualización operativa"
+
+            git push origin main
           fi
