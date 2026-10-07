@@ -31,7 +31,7 @@ jobs:
       - name: Actualizar radar RainViewer
         run: |
           set -e
-          python scripts/radar_rainviewer_7_1.py
+          python scripts/radar_rainviewer.py
           test -s data/radar/radar_nowcast.json
           test -s data/radar/actual.png
           python -m json.tool data/radar/radar_nowcast.json >/dev/null
