@@ -2,6 +2,7 @@ import csv
 import json
 import math
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,10 +12,10 @@ import requests
 # ============================================================
 # CLIMAAR INTELLIGENCE
 # MOTOR DE ADQUISICION Y FUSION METEOROLOGICA
-# Version 1.0.2
+# Version 1.0.3
 # ============================================================
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 LAT = -38.71
 LON = -62.26
@@ -41,7 +42,7 @@ HEADERS = {
     "Accept": "application/json",
 }
 
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 45
 
 
 # ============================================================
@@ -49,51 +50,15 @@ REQUEST_TIMEOUT = 30
 # ============================================================
 
 GRID = [
-    {
-        "id": "BB_CENTRO",
-        "lat": -38.71,
-        "lon": -62.26,
-    },
-    {
-        "id": "BB_N",
-        "lat": -38.46,
-        "lon": -62.26,
-    },
-    {
-        "id": "BB_NE",
-        "lat": -38.46,
-        "lon": -62.01,
-    },
-    {
-        "id": "BB_E",
-        "lat": -38.71,
-        "lon": -62.01,
-    },
-    {
-        "id": "BB_SE",
-        "lat": -38.96,
-        "lon": -62.01,
-    },
-    {
-        "id": "BB_S",
-        "lat": -38.96,
-        "lon": -62.26,
-    },
-    {
-        "id": "BB_SO",
-        "lat": -38.96,
-        "lon": -62.51,
-    },
-    {
-        "id": "BB_O",
-        "lat": -38.71,
-        "lon": -62.51,
-    },
-    {
-        "id": "BB_NO",
-        "lat": -38.46,
-        "lon": -62.51,
-    },
+    {"id": "BB_CENTRO", "lat": -38.71, "lon": -62.26},
+    {"id": "BB_N", "lat": -38.46, "lon": -62.26},
+    {"id": "BB_NE", "lat": -38.46, "lon": -62.01},
+    {"id": "BB_E", "lat": -38.71, "lon": -62.01},
+    {"id": "BB_SE", "lat": -38.96, "lon": -62.01},
+    {"id": "BB_S", "lat": -38.96, "lon": -62.26},
+    {"id": "BB_SO", "lat": -38.96, "lon": -62.51},
+    {"id": "BB_O", "lat": -38.71, "lon": -62.51},
+    {"id": "BB_NO", "lat": -38.46, "lon": -62.51},
 ]
 
 
@@ -105,40 +70,29 @@ HOURLY_VARIABLES = [
     "temperature_2m",
     "relative_humidity_2m",
     "dew_point_2m",
-
     "pressure_msl",
     "surface_pressure",
-
     "precipitation",
     "rain",
     "showers",
-
     "cloud_cover",
     "cloud_cover_low",
     "cloud_cover_mid",
     "cloud_cover_high",
-
     "visibility",
-
     "wind_speed_10m",
     "wind_direction_10m",
     "wind_gusts_10m",
-
     "wind_speed_100m",
     "wind_direction_100m",
-
     "wind_speed_200m",
     "wind_direction_200m",
-
     "cape",
     "convective_inhibition",
-
     "vapour_pressure_deficit",
     "boundary_layer_height",
     "total_column_integrated_water_vapour",
-
     "freezing_level_height",
-
     "lightning_density",
 ]
 
@@ -148,9 +102,7 @@ HOURLY_VARIABLES = [
 # ============================================================
 
 def utc_now():
-    return datetime.now(
-        timezone.utc
-    ).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def finite(value):
@@ -171,192 +123,88 @@ def finite(value):
 
 def load_json(path):
     try:
-
         if not path.exists():
             return None
 
-        with path.open(
-            "r",
-            encoding="utf-8"
-        ) as f:
-
+        with path.open("r", encoding="utf-8") as f:
             return json.load(f)
 
     except Exception as exc:
-
-        print(
-            f"AVISO: no se pudo leer {path}: {exc}"
-        )
-
+        print(f"AVISO: no se pudo leer {path}: {exc}")
         return None
 
 
 def save_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-    path.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    temp = path.with_suffix(path.suffix + ".tmp")
 
-    temp = path.with_suffix(
-        path.suffix + ".tmp"
-    )
-
-    with temp.open(
-        "w",
-        encoding="utf-8"
-    ) as f:
-
+    with temp.open("w", encoding="utf-8") as f:
         json.dump(
             data,
             f,
             ensure_ascii=False,
             indent=2,
-            allow_nan=False
+            allow_nan=False,
         )
 
     temp.replace(path)
 
 
-def safe_get(
-    mapping,
-    key,
-    default=None
-):
-
-    if not isinstance(
-        mapping,
-        dict
-    ):
+def safe_get(mapping, key, default=None):
+    if not isinstance(mapping, dict):
         return default
 
-    return mapping.get(
-        key,
-        default
-    )
+    return mapping.get(key, default)
 
 
 # ============================================================
-# RADAR V7
+# RADAR
 # ============================================================
 
 def cargar_radar():
+    data = load_json(NOWCAST_FILE)
 
-    data = load_json(
-        NOWCAST_FILE
-    )
-
-    if not isinstance(
-        data,
-        dict
-    ):
-
+    if not isinstance(data, dict):
         return {
             "disponible": False,
             "estado": "sin_datos",
         }
 
-    nowcast = data.get(
-        "nowcast",
-        {}
-    )
+    nowcast = data.get("nowcast", {})
 
-    if not isinstance(
-        nowcast,
-        dict
-    ):
-
+    if not isinstance(nowcast, dict):
         nowcast = {}
 
     return {
-
         "disponible": True,
-
-        "version": data.get(
-            "version"
-        ),
-
-        "fuente": data.get(
-            "fuente"
-        ),
-
-        "actualizado": nowcast.get(
-            "actualizado"
-        ),
-
-        "frame_actual_utc": nowcast.get(
-            "frame_actual_utc"
-        ),
-
-        "frames_analizados": nowcast.get(
-            "frames_analizados"
-        ),
-
-        "tiles_ok": nowcast.get(
-            "tiles_ok"
-        ),
-
-        "actividad": nowcast.get(
-            "actividad"
-        ),
-
-        "area_px": nowcast.get(
-            "area_px"
-        ),
-
-        "distancia_km": nowcast.get(
-            "distancia_km"
-        ),
-
-        "fortalecimiento": nowcast.get(
-            "fortalecimiento"
-        ),
-
-        "cambio_area_pct": nowcast.get(
-            "cambio_area_pct"
-        ),
-
-        "velocidad_kmh": nowcast.get(
-            "velocidad_kmh"
-        ),
-
-        "direccion": nowcast.get(
-            "direccion"
-        ),
-
-        "direccion_grados": nowcast.get(
-            "direccion_grados"
-        ),
-
+        "version": data.get("version"),
+        "fuente": data.get("fuente"),
+        "actualizado": nowcast.get("actualizado"),
+        "frame_actual_utc": nowcast.get("frame_actual_utc"),
+        "frames_analizados": nowcast.get("frames_analizados"),
+        "tiles_ok": nowcast.get("tiles_ok"),
+        "actividad": nowcast.get("actividad"),
+        "area_px": nowcast.get("area_px"),
+        "distancia_km": nowcast.get("distancia_km"),
+        "fortalecimiento": nowcast.get("fortalecimiento"),
+        "cambio_area_pct": nowcast.get("cambio_area_pct"),
+        "velocidad_kmh": nowcast.get("velocidad_kmh"),
+        "direccion": nowcast.get("direccion"),
+        "direccion_grados": nowcast.get("direccion_grados"),
         "movimiento_hacia_bahia": nowcast.get(
             "movimiento_hacia_bahia"
         ),
-
-        "eta_minutos": nowcast.get(
-            "eta_minutos"
-        ),
-
-        "proyecciones": nowcast.get(
-            "proyecciones",
-            {}
-        ),
-
+        "eta_minutos": nowcast.get("eta_minutos"),
+        "proyecciones": nowcast.get("proyecciones", {}),
         "confianza_movimiento": nowcast.get(
             "confianza_movimiento"
         ),
-
-        "nucleos": nowcast.get(
-            "nucleos",
-            []
-        ),
-
+        "nucleos": nowcast.get("nucleos", []),
         "nucleo_principal_id": nowcast.get(
             "nucleo_principal_id"
         ),
-
-        "estado": nowcast.get(
-            "estado"
-        ),
+        "estado": nowcast.get("estado"),
     }
 
 
@@ -365,69 +213,28 @@ def cargar_radar():
 # ============================================================
 
 def cargar_sazb():
+    data = load_json(SAZB_FILE)
 
-    data = load_json(
-        SAZB_FILE
-    )
-
-    if not isinstance(
-        data,
-        dict
-    ):
-
+    if not isinstance(data, dict):
         return {
             "disponible": False,
             "estado": "sin_datos",
         }
 
     return {
-
         "disponible": bool(
-            data.get(
-                "observacion_valida",
-                False
-            )
+            data.get("observacion_valida", False)
         ),
-
-        "fuente": data.get(
-            "fuente"
-        ),
-
-        "estacion": data.get(
-            "estacion"
-        ),
-
-        "obsTime_utc": data.get(
-            "obsTime_utc"
-        ),
-
-        "edad_minutos": data.get(
-            "edad_minutos"
-        ),
-
-        "temperatura_c": data.get(
-            "temperatura_c"
-        ),
-
-        "punto_rocio_c": data.get(
-            "punto_rocio_c"
-        ),
-
-        "viento_kt": data.get(
-            "viento_kt"
-        ),
-
-        "direccion_viento": data.get(
-            "direccion_viento"
-        ),
-
-        "presion_hpa": data.get(
-            "presion_hpa"
-        ),
-
-        "visibilidad_millas": data.get(
-            "visibilidad_millas"
-        ),
+        "fuente": data.get("fuente"),
+        "estacion": data.get("estacion"),
+        "obsTime_utc": data.get("obsTime_utc"),
+        "edad_minutos": data.get("edad_minutos"),
+        "temperatura_c": data.get("temperatura_c"),
+        "punto_rocio_c": data.get("punto_rocio_c"),
+        "viento_kt": data.get("viento_kt"),
+        "direccion_viento": data.get("direccion_viento"),
+        "presion_hpa": data.get("presion_hpa"),
+        "visibilidad_millas": data.get("visibilidad_millas"),
     }
 
 
@@ -435,169 +242,206 @@ def cargar_sazb():
 # ECMWF
 # ============================================================
 
-def consultar_ecmwf():
-
-    latitudes = ",".join(
-        str(
-            punto["lat"]
-        )
-        for punto in GRID
-    )
-
-    longitudes = ",".join(
-        str(
-            punto["lon"]
-        )
-        for punto in GRID
-    )
-
-    params = {
-
-        "latitude": latitudes,
-
-        "longitude": longitudes,
-
-        "hourly": ",".join(
-            HOURLY_VARIABLES
+def _ecmwf_params(puntos):
+    return {
+        "latitude": ",".join(
+            str(punto["lat"]) for punto in puntos
         ),
-
+        "longitude": ",".join(
+            str(punto["lon"]) for punto in puntos
+        ),
+        "hourly": ",".join(HOURLY_VARIABLES),
         "forecast_hours": 12,
-
         "past_hours": 3,
-
         "timezone": "UTC",
-
         "temperature_unit": "celsius",
-
         "wind_speed_unit": "kmh",
-
         "precipitation_unit": "mm",
-
         "cell_selection": "land",
     }
 
+
+def _consultar_ecmwf_grupo(puntos, timeout=REQUEST_TIMEOUT):
     response = requests.get(
         ECMWF_API,
-        params=params,
+        params=_ecmwf_params(puntos),
         headers=HEADERS,
-        timeout=REQUEST_TIMEOUT
+        timeout=timeout,
     )
 
     response.raise_for_status()
 
     data = response.json()
 
-    if isinstance(
-        data,
-        dict
-    ):
+    if isinstance(data, dict):
+        data = [data]
 
-        return [
-            data
-        ]
-
-    if not isinstance(
-        data,
-        list
-    ):
-
+    if not isinstance(data, list):
         raise RuntimeError(
             "ECMWF devolvio un formato inesperado."
         )
 
+    if len(data) != len(puntos):
+        raise RuntimeError(
+            "ECMWF devolvio una cantidad inesperada de puntos: "
+            f"{len(data)}/{len(puntos)}."
+        )
+
     return data
+
+
+def consultar_ecmwf():
+    try:
+        print(
+            f"Consultando ECMWF completo: "
+            f"{len(GRID)} puntos, timeout={REQUEST_TIMEOUT}s"
+        )
+
+        resultado = _consultar_ecmwf_grupo(GRID)
+
+        print(
+            f"ECMWF: {len(resultado)} puntos recibidos"
+        )
+
+        return resultado
+
+    except Exception as exc:
+        print(
+            f"AVISO ECMWF consulta completa fallo: {exc}"
+        )
+
+    grupos = [
+        GRID[0:3],
+        GRID[3:6],
+        GRID[6:9],
+    ]
+
+    resultados = [None] * len(grupos)
+
+    print(
+        "ECMWF: usando consulta dividida 3x3"
+    )
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futuros = {
+            executor.submit(
+                _consultar_ecmwf_grupo,
+                grupo,
+                REQUEST_TIMEOUT,
+            ): indice
+            for indice, grupo in enumerate(grupos)
+        }
+
+        for futuro in as_completed(futuros):
+            indice = futuros[futuro]
+
+            try:
+                resultados[indice] = futuro.result()
+
+                print(
+                    f"ECMWF grupo {indice + 1}/3: "
+                    f"{len(resultados[indice])} puntos recibidos"
+                )
+
+            except Exception as exc:
+                print(
+                    f"AVISO ECMWF grupo {indice + 1}/3 fallo: "
+                    f"{exc}"
+                )
+
+    if any(resultado is None for resultado in resultados):
+        for indice, resultado in enumerate(resultados):
+            if resultado is not None:
+                continue
+
+            ultimo_error = None
+
+            for intento in range(1, 3):
+                try:
+                    print(
+                        f"ECMWF grupo {indice + 1}/3 "
+                        f"reintento {intento}/2"
+                    )
+
+                    resultados[indice] = _consultar_ecmwf_grupo(
+                        grupos[indice],
+                        REQUEST_TIMEOUT,
+                    )
+
+                    ultimo_error = None
+                    break
+
+                except Exception as exc:
+                    ultimo_error = exc
+
+                    print(
+                        f"AVISO ECMWF grupo {indice + 1}/3 "
+                        f"reintento {intento}: {exc}"
+                    )
+
+            if ultimo_error is not None:
+                raise RuntimeError(
+                    "ECMWF no pudo obtener el grupo "
+                    f"{indice + 1}/3: {ultimo_error}"
+                )
+
+    datos = []
+
+    for resultado in resultados:
+        datos.extend(resultado)
+
+    if len(datos) != len(GRID):
+        raise RuntimeError(
+            "ECMWF incompleto: "
+            f"{len(datos)}/{len(GRID)} puntos."
+        )
+
+    print(
+        f"ECMWF: {len(datos)} puntos recibidos "
+        "mediante consulta dividida"
+    )
+
+    return datos
 
 
 # ============================================================
 # NORMALIZACION ECMWF
 # ============================================================
 
-def normalizar_punto(
-    point,
-    grid_point
-):
-
-    hourly = point.get(
-        "hourly",
-        {}
-    )
-
-    hourly_units = point.get(
-        "hourly_units",
-        {}
-    )
-
-    times = hourly.get(
-        "time",
-        []
-    )
+def normalizar_punto(point, grid_point):
+    hourly = point.get("hourly", {})
+    hourly_units = point.get("hourly_units", {})
+    times = hourly.get("time", [])
 
     registros = []
 
-    for index, timestamp in enumerate(
-        times
-    ):
-
+    for index, timestamp in enumerate(times):
         registro = {
-
             "tiempo_utc": timestamp,
-
             "punto": grid_point["id"],
-
             "latitud": grid_point["lat"],
-
             "longitud": grid_point["lon"],
         }
 
         for variable in HOURLY_VARIABLES:
+            values = hourly.get(variable, [])
 
-            values = hourly.get(
-                variable,
-                []
-            )
-
-            if index < len(
-                values
-            ):
-
-                value = values[
-                    index
-                ]
-
+            if index < len(values):
+                value = values[index]
             else:
-
                 value = None
 
-            registro[
-                variable
-            ] = finite(
-                value
-            )
+            registro[variable] = finite(value)
 
-        registros.append(
-            registro
-        )
+        registros.append(registro)
 
     return {
-
         "punto": grid_point["id"],
-
         "latitud": grid_point["lat"],
-
         "longitud": grid_point["lon"],
-
-        "timezone": point.get(
-            "timezone"
-        ),
-
-        "elevacion_m": finite(
-            point.get(
-                "elevation"
-            )
-        ),
-
+        "timezone": point.get("timezone"),
+        "elevacion_m": finite(point.get("elevation")),
         "unidades": hourly_units,
-
         "datos": registros,
     }
 
@@ -606,25 +450,17 @@ def normalizar_punto(
 # AMBIENTE FUTURO
 # ============================================================
 
-def construir_ambiente(
-    ecmwf_points
-):
-
+def construir_ambiente(ecmwf_points):
     ambiente = []
 
-    for index, point in enumerate(
-        ecmwf_points
-    ):
-
-        if index >= len(
-            GRID
-        ):
+    for index, point in enumerate(ecmwf_points):
+        if index >= len(GRID):
             break
 
         ambiente.append(
             normalizar_punto(
                 point,
-                GRID[index]
+                GRID[index],
             )
         )
 
@@ -635,88 +471,51 @@ def construir_ambiente(
 # DATO ACTUAL DEL CENTRO
 # ============================================================
 
-def obtener_actual_centro(
-    ambiente
-):
-
+def obtener_actual_centro(ambiente):
     for punto in ambiente:
-
         if punto["punto"] != "BB_CENTRO":
             continue
 
-        datos = punto.get(
-            "datos",
-            []
-        )
+        datos = punto.get("datos", [])
 
         if not datos:
             return None
 
-        ahora = datetime.now(
-            timezone.utc
-        )
+        ahora = datetime.now(timezone.utc)
 
         mejor = None
         mejor_diferencia = None
 
         for registro in datos:
-
             try:
-
                 texto = str(
-                    registro[
-                        "tiempo_utc"
-                    ]
+                    registro["tiempo_utc"]
                 ).strip()
 
-                if texto.endswith(
-                    "Z"
-                ):
+                if texto.endswith("Z"):
+                    texto = texto[:-1] + "+00:00"
 
-                    texto = (
-                        texto[:-1]
-                        + "+00:00"
-                    )
+                dt = datetime.fromisoformat(texto)
 
-                dt = datetime.fromisoformat(
-                    texto
-                )
-
-                # Open-Meteo puede devolver
-                # timestamps sin offset.
-                # Como esta consulta esta en UTC,
-                # los interpretamos explicitamente
-                # como UTC.
                 if dt.tzinfo is None:
-
                     dt = dt.replace(
                         tzinfo=timezone.utc
                     )
-
                 else:
-
-                    dt = dt.astimezone(
-                        timezone.utc
-                    )
+                    dt = dt.astimezone(timezone.utc)
 
             except Exception:
-
                 continue
 
             diferencia = abs(
-                (
-                    dt - ahora
-                ).total_seconds()
+                (dt - ahora).total_seconds()
             )
 
             if (
                 mejor_diferencia is None
-                or
-                diferencia < mejor_diferencia
+                or diferencia < mejor_diferencia
             ):
-
                 mejor = registro
-
                 mejor_diferencia = diferencia
 
         return mejor
@@ -728,87 +527,51 @@ def obtener_actual_centro(
 # CALIDAD DE DATOS
 # ============================================================
 
-def calcular_calidad(
-    radar,
-    sazb,
-    ambiente
-):
-
+def calcular_calidad(radar, sazb, ambiente):
     puntos_validos = len(
         [
             punto
             for punto in ambiente
-            if punto.get(
-                "datos"
-            )
+            if punto.get("datos")
         ]
     )
 
     radar_ok = (
-        radar.get(
-            "disponible",
-            False
-        )
-        and
-        radar.get(
-            "tiles_ok"
-        ) == 9
+        radar.get("disponible", False)
+        and radar.get("tiles_ok") == 9
     )
 
-    sazb_ok = sazb.get(
-        "disponible",
-        False
-    )
+    sazb_ok = sazb.get("disponible", False)
 
     score = 0
 
     if radar_ok:
-
         score += 40
 
     if sazb_ok:
-
         score += 20
 
     if puntos_validos >= 9:
-
         score += 40
-
     elif puntos_validos >= 6:
-
         score += 30
-
     elif puntos_validos >= 3:
-
         score += 15
 
-    score = min(
-        100,
-        score
-    )
+    score = min(100, score)
 
     if score >= 85:
-
         nivel = "alto"
-
     elif score >= 60:
-
         nivel = "medio"
-
     else:
-
         nivel = "bajo"
 
     return {
-
         "score": score,
-
         "nivel": nivel,
-
         "radar_valido": radar_ok,
-
         "sazb_valido": sazb_ok,
-
         "puntos_ecmwf_validos": puntos_validos,
     }
 
@@ -818,9 +581,7 @@ def calcular_calidad(
 # ============================================================
 
 HISTORICO_FIELDS = [
-
     "timestamp_utc",
-
     "radar_actividad",
     "radar_area_px",
     "radar_distancia_km",
@@ -832,258 +593,168 @@ HISTORICO_FIELDS = [
     "radar_movimiento_hacia_bahia",
     "radar_eta_minutos",
     "radar_confianza_movimiento",
-
     "sazb_temperatura_c",
     "sazb_punto_rocio_c",
     "sazb_viento_kt",
     "sazb_direccion_viento",
     "sazb_presion_hpa",
-
     "ecmwf_temperatura_2m",
     "ecmwf_punto_rocio_2m",
     "ecmwf_humedad_2m",
-
     "ecmwf_cape",
     "ecmwf_cin",
-
     "ecmwf_viento_10m",
     "ecmwf_direccion_10m",
     "ecmwf_rafaga_10m",
-
     "ecmwf_viento_100m",
     "ecmwf_direccion_100m",
-
     "ecmwf_viento_200m",
     "ecmwf_direccion_200m",
-
     "ecmwf_precipitacion",
     "ecmwf_lluvia",
     "ecmwf_chubascos",
-
     "ecmwf_nubosidad",
-
     "ecmwf_agua_precipitable",
-
     "ecmwf_pbl",
-
     "ecmwf_nivel_congelacion",
-
     "ecmwf_lightning_density",
-
     "calidad_score",
     "calidad_nivel",
 ]
 
 
-def append_historico(
-    radar,
-    sazb,
-    actual,
-    calidad
-):
-
+def append_historico(radar, sazb, actual, calidad):
     HISTORICO_FILE.parent.mkdir(
         parents=True,
-        exist_ok=True
+        exist_ok=True,
     )
 
     existe = HISTORICO_FILE.exists()
 
     row = {
-
         "timestamp_utc": utc_now(),
-
-        "radar_actividad": radar.get(
-            "actividad"
-        ),
-
-        "radar_area_px": radar.get(
-            "area_px"
-        ),
-
-        "radar_distancia_km": radar.get(
-            "distancia_km"
-        ),
-
-        "radar_fortalecimiento": radar.get(
-            "fortalecimiento"
-        ),
-
-        "radar_cambio_area_pct": radar.get(
-            "cambio_area_pct"
-        ),
-
-        "radar_velocidad_kmh": radar.get(
-            "velocidad_kmh"
-        ),
-
-        "radar_direccion": radar.get(
-            "direccion"
-        ),
-
+        "radar_actividad": radar.get("actividad"),
+        "radar_area_px": radar.get("area_px"),
+        "radar_distancia_km": radar.get("distancia_km"),
+        "radar_fortalecimiento": radar.get("fortalecimiento"),
+        "radar_cambio_area_pct": radar.get("cambio_area_pct"),
+        "radar_velocidad_kmh": radar.get("velocidad_kmh"),
+        "radar_direccion": radar.get("direccion"),
         "radar_direccion_grados": radar.get(
             "direccion_grados"
         ),
-
         "radar_movimiento_hacia_bahia": radar.get(
             "movimiento_hacia_bahia"
         ),
-
-        "radar_eta_minutos": radar.get(
-            "eta_minutos"
-        ),
-
+        "radar_eta_minutos": radar.get("eta_minutos"),
         "radar_confianza_movimiento": radar.get(
             "confianza_movimiento"
         ),
-
-        "sazb_temperatura_c": sazb.get(
-            "temperatura_c"
-        ),
-
-        "sazb_punto_rocio_c": sazb.get(
-            "punto_rocio_c"
-        ),
-
-        "sazb_viento_kt": sazb.get(
-            "viento_kt"
-        ),
-
+        "sazb_temperatura_c": sazb.get("temperatura_c"),
+        "sazb_punto_rocio_c": sazb.get("punto_rocio_c"),
+        "sazb_viento_kt": sazb.get("viento_kt"),
         "sazb_direccion_viento": sazb.get(
             "direccion_viento"
         ),
-
-        "sazb_presion_hpa": sazb.get(
-            "presion_hpa"
-        ),
-
+        "sazb_presion_hpa": sazb.get("presion_hpa"),
         "ecmwf_temperatura_2m": safe_get(
             actual,
-            "temperature_2m"
+            "temperature_2m",
         ),
-
         "ecmwf_punto_rocio_2m": safe_get(
             actual,
-            "dew_point_2m"
+            "dew_point_2m",
         ),
-
         "ecmwf_humedad_2m": safe_get(
             actual,
-            "relative_humidity_2m"
+            "relative_humidity_2m",
         ),
-
         "ecmwf_cape": safe_get(
             actual,
-            "cape"
+            "cape",
         ),
-
         "ecmwf_cin": safe_get(
             actual,
-            "convective_inhibition"
+            "convective_inhibition",
         ),
-
         "ecmwf_viento_10m": safe_get(
             actual,
-            "wind_speed_10m"
+            "wind_speed_10m",
         ),
-
         "ecmwf_direccion_10m": safe_get(
             actual,
-            "wind_direction_10m"
+            "wind_direction_10m",
         ),
-
         "ecmwf_rafaga_10m": safe_get(
             actual,
-            "wind_gusts_10m"
+            "wind_gusts_10m",
         ),
-
         "ecmwf_viento_100m": safe_get(
             actual,
-            "wind_speed_100m"
+            "wind_speed_100m",
         ),
-
         "ecmwf_direccion_100m": safe_get(
             actual,
-            "wind_direction_100m"
+            "wind_direction_100m",
         ),
-
         "ecmwf_viento_200m": safe_get(
             actual,
-            "wind_speed_200m"
+            "wind_speed_200m",
         ),
-
         "ecmwf_direccion_200m": safe_get(
             actual,
-            "wind_direction_200m"
+            "wind_direction_200m",
         ),
-
         "ecmwf_precipitacion": safe_get(
             actual,
-            "precipitation"
+            "precipitation",
         ),
-
         "ecmwf_lluvia": safe_get(
             actual,
-            "rain"
+            "rain",
         ),
-
         "ecmwf_chubascos": safe_get(
             actual,
-            "showers"
+            "showers",
         ),
-
         "ecmwf_nubosidad": safe_get(
             actual,
-            "cloud_cover"
+            "cloud_cover",
         ),
-
         "ecmwf_agua_precipitable": safe_get(
             actual,
-            "total_column_integrated_water_vapour"
+            "total_column_integrated_water_vapour",
         ),
-
         "ecmwf_pbl": safe_get(
             actual,
-            "boundary_layer_height"
+            "boundary_layer_height",
         ),
-
         "ecmwf_nivel_congelacion": safe_get(
             actual,
-            "freezing_level_height"
+            "freezing_level_height",
         ),
-
         "ecmwf_lightning_density": safe_get(
             actual,
-            "lightning_density"
+            "lightning_density",
         ),
-
-        "calidad_score": calidad.get(
-            "score"
-        ),
-
-        "calidad_nivel": calidad.get(
-            "nivel"
-        ),
+        "calidad_score": calidad.get("score"),
+        "calidad_nivel": calidad.get("nivel"),
     }
 
     with HISTORICO_FILE.open(
         "a",
         newline="",
-        encoding="utf-8"
+        encoding="utf-8",
     ) as f:
-
         writer = csv.DictWriter(
             f,
-            fieldnames=HISTORICO_FIELDS
+            fieldnames=HISTORICO_FIELDS,
         )
 
         if not existe:
-
             writer.writeheader()
 
-        writer.writerow(
-            row
-        )
+        writer.writerow(row)
 
 
 # ============================================================
@@ -1091,147 +762,77 @@ def append_historico(
 # ============================================================
 
 def main():
-
-    print(
-        "============================================"
-    )
-
-    print(
-        "ClimaAR Intelligence"
-    )
-
-    print(
-        "Fusion Meteorologica"
-    )
-
-    print(
-        f"Version {VERSION}"
-    )
-
-    print(
-        "============================================"
-    )
-
-    # --------------------------------------------------------
-    # RADAR
-    # --------------------------------------------------------
+    print("============================================")
+    print("ClimaAR Intelligence")
+    print("Fusion Meteorologica")
+    print(f"Version {VERSION}")
+    print("============================================")
 
     radar = cargar_radar()
 
     print(
         "Radar V7:",
-        "OK"
-        if radar.get(
-            "disponible"
-        )
-        else
-        "SIN DATOS"
+        "OK" if radar.get("disponible") else "SIN DATOS",
     )
-
-    # --------------------------------------------------------
-    # SAZB
-    # --------------------------------------------------------
 
     sazb = cargar_sazb()
 
     print(
         "SAZB:",
-        "OK"
-        if sazb.get(
-            "disponible"
-        )
-        else
-        "SIN DATOS"
+        "OK" if sazb.get("disponible") else "SIN DATOS",
     )
 
-    # --------------------------------------------------------
-    # ECMWF
-    # --------------------------------------------------------
-
-    print(
-        "Consultando ECMWF..."
-    )
+    print("Consultando ECMWF...")
 
     try:
-
         ecmwf_raw = consultar_ecmwf()
 
     except Exception as exc:
-
-        print(
-            f"ERROR ECMWF: {exc}"
-        )
-
+        print(f"ERROR ECMWF: {exc}")
         return 1
 
     print(
         f"ECMWF: {len(ecmwf_raw)} puntos recibidos"
     )
 
-    # --------------------------------------------------------
-    # AMBIENTE
-    # --------------------------------------------------------
+    ambiente = construir_ambiente(ecmwf_raw)
 
-    ambiente = construir_ambiente(
-        ecmwf_raw
-    )
+    actual = obtener_actual_centro(ambiente)
 
-    actual = obtener_actual_centro(
-        ambiente
-    )
-
-    # --------------------------------------------------------
-    # CALIDAD
-    # --------------------------------------------------------
+    if actual is None:
+        print(
+            "ERROR: no se pudo obtener el punto "
+            "meteorologico actual de BB_CENTRO."
+        )
+        return 1
 
     calidad = calcular_calidad(
         radar,
         sazb,
-        ambiente
+        ambiente,
     )
 
     timestamp = utc_now()
 
-    # --------------------------------------------------------
-    # SALIDA PRINCIPAL
-    # --------------------------------------------------------
-
     fusion = {
-
         "version": VERSION,
-
         "motor": "ClimaAR Intelligence",
-
         "actualizado_utc": timestamp,
-
         "ubicacion": {
-
             "ciudad": CIUDAD,
-
             "latitud": LAT,
-
             "longitud": LON,
         },
-
         "calidad_datos": calidad,
-
         "radar": radar,
-
         "observacion_sazb": sazb,
-
         "ambiente_actual": actual,
-
         "ambiente_futuro": {
-
             "modelo": "ECMWF IFS HRES",
-
             "ventana_horas": 12,
-
             "puntos": ambiente,
         },
-
         "estado": "operativo",
-
         "proxima_etapa": (
             "Motor IA de evolucion, trayectoria, "
             "fortalecimiento, debilitamiento, ETA, "
@@ -1241,96 +842,48 @@ def main():
 
     save_json(
         FUSION_FILE,
-        fusion
+        fusion,
     )
-
-    # --------------------------------------------------------
-    # AMBIENTE FUTURO SEPARADO
-    # --------------------------------------------------------
 
     save_json(
         AMBIENTE_FILE,
         {
-
             "version": VERSION,
-
             "actualizado_utc": timestamp,
-
             "modelo": "ECMWF IFS HRES",
-
             "ventana_horas": 12,
-
             "puntos": ambiente,
-        }
+        },
     )
-
-    # --------------------------------------------------------
-    # HISTORICO
-    # --------------------------------------------------------
 
     append_historico(
         radar,
         sazb,
         actual,
-        calidad
+        calidad,
     )
 
-    # --------------------------------------------------------
-    # RESULTADO
-    # --------------------------------------------------------
-
-    print(
-        "--------------------------------------------"
-    )
-
+    print("--------------------------------------------")
     print(
         f"Calidad de datos: "
         f"{calidad['score']}/100 "
         f"({calidad['nivel']})"
     )
-
     print(
         f"Puntos meteorologicos: "
         f"{calidad['puntos_ecmwf_validos']}/9"
     )
-
-    print(
-        "Salida principal:"
-    )
-
-    print(
-        FUSION_FILE
-    )
-
-    print(
-        "Ambiente futuro:"
-    )
-
-    print(
-        AMBIENTE_FILE
-    )
-
-    print(
-        "Historico:"
-    )
-
-    print(
-        HISTORICO_FILE
-    )
-
-    print(
-        "--------------------------------------------"
-    )
-
-    print(
-        "FUSION METEOROLOGICA OK"
-    )
+    print("Salida principal:")
+    print(FUSION_FILE)
+    print("Ambiente futuro:")
+    print(AMBIENTE_FILE)
+    print("Historico:")
+    print(HISTORICO_FILE)
+    print("--------------------------------------------")
+    print("FUSION METEOROLOGICA OK")
 
     return 0
 
 
 if __name__ == "__main__":
-
-    sys.exit(
-        main()
-            )
+    sys.exit(main())
