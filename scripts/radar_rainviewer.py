@@ -15,6 +15,11 @@ LON = -62.26
 ZOOM = 7
 SIZE = 512
 
+# ClimaAR vigila un radio de 150 km y da prioridad a lo que
+# entra en los 100 km alrededor de Bahia Blanca.
+DETECTION_RADIUS_KM = 150.0
+PRIORITY_RADIUS_KM = 100.0
+
 FRAMES = 6
 MAX_HISTORY = 144
 
@@ -98,7 +103,6 @@ def download_json(url):
 
 
 def get_radar_frames():
-
     data = download_json(
         RAINVIEWER_API
     )
@@ -144,7 +148,6 @@ def get_radar_frames():
 
 
 def build_image_url(host, path):
-
     return (
         f"{host}{path}/"
         f"{SIZE}/{ZOOM}/{LAT}/{LON}/"
@@ -153,7 +156,6 @@ def build_image_url(host, path):
 
 
 def download_image(url):
-
     response = SESSION.get(
         url,
         timeout=40
@@ -168,7 +170,7 @@ def download_image(url):
 
     image = cv2.imdecode(
         data,
-        cv2.IMREAD_COLOR
+        cv2.IMREAD_UNCHANGED
     )
 
     if image is None:
@@ -179,41 +181,118 @@ def download_image(url):
     return image
 
 
+def radar_geometry():
+    """
+    Calcula la escala aproximada de Web Mercator para la latitud
+    de Bahia Blanca. A zoom 7 y 512 px, la imagen cubre
+    ampliamente el radio operativo de 150 km.
+    """
+    meters_per_pixel_equator = (
+        156543.03392804097 / (2 ** ZOOM)
+    )
+
+    meters_per_pixel = (
+        meters_per_pixel_equator
+        * math.cos(math.radians(LAT))
+    )
+
+    return meters_per_pixel
+
+
+def distance_from_center_km(x, y):
+    meters_per_pixel = radar_geometry()
+
+    dx = (
+        float(x) - SIZE / 2.0
+    )
+
+    dy = (
+        float(y) - SIZE / 2.0
+    )
+
+    return (
+        math.hypot(dx, dy)
+        * meters_per_pixel
+        / 1000.0
+    )
+
+
+def monitoring_circle():
+    meters_per_pixel = radar_geometry()
+
+    radius_px = (
+        DETECTION_RADIUS_KM
+        * 1000.0
+        / meters_per_pixel
+    )
+
+    yy, xx = np.ogrid[
+        :SIZE,
+        :SIZE
+    ]
+
+    cx = SIZE / 2.0
+    cy = SIZE / 2.0
+
+    return (
+        (xx - cx) ** 2
+        + (yy - cy) ** 2
+        <= radius_px ** 2
+    )
+
+
 def precipitation_mask(image):
+    """
+    Detecta ecos de precipitacion debiles sin convertirlos a dBZ.
 
-    b, g, r = cv2.split(
-        image
+    RainViewer entrega una imagen coloreada, no una medicion dBZ
+    calibrada en este endpoint. Por eso esta funcion detecta
+    presencia de eco/lluvia por color y transparencia, pero NO
+    inventa valores dBZ.
+    """
+    if image.ndim == 3 and image.shape[2] == 4:
+        b, g, r, alpha = cv2.split(
+            image
+        )
+    else:
+        b, g, r = cv2.split(
+            image
+        )
+
+        alpha = np.full(
+            b.shape,
+            255,
+            dtype=np.uint8
+        )
+
+    hsv = cv2.cvtColor(
+        cv2.merge(
+            [b, g, r]
+        ),
+        cv2.COLOR_BGR2HSV
     )
 
-    maximum = np.maximum.reduce(
-        [r, g, b]
-    )
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
 
-    minimum = np.minimum.reduce(
-        [r, g, b]
-    )
-
-    colorful = (
-        maximum - minimum
-    ) > 25
-
-    bright = maximum > 70
+    # Umbral deliberadamente sensible para no perder ecos debiles.
+    colorful = saturation >= 18
+    visible = value >= 22
+    opaque = alpha >= 20
 
     mask = (
-        colorful & bright
+        colorful
+        & visible
+        & opaque
     ).astype(
         np.uint8
     ) * 255
 
+    # Solo cerramos pequenos huecos.
+    # No hacemos MORPH_OPEN porque podria eliminar ecos debiles.
     kernel = np.ones(
-        (3, 3),
+        (2, 2),
         np.uint8
-    )
-
-    mask = cv2.morphologyEx(
-        mask,
-        cv2.MORPH_OPEN,
-        kernel
     )
 
     mask = cv2.morphologyEx(
@@ -222,11 +301,16 @@ def precipitation_mask(image):
         kernel
     )
 
+    monitor = monitoring_circle()
+
+    mask[
+        ~monitor
+    ] = 0
+
     return mask
 
 
 def analyze_frame(image):
-
     mask = precipitation_mask(
         image
     )
@@ -238,7 +322,9 @@ def analyze_frame(image):
     height, width = mask.shape
 
     coverage = (
-        area / float(width * height)
+        area / float(
+            width * height
+        )
         if width and height
         else 0.0
     )
@@ -252,12 +338,12 @@ def analyze_frame(image):
     nuclei = []
 
     for contour in contours:
-
         contour_area = cv2.contourArea(
             contour
         )
 
-        if contour_area < 20:
+        # Sensible para ecos debiles pequenos.
+        if contour_area < 8:
             continue
 
         x, y, cw, ch = cv2.boundingRect(
@@ -269,7 +355,6 @@ def analyze_frame(image):
         )
 
         if moments["m00"] != 0:
-
             cx = (
                 moments["m10"]
                 / moments["m00"]
@@ -279,11 +364,21 @@ def analyze_frame(image):
                 moments["m01"]
                 / moments["m00"]
             )
-
         else:
+            cx = (
+                x
+                + cw / 2.0
+            )
 
-            cx = x + cw / 2.0
-            cy = y + ch / 2.0
+            cy = (
+                y
+                + ch / 2.0
+            )
+
+        distance = distance_from_center_km(
+            cx,
+            cy
+        )
 
         nuclei.append(
             {
@@ -300,6 +395,13 @@ def analyze_frame(image):
                 ),
                 "width_px": int(cw),
                 "height_px": int(ch),
+                "distance_km": round(
+                    distance,
+                    1
+                ),
+                "prioridad_100km": (
+                    distance <= PRIORITY_RADIUS_KM
+                ),
             }
         )
 
@@ -315,7 +417,6 @@ def analyze_frame(image):
     )
 
     if len(xs):
-
         centroid_x = float(
             np.mean(xs)
         )
@@ -324,29 +425,57 @@ def analyze_frame(image):
             np.mean(ys)
         )
 
+        centroid_distance = (
+            distance_from_center_km(
+                centroid_x,
+                centroid_y
+            )
+        )
     else:
-
         centroid_x = 0.0
         centroid_y = 0.0
+        centroid_distance = 0.0
+
+    if image.ndim == 3 and image.shape[2] == 4:
+        b, g, r, _ = cv2.split(
+            image
+        )
+    else:
+        b, g, r = cv2.split(
+            image
+        )
 
     intense = (
         (
-            (image[:, :, 0] > 180)
+            (b > 180)
             |
-            (image[:, :, 1] > 180)
+            (g > 180)
             |
-            (image[:, :, 2] > 180)
+            (r > 180)
         )
         &
         (mask > 0)
     )
 
+    priority_nuclei = [
+        nucleus
+        for nucleus in nuclei
+        if nucleus["prioridad_100km"]
+    ]
+
     return {
         "area_px": area,
         "coverage": coverage,
         "nuclei": nuclei,
+        "priority_nuclei": priority_nuclei,
         "centroid_x": centroid_x,
         "centroid_y": centroid_y,
+        "centroid_distance_km": (
+            round(
+                centroid_distance,
+                1
+            )
+        ),
         "intense_pixels": int(
             np.count_nonzero(
                 intense
@@ -359,20 +488,31 @@ def estimate_motion(
     previous,
     current
 ):
-
     if (
         previous is None
         or current is None
     ):
         return 0.0, 0.0, 0.0
 
+    previous_bgr = (
+        previous[:, :, :3]
+        if previous.ndim == 3
+        else previous
+    )
+
+    current_bgr = (
+        current[:, :, :3]
+        if current.ndim == 3
+        else current
+    )
+
     previous_gray = cv2.cvtColor(
-        previous,
+        previous_bgr,
         cv2.COLOR_BGR2GRAY
     )
 
     current_gray = cv2.cvtColor(
-        current,
+        current_bgr,
         cv2.COLOR_BGR2GRAY
     )
 
@@ -429,7 +569,6 @@ def direction_from_vector(
     x,
     y
 ):
-
     if (
         abs(x) < 0.05
         and abs(y) < 0.05
@@ -458,7 +597,9 @@ def direction_from_vector(
     ]
 
     index = int(
-        (angle + 22.5)
+        (
+            angle + 22.5
+        )
         % 360
         / 45
     )
@@ -466,26 +607,7 @@ def direction_from_vector(
     return directions[index]
 
 
-def pixel_distance_km(
-    x,
-    y
-):
-
-    km_per_pixel = (
-        156.0 / 512.0
-    )
-
-    return (
-        math.hypot(
-            x - SIZE / 2.0,
-            y - SIZE / 2.0
-        )
-        * km_per_pixel
-    )
-
-
 def load_existing_rows():
-
     if not os.path.exists(
         FEATURES_PATH
     ):
@@ -494,7 +616,6 @@ def load_existing_rows():
     rows = []
 
     try:
-
         with open(
             FEATURES_PATH,
             "r",
@@ -507,9 +628,7 @@ def load_existing_rows():
             )
 
             for row in reader:
-
                 if row:
-
                     rows.append(
                         {
                             field:
@@ -523,9 +642,9 @@ def load_existing_rows():
                     )
 
     except Exception as exc:
-
         print(
-            f"[WARN] No se pudo leer CSV anterior: {exc}"
+            "[WARN] No se pudo leer "
+            f"CSV anterior: {exc}"
         )
 
     return rows
@@ -534,7 +653,6 @@ def load_existing_rows():
 def normalize_nuclei(
     value
 ):
-
     if isinstance(
         value,
         list
@@ -545,9 +663,7 @@ def normalize_nuclei(
         value,
         str
     ):
-
         try:
-
             parsed = json.loads(
                 value
             )
@@ -571,11 +687,9 @@ def normalize_nuclei(
 def write_features(
     rows
 ):
-
     unique = {}
 
     for row in rows:
-
         key = str(
             row.get(
                 "frame_time",
@@ -661,7 +775,6 @@ def save_json(
     path,
     data
 ):
-
     temporary = (
         path
         + ".tmp"
@@ -690,26 +803,22 @@ def save_image(
     image,
     path
 ):
-
     if not cv2.imwrite(
         path,
         image
     ):
-
         raise RuntimeError(
             f"No se pudo guardar {path}"
         )
 
 
 def clean_old_history():
-
     files = [
         os.path.join(
             HISTORY_DIR,
             name
         )
-        for name
-        in os.listdir(
+        for name in os.listdir(
             HISTORY_DIR
         )
         if os.path.isfile(
@@ -725,18 +834,27 @@ def clean_old_history():
     )
 
     while len(files) > MAX_HISTORY:
-
         os.remove(
             files.pop(0)
         )
 
 
 def main():
-
     ensure_dirs()
 
     print(
-        "[INFO] Iniciando radar RainViewer..."
+        "[INFO] Iniciando radar "
+        "RainViewer..."
+    )
+
+    print(
+        "[INFO] Zona de deteccion: "
+        f"{DETECTION_RADIUS_KM:.0f} km"
+    )
+
+    print(
+        "[INFO] Zona prioritaria: "
+        f"{PRIORITY_RADIUS_KM:.0f} km"
     )
 
     host, frames = (
@@ -748,19 +866,17 @@ def main():
     downloaded = []
 
     for frame in selected:
-
         url = build_image_url(
             host,
             frame["path"]
         )
 
         print(
-            f"[INFO] Descargando "
+            "[INFO] Descargando "
             f"{iso_from_timestamp(frame['time'])}"
         )
 
         try:
-
             image = download_image(
                 url
             )
@@ -773,15 +889,15 @@ def main():
             )
 
         except requests.RequestException as exc:
-
             print(
-                f"[WARN] Error descargando frame: {exc}"
+                "[WARN] Error descargando "
+                f"frame: {exc}"
             )
 
     if not downloaded:
-
         raise RuntimeError(
-            "No se pudo descargar ningun frame de RainViewer"
+            "No se pudo descargar "
+            "ningun frame de RainViewer"
         )
 
     rows = load_existing_rows()
@@ -789,7 +905,6 @@ def main():
     previous_image = None
 
     for item in downloaded:
-
         image = item["image"]
 
         analysis = analyze_frame(
@@ -807,18 +922,13 @@ def main():
 
         previous_image = image
 
-        if analysis["area_px"] > 0:
-
-            distance = (
-                pixel_distance_km(
-                    analysis["centroid_x"],
-                    analysis["centroid_y"]
-                )
-            )
-
-        else:
-
-            distance = 0.0
+        distance = (
+            analysis[
+                "centroid_distance_km"
+            ]
+            if analysis["area_px"] > 0
+            else 0.0
+        )
 
         frame_time = int(
             item["time"]
@@ -966,6 +1076,12 @@ def main():
             "longitude":
                 LON,
 
+            "detection_radius_km":
+                DETECTION_RADIUS_KM,
+
+            "priority_radius_km":
+                PRIORITY_RADIUS_KM,
+
             "frames_analyzed":
                 len(downloaded),
 
@@ -991,6 +1107,11 @@ def main():
                             "nuclei"
                         ],
 
+                    "priority_nuclei_100km":
+                        latest_analysis[
+                            "priority_nuclei"
+                        ],
+
                     "centroid_x":
                         latest_analysis[
                             "centroid_x"
@@ -999,6 +1120,11 @@ def main():
                     "centroid_y":
                         latest_analysis[
                             "centroid_y"
+                        ],
+
+                    "centroid_distance_km":
+                        latest_analysis[
+                            "centroid_distance_km"
                         ],
                 },
         }
@@ -1031,13 +1157,34 @@ def main():
 
             "csv_columns":
                 len(CSV_FIELDS),
+
+            "detection_radius_km":
+                DETECTION_RADIUS_KM,
+
+            "priority_radius_km":
+                PRIORITY_RADIUS_KM,
+
+            "nuclei_detected_latest":
+                len(
+                    latest_analysis[
+                        "nuclei"
+                    ]
+                ),
+
+            "nuclei_priority_100km_latest":
+                len(
+                    latest_analysis[
+                        "priority_nuclei"
+                    ]
+                ),
         }
     )
 
     clean_old_history()
 
     print(
-        "[OK] Radar actualizado correctamente"
+        "[OK] Radar actualizado "
+        "correctamente"
     )
 
 
