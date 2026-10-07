@@ -9,14 +9,16 @@ import numpy as np
 import requests
 
 
+# ============================================================
+# CLIMAAR - RADAR RAINVIEWER
+# ============================================================
+
 LAT = -38.71
 LON = -62.26
 
 ZOOM = 7
 SIZE = 512
 
-# ClimaAR vigila un radio de 150 km y da prioridad a lo que
-# entra en los 100 km alrededor de Bahia Blanca.
 DETECTION_RADIUS_KM = 150.0
 PRIORITY_RADIUS_KM = 100.0
 
@@ -33,6 +35,10 @@ STATUS_PATH = os.path.join(RADAR_DIR, "status.json")
 FEATURES_PATH = os.path.join(
     RADAR_DIR,
     "radar_features_rainviewer.csv"
+)
+
+RAINVIEWER_API = (
+    "https://api.rainviewer.com/public/weather-maps.json"
 )
 
 CSV_FIELDS = [
@@ -59,9 +65,6 @@ CSV_FIELDS = [
     "velocidad_pixeles_frame",
 ]
 
-RAINVIEWER_API = (
-    "https://api.rainviewer.com/public/weather-maps.json"
-)
 
 SESSION = requests.Session()
 
@@ -72,16 +75,13 @@ SESSION.headers.update(
 )
 
 
-def ensure_dirs():
-    os.makedirs(
-        RADAR_DIR,
-        exist_ok=True
-    )
+# ============================================================
+# UTILIDADES
+# ============================================================
 
-    os.makedirs(
-        HISTORY_DIR,
-        exist_ok=True
-    )
+def ensure_dirs():
+    os.makedirs(RADAR_DIR, exist_ok=True)
+    os.makedirs(HISTORY_DIR, exist_ok=True)
 
 
 def iso_from_timestamp(ts):
@@ -90,6 +90,16 @@ def iso_from_timestamp(ts):
         tz=timezone.utc
     ).isoformat()
 
+
+def utc_now():
+    return datetime.now(
+        timezone.utc
+    ).isoformat()
+
+
+# ============================================================
+# RAINVIEWER API
+# ============================================================
 
 def download_json(url):
     response = SESSION.get(
@@ -112,28 +122,44 @@ def get_radar_frames():
         ""
     ).rstrip("/")
 
-    past = data.get(
+    radar = data.get(
         "radar",
         {}
-    ).get(
+    )
+
+    past = radar.get(
         "past",
         []
     )
 
-    if not host or not past:
+    if not host:
         raise RuntimeError(
-            "RainViewer no devolvio datos de radar validos"
+            "RainViewer no devolvio host"
         )
 
-    frames = [
-        {
-            "time": int(item["time"]),
-            "path": item["path"]
-        }
-        for item in past
-        if item.get("time")
-        and item.get("path")
-    ]
+    if not past:
+        raise RuntimeError(
+            "RainViewer no devolvio frames"
+        )
+
+    frames = []
+
+    for item in past:
+
+        if not item.get("time"):
+            continue
+
+        if not item.get("path"):
+            continue
+
+        frames.append(
+            {
+                "time": int(
+                    item["time"]
+                ),
+                "path": item["path"]
+            }
+        )
 
     frames.sort(
         key=lambda item: item["time"]
@@ -141,19 +167,36 @@ def get_radar_frames():
 
     if not frames:
         raise RuntimeError(
-            "No hay frames validos de RainViewer"
+            "No existen frames validos"
         )
 
     return host, frames
 
 
-def build_image_url(host, path):
+def build_image_url(
+    host,
+    path
+):
+    """
+    RainViewer permite solicitar una imagen
+    centrada directamente por lat/lon.
+
+    Formato oficial:
+
+    /{size}/{z}/{lat}/{lon}/{color}/{smooth}_{snow}.png
+    """
+
     return (
         f"{host}{path}/"
-        f"{SIZE}/{ZOOM}/{LAT}/{LON}/"
-        f"2/1_1.png"
+        f"{SIZE}/{ZOOM}/"
+        f"{LAT}/{LON}/"
+        f"2/0_0.png"
     )
 
+
+# ============================================================
+# DESCARGA Y VALIDACION DE IMAGEN
+# ============================================================
 
 def download_image(url):
     response = SESSION.get(
@@ -162,6 +205,26 @@ def download_image(url):
     )
 
     response.raise_for_status()
+
+    content_type = (
+        response.headers.get(
+            "content-type",
+            ""
+        ).lower()
+    )
+
+    if len(response.content) < 512:
+        raise RuntimeError(
+            "RainViewer devolvio una respuesta demasiado pequena"
+        )
+
+    if (
+        "image" not in content_type
+        and not response.content.startswith(b"\x89PNG")
+    ):
+        raise RuntimeError(
+            "RainViewer no devolvio una imagen PNG valida"
+        )
 
     data = np.frombuffer(
         response.content,
@@ -175,64 +238,173 @@ def download_image(url):
 
     if image is None:
         raise RuntimeError(
-            "No se pudo decodificar la imagen del radar"
+            "OpenCV no pudo decodificar la imagen"
+        )
+
+    if image.ndim not in (2, 3):
+        raise RuntimeError(
+            "Formato de imagen inesperado"
+        )
+
+    height, width = image.shape[:2]
+
+    if width < 64 or height < 64:
+        raise RuntimeError(
+            "Imagen de radar demasiado pequena"
+        )
+
+    # --------------------------------------------------------
+    # DIAGNOSTICO DE CONTENIDO
+    # --------------------------------------------------------
+
+    if image.ndim == 3 and image.shape[2] == 4:
+
+        b, g, r, alpha = cv2.split(
+            image
+        )
+
+        rgb_max = int(
+            max(
+                b.max(),
+                g.max(),
+                r.max()
+            )
+        )
+
+        alpha_max = int(
+            alpha.max()
+        )
+
+        alpha_pixels = int(
+            np.count_nonzero(
+                alpha >= 20
+            )
+        )
+
+        # Imagen completamente transparente =
+        # fuente sin datos utilizables.
+        if alpha_max == 0:
+            raise RuntimeError(
+                "RainViewer devolvio una imagen completamente transparente"
+            )
+
+        # Si existe alpha, guardamos RGBA.
+        print(
+            "[RADAR] "
+            f"imagen={width}x{height} "
+            f"rgb_max={rgb_max} "
+            f"pixeles_visibles={alpha_pixels}"
+        )
+
+    else:
+
+        rgb_max = int(
+            image.max()
+        )
+
+        nonzero = int(
+            np.count_nonzero(image)
+        )
+
+        print(
+            "[RADAR] "
+            f"imagen={width}x{height} "
+            f"max={rgb_max} "
+            f"pixeles_no_negros={nonzero}"
         )
 
     return image
 
 
-def radar_geometry():
-    """
-    Calcula la escala aproximada de Web Mercator para la latitud
-    de Bahia Blanca. A zoom 7 y 512 px, la imagen cubre
-    ampliamente el radio operativo de 150 km.
-    """
-    meters_per_pixel_equator = (
-        156543.03392804097 / (2 ** ZOOM)
+def save_png(
+    image,
+    path
+):
+    temporary = (
+        path
+        + ".tmp"
     )
 
-    meters_per_pixel = (
-        meters_per_pixel_equator
-        * math.cos(math.radians(LAT))
+    ok = cv2.imwrite(
+        temporary,
+        image
     )
 
-    return meters_per_pixel
+    if not ok:
+        raise RuntimeError(
+            "No se pudo guardar la imagen"
+        )
+
+    os.replace(
+        temporary,
+        path
+    )
 
 
-def distance_from_center_km(x, y):
-    meters_per_pixel = radar_geometry()
+# ============================================================
+# GEOMETRIA
+# ============================================================
+
+def meters_per_pixel():
+    return (
+        156543.03392804097
+        / (2 ** ZOOM)
+        * math.cos(
+            math.radians(LAT)
+        )
+    )
+
+
+def distance_from_center_km(
+    x,
+    y,
+    width,
+    height
+):
+    scale = meters_per_pixel()
+
+    cx = width / 2.0
+    cy = height / 2.0
 
     dx = (
-        float(x) - SIZE / 2.0
+        float(x)
+        - cx
     )
 
     dy = (
-        float(y) - SIZE / 2.0
+        float(y)
+        - cy
     )
 
     return (
-        math.hypot(dx, dy)
-        * meters_per_pixel
+        math.hypot(
+            dx,
+            dy
+        )
+        * scale
         / 1000.0
     )
 
 
-def monitoring_circle():
-    meters_per_pixel = radar_geometry()
+def monitoring_circle(
+    width,
+    height
+):
+    scale = meters_per_pixel()
 
     radius_px = (
         DETECTION_RADIUS_KM
         * 1000.0
-        / meters_per_pixel
+        / scale
     )
 
     yy, xx = np.ogrid[
-        :SIZE,
-        :SIZE
+        :height,
+        :width
     ]
 
-    cx = SIZE / 2.0
-    cy = SIZE / 2.0
+    cx = width / 2.0
+    cy = height / 2.0
 
     return (
         (xx - cx) ** 2
@@ -241,20 +413,20 @@ def monitoring_circle():
     )
 
 
-def precipitation_mask(image):
-    """
-    Detecta ecos de precipitacion debiles sin convertirlos a dBZ.
+# ============================================================
+# DETECCION DE PRECIPITACION
+# ============================================================
 
-    RainViewer entrega una imagen coloreada, no una medicion dBZ
-    calibrada en este endpoint. Por eso esta funcion detecta
-    presencia de eco/lluvia por color y transparencia, pero NO
-    inventa valores dBZ.
-    """
+def precipitation_mask(image):
+
     if image.ndim == 3 and image.shape[2] == 4:
+
         b, g, r, alpha = cv2.split(
             image
         )
-    else:
+
+    elif image.ndim == 3:
+
         b, g, r = cv2.split(
             image
         )
@@ -265,20 +437,41 @@ def precipitation_mask(image):
             dtype=np.uint8
         )
 
+    else:
+
+        b = image
+        g = image
+        r = image
+
+        alpha = np.full(
+            image.shape,
+            255,
+            dtype=np.uint8
+        )
+
+    bgr = cv2.merge(
+        [b, g, r]
+    )
+
     hsv = cv2.cvtColor(
-        cv2.merge(
-            [b, g, r]
-        ),
+        bgr,
         cv2.COLOR_BGR2HSV
     )
 
     saturation = hsv[:, :, 1]
     value = hsv[:, :, 2]
 
-    # Umbral deliberadamente sensible para no perder ecos debiles.
-    colorful = saturation >= 18
-    visible = value >= 22
-    opaque = alpha >= 20
+    colorful = (
+        saturation >= 12
+    )
+
+    visible = (
+        value >= 15
+    )
+
+    opaque = (
+        alpha >= 20
+    )
 
     mask = (
         colorful
@@ -288,8 +481,6 @@ def precipitation_mask(image):
         np.uint8
     ) * 255
 
-    # Solo cerramos pequenos huecos.
-    # No hacemos MORPH_OPEN porque podria eliminar ecos debiles.
     kernel = np.ones(
         (2, 2),
         np.uint8
@@ -301,7 +492,10 @@ def precipitation_mask(image):
         kernel
     )
 
-    monitor = monitoring_circle()
+    monitor = monitoring_circle(
+        mask.shape[1],
+        mask.shape[0]
+    )
 
     mask[
         ~monitor
@@ -310,22 +504,39 @@ def precipitation_mask(image):
     return mask
 
 
-def analyze_frame(image):
+# ============================================================
+# ANALISIS
+# ============================================================
+
+def analyze_frame(
+    image
+):
     mask = precipitation_mask(
         image
     )
 
-    area = int(
-        cv2.countNonZero(mask)
-    )
-
     height, width = mask.shape
 
-    coverage = (
-        area / float(
-            width * height
+    area = int(
+        cv2.countNonZero(
+            mask
         )
-        if width and height
+    )
+
+    monitor = monitoring_circle(
+        width,
+        height
+    )
+
+    monitored_pixels = int(
+        np.count_nonzero(
+            monitor
+        )
+    )
+
+    coverage = (
+        area / monitored_pixels
+        if monitored_pixels
         else 0.0
     )
 
@@ -338,11 +549,11 @@ def analyze_frame(image):
     nuclei = []
 
     for contour in contours:
+
         contour_area = cv2.contourArea(
             contour
         )
 
-        # Sensible para ecos debiles pequenos.
         if contour_area < 8:
             continue
 
@@ -354,7 +565,8 @@ def analyze_frame(image):
             contour
         )
 
-        if moments["m00"] != 0:
+        if moments["m00"]:
+
             cx = (
                 moments["m10"]
                 / moments["m00"]
@@ -364,7 +576,9 @@ def analyze_frame(image):
                 moments["m01"]
                 / moments["m00"]
             )
+
         else:
+
             cx = (
                 x
                 + cw / 2.0
@@ -375,9 +589,13 @@ def analyze_frame(image):
                 + ch / 2.0
             )
 
-        distance = distance_from_center_km(
-            cx,
-            cy
+        distance = (
+            distance_from_center_km(
+                cx,
+                cy,
+                width,
+                height
+            )
         )
 
         nuclei.append(
@@ -400,23 +618,32 @@ def analyze_frame(image):
                     1
                 ),
                 "prioridad_100km": (
-                    distance <= PRIORITY_RADIUS_KM
-                ),
+                    distance
+                    <= PRIORITY_RADIUS_KM
+                )
             }
         )
 
     nuclei.sort(
-        key=lambda item: item["area_px"],
+        key=lambda item:
+        item["area_px"],
         reverse=True
     )
 
     nuclei = nuclei[:50]
+
+    priority_nuclei = [
+        item
+        for item in nuclei
+        if item["prioridad_100km"]
+    ]
 
     ys, xs = np.where(
         mask > 0
     )
 
     if len(xs):
+
         centroid_x = float(
             np.mean(xs)
         )
@@ -428,40 +655,29 @@ def analyze_frame(image):
         centroid_distance = (
             distance_from_center_km(
                 centroid_x,
-                centroid_y
+                centroid_y,
+                width,
+                height
             )
         )
+
     else:
+
         centroid_x = 0.0
         centroid_y = 0.0
         centroid_distance = 0.0
 
-    if image.ndim == 3 and image.shape[2] == 4:
-        b, g, r, _ = cv2.split(
-            image
-        )
-    else:
-        b, g, r = cv2.split(
-            image
-        )
-
     intense = (
         (
-            (b > 180)
+            (r > 180)
             |
             (g > 180)
             |
-            (r > 180)
+            (b > 180)
         )
         &
         (mask > 0)
     )
-
-    priority_nuclei = [
-        nucleus
-        for nucleus in nuclei
-        if nucleus["prioridad_100km"]
-    ]
 
     return {
         "area_px": area,
@@ -470,29 +686,36 @@ def analyze_frame(image):
         "priority_nuclei": priority_nuclei,
         "centroid_x": centroid_x,
         "centroid_y": centroid_y,
-        "centroid_distance_km": (
-            round(
-                centroid_distance,
-                1
-            )
+        "centroid_distance_km": round(
+            centroid_distance,
+            1
         ),
         "intense_pixels": int(
             np.count_nonzero(
                 intense
             )
-        ),
+        )
     }
 
+
+# ============================================================
+# MOVIMIENTO
+# ============================================================
 
 def estimate_motion(
     previous,
     current
 ):
+
     if (
         previous is None
         or current is None
     ):
-        return 0.0, 0.0, 0.0
+        return (
+            0.0,
+            0.0,
+            0.0
+        )
 
     previous_bgr = (
         previous[:, :, :3]
@@ -533,13 +756,20 @@ def estimate_motion(
     fy = flow[:, :, 1]
 
     magnitude = np.sqrt(
-        fx * fx + fy * fy
+        fx * fx
+        + fy * fy
     )
 
-    valid = magnitude > 0.2
+    valid = (
+        magnitude > 0.2
+    )
 
     if not np.any(valid):
-        return 0.0, 0.0, 0.0
+        return (
+            0.0,
+            0.0,
+            0.0
+        )
 
     movement_x = float(
         np.median(
@@ -569,6 +799,7 @@ def direction_from_vector(
     x,
     y
 ):
+
     if (
         abs(x) < 0.05
         and abs(y) < 0.05
@@ -598,7 +829,8 @@ def direction_from_vector(
 
     index = int(
         (
-            angle + 22.5
+            angle
+            + 22.5
         )
         % 360
         / 45
@@ -607,7 +839,12 @@ def direction_from_vector(
     return directions[index]
 
 
+# ============================================================
+# CSV
+# ============================================================
+
 def load_existing_rows():
+
     if not os.path.exists(
         FEATURES_PATH
     ):
@@ -616,6 +853,7 @@ def load_existing_rows():
     rows = []
 
     try:
+
         with open(
             FEATURES_PATH,
             "r",
@@ -628,76 +866,45 @@ def load_existing_rows():
             )
 
             for row in reader:
-                if row:
-                    rows.append(
-                        {
-                            field:
-                            row.get(
-                                field,
-                                ""
-                            )
-                            for field
-                            in CSV_FIELDS
-                        }
-                    )
+
+                rows.append(
+                    {
+                        field:
+                        row.get(
+                            field,
+                            ""
+                        )
+                        for field
+                        in CSV_FIELDS
+                    }
+                )
 
     except Exception as exc:
+
         print(
-            "[WARN] No se pudo leer "
-            f"CSV anterior: {exc}"
+            "[WARN] Error leyendo CSV:",
+            exc
         )
 
     return rows
 
 
-def normalize_nuclei(
-    value
-):
-    if isinstance(
-        value,
-        list
-    ):
-        return value
-
-    if isinstance(
-        value,
-        str
-    ):
-        try:
-            parsed = json.loads(
-                value
-            )
-
-            if isinstance(
-                parsed,
-                list
-            ):
-                return parsed
-
-        except (
-            TypeError,
-            ValueError,
-            json.JSONDecodeError
-        ):
-            pass
-
-    return []
-
-
 def write_features(
     rows
 ):
+
     unique = {}
 
     for row in rows:
-        key = str(
+
+        frame_time = str(
             row.get(
                 "frame_time",
                 ""
             )
         ).strip()
 
-        if not key:
+        if not frame_time:
             continue
 
         clean = {
@@ -710,18 +917,9 @@ def write_features(
             in CSV_FIELDS
         }
 
-        clean["nucleos"] = json.dumps(
-            normalize_nuclei(
-                clean["nucleos"]
-            ),
-            ensure_ascii=False,
-            separators=(
-                ",",
-                ":"
-            )
-        )
-
-        unique[key] = clean
+        unique[
+            frame_time
+        ] = clean
 
     ordered = list(
         unique.values()
@@ -729,10 +927,14 @@ def write_features(
 
     ordered.sort(
         key=lambda row:
-        int(row["frame_time"])
+        int(
+            row["frame_time"]
+        )
     )
 
-    ordered = ordered[-4320:]
+    ordered = ordered[
+        -MAX_HISTORY:
+    ]
 
     temporary = (
         FEATURES_PATH
@@ -748,9 +950,7 @@ def write_features(
 
         writer = csv.DictWriter(
             handle,
-            fieldnames=CSV_FIELDS,
-            extrasaction="ignore",
-            quoting=csv.QUOTE_MINIMAL
+            fieldnames=CSV_FIELDS
         )
 
         writer.writeheader()
@@ -764,17 +964,16 @@ def write_features(
         FEATURES_PATH
     )
 
-    print(
-        f"[OK] Features: "
-        f"{len(ordered)} filas / "
-        f"{len(CSV_FIELDS)} columnas"
-    )
 
+# ============================================================
+# JSON
+# ============================================================
 
-def save_json(
+def write_json(
     path,
     data
 ):
+
     temporary = (
         path
         + ".tmp"
@@ -799,394 +998,482 @@ def save_json(
     )
 
 
-def save_image(
-    image,
-    path
-):
-    if not cv2.imwrite(
-        path,
-        image
-    ):
-        raise RuntimeError(
-            f"No se pudo guardar {path}"
-        )
-
-
-def clean_old_history():
-    files = [
-        os.path.join(
-            HISTORY_DIR,
-            name
-        )
-        for name in os.listdir(
-            HISTORY_DIR
-        )
-        if os.path.isfile(
-            os.path.join(
-                HISTORY_DIR,
-                name
-            )
-        )
-    ]
-
-    files.sort(
-        key=os.path.getmtime
-    )
-
-    while len(files) > MAX_HISTORY:
-        os.remove(
-            files.pop(0)
-        )
-
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
+
     ensure_dirs()
 
     print(
-        "[INFO] Iniciando radar "
-        "RainViewer..."
+        "========================================"
     )
 
     print(
-        "[INFO] Zona de deteccion: "
-        f"{DETECTION_RADIUS_KM:.0f} km"
+        "CLIMAAR - RAINVIEWER RADAR"
     )
 
     print(
-        "[INFO] Zona prioritaria: "
-        f"{PRIORITY_RADIUS_KM:.0f} km"
+        f"Deteccion: {DETECTION_RADIUS_KM} km"
     )
 
-    host, frames = (
-        get_radar_frames()
+    print(
+        f"Prioridad: {PRIORITY_RADIUS_KM} km"
     )
 
-    selected = frames[-FRAMES:]
+    print(
+        "========================================"
+    )
 
-    downloaded = []
+    try:
+
+        host, frames = get_radar_frames()
+
+    except Exception as exc:
+
+        print(
+            "[ERROR] No se pudo consultar RainViewer:",
+            exc
+        )
+
+        write_json(
+            STATUS_PATH,
+            {
+                "estado": "error_fuente",
+                "datos_vigentes": False,
+                "error": str(exc),
+                "updated_at": utc_now()
+            }
+        )
+
+        return 1
+
+    selected = frames[
+        -FRAMES:
+    ]
+
+    rows = load_existing_rows()
+
+    images = []
+
+    diagnostics = []
+
+    previous_image = None
+
+    latest_valid_image = None
+
+    latest_valid_time = None
+
+    latest_analysis = None
+
+    latest_motion = (
+        0.0,
+        0.0,
+        0.0
+    )
 
     for frame in selected:
+
+        frame_time = int(
+            frame["time"]
+        )
+
+        frame_utc = iso_from_timestamp(
+            frame_time
+        )
+
         url = build_image_url(
             host,
             frame["path"]
         )
 
         print(
-            "[INFO] Descargando "
-            f"{iso_from_timestamp(frame['time'])}"
+            "[RADAR] Descargando:",
+            frame_utc
         )
 
         try:
+
             image = download_image(
                 url
             )
 
-            downloaded.append(
+            analysis = analyze_frame(
+                image
+            )
+
+            motion = estimate_motion(
+                previous_image,
+                image
+            )
+
+            direction = (
+                direction_from_vector(
+                    motion[0],
+                    motion[1]
+                )
+            )
+
+            row = {
+                "frame_time": frame_time,
+                "frame_utc": frame_utc,
+                "source": "RainViewer",
+                "latitud": LAT,
+                "longitud": LON,
+                "area_px": analysis["area_px"],
+                "distance_km": analysis[
+                    "centroid_distance_km"
+                ],
+                "dbz_max": "",
+                "dbz_mean": "",
+                "dbz_p90": "",
+                "dbz_pixels": "",
+                "tiles_ok": 1,
+                "nucleos": json.dumps(
+                    analysis["nuclei"],
+                    ensure_ascii=False,
+                    separators=(",", ":")
+                ),
+                "centroide_x": analysis[
+                    "centroid_x"
+                ],
+                "centroide_y": analysis[
+                    "centroid_y"
+                ],
+                "pixeles_intensos": analysis[
+                    "intense_pixels"
+                ],
+                "cobertura_precipitacion": (
+                    analysis["coverage"]
+                ),
+                "movimiento_x": motion[0],
+                "movimiento_y": motion[1],
+                "direccion": direction,
+                "velocidad_pixeles_frame": motion[2],
+            }
+
+            rows.append(
+                row
+            )
+
+            images.append(
+                image
+            )
+
+            diagnostics.append(
                 {
-                    "time": frame["time"],
-                    "image": image
+                    "frame_utc": frame_utc,
+                    "valido": True,
+                    "area_px": analysis[
+                        "area_px"
+                    ],
+                    "nucleos": len(
+                        analysis["nuclei"]
+                    ),
+                    "prioridad_100km": len(
+                        analysis[
+                            "priority_nuclei"
+                        ]
+                    )
                 }
             )
 
-        except requests.RequestException as exc:
+            latest_valid_image = image
+            latest_valid_time = frame_time
+            latest_analysis = analysis
+            latest_motion = motion
+
+            previous_image = image
+
+        except Exception as exc:
+
             print(
-                "[WARN] Error descargando "
-                f"frame: {exc}"
+                "[WARN] Frame rechazado:",
+                exc
             )
 
-    if not downloaded:
-        raise RuntimeError(
-            "No se pudo descargar "
-            "ningun frame de RainViewer"
+            diagnostics.append(
+                {
+                    "frame_utc": frame_utc,
+                    "valido": False,
+                    "error": str(exc)
+                }
+            )
+
+    if not latest_valid_image:
+
+        print(
+            "[ERROR] No hubo ningun frame valido."
         )
 
-    rows = load_existing_rows()
-
-    previous_image = None
-
-    for item in downloaded:
-        image = item["image"]
-
-        analysis = analyze_frame(
-            image
-        )
-
-        (
-            movement_x,
-            movement_y,
-            speed
-        ) = estimate_motion(
-            previous_image,
-            image
-        )
-
-        previous_image = image
-
-        distance = (
-            analysis[
-                "centroid_distance_km"
-            ]
-            if analysis["area_px"] > 0
-            else 0.0
-        )
-
-        frame_time = int(
-            item["time"]
-        )
-
-        rows.append(
+        write_json(
+            STATUS_PATH,
             {
-                "frame_time":
-                    frame_time,
-
-                "frame_utc":
-                    iso_from_timestamp(
-                        frame_time
-                    ),
-
-                "source":
-                    "RainViewer",
-
-                "latitud":
-                    LAT,
-
-                "longitud":
-                    LON,
-
-                "area_px":
-                    analysis["area_px"],
-
-                "distance_km":
-                    round(
-                        distance,
-                        3
-                    ),
-
-                "dbz_max":
-                    "",
-
-                "dbz_mean":
-                    "",
-
-                "dbz_p90":
-                    "",
-
-                "dbz_pixels":
-                    "",
-
-                "tiles_ok":
-                    1,
-
-                "nucleos":
-                    json.dumps(
-                        analysis["nuclei"],
-                        ensure_ascii=False,
-                        separators=(
-                            ",",
-                            ":"
-                        )
-                    ),
-
-                "centroide_x":
-                    round(
-                        analysis["centroid_x"],
-                        3
-                    ),
-
-                "centroide_y":
-                    round(
-                        analysis["centroid_y"],
-                        3
-                    ),
-
-                "pixeles_intensos":
-                    analysis[
-                        "intense_pixels"
-                    ],
-
-                "cobertura_precipitacion":
-                    round(
-                        analysis["coverage"],
-                        6
-                    ),
-
-                "movimiento_x":
-                    round(
-                        movement_x,
-                        4
-                    ),
-
-                "movimiento_y":
-                    round(
-                        movement_y,
-                        4
-                    ),
-
-                "direccion":
-                    direction_from_vector(
-                        movement_x,
-                        movement_y
-                    ),
-
-                "velocidad_pixeles_frame":
-                    round(
-                        speed,
-                        4
-                    ),
+                "estado": "error_fuente",
+                "datos_vigentes": False,
+                "frame_valido": False,
+                "deteccion_radio_km": (
+                    DETECTION_RADIUS_KM
+                ),
+                "prioridad_radio_km": (
+                    PRIORITY_RADIUS_KM
+                ),
+                "diagnosticos": diagnostics,
+                "updated_at": utc_now()
             }
         )
 
-        save_image(
-            image,
-            os.path.join(
-                HISTORY_DIR,
-                f"{frame_time}.png"
-            )
-        )
+        return 1
+
+    # --------------------------------------------------------
+    # GUARDAR IMAGEN ACTUAL
+    # --------------------------------------------------------
+
+    save_png(
+        latest_valid_image,
+        ACTUAL_PATH
+    )
+
+    # --------------------------------------------------------
+    # GUARDAR CSV
+    # --------------------------------------------------------
 
     write_features(
         rows
     )
 
-    latest = downloaded[-1]["image"]
+    # --------------------------------------------------------
+    # ESTADO
+    # --------------------------------------------------------
 
-    latest_analysis = analyze_frame(
-        latest
+    analysis = latest_analysis
+
+    precipitation = (
+        analysis["area_px"] > 0
     )
 
-    save_image(
-        latest,
-        ACTUAL_PATH
+    state = (
+        "precipitacion_detectada"
+        if precipitation
+        else "sin_precipitacion"
     )
 
-    save_json(
+    now = datetime.now(
+        timezone.utc
+    )
+
+    age_minutes = (
+        now.timestamp()
+        - latest_valid_time
+    ) / 60.0
+
+    fresh = (
+        age_minutes <= 35
+    )
+
+    if not fresh:
+
+        state = (
+            "radar_desactualizado"
+        )
+
+    nowcast = {
+
+        "version": "9.0-rainviewer-safe",
+
+        "generated_at": utc_now(),
+
+        "source": "RainViewer",
+
+        "frame_actual_utc":
+            iso_from_timestamp(
+                latest_valid_time
+            ),
+
+        "frame_age_minutes":
+            round(
+                age_minutes,
+                1
+            ),
+
+        "frame_es_viejo":
+            not fresh,
+
+        "datos_vigentes":
+            bool(fresh),
+
+        "estado":
+            state,
+
+        "deteccion_radio_km":
+            DETECTION_RADIUS_KM,
+
+        "prioridad_radio_km":
+            PRIORITY_RADIUS_KM,
+
+        "precipitacion_detectada":
+            precipitation,
+
+        "cobertura_precipitacion":
+            analysis["coverage"],
+
+        "area_px":
+            analysis["area_px"],
+
+        "nucleos":
+            analysis["nuclei"],
+
+        "nucleos_prioridad_100km":
+            analysis[
+                "priority_nuclei"
+            ],
+
+        "centroide": {
+
+            "x":
+                analysis["centroid_x"],
+
+            "y":
+                analysis["centroid_y"],
+
+            "distancia_km":
+                analysis[
+                    "centroid_distance_km"
+                ]
+        },
+
+        "movimiento": {
+
+            "x":
+                latest_motion[0],
+
+            "y":
+                latest_motion[1],
+
+            "velocidad_pixeles_frame":
+                latest_motion[2],
+
+            "direccion":
+                direction_from_vector(
+                    latest_motion[0],
+                    latest_motion[1]
+                )
+        },
+
+        "dbz_disponible":
+            False,
+
+        "dbz_nota":
+            "RainViewer RGB no se convierte artificialmente a dBZ.",
+
+        "diagnosticos":
+            diagnostics
+    }
+
+    write_json(
         NOWCAST_PATH,
-        {
-            "generated_at":
-                datetime.now(
-                    timezone.utc
-                ).isoformat(),
-
-            "source":
-                "RainViewer",
-
-            "latitude":
-                LAT,
-
-            "longitude":
-                LON,
-
-            "detection_radius_km":
-                DETECTION_RADIUS_KM,
-
-            "priority_radius_km":
-                PRIORITY_RADIUS_KM,
-
-            "frames_analyzed":
-                len(downloaded),
-
-            "latest_frame":
-                iso_from_timestamp(
-                    downloaded[-1]["time"]
-                ),
-
-            "precipitation":
-                {
-                    "area_px":
-                        latest_analysis[
-                            "area_px"
-                        ],
-
-                    "coverage":
-                        latest_analysis[
-                            "coverage"
-                        ],
-
-                    "nuclei":
-                        latest_analysis[
-                            "nuclei"
-                        ],
-
-                    "priority_nuclei_100km":
-                        latest_analysis[
-                            "priority_nuclei"
-                        ],
-
-                    "centroid_x":
-                        latest_analysis[
-                            "centroid_x"
-                        ],
-
-                    "centroid_y":
-                        latest_analysis[
-                            "centroid_y"
-                        ],
-
-                    "centroid_distance_km":
-                        latest_analysis[
-                            "centroid_distance_km"
-                        ],
-                },
-        }
+        nowcast
     )
 
-    save_json(
+    # --------------------------------------------------------
+    # STATUS
+    # --------------------------------------------------------
+
+    write_json(
         STATUS_PATH,
         {
-            "ok":
-                True,
-
-            "source":
-                "RainViewer",
-
-            "updated_at":
-                datetime.now(
-                    timezone.utc
-                ).isoformat(),
-
-            "latest_frame":
+            "estado": state,
+            "datos_vigentes": bool(
+                fresh
+            ),
+            "frame_actual_utc":
                 iso_from_timestamp(
-                    downloaded[-1]["time"]
+                    latest_valid_time
                 ),
-
-            "frames_downloaded":
-                len(downloaded),
-
-            "features_updated":
-                True,
-
-            "csv_columns":
-                len(CSV_FIELDS),
-
-            "detection_radius_km":
+            "frame_age_minutes":
+                round(
+                    age_minutes,
+                    1
+                ),
+            "deteccion_radio_km":
                 DETECTION_RADIUS_KM,
-
-            "priority_radius_km":
+            "prioridad_radio_km":
                 PRIORITY_RADIUS_KM,
-
-            "nuclei_detected_latest":
+            "precipitacion_detectada":
+                precipitation,
+            "nucleos":
                 len(
-                    latest_analysis[
-                        "nuclei"
-                    ]
+                    analysis["nuclei"]
                 ),
-
-            "nuclei_priority_100km_latest":
+            "nucleos_prioridad_100km":
                 len(
-                    latest_analysis[
+                    analysis[
                         "priority_nuclei"
                     ]
                 ),
+            "updated_at":
+                utc_now()
         }
     )
 
-    clean_old_history()
+    print(
+        "----------------------------------------"
+    )
 
     print(
-        "[OK] Radar actualizado "
-        "correctamente"
+        "[OK] Radar procesado"
     )
+
+    print(
+        "[OK] Frame:",
+        iso_from_timestamp(
+            latest_valid_time
+        )
+    )
+
+    print(
+        "[OK] Edad:",
+        round(
+            age_minutes,
+            1
+        ),
+        "min"
+    )
+
+    print(
+        "[OK] Precipitacion:",
+        precipitation
+    )
+
+    print(
+        "[OK] Nucleos:",
+        len(
+            analysis["nuclei"]
+        )
+    )
+
+    print(
+        "[OK] Prioridad 100 km:",
+        len(
+            analysis[
+                "priority_nuclei"
+            ]
+        )
+    )
+
+    print(
+        "[OK] actual.png guardado"
+    )
+
+    print(
+        "========================================"
+    )
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        main()
+    )
