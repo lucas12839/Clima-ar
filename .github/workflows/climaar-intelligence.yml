@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: climaar-intelligence
+  cancel-in-progress: false
+
 jobs:
   intelligence:
     runs-on: ubuntu-latest
@@ -26,7 +30,8 @@ jobs:
 
       - name: Instalar dependencias
         run: |
-          pip install requests numpy scipy opencv-python Pillow joblib scikit-learn
+          python -m pip install --upgrade pip
+          pip install requests numpy scipy opencv-python-headless Pillow pandas joblib scikit-learn
 
       - name: Preparar directorios
         run: |
@@ -40,10 +45,10 @@ jobs:
 
       - name: Verificar radar
         run: |
-          test -f data/radar/actual.png
-          test -f data/radar/radar_nowcast.json
-          ls -lh data/radar/actual.png
-          ls -lh data/radar/radar_nowcast.json
+          set -e
+          test -s data/radar/actual.png
+          test -s data/radar/radar_nowcast.json
+          test -s data/radar/status.json
 
       - name: Analizar radar
         run: |
@@ -86,5 +91,17 @@ jobs:
           echo "================================"
           echo " CLIMAAR OK"
           echo "================================"
+
           ls -lh data/radar/actual.png
           ls -lh data/radar/radar_nowcast.json
+          ls -lh data/radar/status.json
+
+          echo ""
+          echo "Frames del histórico:"
+          find data/radar/historico -name "radar_*.png" | wc -l
+
+          echo ""
+          echo "Features:"
+          if [ -f data/radar/radar_features_rainviewer.csv ]; then
+            wc -l data/radar/radar_features_rainviewer.csv
+          fi
