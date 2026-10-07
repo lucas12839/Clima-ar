@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 
 """
-ClimaAR - RainViewer ingestion
-Obtiene radar actualizado, guarda histórico, genera actual.png
-y radar_nowcast.json para el motor de inteligencia.
+ClimaAR - RainViewer Radar Engine
+
+Obtiene frames reales de RainViewer,
+guarda histórico,
+actualiza actual.png,
+genera features para seguimiento de tormentas
+y prepara radar_nowcast.json.
+
+NO inventa dBZ.
+Las variables dBZ quedan vacías hasta disponer
+de una fuente calibrada.
 """
 
+from __future__ import annotations
+
+import csv
 import json
 import math
 import shutil
@@ -27,8 +38,8 @@ except ImportError:
 # CONFIGURACIÓN
 # ============================================================
 
-LAT = -38.0055
-LON = -62.0
+LAT = -38.71
+LON = -62.26
 
 ZOOM = 7
 SIZE = 512
@@ -49,6 +60,11 @@ HISTORY = RADAR / "historico"
 
 ACTUAL = RADAR / "actual.png"
 NOWCAST = RADAR / "radar_nowcast.json"
+STATUS = RADAR / "status.json"
+
+FEATURES = RADAR / "radar_features_rainviewer.csv"
+
+TEMP = RADAR / "_frames"
 
 
 # ============================================================
@@ -56,22 +72,38 @@ NOWCAST = RADAR / "radar_nowcast.json"
 # ============================================================
 
 def prepare_directories():
-    RADAR.mkdir(parents=True, exist_ok=True)
-    HISTORY.mkdir(parents=True, exist_ok=True)
+
+    RADAR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    HISTORY.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    TEMP.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
 
 # ============================================================
-# RAINVIEWER API
+# API
 # ============================================================
 
 def get_api_data():
+
     last_error = None
 
     for attempt in range(3):
+
         try:
+
             response = requests.get(
                 API,
-                timeout=20,
+                timeout=30,
                 headers={
                     "Cache-Control": "no-cache",
                     "User-Agent": "ClimaAR/1.0"
@@ -82,32 +114,65 @@ def get_api_data():
 
             data = response.json()
 
-            frames = data.get("radar", {}).get("past", [])
+            radar = data.get(
+                "radar",
+                {}
+            )
+
+            frames = radar.get(
+                "past",
+                []
+            )
 
             if not frames:
-                raise RuntimeError("RainViewer no devolvió frames de radar")
+                raise RuntimeError(
+                    "RainViewer no devolvió frames"
+                )
+
+            host = data.get(
+                "host",
+                ""
+            )
+
+            if not host:
+                raise RuntimeError(
+                    "RainViewer no devolvió host"
+                )
 
             return data, frames
 
         except Exception as exc:
+
             last_error = exc
-            print(f"RainViewer intento {attempt + 1}/3: {exc}")
+
+            print(
+                f"Intento {attempt + 1}/3: {exc}"
+            )
+
             time.sleep(2)
 
     raise RuntimeError(
-        f"No se pudo obtener RainViewer: {last_error}"
+        f"RainViewer error: {last_error}"
     )
 
 
 # ============================================================
-# URL DE IMAGEN
+# URL
 # ============================================================
 
-def frame_url(host, frame):
-    path = frame.get("path")
+def frame_url(
+    host,
+    frame
+):
+
+    path = frame.get(
+        "path"
+    )
 
     if not path:
-        raise RuntimeError("Frame sin path")
+        raise RuntimeError(
+            "Frame sin path"
+        )
 
     return (
         f"{host}{path}/"
@@ -117,10 +182,19 @@ def frame_url(host, frame):
 
 
 # ============================================================
-# DESCARGAR FRAME
+# DESCARGA
 # ============================================================
 
-def download_frame(url):
+def download_frame(
+    url,
+    timestamp
+):
+
+    output = (
+        TEMP /
+        f"frame_{timestamp}.png"
+    )
+
     response = requests.get(
         url,
         timeout=30,
@@ -131,106 +205,325 @@ def download_frame(url):
 
     response.raise_for_status()
 
-    image_path = RADAR / "_latest_rainviewer.png"
+    output.write_bytes(
+        response.content
+    )
 
-    image_path.write_bytes(response.content)
+    image = Image.open(
+        output
+    ).convert("RGBA")
 
-    image = Image.open(image_path).convert("RGBA")
+    image.save(
+        output,
+        format="PNG"
+    )
 
-    image.save(image_path, format="PNG")
-
-    return image_path
+    return output
 
 
 # ============================================================
-# ANÁLISIS BÁSICO DEL RADAR
+# ANÁLISIS DE IMAGEN
 # ============================================================
 
-def analyze_image(path):
-    image = Image.open(path).convert("RGBA")
+def analyze_image(
+    path
+):
 
-    rgba = np.array(image)
+    image = Image.open(
+        path
+    ).convert("RGBA")
+
+    rgba = np.array(
+        image
+    )
 
     rgb = rgba[:, :, :3]
 
-    # Detectamos píxeles con color significativo.
-    intensity = rgb.max(axis=2) - rgb.min(axis=2)
+    maximum = rgb.max(
+        axis=2
+    )
+
+    minimum = rgb.min(
+        axis=2
+    )
+
+    intensity = (
+        maximum -
+        minimum
+    )
 
     mask = (
         (intensity > 25)
-        & (rgb.max(axis=2) > 70)
+        &
+        (maximum > 70)
     )
 
-    pixels = int(mask.sum())
+    pixels = int(
+        mask.sum()
+    )
 
     total = mask.size
 
-    coverage = pixels / total if total else 0.0
-
-    result = {
-        "pixels_precipitacion": pixels,
-        "cobertura_precipitacion": round(coverage, 6),
-        "actividad": "sin_datos"
-    }
-
-    if pixels == 0:
-        result["actividad"] = "sin_precipitacion"
-    elif coverage < 0.01:
-        result["actividad"] = "precipitacion_debil"
-    elif coverage < 0.05:
-        result["actividad"] = "precipitacion_moderada"
-    else:
-        result["actividad"] = "precipitacion_extensa"
-
-    # --------------------------------------------------------
-    # Detección de zonas intensas aproximada
-    # --------------------------------------------------------
+    coverage = (
+        pixels / total
+        if total
+        else 0.0
+    )
 
     strong = (
-        (rgb[:, :, 0] > 140)
-        | (rgb[:, :, 1] > 140)
-        | (rgb[:, :, 2] > 140)
-    ) & mask
+        (
+            (rgb[:, :, 0] > 140)
+            |
+            (rgb[:, :, 1] > 140)
+            |
+            (rgb[:, :, 2] > 140)
+        )
+        &
+        mask
+    )
 
-    strong_pixels = int(strong.sum())
+    strong_pixels = int(
+        strong.sum()
+    )
 
-    result["pixeles_intensos"] = strong_pixels
+    # --------------------------------------------------------
+    # CENTROIDE
+    # --------------------------------------------------------
 
-    if strong_pixels > 0:
-        result["actividad_intensa"] = True
+    centroid_x = None
+    centroid_y = None
+
+    if pixels > 0:
+
+        ys, xs = np.where(
+            mask
+        )
+
+        if len(xs) > 0:
+
+            centroid_x = float(
+                np.mean(xs)
+            )
+
+            centroid_y = float(
+                np.mean(ys)
+            )
+
+    # --------------------------------------------------------
+    # NÚCLEOS
+    # --------------------------------------------------------
+
+    nuclei = []
+
+    if cv2 is not None and pixels > 0:
+
+        try:
+
+            binary = (
+                mask.astype(
+                    np.uint8
+                )
+                *
+                255
+            )
+
+            kernel = np.ones(
+                (5, 5),
+                np.uint8
+            )
+
+            binary = cv2.morphologyEx(
+                binary,
+                cv2.MORPH_OPEN,
+                kernel
+            )
+
+            contours, _ = cv2.findContours(
+                binary,
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE
+            )
+
+            for contour in contours:
+
+                area = float(
+                    cv2.contourArea(
+                        contour
+                    )
+                )
+
+                if area < 20:
+                    continue
+
+                moments = cv2.moments(
+                    contour
+                )
+
+                if (
+                    moments["m00"]
+                    == 0
+                ):
+                    continue
+
+                cx = (
+                    moments["m10"]
+                    /
+                    moments["m00"]
+                )
+
+                cy = (
+                    moments["m01"]
+                    /
+                    moments["m00"]
+                )
+
+                nuclei.append(
+                    {
+                        "x": round(
+                            float(cx),
+                            2
+                        ),
+                        "y": round(
+                            float(cy),
+                            2
+                        ),
+                        "area_px": round(
+                            area,
+                            2
+                        )
+                    }
+                )
+
+            nuclei.sort(
+                key=lambda x:
+                x["area_px"],
+                reverse=True
+            )
+
+            nuclei = nuclei[:20]
+
+        except Exception as exc:
+
+            print(
+                f"Advertencia núcleos: {exc}"
+            )
+
+    if pixels == 0:
+
+        activity = (
+            "sin_precipitacion"
+        )
+
+    elif coverage < 0.01:
+
+        activity = (
+            "precipitacion_debil"
+        )
+
+    elif coverage < 0.05:
+
+        activity = (
+            "precipitacion_moderada"
+        )
+
     else:
-        result["actividad_intensa"] = False
 
-    return result
+        activity = (
+            "precipitacion_extensa"
+        )
+
+    return {
+
+        "pixels_precipitacion":
+            pixels,
+
+        "cobertura_precipitacion":
+            round(
+                coverage,
+                6
+            ),
+
+        "pixeles_intensos":
+            strong_pixels,
+
+        "actividad":
+            activity,
+
+        "centroide_x":
+            centroid_x,
+
+        "centroide_y":
+            centroid_y,
+
+        "nucleos":
+            nuclei
+    }
 
 
 # ============================================================
-# ESTIMACIÓN DE MOVIMIENTO
+# MOVIMIENTO
 # ============================================================
 
-def estimate_motion(previous_path, current_path):
+def estimate_motion(
+    previous_path,
+    current_path
+):
+
     result = {
-        "direccion": "desconocida",
-        "velocidad_pixeles_frame": 0.0
+
+        "direccion":
+            "desconocida",
+
+        "velocidad_pixeles_frame":
+            0.0,
+
+        "dx":
+            0.0,
+
+        "dy":
+            0.0
     }
 
     if cv2 is None:
         return result
 
     try:
-        prev = cv2.imread(str(previous_path), cv2.IMREAD_GRAYSCALE)
-        curr = cv2.imread(str(current_path), cv2.IMREAD_GRAYSCALE)
 
-        if prev is None or curr is None:
+        previous = cv2.imread(
+            str(previous_path),
+            cv2.IMREAD_GRAYSCALE
+        )
+
+        current = cv2.imread(
+            str(current_path),
+            cv2.IMREAD_GRAYSCALE
+        )
+
+        if (
+            previous is None
+            or
+            current is None
+        ):
             return result
 
-        prev = cv2.GaussianBlur(prev, (9, 9), 0)
-        curr = cv2.GaussianBlur(curr, (9, 9), 0)
+        previous = cv2.GaussianBlur(
+            previous,
+            (9, 9),
+            0
+        )
+
+        current = cv2.GaussianBlur(
+            current,
+            (9, 9),
+            0
+        )
 
         flow = cv2.calcOpticalFlowFarneback(
-            prev,
-            curr,
+
+            previous,
+            current,
             None,
+
             0.5,
             3,
             15,
@@ -243,86 +536,498 @@ def estimate_motion(previous_path, current_path):
         fx = flow[:, :, 0]
         fy = flow[:, :, 1]
 
-        magnitude = np.sqrt(fx ** 2 + fy ** 2)
+        magnitude = np.sqrt(
+            fx ** 2
+            +
+            fy ** 2
+        )
 
-        valid = magnitude > 0.3
+        valid = (
+            magnitude > 0.3
+        )
 
         if not np.any(valid):
             return result
 
-        mean_x = float(np.mean(fx[valid]))
-        mean_y = float(np.mean(fy[valid]))
+        mean_x = float(
+            np.median(
+                fx[valid]
+            )
+        )
 
-        speed = math.sqrt(mean_x ** 2 + mean_y ** 2)
+        mean_y = float(
+            np.median(
+                fy[valid]
+            )
+        )
 
-        if abs(mean_x) > abs(mean_y):
-            direction = "este" if mean_x > 0 else "oeste"
+        speed = math.sqrt(
+            mean_x ** 2
+            +
+            mean_y ** 2
+        )
+
+        if (
+            abs(mean_x)
+            >
+            abs(mean_y)
+        ):
+
+            direction = (
+                "este"
+                if mean_x > 0
+                else "oeste"
+            )
+
         else:
-            direction = "sur" if mean_y > 0 else "norte"
 
-        result["direccion"] = direction
-        result["velocidad_pixeles_frame"] = round(speed, 3)
+            direction = (
+                "sur"
+                if mean_y > 0
+                else "norte"
+            )
+
+        result = {
+
+            "direccion":
+                direction,
+
+            "velocidad_pixeles_frame":
+                round(
+                    speed,
+                    3
+                ),
+
+            "dx":
+                round(
+                    mean_x,
+                    3
+                ),
+
+            "dy":
+                round(
+                    mean_y,
+                    3
+                )
+        }
 
     except Exception as exc:
-        print(f"Advertencia movimiento: {exc}")
+
+        print(
+            f"Advertencia movimiento: {exc}"
+        )
 
     return result
 
 
 # ============================================================
-# GUARDAR HISTÓRICO
+# DISTANCIA APROXIMADA
 # ============================================================
 
-def save_history(source_path, timestamp):
-    output = HISTORY / f"radar_{timestamp}.png"
+def pixel_distance_km(
+    x,
+    y
+):
 
-    shutil.copy2(source_path, output)
+    if (
+        x is None
+        or
+        y is None
+    ):
+        return None
 
-    return output
+    center_x = SIZE / 2
+    center_y = SIZE / 2
 
+    dx = x - center_x
+    dy = y - center_y
 
-# ============================================================
-# LIMPIAR HISTÓRICO
-# ============================================================
+    # Aproximación para zoom 7.
+    # Se usa solamente como variable relativa
+    # hasta calibrar georreferenciación exacta.
 
-def cleanup_history():
-    files = sorted(
-        HISTORY.glob("radar_*.png"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True
+    km_per_pixel = 0.305
+
+    return round(
+        math.sqrt(
+            dx * dx
+            +
+            dy * dy
+        )
+        *
+        km_per_pixel,
+        2
     )
 
-    for old_file in files[MAX_HISTORY:]:
+
+# ============================================================
+# FEATURES CSV
+# ============================================================
+
+def ensure_features_file():
+
+    if FEATURES.exists():
+        return
+
+    with FEATURES.open(
+        "w",
+        newline="",
+        encoding="utf-8"
+    ) as file:
+
+        writer = csv.writer(
+            file
+        )
+
+        writer.writerow([
+
+            "frame_time",
+            "frame_utc",
+            "source",
+
+            "latitud",
+            "longitud",
+
+            "area_px",
+            "distance_km",
+
+            "dbz_max",
+            "dbz_mean",
+            "dbz_p90",
+            "dbz_pixels",
+
+            "tiles_ok",
+
+            "nucleos",
+
+            "centroide_x",
+            "centroide_y",
+
+            "pixeles_intensos",
+            "cobertura_precipitacion",
+
+            "movimiento_x",
+            "movimiento_y",
+
+            "direccion",
+            "velocidad_pixeles_frame"
+        ])
+
+
+def append_feature(
+    timestamp,
+    analysis,
+    motion,
+    tiles_ok=1
+):
+
+    ensure_features_file()
+
+    dt = datetime.fromtimestamp(
+        int(timestamp),
+        tz=timezone.utc
+    )
+
+    distance = pixel_distance_km(
+        analysis.get(
+            "centroide_x"
+        ),
+        analysis.get(
+            "centroide_y"
+        )
+    )
+
+    row = [
+
+        int(timestamp),
+
+        dt.isoformat(),
+
+        "RainViewer",
+
+        LAT,
+        LON,
+
+        analysis.get(
+            "pixels_precipitacion",
+            0
+        ),
+
+        distance,
+
+        "",
+
+        "",
+
+        "",
+
+        0,
+
+        tiles_ok,
+
+        json.dumps(
+            analysis.get(
+                "nucleos",
+                []
+            ),
+            ensure_ascii=False,
+            separators=(
+                ",",
+                ":"
+            )
+        ),
+
+        analysis.get(
+            "centroide_x"
+        ),
+
+        analysis.get(
+            "centroide_y"
+        ),
+
+        analysis.get(
+            "pixeles_intensos",
+            0
+        ),
+
+        analysis.get(
+            "cobertura_precipitacion",
+            0
+        ),
+
+        motion.get(
+            "dx",
+            0
+        ),
+
+        motion.get(
+            "dy",
+            0
+        ),
+
+        motion.get(
+            "direccion",
+            "desconocida"
+        ),
+
+        motion.get(
+            "velocidad_pixeles_frame",
+            0
+        )
+    ]
+
+    existing = set()
+
+    if FEATURES.exists():
+
         try:
-            old_file.unlink()
+
+            with FEATURES.open(
+                "r",
+                encoding="utf-8"
+            ) as file:
+
+                reader = csv.DictReader(
+                    file
+                )
+
+                for item in reader:
+
+                    try:
+
+                        existing.add(
+                            int(
+                                float(
+                                    item[
+                                        "frame_time"
+                                    ]
+                                )
+                            )
+                        )
+
+                    except Exception:
+                        pass
+
         except Exception:
             pass
+
+    if int(timestamp) in existing:
+
+        return
+
+    with FEATURES.open(
+        "a",
+        newline="",
+        encoding="utf-8"
+    ) as file:
+
+        writer = csv.writer(
+            file
+        )
+
+        writer.writerow(
+            row
+        )
+
+
+# ============================================================
+# LIMPIAR FEATURES
+# ============================================================
+
+def cleanup_features():
+
+    if not FEATURES.exists():
+        return
+
+    try:
+
+        with FEATURES.open(
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            reader = list(
+                csv.DictReader(
+                    file
+                )
+            )
+
+        reader.sort(
+            key=lambda row:
+            int(
+                float(
+                    row["frame_time"]
+                )
+            )
+        )
+
+        reader = reader[
+            -4320:
+        ]
+
+        fieldnames = [
+
+            "frame_time",
+            "frame_utc",
+            "source",
+            "latitud",
+            "longitud",
+            "area_px",
+            "distance_km",
+            "dbz_max",
+            "dbz_mean",
+            "dbz_p90",
+            "dbz_pixels",
+            "tiles_ok",
+            "nucleos",
+            "centroide_x",
+            "centroide_y",
+            "pixeles_intensos",
+            "cobertura_precipitacion",
+            "movimiento_x",
+            "movimiento_y",
+            "direccion",
+            "velocidad_pixeles_frame"
+        ]
+
+        with FEATURES.open(
+            "w",
+            newline="",
+            encoding="utf-8"
+        ) as file:
+
+            writer = csv.DictWriter(
+                file,
+                fieldnames=fieldnames
+            )
+
+            writer.writeheader()
+
+            writer.writerows(
+                reader
+            )
+
+    except Exception as exc:
+
+        print(
+            f"Advertencia limpieza CSV: {exc}"
+        )
 
 
 # ============================================================
 # NOWCAST
 # ============================================================
 
-def build_nowcast(frames_info, motion):
-    latest = frames_info[-1] if frames_info else {}
+def build_nowcast(
+    analyzed,
+    motion
+):
+
+    latest = (
+        analyzed[-1]
+        if analyzed
+        else {}
+    )
 
     return {
-        "version": "1.0",
-        "generado_utc": datetime.now(timezone.utc).isoformat(),
-        "fuente": "RainViewer",
+
+        "version":
+            "2.0",
+
+        "generado_utc":
+            datetime.now(
+                timezone.utc
+            ).isoformat(),
+
+        "fuente":
+            "RainViewer",
+
         "centro": {
-            "latitud": LAT,
-            "longitud": LON
+
+            "latitud":
+                LAT,
+
+            "longitud":
+                LON
         },
-        "frames_analizados": len(frames_info),
-        "ultimo_frame": latest,
-        "movimiento": motion,
+
+        "frames_analizados":
+            len(analyzed),
+
+        "ultimo_frame":
+            latest,
+
+        "movimiento":
+            motion,
+
         "prediccion": {
-            "disponible": True,
-            "metodo": "seguimiento_radar",
-            "horizonte_minutos": 30
+
+            "disponible":
+                True,
+
+            "metodo":
+                "seguimiento_radar",
+
+            "horizonte_minutos":
+                30
         }
     }
+
+
+# ============================================================
+# LIMPIAR TEMPORALES
+# ============================================================
+
+def cleanup_temp():
+
+    for file in TEMP.glob(
+        "frame_*.png"
+    ):
+
+        try:
+            file.unlink()
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -331,107 +1036,205 @@ def build_nowcast(frames_info, motion):
 
 def main():
 
-    print("==========================================")
-    print(" CLIMAAR - RAINVIEWER")
-    print("==========================================")
+    print(
+        "=" * 50
+    )
+
+    print(
+        "CLIMAAR - RAINVIEWER V2"
+    )
+
+    print(
+        "=" * 50
+    )
 
     prepare_directories()
 
     try:
 
-        data, frames = get_api_data()
+        data, frames = (
+            get_api_data()
+        )
 
-        host = data.get("host", "")
+        host = data[
+            "host"
+        ]
 
-        if not host:
-            raise RuntimeError("RainViewer no devolvió host")
-
-        # Tomamos los últimos frames disponibles.
-        selected = frames[-FRAMES:]
+        selected = frames[
+            -FRAMES:
+        ]
 
         downloaded = []
 
         for frame in selected:
 
-            url = frame_url(host, frame)
-
-            print(f"Descargando: {url}")
-
-            try:
-                path = download_frame(url)
-                downloaded.append((frame, path))
-
-            except Exception as exc:
-                print(f"Error descargando frame: {exc}")
-
-        if not downloaded:
-            raise RuntimeError(
-                "No se pudo descargar ningún frame de RainViewer"
+            timestamp = int(
+                frame.get(
+                    "time",
+                    time.time()
+                )
             )
 
-        # ----------------------------------------------------
-        # Analizar frames
-        # ----------------------------------------------------
+            url = frame_url(
+                host,
+                frame
+            )
+
+            print(
+                f"Frame {timestamp}"
+            )
+
+            try:
+
+                path = download_frame(
+                    url,
+                    timestamp
+                )
+
+                downloaded.append(
+                    (
+                        frame,
+                        path
+                    )
+                )
+
+            except Exception as exc:
+
+                print(
+                    f"Error frame {timestamp}: {exc}"
+                )
+
+        if not downloaded:
+
+            raise RuntimeError(
+                "No se descargó ningún frame"
+            )
 
         analyzed = []
 
         for frame, path in downloaded:
 
-            analysis = analyze_image(path)
+            timestamp = int(
+                frame.get(
+                    "time",
+                    time.time()
+                )
+            )
 
-            timestamp = frame.get("time")
+            analysis = analyze_image(
+                path
+            )
 
             analyzed.append({
-                "time": timestamp,
-                "path": str(path),
-                "analisis": analysis
+
+                "time":
+                    timestamp,
+
+                "analisis":
+                    analysis
             })
 
         # ----------------------------------------------------
-        # Frame actual
+        # MOVIMIENTO
         # ----------------------------------------------------
 
-        latest_frame, latest_path = downloaded[-1]
+        motion = {
 
-        timestamp = latest_frame.get(
-            "time",
-            int(time.time())
-        )
+            "direccion":
+                "desconocida",
 
-        history_file = save_history(
-            latest_path,
-            timestamp
-        )
+            "velocidad_pixeles_frame":
+                0.0,
 
-        # ESTE ES EL ARCHIVO QUE NECESITA EL RESTO DE CLIMAAR.
+            "dx":
+                0.0,
+
+            "dy":
+                0.0
+        }
+
+        if len(downloaded) >= 2:
+
+            motion = estimate_motion(
+
+                downloaded[-2][1],
+
+                downloaded[-1][1]
+            )
+
+        # ----------------------------------------------------
+        # HISTÓRICO + FEATURES
+        # ----------------------------------------------------
+
+        for index, (
+            frame,
+            path
+        ) in enumerate(
+            downloaded
+        ):
+
+            timestamp = int(
+                frame.get(
+                    "time",
+                    time.time()
+                )
+            )
+
+            analysis = analyzed[
+                index
+            ][
+                "analisis"
+            ]
+
+            frame_motion = motion
+
+            if index > 0:
+
+                frame_motion = (
+                    estimate_motion(
+                        downloaded[
+                            index - 1
+                        ][1],
+                        path
+                    )
+                )
+
+            history_path = (
+                HISTORY /
+                f"radar_{timestamp}.png"
+            )
+
+            shutil.copy2(
+                path,
+                history_path
+            )
+
+            append_feature(
+
+                timestamp,
+
+                analysis,
+
+                frame_motion,
+
+                tiles_ok=1
+            )
+
+        # ----------------------------------------------------
+        # ACTUAL
+        # ----------------------------------------------------
+
+        latest_path = downloaded[
+            -1
+        ][1]
+
         shutil.copy2(
             latest_path,
             ACTUAL
         )
 
-        print(f"Radar actual: {ACTUAL}")
-        print(f"Histórico: {history_file}")
-
         # ----------------------------------------------------
-        # Movimiento
-        # ----------------------------------------------------
-
-        motion = {
-            "direccion": "desconocida",
-            "velocidad_pixeles_frame": 0.0
-        }
-
-        if len(downloaded) >= 2:
-
-            previous_path = downloaded[-2][1]
-
-            motion = estimate_motion(
-                previous_path,
-                latest_path
-            )
-
-        # ----------------------------------------------------
-        # Nowcast
+        # NOWCAST
         # ----------------------------------------------------
 
         nowcast = build_nowcast(
@@ -440,90 +1243,133 @@ def main():
         )
 
         NOWCAST.write_text(
+
             json.dumps(
                 nowcast,
                 indent=2,
                 ensure_ascii=False
             ),
+
             encoding="utf-8"
         )
 
         cleanup_history()
 
+        cleanup_features()
+
         # ----------------------------------------------------
-        # Status
+        # STATUS
         # ----------------------------------------------------
 
         status = {
-            "ok": True,
-            "fuente": "RainViewer",
-            "frames": len(downloaded),
-            "actual": str(ACTUAL),
-            "nowcast": str(NOWCAST),
-            "timestamp_utc": datetime.now(
-                timezone.utc
-            ).isoformat()
+
+            "ok":
+                True,
+
+            "fuente":
+                "RainViewer",
+
+            "frames":
+                len(downloaded),
+
+            "actual":
+                str(ACTUAL),
+
+            "features":
+                str(FEATURES),
+
+            "nowcast":
+                str(NOWCAST),
+
+            "timestamp_utc":
+                datetime.now(
+                    timezone.utc
+                ).isoformat()
         }
 
-        status_file = RADAR / "status.json"
+        STATUS.write_text(
 
-        status_file.write_text(
             json.dumps(
                 status,
                 indent=2,
                 ensure_ascii=False
             ),
+
             encoding="utf-8"
         )
 
+        cleanup_temp()
+
         print("")
-        print("==========================================")
-        print(" CLIMAAR RAINVIEWER OK")
-        print("==========================================")
-        print(f"Frames: {len(downloaded)}")
-        print(f"Actual: {ACTUAL}")
-        print(f"Nowcast: {NOWCAST}")
-        print(f"Movimiento: {motion}")
+        print(
+            "CLIMAAR RAINVIEWER OK"
+        )
+
+        print(
+            f"Frames: {len(downloaded)}"
+        )
+
+        print(
+            f"Features: {FEATURES}"
+        )
+
+        print(
+            f"Actual: {ACTUAL}"
+        )
+
+        print(
+            f"Nowcast: {NOWCAST}"
+        )
 
     except Exception as exc:
 
         print("")
-        print("==========================================")
-        print(" ERROR RAINVIEWER")
-        print("==========================================")
-        print(str(exc))
+        print(
+            "ERROR RAINVIEWER"
+        )
 
-        # No borramos el radar anterior.
-        # Esto permite que ClimaAR conserve el último
-        # dato disponible si RainViewer falla.
+        print(
+            str(exc)
+        )
 
         if ACTUAL.exists():
 
-            print(
-                "Se conserva el radar anterior como respaldo."
-            )
-
             fallback = {
-                "ok": False,
-                "fuente": "RainViewer",
-                "fallback": True,
-                "actual_existente": True,
-                "error": str(exc),
-                "timestamp_utc": datetime.now(
-                    timezone.utc
-                ).isoformat()
+
+                "ok":
+                    False,
+
+                "fuente":
+                    "RainViewer",
+
+                "fallback":
+                    True,
+
+                "actual_existente":
+                    True,
+
+                "error":
+                    str(exc),
+
+                "timestamp_utc":
+                    datetime.now(
+                        timezone.utc
+                    ).isoformat()
             }
 
             NOWCAST.write_text(
+
                 json.dumps(
                     fallback,
                     indent=2,
                     ensure_ascii=False
                 ),
+
                 encoding="utf-8"
             )
 
         else:
+
             raise
 
 
