@@ -43,12 +43,14 @@ jobs:
           python scripts/radar_repair_decoder.py
           test -s data/radar/radar_nowcast.json
           python -m json.tool data/radar/radar_nowcast.json >/dev/null
+
           python - <<'PY'
           import json
           from pathlib import Path
 
           p = Path("data/radar/radar_nowcast.json")
           data = json.loads(p.read_text(encoding="utf-8"))
+
           n = data.get("nowcast", {})
           d = data.get("diagnostico", {}).get("ultimo_frame", {})
 
@@ -140,7 +142,15 @@ jobs:
           if not isinstance(radar, dict):
               raise SystemExit("ERROR: radar inválido")
 
+          # El Storm Engine puede entregar el frame directamente
+          # o dentro del bloque "nowcast". Aceptamos ambas estructuras.
           frame = radar.get("frame_actual_utc")
+
+          if not frame:
+              nested = radar.get("nowcast", {})
+
+              if isinstance(nested, dict):
+                  frame = nested.get("frame_actual_utc")
 
           if not frame:
               raise SystemExit(
