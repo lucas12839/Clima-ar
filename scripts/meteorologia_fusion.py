@@ -12,10 +12,10 @@ import requests
 # ============================================================
 # CLIMAAR INTELLIGENCE
 # MOTOR DE ADQUISICION Y FUSION METEOROLOGICA
-# Version 1.0.3
+# Version 1.1.0
 # ============================================================
 
-VERSION = "1.0.3"
+VERSION = "1.1.0"
 
 LAT = -38.71
 LON = -62.26
@@ -524,6 +524,148 @@ def obtener_actual_centro(ambiente):
 
 
 # ============================================================
+# FUSION SUPERFICIE ACTUAL: SAZB + ECMWF
+# ============================================================
+
+SAZB_FRESH_MAX_MINUTES = 15
+
+
+def _parse_utc_timestamp(value):
+    if not value:
+        return None
+
+    try:
+        texto = str(value).strip()
+
+        if texto.endswith("Z"):
+            texto = texto[:-1] + "+00:00"
+
+        dt = datetime.fromisoformat(texto)
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+
+        return dt
+
+    except Exception:
+        return None
+
+
+def obtener_edad_sazb_minutos(sazb):
+    edad = finite(sazb.get("edad_minutos"))
+
+    if edad is not None:
+        return max(0.0, edad)
+
+    obs_time = _parse_utc_timestamp(sazb.get("obsTime_utc"))
+
+    if obs_time is None:
+        return None
+
+    edad = (
+        datetime.now(timezone.utc) - obs_time
+    ).total_seconds() / 60.0
+
+    return max(0.0, edad)
+
+
+def fusionar_actual_ecmwf_sazb(actual, sazb):
+    """
+    Para el estado superficial actual se prioriza SAZB/AWC,
+    porque es una observacion real de estacion.
+
+    ECMWF sigue siendo la fuente del estado atmosferico/modelado
+    y de la evolucion futura.
+
+    Si SAZB esta vieja, NO se presenta como observacion fresca:
+    se conserva el ultimo valor observado, pero se informa
+    explicitamente su antiguedad.
+    """
+
+    resultado = dict(actual)
+
+    edad_minutos = obtener_edad_sazb_minutos(sazb)
+
+    sazb_valido = bool(sazb.get("disponible"))
+
+    if not sazb_valido:
+        resultado["fuente_superficie_actual"] = "ECMWF"
+        resultado["estado_observacion_actual"] = "sin_observacion_sazb"
+        resultado["observacion_sazb_utc"] = sazb.get("obsTime_utc")
+        resultado["observacion_sazb_edad_minutos"] = edad_minutos
+        resultado["viento_actual_fuente"] = "ECMWF"
+        resultado["viento_actual_kmh"] = finite(
+            actual.get("wind_speed_10m")
+        )
+        resultado["direccion_viento_actual"] = finite(
+            actual.get("wind_direction_10m")
+        )
+        return resultado
+
+    # Guardamos siempre el valor modelado para comparacion.
+    resultado["modelo_ecmwf_viento_10m_kmh"] = finite(
+        actual.get("wind_speed_10m")
+    )
+    resultado["modelo_ecmwf_direccion_10m"] = finite(
+        actual.get("wind_direction_10m")
+    )
+    resultado["modelo_ecmwf_rafaga_10m_kmh"] = finite(
+        actual.get("wind_gusts_10m")
+    )
+
+    # Temperatura observada.
+    temperatura = finite(sazb.get("temperatura_c"))
+    if temperatura is not None:
+        resultado["temperature_2m"] = temperatura
+
+    # Punto de rocio observado.
+    punto_rocio = finite(sazb.get("punto_rocio_c"))
+    if punto_rocio is not None:
+        resultado["dew_point_2m"] = punto_rocio
+
+    # Presion observada.
+    presion = finite(sazb.get("presion_hpa"))
+    if presion is not None:
+        resultado["pressure_msl"] = presion
+
+    # Viento observado SAZB: kt -> km/h.
+    viento_kt = finite(sazb.get("viento_kt"))
+    viento_kmh = None
+
+    if viento_kt is not None:
+        viento_kmh = viento_kt * 1.852
+        resultado["wind_speed_10m"] = viento_kmh
+
+    direccion = finite(sazb.get("direccion_viento"))
+
+    if direccion is not None:
+        resultado["wind_direction_10m"] = direccion
+
+    resultado["fuente_superficie_actual"] = "SAZB_AWC"
+    resultado["observacion_sazb_utc"] = sazb.get("obsTime_utc")
+    resultado["observacion_sazb_edad_minutos"] = edad_minutos
+    resultado["viento_actual_fuente"] = "SAZB_AWC"
+    resultado["viento_actual_kmh"] = viento_kmh
+    resultado["direccion_viento_actual"] = direccion
+
+    if edad_minutos is not None and edad_minutos <= SAZB_FRESH_MAX_MINUTES:
+        resultado["estado_observacion_actual"] = "observacion_reciente"
+    else:
+        resultado["estado_observacion_actual"] = (
+            "ultima_observacion_disponible"
+        )
+
+    resultado["observacion_sazb_fresca"] = bool(
+        edad_minutos is not None
+        and edad_minutos <= SAZB_FRESH_MAX_MINUTES
+    )
+
+    return resultado
+
+
+# ============================================================
 # CALIDAD DE DATOS
 # ============================================================
 
@@ -797,14 +939,19 @@ def main():
 
     ambiente = construir_ambiente(ecmwf_raw)
 
-    actual = obtener_actual_centro(ambiente)
+    actual_ecmwf = obtener_actual_centro(ambiente)
 
-    if actual is None:
+    if actual_ecmwf is None:
         print(
             "ERROR: no se pudo obtener el punto "
             "meteorologico actual de BB_CENTRO."
         )
         return 1
+
+    actual = fusionar_actual_ecmwf_sazb(
+        actual_ecmwf,
+        sazb,
+    )
 
     calidad = calcular_calidad(
         radar,
@@ -859,7 +1006,7 @@ def main():
     append_historico(
         radar,
         sazb,
-        actual,
+        actual_ecmwf,
         calidad,
     )
 
@@ -872,6 +1019,19 @@ def main():
     print(
         f"Puntos meteorologicos: "
         f"{calidad['puntos_ecmwf_validos']}/9"
+    )
+    print(
+        "Superficie actual:",
+        actual.get("fuente_superficie_actual"),
+        "| estado:",
+        actual.get("estado_observacion_actual"),
+    )
+    print(
+        "Viento actual:",
+        actual.get("viento_actual_kmh"),
+        "km/h | edad SAZB:",
+        actual.get("observacion_sazb_edad_minutos"),
+        "min",
     )
     print("Salida principal:")
     print(FUSION_FILE)
