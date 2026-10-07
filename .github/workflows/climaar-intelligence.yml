@@ -2,6 +2,7 @@ name: ClimaAR Intelligence Central
 
 on:
   workflow_dispatch:
+
   schedule:
     - cron: "*/10 * * * *"
 
@@ -18,7 +19,7 @@ jobs:
 
     steps:
 
-      - name: Descargar repositorio
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -31,77 +32,150 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install requests numpy scipy opencv-python-headless Pillow pandas joblib scikit-learn
+          pip install -r requirements.txt
 
-      - name: Preparar directorios
+      - name: Crear directorios
         run: |
           mkdir -p data/radar/historico
           mkdir -p data/ia
           mkdir -p logs
 
-      - name: Obtener radar RainViewer
+      - name: Actualizar radar RainViewer
         run: |
           python scripts/radar_rainviewer.py
 
       - name: Verificar radar
         run: |
-          set -e
           test -s data/radar/actual.png
           test -s data/radar/radar_nowcast.json
           test -s data/radar/status.json
+          test -s data/radar/radar_features_rainviewer.csv
 
-      - name: Analizar radar
+      - name: Verificar estructura CSV
         run: |
-          python scripts/radar_repair_decoder.py
+          python - <<'PY'
+          import csv
 
-      - name: Fusion meteorologica
+          path = "data/radar/radar_features_rainviewer.csv"
+
+          expected = 21
+
+          with open(
+              path,
+              encoding="utf-8",
+              newline=""
+          ) as f:
+
+              reader = csv.reader(f)
+
+              header = next(reader)
+
+              if len(header) != expected:
+                  raise SystemExit(
+                      f"ERROR: encabezado tiene {len(header)} columnas"
+                  )
+
+              rows = 0
+
+              for line, row in enumerate(
+                  reader,
+                  start=2
+              ):
+                  if not row:
+                      continue
+
+                  if len(row) != expected:
+                      raise SystemExit(
+                          f"ERROR: línea {line} tiene "
+                          f"{len(row)} columnas; "
+                          f"esperadas {expected}"
+                      )
+
+                  rows += 1
+
+          print(
+              f"CSV OK: {rows} filas / {expected} columnas"
+          )
+          PY
+
+      - name: Decodificador de radar
+        run: |
+          if [ -f scripts/radar_repair_decoder.py ]; then
+            python scripts/radar_repair_decoder.py
+          else
+            echo "Decoder no encontrado; se continúa."
+          fi
+
+      - name: Fusión meteorológica
         run: |
           if [ -f scripts/meteorologia_fusion.py ]; then
             python scripts/meteorologia_fusion.py
+          else
+            echo "meteorologia_fusion.py no encontrado; se continúa."
           fi
 
-      - name: Inteligencia de tormenta
+      - name: Inteligencia de tormentas
         run: |
           if [ -f scripts/tormenta_intelligence.py ]; then
             python scripts/tormenta_intelligence.py
+          else
+            echo "tormenta_intelligence.py no encontrado; se continúa."
           fi
+
+      - name: Verificación final
+        run: |
+          python - <<'PY'
+          import csv
+          import os
+
+          path = "data/radar/radar_features_rainviewer.csv"
+
+          with open(
+              path,
+              encoding="utf-8",
+              newline=""
+          ) as f:
+
+              reader = csv.reader(f)
+
+              header = next(reader)
+
+              assert len(header) == 21
+
+              count = 0
+
+              for row in reader:
+                  if row:
+                      assert len(row) == 21
+                      count += 1
+
+          assert os.path.getsize(
+              "data/radar/actual.png"
+          ) > 0
+
+          print(
+              f"VALIDACIÓN OK: {count} filas"
+          )
+          PY
 
       - name: Guardar cambios
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -f data/radar/actual.png
-          git add -f data/radar/radar_nowcast.json
-          git add -f data/radar/status.json
-          git add -f data/radar/radar_features_rainviewer.csv
-          git add -f data/radar/historico/
-          git add -f data/ia/
-          git add -f logs/
+          git add \
+            data/radar/actual.png \
+            data/radar/radar_nowcast.json \
+            data/radar/status.json \
+            data/radar/radar_features_rainviewer.csv \
+            data/radar/historico \
+            data/ia \
+            logs
 
-          if git diff --cached --quiet; then
-            echo "Sin cambios."
-          else
-            git commit -m "ClimaAR: actualizar radar e inteligencia"
-            git push origin main
-          fi
+          git diff --cached --quiet || \
+            git commit -m "ClimaAR: actualización radar e inteligencia"
 
-      - name: Verificacion final
+      - name: Sincronizar y publicar
         run: |
-          echo "================================"
-          echo " CLIMAAR OK"
-          echo "================================"
-
-          ls -lh data/radar/actual.png
-          ls -lh data/radar/radar_nowcast.json
-          ls -lh data/radar/status.json
-
-          echo ""
-          echo "Frames del histórico:"
-          find data/radar/historico -name "radar_*.png" | wc -l
-
-          echo ""
-          echo "Features:"
-          if [ -f data/radar/radar_features_rainviewer.csv ]; then
-            wc -l data/radar/radar_features_rainviewer.csv
-          fi
+          git pull --rebase origin main
+          git push origin HEAD:main
