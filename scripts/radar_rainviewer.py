@@ -11,7 +11,7 @@ import requests
 
 # ============================================================
 # CLIMAAR - RADAR RAINVIEWER
-# v9.2 - RADAR SAFE
+# v10.0 - SOURCE HEALTH + WEAK ECHO DETECTION
 # ============================================================
 
 LAT = -38.71
@@ -29,24 +29,22 @@ MAX_HISTORY = 144
 RADAR_DIR = "data/radar"
 HISTORY_DIR = os.path.join(RADAR_DIR, "historico")
 
-ACTUAL_PATH = os.path.join(
-    RADAR_DIR,
-    "actual.png"
-)
-
-NOWCAST_PATH = os.path.join(
-    RADAR_DIR,
-    "radar_nowcast.json"
-)
-
-STATUS_PATH = os.path.join(
-    RADAR_DIR,
-    "status.json"
-)
-
+ACTUAL_PATH = os.path.join(RADAR_DIR, "actual.png")
+NOWCAST_PATH = os.path.join(RADAR_DIR, "radar_nowcast.json")
+STATUS_PATH = os.path.join(RADAR_DIR, "status.json")
 FEATURES_PATH = os.path.join(
     RADAR_DIR,
     "radar_features_rainviewer.csv"
+)
+
+LAST_VALID_IMAGE_PATH = os.path.join(
+    RADAR_DIR,
+    "last_valid_radar.png"
+)
+
+LAST_VALID_NOWCAST_PATH = os.path.join(
+    RADAR_DIR,
+    "last_valid_nowcast.json"
 )
 
 RAINVIEWER_API = (
@@ -150,6 +148,33 @@ def atomic_json_write(
     )
 
 
+def atomic_copy_file(
+    source,
+    destination
+):
+
+    temporary = destination + ".tmp"
+
+    with open(
+        source,
+        "rb"
+    ) as src:
+
+        with open(
+            temporary,
+            "wb"
+        ) as dst:
+
+            dst.write(
+                src.read()
+            )
+
+    os.replace(
+        temporary,
+        destination
+    )
+
+
 # ============================================================
 # RAINVIEWER API
 # ============================================================
@@ -245,8 +270,18 @@ def build_image_url(
     )
 
 
+def build_coverage_url(host):
+
+    return (
+        f"{host}/v2/coverage/0/"
+        f"{SIZE}/{ZOOM}/"
+        f"{LAT}/{LON}/"
+        f"0/0_0.png"
+    )
+
+
 # ============================================================
-# DESCARGA DE IMAGEN
+# DESCARGA Y DIAGNOSTICO
 # ============================================================
 
 def download_image(url):
@@ -258,12 +293,10 @@ def download_image(url):
 
     response.raise_for_status()
 
-    content_type = (
-        response.headers.get(
-            "content-type",
-            ""
-        ).lower()
-    )
+    content_type = response.headers.get(
+        "content-type",
+        ""
+    ).lower()
 
     if len(response.content) < 512:
 
@@ -315,24 +348,18 @@ def download_image(url):
             "Imagen demasiado pequena"
         )
 
-    # --------------------------------------------------------
-    # DIAGNOSTICO
-    # --------------------------------------------------------
-
     if (
         image.ndim == 3
         and image.shape[2] == 4
     ):
 
-        b, g, r, alpha = cv2.split(
-            image
-        )
+        alpha = image[:, :, 3]
 
         rgb_max = int(
             max(
-                b.max(),
-                g.max(),
-                r.max()
+                image[:, :, 0].max(),
+                image[:, :, 1].max(),
+                image[:, :, 2].max()
             )
         )
 
@@ -346,22 +373,18 @@ def download_image(url):
             )
         )
 
-        if alpha_max == 0:
+        fully_transparent = (
+            alpha_max == 0
+        )
 
-            print(
-                "[RADAR] "
-                "Imagen completamente transparente: "
-                "se acepta como RADAR SIN PRECIPITACION."
-            )
-
-        else:
-
-            print(
-                "[RADAR] "
-                f"imagen={width}x{height} "
-                f"rgb_max={rgb_max} "
-                f"pixeles_visibles={visible_pixels}"
-            )
+        print(
+            "[RADAR] "
+            f"imagen={width}x{height} "
+            f"rgb_max={rgb_max} "
+            f"alpha_max={alpha_max} "
+            f"pixeles_visibles={visible_pixels} "
+            f"transparente={fully_transparent}"
+        )
 
     else:
 
@@ -375,6 +398,8 @@ def download_image(url):
             )
         )
 
+        fully_transparent = False
+
         print(
             "[RADAR] "
             f"imagen={width}x{height} "
@@ -382,7 +407,94 @@ def download_image(url):
             f"pixeles_no_negros={nonzero}"
         )
 
-    return image
+    return (
+        image,
+        fully_transparent
+    )
+
+
+def download_coverage_status(host):
+
+    url = build_coverage_url(
+        host
+    )
+
+    try:
+
+        response = SESSION.get(
+            url,
+            timeout=30
+        )
+
+        response.raise_for_status()
+
+        data = np.frombuffer(
+            response.content,
+            dtype=np.uint8
+        )
+
+        image = cv2.imdecode(
+            data,
+            cv2.IMREAD_UNCHANGED
+        )
+
+        if image is None:
+
+            return {
+                "ok": False,
+                "cobertura_disponible": None,
+                "error":
+                    "No se pudo decodificar mascara"
+            }
+
+        if (
+            image.ndim == 3
+            and image.shape[2] == 4
+        ):
+
+            alpha = image[:, :, 3]
+
+            available = int(
+                np.count_nonzero(
+                    alpha >= 20
+                )
+            )
+
+            return {
+                "ok": True,
+                "cobertura_disponible":
+                    available > 0,
+                "pixeles_cobertura":
+                    available
+            }
+
+        nonzero = int(
+            np.count_nonzero(
+                image
+            )
+        )
+
+        return {
+            "ok": True,
+            "cobertura_disponible":
+                nonzero > 0,
+            "pixeles_cobertura":
+                nonzero
+        }
+
+    except Exception as exc:
+
+        print(
+            "[WARN] "
+            "No se pudo consultar cobertura "
+            f"RainViewer: {exc}"
+        )
+
+        return {
+            "ok": False,
+            "cobertura_disponible": None,
+            "error": str(exc)
+        }
 
 
 # ============================================================
@@ -394,9 +506,6 @@ def save_png(
     path
 ):
 
-    # IMPORTANTE:
-    # El temporal DEBE terminar en .png.
-    # OpenCV determina el formato por la extension.
     temporary = path + ".tmp.png"
 
     ok = cv2.imwrite(
@@ -539,16 +648,18 @@ def precipitation_mask(image):
     saturation = hsv[:, :, 1]
     value = hsv[:, :, 2]
 
+    # Umbral bajo para detectar
+    # ecos radar debiles.
     colorful = (
-        saturation >= 12
+        saturation >= 8
     )
 
     visible = (
-        value >= 15
+        value >= 8
     )
 
     opaque = (
-        alpha >= 20
+        alpha >= 10
     )
 
     mask = (
@@ -631,8 +742,7 @@ def analyze_frame(image):
             contour
         )
 
-        if contour_area < 8:
-
+        if contour_area < 3:
             continue
 
         x, y, cw, ch = cv2.boundingRect(
@@ -749,12 +859,6 @@ def analyze_frame(image):
         centroid_y = 0.0
         centroid_distance = 0.0
 
-    # --------------------------------------------------------
-    # PIXELES INTENSOS
-    # --------------------------------------------------------
-    # NO representa dBZ.
-    # Solo identifica intensidad visual del RGB.
-
     if image.ndim == 3:
 
         b = image[:, :, 0]
@@ -780,17 +884,30 @@ def analyze_frame(image):
     )
 
     return {
-        "area_px": area,
-        "coverage": coverage,
-        "nuclei": nuclei,
-        "priority_nuclei": priority_nuclei,
-        "centroid_x": centroid_x,
-        "centroid_y": centroid_y,
+        "area_px":
+            area,
+
+        "coverage":
+            coverage,
+
+        "nuclei":
+            nuclei,
+
+        "priority_nuclei":
+            priority_nuclei,
+
+        "centroid_x":
+            centroid_x,
+
+        "centroid_y":
+            centroid_y,
+
         "centroid_distance_km":
             round(
                 centroid_distance,
                 1
             ),
+
         "intense_pixels":
             int(
                 np.count_nonzero(
@@ -921,7 +1038,6 @@ def movement_direction(
     )
 
     if angle < 0:
-
         angle += 360
 
     directions = [
@@ -958,7 +1074,6 @@ def cleanup_history():
         if not name.endswith(
             ".png"
         ):
-
             continue
 
         path = os.path.join(
@@ -1025,6 +1140,198 @@ def append_features(row):
 
 
 # ============================================================
+# ESTADO DE FUENTE
+# ============================================================
+
+def source_health_from_observations(
+    observations,
+    coverage_info
+):
+
+    if not observations:
+
+        return {
+            "estado_fuente":
+                "sin_datos",
+
+            "radar_con_datos":
+                False,
+
+            "motivo":
+                "No hubo frames descargables"
+        }
+
+    transparent_count = sum(
+        1
+        for item in observations
+        if item[
+            "fully_transparent"
+        ]
+    )
+
+    visible_count = (
+        len(observations)
+        - transparent_count
+    )
+
+    # Si hubo al menos un frame
+    # con datos visibles, RainViewer
+    # entrego informacion util.
+    if visible_count > 0:
+
+        return {
+            "estado_fuente":
+                "datos_recibidos",
+
+            "radar_con_datos":
+                True,
+
+            "motivo":
+                "Hay frames con pixeles radar visibles"
+        }
+
+    # Sin cobertura geografica.
+    if (
+        coverage_info.get(
+            "cobertura_disponible"
+        )
+        is False
+    ):
+
+        return {
+            "estado_fuente":
+                "sin_cobertura",
+
+            "radar_con_datos":
+                False,
+
+            "motivo":
+                "La mascara indica ausencia de cobertura"
+        }
+
+    # TODOS transparentes:
+    # NO afirmamos que esta seco.
+    return {
+        "estado_fuente":
+            "fuente_sin_datos",
+
+        "radar_con_datos":
+            False,
+
+        "motivo":
+            (
+                "Todos los frames recientes "
+                "estan completamente transparentes"
+            )
+    }
+
+
+# ============================================================
+# FALLBACK
+# ============================================================
+
+def load_last_valid_nowcast():
+
+    if not os.path.exists(
+        LAST_VALID_NOWCAST_PATH
+    ):
+
+        return None
+
+    try:
+
+        with open(
+            LAST_VALID_NOWCAST_PATH,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            return json.load(f)
+
+    except Exception as exc:
+
+        print(
+            "[WARN] "
+            "No se pudo cargar ultima "
+            f"observacion valida: {exc}"
+        )
+
+        return None
+
+
+def activate_radar_fallback(
+    current_nowcast,
+    current_status
+):
+
+    last_valid = load_last_valid_nowcast()
+
+    current_nowcast[
+        "fallback"
+    ] = {
+
+        "activo":
+            True,
+
+        "motivo":
+            (
+                "Fuente radar sin datos "
+                "confirmados; se conserva "
+                "la ultima observacion valida."
+            ),
+
+        "ultima_observacion_valida":
+            last_valid is not None
+    }
+
+    current_status[
+        "fallback_activo"
+    ] = True
+
+    current_status[
+        "ultima_observacion_valida"
+    ] = (
+        last_valid is not None
+    )
+
+    if last_valid is not None:
+
+        current_nowcast[
+            "ultima_observacion_valida"
+        ] = last_valid
+
+    if os.path.exists(
+        LAST_VALID_IMAGE_PATH
+    ):
+
+        try:
+
+            atomic_copy_file(
+                LAST_VALID_IMAGE_PATH,
+                ACTUAL_PATH
+            )
+
+            current_status[
+                "imagen_actual"
+            ] = (
+                "ultima_imagen_radar_valida"
+            )
+
+        except Exception as exc:
+
+            print(
+                "[WARN] "
+                "No se pudo restaurar "
+                f"ultima imagen valida: {exc}"
+            )
+
+    return (
+        current_nowcast,
+        current_status
+    )
+
+
+# ============================================================
 # PROCESAMIENTO PRINCIPAL
 # ============================================================
 
@@ -1034,7 +1341,7 @@ def main():
 
     print(
         "[CLIMAAR] "
-        "Iniciando radar RainViewer"
+        "Iniciando radar RainViewer v10.0"
     )
 
     print(
@@ -1050,7 +1357,18 @@ def main():
         -FRAMES:
     ]
 
+    coverage_info = download_coverage_status(
+        host
+    )
+
+    print(
+        "[RADAR] Cobertura: "
+        f"{coverage_info.get('cobertura_disponible')}"
+    )
+
     observations = []
+
+    pending_rows = []
 
     previous_image = None
 
@@ -1078,8 +1396,10 @@ def main():
 
         try:
 
-            image = download_image(
-                url
+            image, fully_transparent = (
+                download_image(
+                    url
+                )
             )
 
             analysis = analyze_frame(
@@ -1100,10 +1420,6 @@ def main():
                 movement_y
             )
 
-            # --------------------------------------------
-            # HISTORIAL
-            # --------------------------------------------
-
             history_path = os.path.join(
                 HISTORY_DIR,
                 f"{timestamp}.png"
@@ -1119,6 +1435,7 @@ def main():
             successful_frames += 1
 
             observation = {
+
                 "time":
                     timestamp,
 
@@ -1141,18 +1458,18 @@ def main():
                     speed,
 
                 "direction":
-                    direction
+                    direction,
+
+                "fully_transparent":
+                    fully_transparent
             }
 
             observations.append(
                 observation
             )
 
-            # --------------------------------------------
-            # CSV
-            # --------------------------------------------
-
             row = {
+
                 "frame_time":
                     timestamp,
 
@@ -1178,7 +1495,6 @@ def main():
                         "centroid_distance_km"
                     ],
 
-                # No inventamos dBZ.
                 "dbz_max":
                     "",
 
@@ -1252,7 +1568,7 @@ def main():
                     )
             }
 
-            append_features(
+            pending_rows.append(
                 row
             )
 
@@ -1262,10 +1578,6 @@ def main():
                 "[WARN] "
                 f"Frame rechazado: {exc}"
             )
-
-    # ========================================================
-    # SI NO HUBO FRAMES
-    # ========================================================
 
     if not observations:
 
@@ -1285,19 +1597,6 @@ def main():
         "analysis"
     ]
 
-    # ========================================================
-    # ACTUAL.PNG
-    # ========================================================
-
-    save_png(
-        latest_image,
-        ACTUAL_PATH
-    )
-
-    # ========================================================
-    # EDAD DEL RADAR
-    # ========================================================
-
     latest_time = latest[
         "time"
     ]
@@ -1310,7 +1609,8 @@ def main():
     )
 
     age_minutes = (
-        age_seconds / 60.0
+        age_seconds
+        / 60.0
     )
 
     precipitation_area = (
@@ -1327,6 +1627,13 @@ def main():
         "priority_nuclei"
     ]
 
+    source_health = (
+        source_health_from_observations(
+            observations,
+            coverage_info
+        )
+    )
+
     # ========================================================
     # ESTADO
     # ========================================================
@@ -1335,6 +1642,36 @@ def main():
 
         estado = (
             "radar_desactualizado"
+        )
+
+        datos_vigentes = False
+
+        confianza = 0.0
+
+    elif (
+        source_health[
+            "estado_fuente"
+        ]
+        == "sin_cobertura"
+    ):
+
+        estado = (
+            "radar_sin_cobertura"
+        )
+
+        datos_vigentes = False
+
+        confianza = 0.0
+
+    elif (
+        source_health[
+            "estado_fuente"
+        ]
+        == "fuente_sin_datos"
+    ):
+
+        estado = (
+            "radar_sin_datos"
         )
 
         datos_vigentes = False
@@ -1369,13 +1706,35 @@ def main():
         confianza = 0.50
 
     # ========================================================
+    # PUBLICAR FEATURES SOLO SI LA FUENTE ENTREGO DATOS
+    # ========================================================
+
+    if source_health[
+        "radar_con_datos"
+    ]:
+
+        for row in pending_rows:
+
+            append_features(
+                row
+            )
+
+    else:
+
+        print(
+            "[RADAR] "
+            "No se agregan filas al CSV: "
+            "fuente radar sin datos confirmados."
+        )
+
+    # ========================================================
     # NOWCAST
     # ========================================================
 
     nowcast = {
 
         "version":
-            "9.2-radar-safe",
+            "10.0-source-health",
 
         "generated_utc":
             utc_now(),
@@ -1409,6 +1768,27 @@ def main():
                 confianza,
                 3
             ),
+
+        "fuente": {
+
+            "estado":
+                source_health[
+                    "estado_fuente"
+                ],
+
+            "radar_con_datos":
+                source_health[
+                    "radar_con_datos"
+                ],
+
+            "motivo":
+                source_health[
+                    "motivo"
+                ],
+
+            "cobertura":
+                coverage_info
+        },
 
         "centro": {
 
@@ -1487,18 +1867,25 @@ def main():
         "historico_frames_validos":
             successful_frames,
 
+        "frames_transparentes":
+            sum(
+                1
+                for item in observations
+                if item[
+                    "fully_transparent"
+                ]
+            ),
+
         "dbz_disponible":
             False,
 
         "nota_dbz":
-            "RainViewer RGB no se convierte "
-            "artificialmente a dBZ."
+            (
+                "RainViewer RGB no se "
+                "convierte artificialmente "
+                "a dBZ."
+            )
     }
-
-    atomic_json_write(
-        NOWCAST_PATH,
-        nowcast
-    )
 
     # ========================================================
     # STATUS
@@ -1507,7 +1894,7 @@ def main():
     status = {
 
         "version":
-            "9.2-radar-safe",
+            "10.0-source-health",
 
         "updated_utc":
             utc_now(),
@@ -1553,9 +1940,82 @@ def main():
         "frames_validos":
             successful_frames,
 
+        "frames_transparentes":
+            sum(
+                1
+                for item in observations
+                if item[
+                    "fully_transparent"
+                ]
+            ),
+
+        "fuente":
+            source_health,
+
+        "cobertura_radar":
+            coverage_info,
+
         "dbz_disponible":
+            False,
+
+        "fallback_activo":
+            False,
+
+        "ultima_observacion_valida":
             False
     }
+
+    # ========================================================
+    # FUENTE SANA / FALLBACK
+    # ========================================================
+
+    if source_health[
+        "radar_con_datos"
+    ]:
+
+        save_png(
+            latest_image,
+            ACTUAL_PATH
+        )
+
+        save_png(
+            latest_image,
+            LAST_VALID_IMAGE_PATH
+        )
+
+        atomic_json_write(
+            LAST_VALID_NOWCAST_PATH,
+            nowcast
+        )
+
+    elif (
+        estado
+        in (
+            "radar_sin_datos",
+            "radar_sin_cobertura",
+            "radar_desactualizado"
+        )
+    ):
+
+        (
+            nowcast,
+            status
+        ) = activate_radar_fallback(
+            nowcast,
+            status
+        )
+
+    else:
+
+        save_png(
+            latest_image,
+            ACTUAL_PATH
+        )
+
+    atomic_json_write(
+        NOWCAST_PATH,
+        nowcast
+    )
 
     atomic_json_write(
         STATUS_PATH,
@@ -1564,17 +2024,16 @@ def main():
 
     cleanup_history()
 
-    # ========================================================
-    # RESUMEN
-    # ========================================================
-
     print("")
+
     print(
         "============================================"
     )
+
     print(
         " CLIMAAR RADAR FINALIZADO"
     )
+
     print(
         "============================================"
     )
@@ -1592,22 +2051,38 @@ def main():
     )
 
     print(
+        "Fuente: "
+        f"{source_health['estado_fuente']}"
+    )
+
+    print(
         f"Precipitacion: "
         f"{precipitation_area} px"
     )
 
     print(
-        f"Nucleos: {len(nuclei)}"
+        f"Nucleos: "
+        f"{len(nuclei)}"
     )
 
     print(
-        f"Nucleos prioridad: "
+        "Nucleos prioridad: "
         f"{len(priority_nuclei)}"
     )
 
     print(
-        f"Frames validos: "
+        "Frames validos: "
         f"{successful_frames}/{len(selected)}"
+    )
+
+    print(
+        "Frames transparentes: "
+        f"{sum(1 for item in observations if item['fully_transparent'])}"
+    )
+
+    print(
+        "Cobertura radar: "
+        f"{coverage_info.get('cobertura_disponible')}"
     )
 
     print(
