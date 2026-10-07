@@ -1,5 +1,5 @@
 {
-  "version": "7.3",
+  "version": "7.5",
   "app": "ClimaAR",
   "ubicacion": {
     "latitud": -38.71,
@@ -8,21 +8,15 @@
   },
   "fuente": "RainViewer",
   "rainviewer_color_scheme": "Universal Blue (2)",
-  "rainviewer_smooth": 0,
-  "rainviewer_snow": 0,
-  "dbz_decode": "tabla oficial Universal Blue + tolerancia robusta",
-  "bahia_pixel_mosaico": {
-    "x": 953.91,
-    "y": 997.71
-  },
+  "dbz_decode": "tabla oficial Universal Blue RGBA 10-95 dBZ + deteccion RGB robusta sin exigir alpha",
   "nowcast": {
     "fuente": "RainViewer",
-    "actualizado": "2026-10-07T13:59:25.341155+00:00",
+    "actualizado": "2026-10-07T14:19:48.662569+00:00",
     "latitud": -38.71,
     "longitud": -62.26,
     "frames_analizados": 13,
-    "frame_actual": 1791381000,
-    "frame_actual_utc": "2026-10-07T13:50:00+00:00",
+    "frame_actual": 1791382200,
+    "frame_actual_utc": "2026-10-07T14:10:00+00:00",
     "tiles_ok": 9,
     "actividad": false,
     "area_px": 0,
@@ -53,15 +47,27 @@
     "max_history_frames": 144
   },
   "diagnostico": {
-    "metodo": "redecodificacion_robusta_desde_PNG_historico",
+    "metodo": "decoder_rgb_robusto_v7_5",
     "tolerancia_color": 36.0,
-    "alpha_minimo": 3.0,
     "ultimo_frame": {
+      "modo_imagen": "RGBA",
+      "ancho": 1536,
+      "alto": 1536,
+      "pixeles_totales": 2359296,
+      "pixeles_alpha": 0,
       "pixeles_no_transparentes": 0,
+      "pixeles_rgb_no_negros": 0,
       "pixeles_paleta_detectados": 0,
       "pixeles_precipitacion": 0,
+      "alpha_max": 0,
+      "rgb_max": [
+        0,
+        0,
+        0
+      ],
       "tolerancia_color": 36.0,
-      "alpha_minimo": 3.0
+      "tabla_colores": 86,
+      "rango_dbz": "10-95"
     }
   }
 }
