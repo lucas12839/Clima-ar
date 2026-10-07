@@ -1,4 +1,4 @@
-name: Radar ClimaAR Manual
+name: Radar RainViewer Manual
 
 on:
   workflow_dispatch:
@@ -7,71 +7,68 @@ permissions:
   contents: write
 
 jobs:
-
   radar:
     runs-on: ubuntu-latest
 
     steps:
 
-      - name: Descargar repositorio
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Instalar librerías
+      - name: Dependencias
         run: |
-          python -m pip install --upgrade pip
-          pip install requests Pillow numpy opencv-python-headless pandas
+          pip install -r requirements.txt
 
-      - name: Procesar radar
+      - name: Radar
         run: |
           python scripts/radar_rainviewer.py
 
-      - name: Verificar
+      - name: Validar CSV
         run: |
-          test -s data/radar/actual.png
-          test -s data/radar/radar_nowcast.json
-          test -s data/radar/radar_features_rainviewer.csv
+          python - <<'PY'
+          import csv
 
-          python -m json.tool \
-            data/radar/radar_nowcast.json \
-            >/dev/null
+          path = "data/radar/radar_features_rainviewer.csv"
 
-          echo "RADAR OK"
+          with open(
+              path,
+              encoding="utf-8",
+              newline=""
+          ) as f:
 
-          echo "Frames:"
-          find data/radar/historico \
-            -name "radar_*.png" \
-            | wc -l
+              reader = csv.reader(f)
 
-          echo "Features:"
-          wc -l \
-            data/radar/radar_features_rainviewer.csv
+              header = next(reader)
 
-      - name: Guardar
+              assert len(header) == 21, (
+                  f"Header inválido: {len(header)}"
+              )
+
+              for n, row in enumerate(
+                  reader,
+                  start=2
+              ):
+                  if row:
+                      assert len(row) == 21, (
+                          f"Línea {n}: {len(row)} columnas"
+                      )
+
+          print("CSV CORRECTO")
+          PY
+
+      - name: Commit
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git config \
-            user.name \
-            "github-actions[bot]"
+          git add data/radar
 
-          git config \
-            user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
+          git diff --cached --quiet || \
+            git commit -m "Radar RainViewer actualizado"
 
-          git add \
-            data/radar/
-
-          if git diff --cached --quiet; then
-            echo "Sin cambios."
-          else
-            git commit \
-              -m "radar: actualización manual"
-
-            git push origin main
-          fi
+          git push
