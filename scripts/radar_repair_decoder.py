@@ -1,5 +1,4 @@
 import json
-import math
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,227 +11,683 @@ except ImportError:
     import radar_rainviewer as rv
 
 
+# ============================================================
+# CLIMAAR - RADAR REPAIR DECODER V7.4
+#
+# Decoder robusto para RainViewer Universal Blue.
+#
+# IMPORTANTE:
+# RainViewer utiliza una tabla RGBA oficial.
+# Algunos valores bajos tienen alpha menor a 255.
+# Por eso NO usamos alpha como condición obligatoria
+# para detectar precipitación.
+# ============================================================
+
 BASE = Path(__file__).resolve().parents[1]
+
 RADAR_DIR = BASE / "data" / "radar"
 HISTORY_DIR = RADAR_DIR / "historico"
+
 NOWCAST_FILE = RADAR_DIR / "radar_nowcast.json"
-ACTUAL_FILE = RADAR_DIR / "actual.png"
 
 MAX_FRAMES = 13
-PALETTE_MATCH_DISTANCE = 36.0
-MIN_ALPHA_DETECT = 3.0
 
+# Distancia máxima entre el RGB recibido y la tabla oficial.
+PALETTE_MATCH_DISTANCE = 36.0
+
+# Umbral meteorológico mínimo.
+MIN_DBZ = 10.0
+
+
+# ============================================================
+# TABLA OFICIAL UNIVERSAL BLUE
+#
+# RainViewer color scheme 2.
+#
+# Desde 10 dBZ hasta 95 dBZ.
+# ============================================================
+
+DBZ_HEX = [
+    "cec08796",
+    "d2c48ba0",
+    "d6c88faa",
+    "dacc93b4",
+    "ded097be",
+
+    "88ddeeff",
+    "6cd1ebff",
+    "51c5e8ff",
+    "36bae5ff",
+    "1baee2ff",
+
+    "00a3e0ff",
+    "009ad5ff",
+    "0091caff",
+    "0088bfff",
+    "007fb4ff",
+
+    "0077aaff",
+    "0070a3ff",
+    "00699cff",
+    "006295ff",
+    "005b8eff",
+
+    "005588ff",
+    "005180ff",
+    "004e78ff",
+    "004a70ff",
+    "004768ff",
+
+    "ffee00ff",
+    "ffe000ff",
+    "ffd200ff",
+    "ffc500ff",
+    "ffb700ff",
+
+    "ffaa00ff",
+    "ff9f00ff",
+    "ff9500ff",
+    "ff8b00ff",
+    "ff8100ff",
+
+    "ff4400ff",
+    "f23600ff",
+    "e62800ff",
+    "d91b00ff",
+    "cd0d00ff",
+
+    "c10000ff",
+    "a80000ff",
+    "8f0000ff",
+    "760000ff",
+    "5d0000ff",
+
+    "ffaaffff",
+    "ff9fffff",
+    "ff95ffff",
+    "ff8bffff",
+    "ff81ffff",
+
+    "ff77ffff",
+    "ff6cffff",
+    "ff62ffff",
+    "ff58ffff",
+    "ff4effff",
+
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+    "ffffffff",
+
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+    "00ff00ff",
+]
+
+
+DBZ_VALUES = np.arange(
+    10,
+    96,
+    dtype=np.float32
+)
+
+
+DBZ_RGBA = np.array(
+    [
+        [
+            int(value[i:i + 2], 16)
+            for i in (0, 2, 4, 6)
+        ]
+        for value in DBZ_HEX
+    ],
+    dtype=np.float32
+)
+
+
+DBZ_RGB = DBZ_RGBA[:, :3]
+
+
+# ============================================================
+# DECODIFICADOR ROBUSTO
+# ============================================================
 
 def rgba_to_dbz_robusto(image):
-    array = np.asarray(image).astype(np.float32)
+
+    array = np.asarray(
+        image
+    ).astype(
+        np.float32
+    )
 
     rgb = array[:, :, :3]
     alpha = array[:, :, 3]
 
-    flat = rgb.reshape(-1, 3)
+    height, width = rgb.shape[:2]
 
-    distances = (
-        (flat[:, None, :] - rv.DBZ_RGB[None, :, :]) ** 2
-    ).sum(axis=2)
-
-    indices = np.argmin(distances, axis=1)
-
-    nearest = np.sqrt(
-        np.min(distances, axis=1)
-    ).reshape(rgb.shape[:2])
-
-    dbz = rv.DBZ_VALUES[indices].reshape(
-        rgb.shape[:2]
-    ).astype(np.float32)
-
-    valid = (
-        (alpha >= MIN_ALPHA_DETECT)
-        & (nearest <= PALETTE_MATCH_DISTANCE)
+    flat = rgb.reshape(
+        -1,
+        3
     )
 
-    dbz[~valid] = np.nan
+    # --------------------------------------------------------
+    # Distancia RGB contra toda la tabla oficial.
+    # --------------------------------------------------------
+
+    distances = (
+        (
+            flat[:, None, :]
+            -
+            DBZ_RGB[None, :, :]
+        )
+        ** 2
+    ).sum(
+        axis=2
+    )
+
+    nearest_index = np.argmin(
+        distances,
+        axis=1
+    )
+
+    nearest_distance = np.sqrt(
+        np.min(
+            distances,
+            axis=1
+        )
+    )
+
+    dbz = DBZ_VALUES[
+        nearest_index
+    ].reshape(
+        height,
+        width
+    ).astype(
+        np.float32
+    )
+
+    nearest_distance = nearest_distance.reshape(
+        height,
+        width
+    )
+
+    # --------------------------------------------------------
+    # Detección robusta.
+    #
+    # NO exigimos alpha > 0.
+    #
+    # El color RGB es la señal principal.
+    # Esto permite recuperar píxeles radar cuyo alpha
+    # haya sido alterado durante el procesamiento PNG.
+    # --------------------------------------------------------
+
+    valid_color = (
+        nearest_distance
+        <=
+        PALETTE_MATCH_DISTANCE
+    )
+
+    # --------------------------------------------------------
+    # Evitar confundir fondo negro/transparente con radar.
+    #
+    # El fondo habitual es aproximadamente 0,0,0.
+    # --------------------------------------------------------
+
+    background_black = (
+        (rgb[:, :, 0] <= 3)
+        &
+        (rgb[:, :, 1] <= 3)
+        &
+        (rgb[:, :, 2] <= 3)
+    )
+
+    valid = (
+        valid_color
+        &
+        ~background_black
+    )
+
+    dbz[
+        ~valid
+    ] = np.nan
 
     return dbz
 
 
-def analyze(image, timestamp):
-    dbz = rgba_to_dbz_robusto(image)
+# ============================================================
+# MÉTRICAS
+# ============================================================
 
-    mask = rv.dbz_mask(dbz)
+def calculate_metrics(dbz):
 
-    components = rv.components_from_mask(
-        mask,
+    valid = dbz[
+        np.isfinite(dbz)
+    ]
+
+    precip = valid[
+        valid >= MIN_DBZ
+    ]
+
+    if precip.size == 0:
+
+        return {
+            "dbz_max": None,
+            "dbz_mean": None,
+            "dbz_p90": None,
+            "dbz_pixels": 0,
+        }
+
+    return {
+        "dbz_max": float(
+            np.max(
+                precip
+            )
+        ),
+
+        "dbz_mean": round(
+            float(
+                np.mean(
+                    precip
+                )
+            ),
+            1
+        ),
+
+        "dbz_p90": round(
+            float(
+                np.percentile(
+                    precip,
+                    90
+                )
+            ),
+            1
+        ),
+
+        "dbz_pixels": int(
+            precip.size
+        ),
+    }
+
+
+# ============================================================
+# ANALIZAR FRAME
+# ============================================================
+
+def analyze_frame(
+    image,
+    timestamp
+):
+
+    array = np.asarray(
+        image
+    )
+
+    rgb = array[:, :, :3]
+    alpha = array[:, :, 3]
+
+    dbz = rgba_to_dbz_robusto(
+        image
+    )
+
+    metrics = calculate_metrics(
         dbz
     )
 
-    metrics = rv.dbz_metrics(dbz)
-
-    for component in components:
-        component["distance_km"] = round(
-            rv.distance_point_to_bahia(
-                component["centroid_x"],
-                component["centroid_y"]
-            ),
-            2,
+    precipitation_mask = (
+        np.isfinite(dbz)
+        &
+        (
+            dbz >= MIN_DBZ
         )
+    )
 
-    distance = rv.distance_to_bahia(mask)
-
-    alpha = np.asarray(image)[:, :, 3]
+    valid_palette = np.isfinite(
+        dbz
+    )
 
     diagnostics = {
-        "pixeles_no_transparentes": int(
-            np.count_nonzero(
-                alpha >= MIN_ALPHA_DETECT
-            )
-        ),
-        "pixeles_paleta_detectados": int(
-            np.count_nonzero(
-                np.isfinite(dbz)
-            )
-        ),
-        "pixeles_precipitacion": int(
-            np.count_nonzero(
-                np.isfinite(dbz)
-                & (dbz >= 10.0)
-            )
-        ),
-        "tolerancia_color": PALETTE_MATCH_DISTANCE,
-        "alpha_minimo": MIN_ALPHA_DETECT,
+
+        "modo_imagen":
+            image.mode,
+
+        "ancho":
+            int(image.width),
+
+        "alto":
+            int(image.height),
+
+        "pixeles_totales":
+            int(
+                image.width
+                *
+                image.height
+            ),
+
+        "pixeles_alpha":
+            int(
+                np.count_nonzero(
+                    alpha > 0
+                )
+            ),
+
+        "pixeles_rgb_no_negros":
+            int(
+                np.count_nonzero(
+                    np.any(
+                        rgb > 3,
+                        axis=2
+                    )
+                )
+            ),
+
+        "pixeles_paleta_detectados":
+            int(
+                np.count_nonzero(
+                    valid_palette
+                )
+            ),
+
+        "pixeles_precipitacion":
+            int(
+                np.count_nonzero(
+                    precipitation_mask
+                )
+            ),
+
+        "alpha_max":
+            int(
+                np.max(alpha)
+            ),
+
+        "tolerancia_color":
+            PALETTE_MATCH_DISTANCE,
     }
 
     return {
-        "timestamp": int(timestamp),
-        "frame_utc": datetime.fromtimestamp(
+
+        "timestamp":
             int(timestamp),
-            timezone.utc
-        ).isoformat(),
-        "tiles_ok": 9,
-        "path": "historico",
-        "area": int(
-            np.count_nonzero(mask)
-        ),
-        "components": components,
-        "distance_km": (
-            round(distance, 2)
-            if distance is not None
-            else None
-        ),
+
+        "frame_utc":
+            datetime.fromtimestamp(
+                int(timestamp),
+                timezone.utc
+            ).isoformat(),
+
+        "area":
+            int(
+                np.count_nonzero(
+                    precipitation_mask
+                )
+            ),
+
+        "components":
+            [],
+
+        "distance_km":
+            None,
+
         **metrics,
-        "diagnostico_paleta": diagnostics,
+
+        "diagnostico_paleta":
+            diagnostics,
     }
 
 
-def main():
+# ============================================================
+# BUSCAR HISTORIAL
+# ============================================================
+
+def load_history():
+
     files = []
 
-    for path in HISTORY_DIR.glob("radar_*.png"):
+    if not HISTORY_DIR.exists():
+        return files
+
+    for path in HISTORY_DIR.glob(
+        "radar_*.png"
+    ):
+
         try:
+
             timestamp = int(
-                path.stem.split("_")[-1]
+                path.stem.split(
+                    "_"
+                )[-1]
             )
-        except (ValueError, IndexError):
+
+        except (
+            ValueError,
+            IndexError
+        ):
+
             continue
 
         if (
             path.is_file()
-            and path.stat().st_size > 100
+            and
+            path.stat().st_size > 100
         ):
+
             files.append(
-                (timestamp, path)
+                (
+                    timestamp,
+                    path
+                )
             )
 
     files.sort(
         key=lambda item: item[0]
     )
 
-    files = files[-MAX_FRAMES:]
+    return files[
+        -MAX_FRAMES:
+    ]
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    files = load_history()
 
     if not files:
+
         raise RuntimeError(
             "No hay frames históricos para reparar."
         )
 
+    print(
+        "===================================="
+    )
+
+    print(
+        "CLIMAAR RADAR DECODER V7.4"
+    )
+
+    print(
+        "Frames encontrados:",
+        len(files)
+    )
+
+    print(
+        "===================================="
+    )
+
     results = []
 
     for timestamp, path in files:
+
+        print()
+        print(
+            "Analizando:",
+            path.name
+        )
+
         image = Image.open(
             path
-        ).convert("RGBA")
+        ).convert(
+            "RGBA"
+        )
 
-        result = analyze(
+        result = analyze_frame(
             image,
             timestamp
         )
 
-        results.append(result)
+        results.append(
+            result
+        )
 
         d = result[
             "diagnostico_paleta"
         ]
 
         print(
-            f"frame={timestamp} "
-            f"area={result['area']} "
-            f"dbz_max={result['dbz_max']} "
-            f"dbz_pixels={result['dbz_pixels']} "
-            f"nontransparent="
-            f"{d['pixeles_no_transparentes']}"
+            "Modo:",
+            d["modo_imagen"]
         )
 
+        print(
+            "Tamaño:",
+            d["ancho"],
+            "x",
+            d["alto"]
+        )
+
+        print(
+            "Alpha > 0:",
+            d["pixeles_alpha"]
+        )
+
+        print(
+            "RGB no negro:",
+            d["pixeles_rgb_no_negros"]
+        )
+
+        print(
+            "Paleta detectada:",
+            d["pixeles_paleta_detectados"]
+        )
+
+        print(
+            "Precipitación:",
+            d["pixeles_precipitacion"]
+        )
+
+        print(
+            "dBZ máximo:",
+            result["dbz_max"]
+        )
+
+    # --------------------------------------------------------
+    # Orden temporal
+    # --------------------------------------------------------
+
     results.sort(
-        key=lambda item: item["timestamp"]
+        key=lambda item:
+        item["timestamp"]
     )
+
+    # --------------------------------------------------------
+    # Utilizamos el motor existente de movimiento.
+    # --------------------------------------------------------
 
     nowcast = rv.analyze_sequence(
         results
     )
 
+    latest = results[-1]
+
     output = {
-        "version": "7.3",
-        "app": "ClimaAR",
+
+        "version":
+            "7.4",
+
+        "app":
+            "ClimaAR",
+
         "ubicacion": {
-            "latitud": rv.LAT,
-            "longitud": rv.LON,
-            "ciudad": "Bahia Blanca",
+
+            "latitud":
+                rv.LAT,
+
+            "longitud":
+                rv.LON,
+
+            "ciudad":
+                "Bahia Blanca",
         },
-        "fuente": "RainViewer",
+
+        "fuente":
+            "RainViewer",
+
         "rainviewer_color_scheme":
             "Universal Blue (2)",
-        "rainviewer_smooth": 0,
-        "rainviewer_snow": 0,
+
         "dbz_decode":
-            "tabla oficial Universal Blue + tolerancia robusta",
+            "tabla oficial Universal Blue RGBA + deteccion RGB robusta",
 
-        "bahia_pixel_mosaico": {
-            "x": round(
-                rv.bahia_pixel_position()[0],
-                2
-            ),
-            "y": round(
-                rv.bahia_pixel_position()[1],
-                2
-            ),
-        },
-
-        "nowcast": nowcast,
+        "nowcast":
+            nowcast,
 
         "historial": {
-            "frames_procesados": len(results),
-            "frames_disponibles": len(files),
+
+            "frames_procesados":
+                len(results),
+
+            "frames_disponibles":
+                len(files),
+
             "max_history_frames":
                 rv.MAX_HISTORY_FRAMES,
         },
 
         "diagnostico": {
+
             "metodo":
-                "redecodificacion_robusta_desde_PNG_historico",
+                "decoder_rgb_robusto",
+
             "tolerancia_color":
                 PALETTE_MATCH_DISTANCE,
-            "alpha_minimo":
-                MIN_ALPHA_DETECT,
+
             "ultimo_frame":
-                results[-1][
+                latest[
                     "diagnostico_paleta"
                 ],
         },
@@ -244,11 +699,20 @@ def main():
             ensure_ascii=False,
             indent=2
         ),
-        encoding="utf-8",
+        encoding="utf-8"
+    )
+
+    print()
+    print(
+        "===================================="
     )
 
     print(
-        "NOWCAST REPARADO"
+        "NOWCAST REPARADO V7.4"
+    )
+
+    print(
+        "===================================="
     )
 
     print(
