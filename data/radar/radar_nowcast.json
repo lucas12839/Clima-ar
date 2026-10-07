@@ -1,5 +1,5 @@
 {
-  "version": "7.2",
+  "version": "7.3",
   "app": "ClimaAR",
   "ubicacion": {
     "latitud": -38.71,
@@ -10,19 +10,19 @@
   "rainviewer_color_scheme": "Universal Blue (2)",
   "rainviewer_smooth": 0,
   "rainviewer_snow": 0,
-  "dbz_decode": "tabla oficial Universal Blue",
+  "dbz_decode": "tabla oficial Universal Blue + tolerancia robusta",
   "bahia_pixel_mosaico": {
     "x": 953.91,
     "y": 997.71
   },
   "nowcast": {
     "fuente": "RainViewer",
-    "actualizado": "2026-10-07T09:24:14.121623+00:00",
+    "actualizado": "2026-10-07T13:59:25.341155+00:00",
     "latitud": -38.71,
     "longitud": -62.26,
-    "frames_analizados": 12,
-    "frame_actual": 1791364800,
-    "frame_actual_utc": "2026-10-07T09:20:00+00:00",
+    "frames_analizados": 13,
+    "frame_actual": 1791381000,
+    "frame_actual_utc": "2026-10-07T13:50:00+00:00",
     "tiles_ok": 9,
     "actividad": false,
     "area_px": 0,
@@ -48,9 +48,20 @@
     "estado": "sin_precipitacion_detectada"
   },
   "historial": {
-    "frames_procesados": 12,
-    "frames_disponibles": 12,
+    "frames_procesados": 13,
+    "frames_disponibles": 13,
     "max_history_frames": 144
   },
-  "nota": "dBZ decodificado desde la tabla oficial de colores de RainViewer. Los colores repetidos de la paleta no permiten distinguir todos los valores individuales; 65-74 y 75-95 comparten colores."
+  "diagnostico": {
+    "metodo": "redecodificacion_robusta_desde_PNG_historico",
+    "tolerancia_color": 36.0,
+    "alpha_minimo": 3.0,
+    "ultimo_frame": {
+      "pixeles_no_transparentes": 0,
+      "pixeles_paleta_detectados": 0,
+      "pixeles_precipitacion": 0,
+      "tolerancia_color": 36.0,
+      "alpha_minimo": 3.0
+    }
+  }
 }
