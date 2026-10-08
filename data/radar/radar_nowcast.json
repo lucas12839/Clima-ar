@@ -1,57 +1,81 @@
 {
-  "version": "11.0-cell-tracking",
-  "generated_utc": "2026-10-08T01:45:58.127774+00:00",
-  "source": "RainViewer",
-  "radar_frame_utc": "2026-10-08T01:40:00+00:00",
-  "radar_frame_timestamp": 1791423600,
-  "edad_minutos": 6.0,
-  "frame_es_viejo": false,
-  "datos_vigentes": false,
-  "estado": "radar_sin_datos",
-  "confianza": 0.0,
-  "fuente": {
-    "estado": "fuente_sin_datos",
-    "radar_con_datos": false,
-    "motivo": "0 frames visibles pero sin ecos suficientes para confirmar precipitacion",
-    "cobertura": {
-      "ok": true,
-      "cobertura_disponible": true,
-      "pixeles_cobertura": 262144
+  "version": "8.1-radar-safe",
+  "app": "ClimaAR",
+  "ubicacion": {
+    "latitud": -38.71,
+    "longitud": -62.26,
+    "ciudad": "Bahia Blanca"
+  },
+  "fuente": "RainViewer",
+  "frame_actual": 1791444000,
+  "frame_actual_utc": "2026-10-08T07:20:00+00:00",
+  "frame_edad_minutos": 10.3,
+  "nowcast": {
+    "estado": "sin_precipitacion",
+    "actividad": false,
+    "actividad_ultima_observada": false,
+    "confianza": 100,
+    "movimiento": {
+      "direccion": "sin_movimiento",
+      "velocidad_kmh": 0.0,
+      "confianza": 0.0
+    },
+    "actualizado": "2026-10-08T07:30:20.682348+00:00",
+    "frame_actual": 1791444000,
+    "frame_actual_utc": "2026-10-08T07:20:00+00:00",
+    "frame_timestamp": 1791444000,
+    "frame_edad_minutos": 10.3,
+    "frame_es_viejo": false,
+    "datos_vigentes": true,
+    "frames_analizados": 13,
+    "tiles_ok": 1,
+    "area_px": 0,
+    "distancia_km": null,
+    "fortalecimiento": "sin_datos",
+    "cambio_area_pct": 0.0,
+    "velocidad_kmh": 0.0,
+    "direccion": "sin_movimiento",
+    "direccion_grados": null,
+    "movimiento_hacia_bahia": false,
+    "eta_minutos": null,
+    "proyecciones": {},
+    "confianza_movimiento": 0.0,
+    "nucleos": [],
+    "priority_nuclei_100km": [],
+    "detection_radius_km": 150.0,
+    "priority_radius_km": 100.0,
+    "fallback": {
+      "activo": false,
+      "limitado": false,
+      "edad_minutos": 10.3,
+      "ultima_observacion_utc": "2026-10-08T07:20:00+00:00",
+      "ultima_actividad": false,
+      "ultima_area_px": 0,
+      "ultima_cobertura": 0.0,
+      "ultima_distancia_km": null,
+      "movimiento_estimado": {
+        "x": 0.0,
+        "y": 0.0,
+        "velocidad_kmh": 0.0,
+        "direccion": "sin_movimiento",
+        "direccion_grados": null,
+        "hacia_bahia_blanca": false,
+        "confianza": 0.0
+      },
+      "proyecciones": {},
+      "nota": "Se conserva la ultima observacion y su movimiento estimado. No se presenta como radar actual hasta recuperar un frame fresco."
     }
   },
-  "centro": {
-    "latitud": -38.71,
-    "longitud": -62.26
+  "historial": {
+    "frames_procesados": 13,
+    "frames_disponibles": 13
   },
-  "deteccion": {
-    "radio_km": 150.0,
-    "prioridad_km": 100.0,
-    "cobertura_precipitacion": 0.0,
-    "area_px": 0,
-    "nucleos": [],
-    "nucleos_prioridad": [],
-    "pixeles_intensos": 0
+  "diagnostico": {
+    "cobertura_pct": 0.0,
+    "sin_precipitacion": true,
+    "radar_desactualizado": false,
+    "datos_vigentes": true
   },
-  "movimiento": {
-    "x": 0.0,
-    "y": 0.0,
-    "velocidad_pixeles_frame": 0.0,
-    "direccion": "sin_datos",
-    "direccion_confianza": 0.0,
-    "movimiento_confianza": 0.0,
-    "tracking_quality": 0.0,
-    "active_tracks": 0,
-    "primary_track_id": null,
-    "tracks": [],
-    "metodo": "tracking_celulas + correlacion_global"
-  },
-  "historico_frames_validos": 8,
-  "frames_transparentes": 8,
-  "dbz_disponible": false,
-  "nota_dbz": "RainViewer RGB no se convierte artificialmente a dBZ.",
-  "fallback": {
-    "activo": true,
-    "motivo": "Fuente radar sin datos confirmados; se conserva la ultima observacion valida.",
-    "ultima_observacion_valida": false
-  }
+  "detection_radius_km": 150.0,
+  "priority_radius_km": 100.0
 }
