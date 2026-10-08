@@ -2,7 +2,6 @@ name: Entrenar Nowcast
 
 on:
   workflow_dispatch:
-
   schedule:
     - cron: "0 3 * * *"
 
@@ -18,7 +17,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -30,26 +28,20 @@ jobs:
           python-version: "3.11"
 
       - name: Dependencias
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      - name: Verificar dataset
-        run: |
-          test -s data/radar/radar_features_rainviewer.csv
+      - name: Verificar dataset radar
+        run: test -s data/radar/radar_features_rainviewer.csv
 
-      - name: Entrenar
-        run: |
-          python scripts/entrenar_nowcast.py
+      - name: Entrenar Nowcast
+        run: python scripts/entrenar_nowcast.py
 
-      - name: Commit modelo
+      - name: Commit resultados
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add ia data/radar logs
-
-          git diff --cached --quiet || \
-            git commit -m "ClimaAR: actualización modelo nowcast"
+          git add modelo data/radar logs
+          git diff --cached --quiet || git commit -m "ClimaAR: actualización nowcast"
 
       - name: Publicar
         run: |
