@@ -33,6 +33,10 @@ CSV = Path(
     "data/radar/radar_features_rainviewer.csv"
 )
 
+WEATHER_CSV = Path(
+    "data/historico/clima_horario_1980_2026.csv"
+)
+
 MODEL = Path(
     "modelo/climaar_nowcast_features.joblib"
 )
@@ -67,6 +71,13 @@ DELTA_FEATURES = [
     "dbz_p90",
     "dbz_pixels",
     "nucleos",
+]
+
+WEATHER_FEATURES = [
+    "temperature_2m", "relative_humidity_2m", "dew_point_2m",
+    "pressure_msl", "surface_pressure", "precipitation", "rain",
+    "cloud_cover", "wind_speed_10m", "wind_gusts_10m",
+    "vapour_pressure_deficit", "boundary_layer_height",
 ]
 
 
@@ -121,6 +132,50 @@ def parse_nucleos(value):
         pass
 
     return 0.0
+
+
+# ============================================================
+# DATOS METEOROLÓGICOS HISTÓRICOS
+# ============================================================
+
+def load_weather_dataframe():
+    if not WEATHER_CSV.exists():
+        print(f"AVISO: no existe {WEATHER_CSV}. Se continuará solo con radar.")
+        return None
+    weather = pd.read_csv(WEATHER_CSV)
+    time_column = next((c for c in ("time", "timestamp", "datetime", "date") if c in weather.columns), None)
+    if time_column is None:
+        print("AVISO: el histórico meteorológico no tiene columna temporal reconocible.")
+        return None
+    parsed = pd.to_datetime(weather[time_column], errors="coerce", utc=True)
+    if parsed.isna().all():
+        numeric = pd.to_numeric(weather[time_column], errors="coerce")
+        parsed = pd.to_datetime(numeric, unit="s", errors="coerce", utc=True)
+    weather["_weather_time"] = parsed
+    for column in WEATHER_FEATURES:
+        if column not in weather.columns:
+            weather[column] = np.nan
+        weather[column] = pd.to_numeric(weather[column], errors="coerce")
+    return weather.dropna(subset=["_weather_time"]).sort_values("_weather_time")[
+        ["_weather_time"] + WEATHER_FEATURES
+    ].drop_duplicates("_weather_time")
+
+def merge_weather_with_radar(df):
+    weather = load_weather_dataframe()
+    if weather is None or weather.empty:
+        df["weather_match"] = 0.0
+        for c in WEATHER_FEATURES:
+            df[f"weather_{c}"] = np.nan
+        return df
+    radar = df.copy()
+    radar["_radar_time"] = pd.to_datetime(pd.to_numeric(radar["frame_time"], errors="coerce"), unit="s", errors="coerce", utc=True)
+    radar = radar.sort_values("_radar_time")
+    merged = pd.merge_asof(radar, weather, left_on="_radar_time", right_on="_weather_time", direction="nearest", tolerance=pd.Timedelta(minutes=90))
+    merged["weather_match"] = merged["_weather_time"].notna().astype(float)
+    merged = merged.rename(columns={c: f"weather_{c}" for c in WEATHER_FEATURES})
+    merged = merged.drop(columns=["_radar_time", "_weather_time"], errors="ignore")
+    print(f"Frames con datos meteorológicos asociados: {int(merged['weather_match'].sum())}/{len(merged)}")
+    return merged.reset_index(drop=True)
 
 
 # ============================================================
@@ -236,9 +291,9 @@ def prepare_dataframe(df):
         ]
     )
 
-    return df.reset_index(
-        drop=True
-    )
+    df = df.reset_index(drop=True)
+    df = merge_weather_with_radar(df)
+    return df
 
 
 # ============================================================
@@ -403,6 +458,10 @@ def build_sequences(df):
                 f"t{offset}_{feature}"
             )
 
+        feature_names.append(f"t{offset}_weather_match")
+        for feature in WEATHER_FEATURES:
+            feature_names.append(f"t{offset}_weather_{feature}")
+
     # Variables de tendencia
 
     for offset in (
@@ -472,11 +531,13 @@ def build_sequences(df):
 
             for feature in BASE_FEATURES:
 
-                values.append(
-                    float(
-                        frame[feature]
-                    )
-                )
+                values.append(float(frame[feature]))
+
+            match = frame.get("weather_match", 0.0)
+            values.append(float(match) if pd.notna(match) else 0.0)
+            for feature in WEATHER_FEATURES:
+                value = frame.get(f"weather_{feature}", np.nan)
+                values.append(float(value) if pd.notna(value) else 0.0)
 
         # Tendencias entre frames
 
@@ -865,7 +926,7 @@ def main():
     metrics = {
 
         "version":
-            "3.0",
+            "4.0",
 
         "fuente":
             "RainViewer V7.1",
@@ -1005,10 +1066,10 @@ def main():
     artifact = {
 
         "version":
-            "3.0",
+            "4.0",
 
         "source":
-            "RainViewer V7.1",
+            "RainViewer + histórico meteorológico 1980-2026",
 
         "models":
             models,
@@ -1027,6 +1088,12 @@ def main():
 
         "delta_features":
             DELTA_FEATURES,
+
+        "weather_features":
+            WEATHER_FEATURES,
+
+        "weather_source":
+            str(WEATHER_CSV),
 
         "validation": {
 
