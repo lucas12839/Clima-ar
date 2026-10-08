@@ -168,12 +168,32 @@ def merge_weather_with_radar(df):
             df[f"weather_{c}"] = np.nan
         return df
     radar = df.copy()
-    radar["_radar_time"] = pd.to_datetime(pd.to_numeric(radar["frame_time"], errors="coerce"), unit="s", errors="coerce", utc=True)
-    radar = radar.sort_values("_radar_time")
-    merged = pd.merge_asof(radar, weather, left_on="_radar_time", right_on="_weather_time", direction="nearest", tolerance=pd.Timedelta(minutes=90))
+    radar["_radar_time"] = pd.to_datetime(
+        pd.to_numeric(radar["frame_time"], errors="coerce"),
+        unit="s", errors="coerce", utc=True
+    )
+
+    # Pandas puede cargar el CSV meteorológico con datetime64[us, UTC]
+    # mientras que el radar queda en datetime64[ns, UTC]. Para evitar
+    # incompatibilidades de merge_asof, ambos lados se normalizan a
+    # epoch nanoseconds (int64).
+    radar["_time_ns"] = radar["_radar_time"].astype("int64")
+    weather["_time_ns"] = weather["_weather_time"].astype("int64")
+
+    radar = radar.sort_values("_time_ns")
+    weather = weather.sort_values("_time_ns")
+
+    merged = pd.merge_asof(
+        radar,
+        weather,
+        left_on="_time_ns",
+        right_on="_time_ns",
+        direction="nearest",
+        tolerance=int(pd.Timedelta(minutes=90).value)
+    )
     merged["weather_match"] = merged["_weather_time"].notna().astype(float)
     merged = merged.rename(columns={c: f"weather_{c}" for c in WEATHER_FEATURES})
-    merged = merged.drop(columns=["_radar_time", "_weather_time"], errors="ignore")
+    merged = merged.drop(columns=["_radar_time", "_weather_time", "_time_ns"], errors="ignore")
     print(f"Frames con datos meteorológicos asociados: {int(merged['weather_match'].sum())}/{len(merged)}")
     return merged.reset_index(drop=True)
 
