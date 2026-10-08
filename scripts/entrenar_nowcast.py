@@ -147,10 +147,48 @@ def load_weather_dataframe():
     if time_column is None:
         print("AVISO: el histórico meteorológico no tiene columna temporal reconocible.")
         return None
-    parsed = pd.to_datetime(weather[time_column], errors="coerce", utc=True)
-    if parsed.isna().all():
-        numeric = pd.to_numeric(weather[time_column], errors="coerce")
-        parsed = pd.to_datetime(numeric, unit="s", errors="coerce", utc=True)
+    raw_time = weather[time_column]
+
+    # El histórico puede traer el tiempo como texto ISO o como epoch.
+    # Si es numérico, NO dejar que pandas lo interprete automáticamente
+    # como nanosegundos: primero inferimos la unidad por magnitud.
+    numeric = pd.to_numeric(raw_time, errors="coerce")
+
+    if numeric.notna().sum() == len(raw_time):
+        sample = float(numeric.dropna().abs().median())
+
+        if sample >= 1e17:
+            unit = "ns"
+        elif sample >= 1e14:
+            unit = "us"
+        elif sample >= 1e11:
+            unit = "ms"
+        else:
+            unit = "s"
+
+        parsed = pd.to_datetime(
+            numeric,
+            unit=unit,
+            errors="coerce",
+            utc=True
+        )
+        print(f"Tiempo meteorológico numérico detectado: epoch {unit}")
+    else:
+        parsed = pd.to_datetime(
+            raw_time,
+            errors="coerce",
+            utc=True
+        )
+
+        # Si quedaron pocos/no válidos, probar numéricos como epoch segundos.
+        if parsed.notna().sum() == 0:
+            parsed = pd.to_datetime(
+                numeric,
+                unit="s",
+                errors="coerce",
+                utc=True
+            )
+
     weather["_weather_time"] = parsed
     for column in WEATHER_FEATURES:
         if column not in weather.columns:
@@ -182,6 +220,18 @@ def merge_weather_with_radar(df):
 
     radar = radar.sort_values("_time_ns")
     weather = weather.sort_values("_time_ns")
+
+    valid_radar = radar["_radar_time"].dropna()
+    valid_weather = weather["_weather_time"].dropna()
+    if not valid_radar.empty and not valid_weather.empty:
+        print(
+            "Rango radar: "
+            f"{valid_radar.min()} -> {valid_radar.max()}"
+        )
+        print(
+            "Rango meteorológico: "
+            f"{valid_weather.min()} -> {valid_weather.max()}"
+        )
 
     merged = pd.merge_asof(
         radar,
