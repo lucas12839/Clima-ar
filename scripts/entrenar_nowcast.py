@@ -147,48 +147,10 @@ def load_weather_dataframe():
     if time_column is None:
         print("AVISO: el histórico meteorológico no tiene columna temporal reconocible.")
         return None
-    raw_time = weather[time_column]
-
-    # El histórico puede traer el tiempo como texto ISO o como epoch.
-    # Si es numérico, NO dejar que pandas lo interprete automáticamente
-    # como nanosegundos: primero inferimos la unidad por magnitud.
-    numeric = pd.to_numeric(raw_time, errors="coerce")
-
-    if numeric.notna().sum() == len(raw_time):
-        sample = float(numeric.dropna().abs().median())
-
-        if sample >= 1e17:
-            unit = "ns"
-        elif sample >= 1e14:
-            unit = "us"
-        elif sample >= 1e11:
-            unit = "ms"
-        else:
-            unit = "s"
-
-        parsed = pd.to_datetime(
-            numeric,
-            unit=unit,
-            errors="coerce",
-            utc=True
-        )
-        print(f"Tiempo meteorológico numérico detectado: epoch {unit}")
-    else:
-        parsed = pd.to_datetime(
-            raw_time,
-            errors="coerce",
-            utc=True
-        )
-
-        # Si quedaron pocos/no válidos, probar numéricos como epoch segundos.
-        if parsed.notna().sum() == 0:
-            parsed = pd.to_datetime(
-                numeric,
-                unit="s",
-                errors="coerce",
-                utc=True
-            )
-
+    parsed = pd.to_datetime(weather[time_column], errors="coerce", utc=True)
+    if parsed.isna().all():
+        numeric = pd.to_numeric(weather[time_column], errors="coerce")
+        parsed = pd.to_datetime(numeric, unit="s", errors="coerce", utc=True)
     weather["_weather_time"] = parsed
     for column in WEATHER_FEATURES:
         if column not in weather.columns:
@@ -220,18 +182,6 @@ def merge_weather_with_radar(df):
 
     radar = radar.sort_values("_time_ns")
     weather = weather.sort_values("_time_ns")
-
-    valid_radar = radar["_radar_time"].dropna()
-    valid_weather = weather["_weather_time"].dropna()
-    if not valid_radar.empty and not valid_weather.empty:
-        print(
-            "Rango radar: "
-            f"{valid_radar.min()} -> {valid_radar.max()}"
-        )
-        print(
-            "Rango meteorológico: "
-            f"{valid_weather.min()} -> {valid_weather.max()}"
-        )
 
     merged = pd.merge_asof(
         radar,
@@ -372,126 +322,29 @@ def prepare_dataframe(df):
 
 def dataset_quality(df):
 
-    precipitation = (
-        df["area_px"] > 0
-    )
+    precipitation = df["area_px"] > 0
+    precipitation_frames = int(precipitation.sum())
+    dbz_frames = int((df["dbz_pixels"] > 0).sum())
+    unique_area = int(df["area_px"].nunique())
+    max_area = float(df["area_px"].max()) if len(df) else 0.0
 
-    precipitation_frames = int(
-        precipitation.sum()
-    )
-
-    dbz_frames = int(
-        (
-            df["dbz_pixels"] > 0
-        ).sum()
-    )
-
-    unique_area = int(
-        df["area_px"].nunique()
-    )
-
-    max_area = float(
-        df["area_px"].max()
-    )
-
+    reasons = []
     if len(df) < MIN_FRAMES:
-
-        raise SystemExit(
-            f"ERROR: hay {len(df)} frames. "
-            f"Se necesitan al menos "
-            f"{MIN_FRAMES}."
-        )
-
-    if (
-        precipitation_frames
-        <
-        MIN_PRECIP_FRAMES
-    ):
-
-        raise SystemExit(
-            f"ERROR: solo hay "
-            f"{precipitation_frames} "
-            "frames con precipitación. "
-            f"Se necesitan al menos "
-            f"{MIN_PRECIP_FRAMES}. "
-            "No se entrenará un modelo "
-            "artificialmente seco."
-        )
-
-    if (
-        dbz_frames
-        <
-        MIN_PRECIP_FRAMES
-    ):
-
-        raise SystemExit(
-            "ERROR: hay precipitación "
-            "pero no suficiente señal "
-            "dBZ válida."
-        )
-
-    if (
-        unique_area < 3
-        or
-        max_area <= 0
-    ):
-
-        raise SystemExit(
-            "ERROR: no existe variación "
-            "espacial suficiente en el radar."
-        )
+        reasons.append(f"frames={len(df)}<{MIN_FRAMES}")
+    if precipitation_frames < MIN_PRECIP_FRAMES:
+        reasons.append(f"precipitacion={precipitation_frames}<{MIN_PRECIP_FRAMES}")
+    if dbz_frames < MIN_PRECIP_FRAMES:
+        reasons.append(f"dbz_validos={dbz_frames}<{MIN_PRECIP_FRAMES}")
 
     return {
-
-        "frames":
-            len(df),
-
-        "frames_precipitacion":
-            precipitation_frames,
-
-        "frames_dbz":
-            dbz_frames,
-
-        "areas_distintas":
-            unique_area,
-
-        "area_max":
-            max_area,
-
-        "porcentaje_precipitacion":
-            round(
-                100.0
-                *
-                precipitation_frames
-                /
-                len(df),
-                2
-            ),
+        "frames": len(df),
+        "precipitation_frames": precipitation_frames,
+        "dbz_frames": dbz_frames,
+        "unique_area": unique_area,
+        "max_area_px": max_area,
+        "entrenable": not reasons,
+        "motivos": reasons,
     }
-
-
-# ============================================================
-# COMPROBAR CONTINUIDAD TEMPORAL
-# ============================================================
-
-def continuous(
-    a,
-    b
-):
-
-    minutes = (
-        float(b)
-        -
-        float(a)
-    ) / 60.0
-
-    return (
-        FRAME_MIN_MINUTES
-        <=
-        minutes
-        <=
-        FRAME_MAX_MINUTES
-    )
 
 
 # ============================================================
@@ -842,22 +695,34 @@ def main():
     # CALIDAD
     # --------------------------------------------------------
 
-    quality = dataset_quality(
-        df
-    )
+    quality = dataset_quality(df)
 
     print("")
-    print(
-        "CALIDAD DEL DATASET:"
-    )
+    print("CALIDAD DEL DATASET:")
+    print(json.dumps(quality, indent=2, ensure_ascii=False))
 
-    print(
-        json.dumps(
-            quality,
-            indent=2,
-            ensure_ascii=False
+    # El histórico meteorológico NO se exige para entrenar el
+    # nowcast radar. Es un modelo ambiental separado (V8).
+    # Si no hay suficiente radar real todavía, terminamos en
+    # estado limpio y conservamos el modelo anterior.
+    if not quality["entrenable"]:
+        print("")
+        print("DATASET AUN NO ENTRENABLE.")
+        print("No se modifica el modelo existente.")
+        print("Motivos:")
+        for reason in quality["motivos"]:
+            print(f"- {reason}")
+        METRICS.parent.mkdir(parents=True, exist_ok=True)
+        METRICS.write_text(
+            json.dumps({
+                "status": "sin_datos_suficientes",
+                "quality": quality,
+                "weather_matching": int(df.get("weather_match", pd.Series(dtype=float)).sum()),
+                "weather_required": False,
+            }, indent=2, ensure_ascii=False),
+            encoding="utf-8",
         )
-    )
+        return
 
     # --------------------------------------------------------
     # SECUENCIAS
@@ -874,14 +739,21 @@ def main():
     )
 
     if len(sequences) < MIN_SEQUENCES:
-
-        raise SystemExit(
-            f"ERROR: solo hay "
-            f"{len(sequences)} "
-            "secuencias continuas. "
-            f"Se necesitan al menos "
-            f"{MIN_SEQUENCES}."
+        print("")
+        print("AUN NO HAY SUFICIENTES SECUENCIAS PARA ENTRENAR.")
+        print(f"Secuencias: {len(sequences)} / mínimo: {MIN_SEQUENCES}")
+        print("No se modifica el modelo existente.")
+        METRICS.write_text(
+            json.dumps({
+                "status": "sin_secuencias_suficientes",
+                "quality": quality,
+                "secuencias": int(len(sequences)),
+                "min_secuencias": MIN_SEQUENCES,
+                "weather_required": False,
+            }, indent=2, ensure_ascii=False),
+            encoding="utf-8",
         )
+        return
 
     # --------------------------------------------------------
     # FEATURES / TARGETS
@@ -932,11 +804,9 @@ def main():
         split >= len(sequences)
     ):
 
-        raise SystemExit(
-            "ERROR: dataset demasiado "
-            "pequeño para realizar "
-            "un holdout temporal seguro."
-        )
+        print("DATASET DEMASIADO PEQUEÑO PARA HOLDOUT SEGURO.")
+        print("No se modifica el modelo existente.")
+        return
 
     X_train = X.iloc[
         :train_end
@@ -975,17 +845,9 @@ def main():
         > 0
     ).any():
 
-        raise SystemExit(
-
-            "ERROR: el bloque temporal "
-            "de prueba no contiene "
-            "precipitación. "
-
-            "Se necesita otro período "
-            "con lluvia para validar "
-            "el modelo correctamente."
-
-        )
+        print("EL BLOQUE DE PRUEBA NO CONTIENE PRECIPITACIÓN.")
+        print("No se modifica el modelo existente.")
+        return
 
     # --------------------------------------------------------
     # MODELOS
@@ -996,7 +858,7 @@ def main():
     metrics = {
 
         "version":
-            "4.0",
+            "5.0",
 
         "fuente":
             "RainViewer V7.1",
@@ -1136,7 +998,7 @@ def main():
     artifact = {
 
         "version":
-            "4.0",
+            "5.0",
 
         "source":
             "RainViewer + histórico meteorológico 1980-2026",
