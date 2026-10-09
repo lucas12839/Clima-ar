@@ -15,33 +15,38 @@ LATEST_FILE = OUTPUT_DIR / "actual.png"
 
 
 def guardar_debug(page):
-    """Guarda información útil si el SMN cambia la página."""
-
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    page.screenshot(
-        path=str(OUTPUT_DIR / "debug_smn.png"),
-        full_page=True
-    )
+    print("Guardando captura de debug...")
 
-    html = page.content()
+    try:
+        page.screenshot(
+            path=str(OUTPUT_DIR / "debug_smn.png"),
+            full_page=True
+        )
+        print("OK: debug_smn.png")
+    except Exception as e:
+        print(f"No se pudo guardar screenshot: {e}")
 
-    (OUTPUT_DIR / "debug_smn.html").write_text(
-        html,
-        encoding="utf-8"
-    )
+    try:
+        html = page.content()
 
-    print("Debug guardado:")
-    print("  data/radar/debug_smn.png")
-    print("  data/radar/debug_smn.html")
+        (OUTPUT_DIR / "debug_smn.html").write_text(
+            html,
+            encoding="utf-8"
+        )
+
+        print("OK: debug_smn.html")
+
+    except Exception as e:
+        print(f"No se pudo guardar HTML: {e}")
 
 
 def seleccionar_bahia_blanca(page):
 
     print("Buscando selector de radar...")
 
-    # Primero buscamos cualquier elemento visible que contenga
-    # el texto "Seleccionar Radar".
+    # Buscamos el texto sin exigir coincidencia exacta.
     selector = page.locator(
         "text=Seleccionar Radar"
     ).first
@@ -57,7 +62,10 @@ def seleccionar_bahia_blanca(page):
 
     print("Selector abierto.")
 
-    # Buscamos la opción exacta de Bahía Blanca.
+    page.wait_for_timeout(1000)
+
+    print("Buscando Bahía Blanca...")
+
     opcion = page.locator(
         "text=Bahía Blanca (Buenos Aires)"
     ).first
@@ -78,15 +86,17 @@ def encontrar_radar(page):
 
     print("Esperando imagen de RMA10...")
 
-    # Esperamos un poco para que el visor cambie.
     page.wait_for_timeout(7000)
 
-    # Buscamos imágenes grandes visibles.
     imagenes = page.locator("img:visible")
 
     candidatos = []
 
-    for i in range(imagenes.count()):
+    cantidad = imagenes.count()
+
+    print(f"Imágenes visibles encontradas: {cantidad}")
+
+    for i in range(cantidad):
 
         elemento = imagenes.nth(i)
 
@@ -221,7 +231,9 @@ def capturar():
         except Exception as e:
 
             print()
-            print("ERROR:")
+            print("======================================")
+            print("ERROR EN CAPTURA")
+            print("======================================")
             print(str(e))
             print()
 
@@ -237,6 +249,7 @@ def capturar():
 if __name__ == "__main__":
 
     try:
+
         capturar()
 
     except Exception:
