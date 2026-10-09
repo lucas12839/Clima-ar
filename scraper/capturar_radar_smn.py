@@ -4,62 +4,94 @@ from pathlib import Path
 from datetime import datetime, timezone
 import sys
 
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 
 SMN_URL = "https://www.smn.gob.ar/radar/bahiablanca"
 
 OUTPUT_DIR = Path("data/radar")
 HISTORIC_DIR = OUTPUT_DIR / "historico"
-
 LATEST_FILE = OUTPUT_DIR / "actual.png"
 
 
-def guardar_imagen(page):
-    """
-    Busca la imagen/canvas visible correspondiente al radar
-    y guarda una captura del elemento.
-    """
+def guardar_debug(page):
+    """Guarda información útil si el SMN cambia la página."""
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    page.screenshot(
+        path=str(OUTPUT_DIR / "debug_smn.png"),
+        full_page=True
+    )
+
+    html = page.content()
+
+    (OUTPUT_DIR / "debug_smn.html").write_text(
+        html,
+        encoding="utf-8"
+    )
+
+    print("Debug guardado:")
+    print("  data/radar/debug_smn.png")
+    print("  data/radar/debug_smn.html")
+
+
+def seleccionar_bahia_blanca(page):
+
+    print("Buscando selector de radar...")
+
+    # Primero buscamos cualquier elemento visible que contenga
+    # el texto "Seleccionar Radar".
+    selector = page.locator(
+        "text=Seleccionar Radar"
+    ).first
+
+    selector.wait_for(
+        state="visible",
+        timeout=60000
+    )
+
+    print("Selector encontrado.")
+
+    selector.click()
+
+    print("Selector abierto.")
+
+    # Buscamos la opción exacta de Bahía Blanca.
+    opcion = page.locator(
+        "text=Bahía Blanca (Buenos Aires)"
+    ).first
+
+    opcion.wait_for(
+        state="visible",
+        timeout=30000
+    )
+
+    print("Bahía Blanca encontrada.")
+
+    opcion.click()
+
+    print("Bahía Blanca seleccionada.")
+
+
+def encontrar_radar(page):
+
+    print("Esperando imagen de RMA10...")
+
+    # Esperamos un poco para que el visor cambie.
+    page.wait_for_timeout(7000)
+
+    # Buscamos imágenes grandes visibles.
+    imagenes = page.locator("img:visible")
 
     candidatos = []
 
-    # Buscar imágenes visibles
-    imagenes = page.locator("img:visible")
-
     for i in range(imagenes.count()):
+
         elemento = imagenes.nth(i)
 
         try:
-            box = elemento.bounding_box()
 
-            if not box:
-                continue
-
-            ancho = box["width"]
-            alto = box["height"]
-
-            # Evitamos logos, iconos y elementos pequeños
-            if ancho < 250 or alto < 200:
-                continue
-
-            # El radar normalmente tiene proporción cercana a cuadrada
-            proporcion = ancho / alto
-
-            if 0.60 <= proporcion <= 1.50:
-                candidatos.append(
-                    ("img", i, ancho * alto)
-                )
-
-        except Exception:
-            continue
-
-    # Buscar canvas visibles por si el radar se dibuja mediante canvas
-    canvas = page.locator("canvas:visible")
-
-    for i in range(canvas.count()):
-        elemento = canvas.nth(i)
-
-        try:
             box = elemento.bounding_box()
 
             if not box:
@@ -71,72 +103,45 @@ def guardar_imagen(page):
             if ancho < 250 or alto < 200:
                 continue
 
-            proporcion = ancho / alto
+            area = ancho * alto
 
-            if 0.60 <= proporcion <= 1.50:
-                candidatos.append(
-                    ("canvas", i, ancho * alto)
-                )
+            candidatos.append(
+                (elemento, area, ancho, alto)
+            )
 
         except Exception:
             continue
 
     if not candidatos:
         raise RuntimeError(
-            "No se encontró ninguna imagen/canvas compatible con el radar."
+            "No se encontró ninguna imagen grande visible."
         )
 
-    # Elegimos el elemento de mayor superficie
-    candidatos.sort(key=lambda x: x[2], reverse=True)
+    candidatos.sort(
+        key=lambda x: x[1],
+        reverse=True
+    )
 
-    tipo, indice, superficie = candidatos[0]
+    radar, area, ancho, alto = candidatos[0]
 
-    if tipo == "img":
-        radar = imagenes.nth(indice)
-    else:
-        radar = canvas.nth(indice)
+    print("Imagen candidata encontrada:")
+    print(f"  ancho: {ancho:.0f}")
+    print(f"  alto:  {alto:.0f}")
 
-    box = radar.bounding_box()
-
-    print("Elemento radar encontrado:")
-    print(f"  tipo: {tipo}")
-    print(f"  ancho: {box['width']:.0f}")
-    print(f"  alto: {box['height']:.0f}")
-
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    HISTORIC_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Captura del radar actual
-    radar.screenshot(path=str(LATEST_FILE))
-
-    # Histórico
-    ahora = datetime.now(timezone.utc)
-    timestamp = ahora.strftime("%Y%m%dT%H%M%SZ")
-
-    historic_file = HISTORIC_DIR / f"RMA10_{timestamp}.png"
-
-    radar.screenshot(path=str(historic_file))
-
-    # Validación básica
-    tamano = LATEST_FILE.stat().st_size
-
-    if tamano < 5000:
-        raise RuntimeError(
-            f"La imagen parece inválida o vacía. Tamaño: {tamano} bytes."
-        )
-
-    print()
-    print("RADAR CAPTURADO CORRECTAMENTE")
-    print(f"Actual:    {LATEST_FILE}")
-    print(f"Histórico: {historic_file}")
-    print(f"Tamaño:    {tamano} bytes")
+    return radar
 
 
-def main():
+def capturar():
 
-    print("========================================")
-    print("CLIMAAR - CAPTURADOR RADAR SMN RMA10")
-    print("========================================")
+    OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    HISTORIC_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
     with sync_playwright() as p:
 
@@ -146,111 +151,94 @@ def main():
 
         page = browser.new_page(
             viewport={
-                "width": 1366,
-                "height": 1000,
+                "width": 390,
+                "height": 844
             }
         )
 
-        print()
-        print("1. Abriendo SMN...")
-
-        page.goto(
-            SMN_URL,
-            wait_until="domcontentloaded",
-            timeout=60000
-        )
-
-        print("Página cargada.")
-
-        # Esperamos que aparezca el selector
-        print()
-        print("2. Buscando 'Seleccionar Radar'...")
-
-        selector = page.get_by_text(
-            "Seleccionar Radar",
-            exact=True
-        )
-
-        selector.wait_for(
-            state="visible",
-            timeout=30000
-        )
-
-        print("Selector encontrado.")
-
-        # Abrimos el menú
-        print()
-        print("3. Abriendo selector...")
-
-        selector.click()
-
-        # Esperamos la opción exacta de Bahía Blanca
-        print()
-        print("4. Buscando Bahía Blanca...")
-
-        opcion = page.get_by_text(
-            "Bahía Blanca (Buenos Aires)",
-            exact=True
-        )
-
-        opcion.wait_for(
-            state="visible",
-            timeout=30000
-        )
-
-        print("Bahía Blanca encontrada.")
-
-        # Seleccionamos RMA10
-        print()
-        print("5. Seleccionando Bahía Blanca...")
-
-        opcion.click()
-
-        # Esperar que cambie el contenido
-        print()
-        print("6. Esperando actualización del radar...")
-
         try:
-            page.get_by_text(
-                "Bahía Blanca-SINARAME",
-                exact=False
-            ).wait_for(
-                state="visible",
-                timeout=30000
+
+            print()
+            print("======================================")
+            print("CLIMAAR - CAPTURADOR SMN RMA10")
+            print("======================================")
+            print()
+
+            print("Abriendo:")
+            print(SMN_URL)
+
+            page.goto(
+                SMN_URL,
+                wait_until="domcontentloaded",
+                timeout=60000
             )
 
-            print("Texto del radar RMA10 detectado.")
+            print("Página cargada.")
 
-        except PlaywrightTimeoutError:
+            page.wait_for_timeout(5000)
 
-            print(
-                "No apareció el texto exacto del radar."
+            seleccionar_bahia_blanca(page)
+
+            radar = encontrar_radar(page)
+
+            print("Capturando radar...")
+
+            radar.screenshot(
+                path=str(LATEST_FILE)
             )
 
-            # Igual damos tiempo para que termine de cargar
-            page.wait_for_timeout(10000)
+            timestamp = datetime.now(
+                timezone.utc
+            ).strftime(
+                "%Y%m%dT%H%M%SZ"
+            )
 
-        # Tiempo adicional para que termine de renderizar
-        page.wait_for_timeout(5000)
+            historic_file = (
+                HISTORIC_DIR /
+                f"RMA10_{timestamp}.png"
+            )
 
-        print()
-        print("7. Capturando imagen...")
+            radar.screenshot(
+                path=str(historic_file)
+            )
 
-        guardar_imagen(page)
+            tamano = LATEST_FILE.stat().st_size
 
-        browser.close()
+            if tamano < 5000:
+                raise RuntimeError(
+                    f"La captura parece inválida: {tamano} bytes."
+                )
+
+            print()
+            print("======================================")
+            print("RADAR CAPTURADO CORRECTAMENTE")
+            print("======================================")
+            print()
+            print(f"Actual: {LATEST_FILE}")
+            print(f"Histórico: {historic_file}")
+            print(f"Tamaño: {tamano} bytes")
+
+        except Exception as e:
+
+            print()
+            print("ERROR:")
+            print(str(e))
+            print()
+
+            guardar_debug(page)
+
+            raise
+
+        finally:
+
+            browser.close()
 
 
 if __name__ == "__main__":
+
     try:
-        main()
+        capturar()
 
-    except Exception as e:
-
-        print()
-        print("========================================")
-        print("ERROR EN CAPTURADOR SMN")
-        print("========================================")
-        print(str(e))
+    except Exception:
 
         sys.exit(1)
