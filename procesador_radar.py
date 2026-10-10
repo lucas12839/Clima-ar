@@ -8,6 +8,43 @@ from collections import Counter
 RADAR_FILE = Path("data/radar/actual.png")
 
 
+def clasificar_color(r, g, b):
+    """
+    Clasificación aproximada por color.
+    NO representa todavía valores dBZ.
+    """
+
+    # Fondo / transparente / negro
+    if r < 20 and g < 20 and b < 20:
+        return "FONDO"
+
+    # Azules y cian
+    if b > r * 1.25 and b > g * 1.05:
+        return "AZUL/CYAN"
+
+    # Verdes
+    if g > r * 1.25 and g > b * 1.15:
+        return "VERDE"
+
+    # Amarillos
+    if r > 150 and g > 150 and b < 120:
+        return "AMARILLO"
+
+    # Naranjas
+    if r > 170 and g > 80 and g < 180 and b < 100:
+        return "NARANJA"
+
+    # Rojos
+    if r > 150 and r > g * 1.35 and r > b * 1.35:
+        return "ROJO"
+
+    # Magenta / violeta
+    if r > 100 and b > 100 and r > g * 1.25:
+        return "VIOLETA/MAGENTA"
+
+    return "OTRO"
+
+
 def procesar_radar():
 
     print("======================================")
@@ -23,100 +60,93 @@ def procesar_radar():
     print("Imagen encontrada:")
     print(RADAR_FILE)
 
-    imagen = Image.open(RADAR_FILE).convert("RGB")
+    imagen = Image.open(RADAR_FILE)
 
     print("")
     print("Información de la imagen:")
     print(f"Formato: {imagen.format}")
     print(f"Ancho: {imagen.width}")
     print(f"Alto: {imagen.height}")
+    print(f"Modo: {imagen.mode}")
 
-    # ======================================
-    # CONTAR COLORES
-    # ======================================
+    # Convertimos a RGB para analizar correctamente los colores
+    imagen = imagen.convert("RGB")
 
     pixeles = list(imagen.getdata())
 
     total_pixeles = len(pixeles)
 
-    contador = Counter(pixeles)
+    categorias = Counter()
+
+    for r, g, b in pixeles:
+
+        categoria = clasificar_color(r, g, b)
+
+        categorias[categoria] += 1
 
     print("")
     print("======================================")
-    print("COLORES MÁS FRECUENTES")
+    print("CLASIFICACIÓN DEL RADAR")
     print("======================================")
 
-    for color, cantidad in contador.most_common(30):
+    orden = [
+        "FONDO",
+        "AZUL/CYAN",
+        "VERDE",
+        "AMARILLO",
+        "NARANJA",
+        "ROJO",
+        "VIOLETA/MAGENTA",
+        "OTRO"
+    ]
+
+    for categoria in orden:
+
+        cantidad = categorias[categoria]
 
         porcentaje = (
             cantidad / total_pixeles * 100
         )
 
         print(
-            f"RGB {color} -> "
-            f"{cantidad} píxeles "
-            f"({porcentaje:.2f}%)"
+            f"{categoria:<18} "
+            f"{cantidad:>8} píxeles "
+            f"({porcentaje:>6.2f}%)"
         )
 
     # ======================================
-    # COLORES NO GRISES
+    # COLORES REALES MÁS FRECUENTES
     # ======================================
 
-    colores = []
-
-    for color, cantidad in contador.items():
-
-        r, g, b = color
-
-        diferencia = max(color) - min(color)
-
-        if diferencia > 15:
-
-            colores.append(
-                (cantidad, color)
-            )
-
-    colores.sort(reverse=True)
-
     print("")
     print("======================================")
-    print("COLORES DEL RADAR")
+    print("COLORES REALES MÁS FRECUENTES")
     print("======================================")
 
-    total_colores = sum(
-        cantidad
-        for cantidad, color in colores
-    )
+    colores = Counter(pixeles)
 
-    porcentaje_colores = (
-        total_colores
-        / total_pixeles
-        * 100
-    )
+    mostrados = 0
 
-    print(
-        f"Píxeles con color: {total_colores}"
-    )
+    for (r, g, b), cantidad in colores.most_common():
 
-    print(
-        f"Porcentaje: "
-        f"{porcentaje_colores:.2f}%"
-    )
-
-    print("")
-    print("Principales colores detectados:")
-
-    for cantidad, color in colores[:30]:
+        # Ignorar negro/fondo
+        if r < 20 and g < 20 and b < 20:
+            continue
 
         porcentaje = (
             cantidad / total_pixeles * 100
         )
 
         print(
-            f"RGB {color} -> "
+            f"RGB ({r}, {g}, {b}) -> "
             f"{cantidad} píxeles "
             f"({porcentaje:.2f}%)"
         )
+
+        mostrados += 1
+
+        if mostrados >= 30:
+            break
 
     print("")
     print("======================================")
