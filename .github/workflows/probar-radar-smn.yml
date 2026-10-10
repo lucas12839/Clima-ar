@@ -1,4 +1,4 @@
-name: Probar Radar SINARAME RMA10
+name: Diagnostico SINARAME RMA10
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
-      - name: Capturar radar SINARAME
+      - name: Ejecutar diagnostico
         run: |
           python scraper/capturar_radar_smn.py
 
@@ -31,7 +31,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sinarame-rma10-debug
+          name: sinarame-rma10-diagnostico
           path: |
             data/radar/sinarame_network.txt
             data/radar/sinarame_rma10.png
@@ -44,10 +44,10 @@ jobs:
           echo "======================================"
           echo "ARCHIVOS GENERADOS"
           echo "======================================"
+
           find data/radar -type f -print 2>/dev/null || true
 
           echo ""
           echo "======================================"
-          echo "NETWORK"
+          echo "FIN DEL DIAGNOSTICO"
           echo "======================================"
-          cat data/radar/sinarame_network.txt 2>/dev/null || true
