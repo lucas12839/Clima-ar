@@ -2,44 +2,47 @@
 
 from pathlib import Path
 from PIL import Image
-from collections import Counter
 
 
 RADAR_FILE = Path("data/radar/actual.png")
 
 
 def clasificar_color(r, g, b):
-    """
-    Clasificación aproximada por color.
-    NO representa todavía valores dBZ.
-    """
 
-    # Fondo / transparente / negro
-    if r < 20 and g < 20 and b < 20:
+    # Fondo
+    if max(r, g, b) < 25:
         return "FONDO"
 
-    # Azules y cian
-    if b > r * 1.25 and b > g * 1.05:
+    # Ignorar colores casi grises
+    diferencia = max(r, g, b) - min(r, g, b)
+
+    if diferencia < 20:
+        return "FONDO"
+
+    # Azul / Cyan
+    if b > g and g > r * 1.5:
         return "AZUL/CYAN"
 
-    # Verdes
-    if g > r * 1.25 and g > b * 1.15:
+    # Verde
+    if g > r * 1.35 and g >= b * 0.95:
         return "VERDE"
 
-    # Amarillos
-    if r > 150 and g > 150 and b < 120:
-        return "AMARILLO"
+    # Amarillo
+    if r > 100 and g > 100 and b < 100:
+        if abs(r - g) < 100:
+            return "AMARILLO"
 
-    # Naranjas
-    if r > 170 and g > 80 and g < 180 and b < 100:
-        return "NARANJA"
+    # Naranja
+    if r > 130 and g > 60 and g < 180 and b < 90:
+        if r > g * 1.15:
+            return "NARANJA"
 
-    # Rojos
-    if r > 150 and r > g * 1.35 and r > b * 1.35:
+    # Rojo
+    if r > 130 and r > g * 1.35 and r > b * 1.35:
         return "ROJO"
 
-    # Magenta / violeta
-    if r > 100 and b > 100 and r > g * 1.25:
+    # Violeta / Magenta
+    if r > 100 and b > 100 and r > g * 1.3:
         return "VIOLETA/MAGENTA"
 
     return "OTRO"
@@ -48,7 +51,7 @@ def clasificar_color(r, g, b):
 def procesar_radar():
 
     print("======================================")
-    print("ClimaAR - ANÁLISIS DE COLORES RMA10")
+    print("ClimaAR - ANALISIS DE RADAR RMA10")
     print("======================================")
 
     if not RADAR_FILE.exists():
@@ -56,97 +59,139 @@ def procesar_radar():
             f"No se encontró la imagen: {RADAR_FILE}"
         )
 
+    imagen = Image.open(RADAR_FILE).convert("RGB")
+
+    ancho = imagen.width
+    alto = imagen.height
+
     print("")
-    print("Imagen encontrada:")
+    print("Imagen:")
     print(RADAR_FILE)
 
-    imagen = Image.open(RADAR_FILE)
-
     print("")
-    print("Información de la imagen:")
+    print("Información:")
     print(f"Formato: {imagen.format}")
-    print(f"Ancho: {imagen.width}")
-    print(f"Alto: {imagen.height}")
-    print(f"Modo: {imagen.mode}")
+    print(f"Ancho: {ancho}")
+    print(f"Alto: {alto}")
 
-    # Convertimos a RGB para analizar correctamente los colores
-    imagen = imagen.convert("RGB")
+    pixeles = imagen.load()
 
-    pixeles = list(imagen.getdata())
+    resultados = {
+        "FONDO": 0,
+        "AZUL/CYAN": 0,
+        "VERDE": 0,
+        "AMARILLO": 0,
+        "NARANJA": 0,
+        "ROJO": 0,
+        "VIOLETA/MAGENTA": 0,
+        "OTRO": 0
+    }
 
-    total_pixeles = len(pixeles)
+    # Límites de cada color
+    limites = {}
 
-    categorias = Counter()
+    for categoria in resultados:
 
-    for r, g, b in pixeles:
+        if categoria == "FONDO":
+            continue
 
-        categoria = clasificar_color(r, g, b)
+        limites[categoria] = {
+            "min_x": ancho,
+            "max_x": 0,
+            "min_y": alto,
+            "max_y": 0
+        }
 
-        categorias[categoria] += 1
+    # Analizar todos los píxeles
+    for y in range(alto):
+
+        for x in range(ancho):
+
+            r, g, b = pixeles[x, y]
+
+            categoria = clasificar_color(r, g, b)
+
+            resultados[categoria] += 1
+
+            if categoria != "FONDO":
+
+                limite = limites[categoria]
+
+                limite["min_x"] = min(
+                    limite["min_x"], x
+                )
+
+                limite["max_x"] = max(
+                    limite["max_x"], x
+                )
+
+                limite["min_y"] = min(
+                    limite["min_y"], y
+                )
+
+                limite["max_y"] = max(
+                    limite["max_y"], y
+                )
+
+    total = ancho * alto
 
     print("")
     print("======================================")
     print("CLASIFICACIÓN DEL RADAR")
     print("======================================")
 
-    orden = [
-        "FONDO",
-        "AZUL/CYAN",
-        "VERDE",
-        "AMARILLO",
-        "NARANJA",
-        "ROJO",
-        "VIOLETA/MAGENTA",
-        "OTRO"
-    ]
+    for categoria, cantidad in resultados.items():
 
-    for categoria in orden:
-
-        cantidad = categorias[categoria]
-
-        porcentaje = (
-            cantidad / total_pixeles * 100
-        )
+        porcentaje = cantidad / total * 100
 
         print(
             f"{categoria:<18} "
-            f"{cantidad:>8} píxeles "
-            f"({porcentaje:>6.2f}%)"
-        )
-
-    # ======================================
-    # COLORES REALES MÁS FRECUENTES
-    # ======================================
-
-    print("")
-    print("======================================")
-    print("COLORES REALES MÁS FRECUENTES")
-    print("======================================")
-
-    colores = Counter(pixeles)
-
-    mostrados = 0
-
-    for (r, g, b), cantidad in colores.most_common():
-
-        # Ignorar negro/fondo
-        if r < 20 and g < 20 and b < 20:
-            continue
-
-        porcentaje = (
-            cantidad / total_pixeles * 100
-        )
-
-        print(
-            f"RGB ({r}, {g}, {b}) -> "
-            f"{cantidad} píxeles "
+            f"{cantidad:>7} píxeles "
             f"({porcentaje:.2f}%)"
         )
 
-        mostrados += 1
+    print("")
+    print("======================================")
+    print("ZONAS DETECTADAS")
+    print("======================================")
 
-        if mostrados >= 30:
-            break
+    for categoria, limite in limites.items():
+
+        cantidad = resultados[categoria]
+
+        if cantidad == 0:
+            continue
+
+        ancho_zona = (
+            limite["max_x"] - limite["min_x"] + 1
+        )
+
+        alto_zona = (
+            limite["max_y"] - limite["min_y"] + 1
+        )
+
+        centro_x = (
+            limite["min_x"] + limite["max_x"]
+        ) // 2
+
+        centro_y = (
+            limite["min_y"] + limite["max_y"]
+        ) // 2
+
+        print("")
+        print(categoria)
+
+        print(
+            f"  Cantidad: {cantidad} píxeles"
+        )
+
+        print(
+            f"  Zona: {ancho_zona} x {alto_zona}"
+        )
+
+        print(
+            f"  Centro: X={centro_x} Y={centro_y}"
+        )
 
     print("")
     print("======================================")
