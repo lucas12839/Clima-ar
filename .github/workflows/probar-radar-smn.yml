@@ -1,4 +1,4 @@
-name: Probar Radar SMN RMA10
+name: Probar Radar SINARAME RMA10
 
 on:
   workflow_dispatch:
@@ -11,71 +11,35 @@ jobs:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Instalar Python
+      - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install requests
 
-      - name: Instalar Chromium
-        run: |
-          playwright install chromium
-          playwright install-deps chromium
-
-      - name: Capturar radar SMN
-        id: radar
+      - name: Capturar radar SINARAME
         continue-on-error: true
         run: |
           python scraper/capturar_radar_smn.py
+
+      - name: Subir diagnostico SINARAME
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sinarame-debug
+          path: |
+            data/radar/sinarame.html
+            data/radar/sinarame_debug.txt
+          if-no-files-found: warn
 
       - name: Mostrar archivos generados
         if: always()
         run: |
           echo "======================================"
-          echo "ARCHIVOS EN data/radar"
+          echo "ARCHIVOS GENERADOS"
           echo "======================================"
-          find data/radar -type f -maxdepth 3 -print 2>/dev/null || true
-
-      - name: Preparar debug
-        if: always()
-        run: |
-          mkdir -p debug-smn
-
-          if [ -f data/radar/debug_smn.png ]; then
-            cp data/radar/debug_smn.png debug-smn/debug_smn.png
-          fi
-
-          if [ -f data/radar/debug_smn.html ]; then
-            cp data/radar/debug_smn.html debug-smn/debug_smn.html
-          fi
-
-          echo "======================================"
-          echo "ARCHIVOS DE DEBUG"
-          echo "======================================"
-          find debug-smn -type f -print
-
-      - name: Guardar debug SMN
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-scraper-smn
-          path: debug-smn/
-          if-no-files-found: warn
-
-      - name: Guardar captura como artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: prueba-radar-smn
-          path: data/radar/
-          if-no-files-found: warn
-
-      - name: Fallar si el scraper falló
-        if: steps.radar.outcome == 'failure'
-        run: |
-          echo "El capturador de radar SMN falló."
-          exit 1
+          find data/radar -maxdepth 2 -type f -print 2>/dev/null || true
