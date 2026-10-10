@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
@@ -16,30 +17,37 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Instalar dependencias
+      - name: Instalar Playwright
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install playwright
+          playwright install --with-deps chromium
 
       - name: Capturar radar SINARAME
-        continue-on-error: true
         run: |
           python scraper/capturar_radar_smn.py
 
-      - name: Subir diagnostico SINARAME
+      - name: Subir diagnostico
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sinarame-debug
+          name: sinarame-rma10-debug
           path: |
-            data/radar/sinarame.html
-            data/radar/sinarame_debug.txt
+            data/radar/sinarame_network.txt
+            data/radar/sinarame_rma10.png
+            data/radar/sinarame_rma10.html
           if-no-files-found: warn
 
-      - name: Mostrar archivos generados
+      - name: Mostrar resultado
         if: always()
         run: |
           echo "======================================"
           echo "ARCHIVOS GENERADOS"
           echo "======================================"
-          find data/radar -maxdepth 2 -type f -print 2>/dev/null || true
+          find data/radar -type f -print 2>/dev/null || true
+
+          echo ""
+          echo "======================================"
+          echo "NETWORK"
+          echo "======================================"
+          cat data/radar/sinarame_network.txt 2>/dev/null || true
