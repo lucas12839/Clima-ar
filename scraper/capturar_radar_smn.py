@@ -9,16 +9,17 @@ URL = "https://radares.hidricosargentina.gob.ar/"
 OUTPUT_DIR = Path("data/radar")
 REPORT_FILE = OUTPUT_DIR / "sinarame_network.txt"
 SCREENSHOT_FILE = OUTPUT_DIR / "sinarame_rma10.png"
+HTML_FILE = OUTPUT_DIR / "sinarame_rma10.html"
 
 
 def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    requests_found = []
+    eventos = []
 
     print("======================================")
-    print("CLIMAAR - CAPTURA SINARAME RMA10")
+    print("CLIMAAR - DIAGNOSTICO SINARAME RMA10")
     print("======================================")
 
     with sync_playwright() as p:
@@ -34,165 +35,425 @@ def main():
             }
         )
 
+        # ---------------------------------
+        # CAPTURAR REQUESTS
+        # ---------------------------------
+
         def registrar_request(request):
 
-            url = request.url.lower()
+            linea = (
+                f"REQUEST | {request.method} | "
+                f"{request.resource_type} | "
+                f"{request.url}"
+            )
 
-            palabras = [
-                "rma10",
-                "radar",
-                ".png",
-                ".jpg",
-                ".jpeg",
-                "cache",
-                "image",
-                "frame"
-            ]
+            eventos.append(linea)
 
-            if any(palabra in url for palabra in palabras):
+            print(linea)
 
-                linea = f"REQUEST {request.method} {request.url}"
+        page.on("request", registrar_request)
 
-                print(linea)
-
-                requests_found.append(linea)
+        # ---------------------------------
+        # CAPTURAR RESPONSES
+        # ---------------------------------
 
         def registrar_response(response):
 
-            url = response.url.lower()
+            linea = (
+                f"RESPONSE | {response.status} | "
+                f"{response.request.resource_type} | "
+                f"{response.url}"
+            )
 
-            palabras = [
-                "rma10",
-                "radar",
-                ".png",
-                ".jpg",
-                ".jpeg",
-                "cache",
-                "image",
-                "frame"
-            ]
+            eventos.append(linea)
 
-            if any(palabra in url for palabra in palabras):
+            print(linea)
 
-                linea = (
-                    f"RESPONSE {response.status} "
-                    f"{response.url}"
+        page.on("response", registrar_response)
+
+        # ---------------------------------
+        # WEBSOCKETS
+        # ---------------------------------
+
+        def registrar_websocket(ws):
+
+            print()
+            print("WEBSOCKET:")
+            print(ws.url)
+
+            eventos.append(
+                f"WEBSOCKET OPEN | {ws.url}"
+            )
+
+            def recibido(mensaje):
+
+                texto = str(mensaje)
+
+                if len(texto) > 10000:
+                    texto = texto[:10000] + " [TRUNCADO]"
+
+                eventos.append(
+                    f"WEBSOCKET RECEIVED | {ws.url} | {texto}"
                 )
 
-                print(linea)
+                print(
+                    "WEBSOCKET RECEIVED:",
+                    texto[:2000]
+                )
 
-                requests_found.append(linea)
+            def enviado(mensaje):
 
-        page.on("request", registrar_request)
-        page.on("response", registrar_response)
+                texto = str(mensaje)
+
+                if len(texto) > 10000:
+                    texto = texto[:10000] + " [TRUNCADO]"
+
+                eventos.append(
+                    f"WEBSOCKET SENT | {ws.url} | {texto}"
+                )
+
+            ws.on("framereceived", recibido)
+            ws.on("framesent", enviado)
+
+        page.on("websocket", registrar_websocket)
+
+        # ---------------------------------
+        # ABRIR SINARAME
+        # ---------------------------------
 
         print()
         print("Abriendo SINARAME...")
 
         page.goto(
             URL,
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
             timeout=60000
         )
 
         print("Página cargada.")
 
-        time.sleep(3)
+        time.sleep(8)
+
+        # ---------------------------------
+        # BUSCAR SELECT
+        # ---------------------------------
 
         print()
-        print("Buscando selector RMA10...")
+        print("Buscando selector de radar...")
 
-        selector = page.locator("#radar-selector")
+        selects = page.locator("select")
 
-        selector.wait_for(
-            state="visible",
-            timeout=30000
+        cantidad_selects = selects.count()
+
+        print(
+            "Selectores encontrados:",
+            cantidad_selects
         )
 
-        print("Selector encontrado.")
+        selector = None
+
+        # Buscar el select que contenga Bahía Blanca
+        for i in range(cantidad_selects):
+
+            actual = selects.nth(i)
+
+            try:
+
+                texto = actual.inner_text()
+
+                print(
+                    f"SELECT {i}:",
+                    texto[:500]
+                )
+
+                if (
+                    "Bahía Blanca" in texto
+                    or
+                    "Bahia Blanca" in texto
+                    or
+                    "RMA10" in texto
+                ):
+
+                    selector = actual
+
+                    print()
+                    print(
+                        "Selector RMA10 encontrado:",
+                        i
+                    )
+
+                    break
+
+            except Exception:
+                pass
+
+        if selector is None:
+
+            raise RuntimeError(
+                "No se encontró el selector que contiene Bahía Blanca/RMA10."
+            )
+
+        # ---------------------------------
+        # MOSTRAR OPCIONES
+        # ---------------------------------
 
         print()
-        print("Seleccionando Bahía Blanca (RMA10)...")
+        print("Opciones:")
 
-        selector.select_option("RMA10")
+        opciones = selector.locator("option")
 
-        print("RMA10 seleccionado.")
+        for i in range(opciones.count()):
+
+            option = opciones.nth(i)
+
+            try:
+
+                texto = option.inner_text()
+                valor = option.get_attribute("value")
+
+                print(
+                    f"{i}: {texto} | value={valor}"
+                )
+
+            except Exception:
+                pass
+
+        # ---------------------------------
+        # SELECCIONAR POR TEXTO
+        # ---------------------------------
 
         print()
-        print("Esperando carga del radar...")
+        print("======================================")
+        print("SELECCIONANDO BAHÍA BLANCA RMA10")
+        print("======================================")
 
-        time.sleep(15)
+        seleccionada = False
 
-        # Guardar captura visual
-        page.screenshot(
-            path=str(SCREENSHOT_FILE),
-            full_page=True
+        for i in range(opciones.count()):
+
+            option = opciones.nth(i)
+
+            try:
+
+                texto = option.inner_text().strip()
+
+                if (
+                    "Bahía Blanca" in texto
+                    or
+                    "Bahia Blanca" in texto
+                    or
+                    "RMA10" in texto
+                ):
+
+                    valor = option.get_attribute("value")
+
+                    print(
+                        "Texto encontrado:",
+                        texto
+                    )
+
+                    print(
+                        "Value:",
+                        valor
+                    )
+
+                    selector.select_option(
+                        value=valor
+                    )
+
+                    seleccionada = True
+
+                    break
+
+            except Exception:
+                pass
+
+        if not seleccionada:
+
+            raise RuntimeError(
+                "No se pudo seleccionar Bahía Blanca RMA10."
+            )
+
+        print("RMA10 seleccionado correctamente.")
+
+        # ---------------------------------
+        # FORZAR EVENTO CHANGE
+        # ---------------------------------
+
+        page.evaluate("""
+            (selector) => {
+                selector.dispatchEvent(
+                    new Event("change", {
+                        bubbles: true
+                    })
+                );
+            }
+        """, selector.element_handle())
+
+        print("Evento change enviado.")
+
+        # ---------------------------------
+        # ESPERAR RADAR
+        # ---------------------------------
+
+        print()
+        print("Esperando tráfico del radar...")
+
+        for segundo in range(30):
+
+            time.sleep(1)
+
+            print(
+                f"Esperando: {segundo + 1}/30"
+            )
+
+        # ---------------------------------
+        # RECURSOS DEL NAVEGADOR
+        # ---------------------------------
+
+        print()
+        print("======================================")
+        print("RECURSOS CARGADOS")
+        print("======================================")
+
+        resources = page.evaluate("""
+            performance
+                .getEntriesByType("resource")
+                .map(x => ({
+                    name: x.name,
+                    initiatorType: x.initiatorType
+                }))
+        """)
+
+        eventos.append("")
+        eventos.append(
+            "===== PERFORMANCE RESOURCES ====="
         )
 
-        print()
-        print("Captura guardada:")
-        print(SCREENSHOT_FILE)
+        for resource in resources:
 
-        # Buscar imágenes visibles
+            name = resource.get("name", "")
+            tipo = resource.get(
+                "initiatorType",
+                ""
+            )
+
+            linea = (
+                f"RESOURCE | {tipo} | {name}"
+            )
+
+            eventos.append(linea)
+
+            print(linea)
+
+        # ---------------------------------
+        # IMÁGENES
+        # ---------------------------------
+
         print()
-        print("IMAGENES EN LA PAGINA:")
+        print("======================================")
+        print("IMÁGENES")
+        print("======================================")
 
         imagenes = page.locator("img")
 
         cantidad = imagenes.count()
 
-        print("Cantidad:", cantidad)
+        print(
+            "Cantidad:",
+            cantidad
+        )
+
+        eventos.append("")
+        eventos.append(
+            "===== IMG ELEMENTS ====="
+        )
 
         for i in range(cantidad):
 
             try:
 
-                src = imagenes.nth(i).get_attribute("src")
+                img = imagenes.nth(i)
 
-                if src:
-                    linea = f"IMG {src}"
+                src = img.get_attribute("src")
+                alt = img.get_attribute("alt")
 
-                    print(linea)
-                    requests_found.append(linea)
+                linea = (
+                    f"IMG | src={src} | alt={alt}"
+                )
+
+                eventos.append(linea)
+
+                print(linea)
 
             except Exception:
                 pass
 
-        # Guardar HTML final
-        html_file = OUTPUT_DIR / "sinarame_rma10.html"
+        # ---------------------------------
+        # TEXTO FINAL
+        # ---------------------------------
 
-        html_file.write_text(
+        texto = page.locator(
+            "body"
+        ).inner_text()
+
+        eventos.append("")
+        eventos.append(
+            "===== TEXTO VISIBLE ====="
+        )
+
+        eventos.append(
+            texto[:30000]
+        )
+
+        # ---------------------------------
+        # GUARDAR HTML
+        # ---------------------------------
+
+        HTML_FILE.write_text(
             page.content(),
             encoding="utf-8"
         )
 
-        print()
-        print("HTML final guardado:")
-        print(html_file)
+        # ---------------------------------
+        # SCREENSHOT
+        # ---------------------------------
+
+        page.screenshot(
+            path=str(SCREENSHOT_FILE),
+            full_page=True
+        )
 
         browser.close()
 
-    # Eliminar duplicados manteniendo orden
-    unicas = []
-
-    for item in requests_found:
-
-        if item not in unicas:
-            unicas.append(item)
+    # ---------------------------------
+    # GUARDAR REPORTE
+    # ---------------------------------
 
     REPORT_FILE.write_text(
-        "\n".join(unicas),
+        "\n".join(eventos),
         encoding="utf-8"
     )
 
     print()
     print("======================================")
-    print("CAPTURA TERMINADA")
+    print("DIAGNOSTICO TERMINADO")
     print("======================================")
-    print()
-    print("Peticiones encontradas:", len(unicas))
-    print("Reporte:", REPORT_FILE)
-    print()
+
+    print(
+        "Reporte:",
+        REPORT_FILE
+    )
+
+    print(
+        "Captura:",
+        SCREENSHOT_FILE
+    )
+
+    print(
+        "HTML:",
+        HTML_FILE
+    )
 
 
 if __name__ == "__main__":
