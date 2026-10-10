@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+from collections import deque, Counter
 from PIL import Image
 
 
 RADAR_FILE = Path("data/radar/actual.png")
+
+# Ignorar manchas demasiado pequeñas
+MIN_PIXELS = 10
 
 
 def clasificar_color(r, g, b):
@@ -13,7 +17,6 @@ def clasificar_color(r, g, b):
     if max(r, g, b) < 25:
         return "FONDO"
 
-    # Ignorar colores casi grises
     diferencia = max(r, g, b) - min(r, g, b)
 
     if diferencia < 20:
@@ -48,10 +51,23 @@ def clasificar_color(r, g, b):
     return "OTRO"
 
 
+# Prioridad de intensidad
+INTENSIDAD = {
+    "FONDO": 0,
+    "AZUL/CYAN": 1,
+    "VERDE": 2,
+    "AMARILLO": 3,
+    "NARANJA": 4,
+    "ROJO": 5,
+    "VIOLETA/MAGENTA": 6,
+    "OTRO": 0
+}
+
+
 def procesar_radar():
 
     print("======================================")
-    print("ClimaAR - ANALISIS DE RADAR RMA10")
+    print("ClimaAR - DETECCIÓN DE NÚCLEOS RMA10")
     print("======================================")
 
     if not RADAR_FILE.exists():
@@ -69,131 +85,206 @@ def procesar_radar():
     print(RADAR_FILE)
 
     print("")
-    print("Información:")
-    print(f"Formato: {imagen.format}")
-    print(f"Ancho: {ancho}")
-    print(f"Alto: {alto}")
+    print(f"Resolución: {ancho} x {alto}")
 
     pixeles = imagen.load()
 
-    resultados = {
-        "FONDO": 0,
-        "AZUL/CYAN": 0,
-        "VERDE": 0,
-        "AMARILLO": 0,
-        "NARANJA": 0,
-        "ROJO": 0,
-        "VIOLETA/MAGENTA": 0,
-        "OTRO": 0
-    }
+    # ======================================
+    # CLASIFICAR CADA PÍXEL
+    # ======================================
 
-    # Límites de cada color
-    limites = {}
+    matriz = []
 
-    for categoria in resultados:
-
-        if categoria == "FONDO":
-            continue
-
-        limites[categoria] = {
-            "min_x": ancho,
-            "max_x": 0,
-            "min_y": alto,
-            "max_y": 0
-        }
-
-    # Analizar todos los píxeles
     for y in range(alto):
+
+        fila = []
 
         for x in range(ancho):
 
             r, g, b = pixeles[x, y]
 
-            categoria = clasificar_color(r, g, b)
+            fila.append(
+                clasificar_color(r, g, b)
+            )
 
-            resultados[categoria] += 1
+        matriz.append(fila)
 
-            if categoria != "FONDO":
+    # ======================================
+    # BUSCAR NÚCLEOS CONECTADOS
+    # ======================================
 
-                limite = limites[categoria]
+    visitados = set()
+    nucleos = []
 
-                limite["min_x"] = min(
-                    limite["min_x"], x
-                )
+    direcciones = [
+        (-1, -1), (0, -1), (1, -1),
+        (-1,  0),          (1,  0),
+        (-1,  1), (0,  1), (1,  1)
+    ]
 
-                limite["max_x"] = max(
-                    limite["max_x"], x
-                )
+    for y in range(alto):
 
-                limite["min_y"] = min(
-                    limite["min_y"], y
-                )
+        for x in range(ancho):
 
-                limite["max_y"] = max(
-                    limite["max_y"], y
-                )
+            if (x, y) in visitados:
+                continue
 
-    total = ancho * alto
+            categoria = matriz[y][x]
+
+            if categoria in ("FONDO", "OTRO"):
+                continue
+
+            # Nuevo núcleo
+            cola = deque()
+            cola.append((x, y))
+            visitados.add((x, y))
+
+            puntos = []
+
+            colores = Counter()
+
+            min_x = x
+            max_x = x
+            min_y = y
+            max_y = y
+
+            while cola:
+
+                px, py = cola.popleft()
+
+                puntos.append((px, py))
+
+                color_actual = matriz[py][px]
+
+                colores[color_actual] += 1
+
+                min_x = min(min_x, px)
+                max_x = max(max_x, px)
+
+                min_y = min(min_y, py)
+                max_y = max(max_y, py)
+
+                for dx, dy in direcciones:
+
+                    nx = px + dx
+                    ny = py + dy
+
+                    if nx < 0 or nx >= ancho:
+                        continue
+
+                    if ny < 0 or ny >= alto:
+                        continue
+
+                    if (nx, ny) in visitados:
+                        continue
+
+                    nuevo_color = matriz[ny][nx]
+
+                    if nuevo_color in (
+                        "FONDO",
+                        "OTRO"
+                    ):
+                        continue
+
+                    visitados.add((nx, ny))
+                    cola.append((nx, ny))
+
+            cantidad = len(puntos)
+
+            # Ignorar ruido muy pequeño
+            if cantidad < MIN_PIXELS:
+                continue
+
+            # Intensidad máxima del núcleo
+            intensidad_maxima = max(
+                colores,
+                key=lambda c: INTENSIDAD[c]
+            )
+
+            centro_x = sum(
+                p[0] for p in puntos
+            ) // cantidad
+
+            centro_y = sum(
+                p[1] for p in puntos
+            ) // cantidad
+
+            nucleos.append({
+                "pixeles": cantidad,
+                "centro_x": centro_x,
+                "centro_y": centro_y,
+                "ancho": max_x - min_x + 1,
+                "alto": max_y - min_y + 1,
+                "intensidad": intensidad_maxima,
+                "colores": colores
+            })
+
+    # ======================================
+    # ORDENAR NÚCLEOS POR TAMAÑO
+    # ======================================
+
+    nucleos.sort(
+        key=lambda n: n["pixeles"],
+        reverse=True
+    )
+
+    # ======================================
+    # RESULTADO
+    # ======================================
 
     print("")
     print("======================================")
-    print("CLASIFICACIÓN DEL RADAR")
+    print("NÚCLEOS DE PRECIPITACIÓN")
     print("======================================")
 
-    for categoria, cantidad in resultados.items():
+    print(
+        f"Núcleos detectados: {len(nucleos)}"
+    )
 
-        porcentaje = cantidad / total * 100
+    print("")
+
+    for numero, nucleo in enumerate(
+        nucleos[:20],
+        start=1
+    ):
 
         print(
-            f"{categoria:<18} "
-            f"{cantidad:>7} píxeles "
-            f"({porcentaje:.2f}%)"
+            f"NÚCLEO #{numero}"
         )
 
-    print("")
-    print("======================================")
-    print("ZONAS DETECTADAS")
-    print("======================================")
-
-    for categoria, limite in limites.items():
-
-        cantidad = resultados[categoria]
-
-        if cantidad == 0:
-            continue
-
-        ancho_zona = (
-            limite["max_x"] - limite["min_x"] + 1
+        print(
+            f"  Píxeles: {nucleo['pixeles']}"
         )
 
-        alto_zona = (
-            limite["max_y"] - limite["min_y"] + 1
+        print(
+            f"  Centro: "
+            f"X={nucleo['centro_x']} "
+            f"Y={nucleo['centro_y']}"
         )
 
-        centro_x = (
-            limite["min_x"] + limite["max_x"]
-        ) // 2
+        print(
+            f"  Tamaño: "
+            f"{nucleo['ancho']} x "
+            f"{nucleo['alto']}"
+        )
 
-        centro_y = (
-            limite["min_y"] + limite["max_y"]
-        ) // 2
+        print(
+            f"  Intensidad máxima: "
+            f"{nucleo['intensidad']}"
+        )
+
+        print("  Colores:")
+
+        for color, cantidad in nucleo[
+            "colores"
+        ].most_common():
+
+            print(
+                f"    {color}: {cantidad}"
+            )
 
         print("")
-        print(categoria)
 
-        print(
-            f"  Cantidad: {cantidad} píxeles"
-        )
-
-        print(
-            f"  Zona: {ancho_zona} x {alto_zona}"
-        )
-
-        print(
-            f"  Centro: X={centro_x} Y={centro_y}"
-        )
-
-    print("")
     print("======================================")
     print("ANÁLISIS TERMINADO")
     print("======================================")
