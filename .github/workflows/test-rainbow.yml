@@ -18,7 +18,7 @@ jobs:
 
       - name: Instalar dependencias
         run: |
-          pip install requests
+          pip install requests Pillow
 
       - name: Ejecutar prueba Rainbow
         env:
@@ -31,5 +31,7 @@ jobs:
         if: always()
         with:
           name: rainbow-radar-test
-          path: data/radar/rainbow_bahia_blanca.png
+          path: |
+            data/radar/rainbow_bahia_blanca.png
+            data/radar/rainbow_status.json
           if-no-files-found: warn
