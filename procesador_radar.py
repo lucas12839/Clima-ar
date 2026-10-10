@@ -22,7 +22,6 @@ def procesar_radar():
     print("Imagen encontrada:")
     print(RADAR_FILE)
 
-    # Abrir imagen
     imagen = Image.open(RADAR_FILE)
 
     print("")
@@ -32,10 +31,8 @@ def procesar_radar():
     print(f"Alto: {imagen.height}")
     print(f"Modo: {imagen.mode}")
 
-    # Convertir a RGB
     imagen_rgb = imagen.convert("RGB")
 
-    # Analizar píxeles
     pixeles = imagen_rgb.load()
 
     ancho = imagen_rgb.width
@@ -51,14 +48,11 @@ def procesar_radar():
 
             r, g, b = pixeles[x, y]
 
-            # Detectar píxeles que no sean
-            # prácticamente blancos/grises.
             if not (
                 abs(r - g) < 8
                 and abs(g - b) < 8
                 and abs(r - b) < 8
             ):
-
                 pixeles_con_color += 1
 
     porcentaje = (
