@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from PIL import Image
+from collections import Counter
 
 
 RADAR_FILE = Path("data/radar/actual.png")
@@ -10,7 +11,7 @@ RADAR_FILE = Path("data/radar/actual.png")
 def procesar_radar():
 
     print("======================================")
-    print("ClimaAR - PROCESADOR RADAR")
+    print("ClimaAR - ANÁLISIS DE COLORES RMA10")
     print("======================================")
 
     if not RADAR_FILE.exists():
@@ -22,58 +23,105 @@ def procesar_radar():
     print("Imagen encontrada:")
     print(RADAR_FILE)
 
-    imagen = Image.open(RADAR_FILE)
+    imagen = Image.open(RADAR_FILE).convert("RGB")
 
     print("")
     print("Información de la imagen:")
     print(f"Formato: {imagen.format}")
     print(f"Ancho: {imagen.width}")
     print(f"Alto: {imagen.height}")
-    print(f"Modo: {imagen.mode}")
 
-    imagen_rgb = imagen.convert("RGB")
+    # ======================================
+    # CONTAR COLORES
+    # ======================================
 
-    pixeles = imagen_rgb.load()
+    pixeles = list(imagen.getdata())
 
-    ancho = imagen_rgb.width
-    alto = imagen_rgb.height
+    total_pixeles = len(pixeles)
 
-    total_pixeles = ancho * alto
+    contador = Counter(pixeles)
 
-    pixeles_con_color = 0
+    print("")
+    print("======================================")
+    print("COLORES MÁS FRECUENTES")
+    print("======================================")
 
-    for y in range(alto):
+    for color, cantidad in contador.most_common(30):
 
-        for x in range(ancho):
+        porcentaje = (
+            cantidad / total_pixeles * 100
+        )
 
-            r, g, b = pixeles[x, y]
+        print(
+            f"RGB {color} -> "
+            f"{cantidad} píxeles "
+            f"({porcentaje:.2f}%)"
+        )
 
-            if not (
-                abs(r - g) < 8
-                and abs(g - b) < 8
-                and abs(r - b) < 8
-            ):
-                pixeles_con_color += 1
+    # ======================================
+    # COLORES NO GRISES
+    # ======================================
 
-    porcentaje = (
-        pixeles_con_color
+    colores = []
+
+    for color, cantidad in contador.items():
+
+        r, g, b = color
+
+        diferencia = max(color) - min(color)
+
+        if diferencia > 15:
+
+            colores.append(
+                (cantidad, color)
+            )
+
+    colores.sort(reverse=True)
+
+    print("")
+    print("======================================")
+    print("COLORES DEL RADAR")
+    print("======================================")
+
+    total_colores = sum(
+        cantidad
+        for cantidad, color in colores
+    )
+
+    porcentaje_colores = (
+        total_colores
         / total_pixeles
         * 100
     )
 
-    print("")
-    print("Análisis básico:")
     print(
-        f"Píxeles con color: {pixeles_con_color}"
+        f"Píxeles con color: {total_colores}"
     )
 
     print(
-        f"Porcentaje detectado: "
-        f"{porcentaje:.2f}%"
+        f"Porcentaje: "
+        f"{porcentaje_colores:.2f}%"
     )
 
     print("")
-    print("Procesamiento terminado.")
+    print("Principales colores detectados:")
+
+    for cantidad, color in colores[:30]:
+
+        porcentaje = (
+            cantidad / total_pixeles * 100
+        )
+
+        print(
+            f"RGB {color} -> "
+            f"{cantidad} píxeles "
+            f"({porcentaje:.2f}%)"
+        )
+
+    print("")
+    print("======================================")
+    print("ANÁLISIS TERMINADO")
+    print("======================================")
 
 
 if __name__ == "__main__":
