@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
-from datetime import datetime
 from playwright.sync_api import sync_playwright
-import time
 
 
 URL = "https://radares.hidricosargentina.gob.ar/"
@@ -18,12 +16,11 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     HISTORICO_DIR.mkdir(parents=True, exist_ok=True)
 
-    radar_encontrado = False
-    archivo_historico = None
-
     with sync_playwright() as p:
 
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True
+        )
 
         page = browser.new_page(
             viewport={
@@ -31,81 +28,6 @@ def main():
                 "height": 1080
             }
         )
-
-        # ======================================
-        # CAPTURAR RESPUESTAS DEL RADAR
-        # ======================================
-
-        def recibir_respuesta(response):
-
-            nonlocal radar_encontrado
-            nonlocal archivo_historico
-
-            url = response.url
-
-            if (
-                "/cache/RMA10/" in url
-                and url.endswith(".png")
-            ):
-
-                print("")
-                print("======================================")
-                print("RADAR RMA10 ENCONTRADO")
-                print("======================================")
-                print(url)
-
-                try:
-
-                    contenido = response.body()
-
-                    if len(contenido) == 0:
-                        print("La imagen llegó vacía.")
-                        return
-
-                    # Guardar imagen actual
-                    ACTUAL_FILE.write_bytes(
-                        contenido
-                    )
-
-                    # Obtener nombre original
-                    nombre = url.split("/")[-1]
-
-                    archivo_historico = (
-                        HISTORICO_DIR / nombre
-                    )
-
-                    archivo_historico.write_bytes(
-                        contenido
-                    )
-
-                    radar_encontrado = True
-
-                    print("")
-                    print("RADAR DESCARGADO CORRECTAMENTE")
-                    print(
-                        f"Tamaño: {len(contenido)} bytes"
-                    )
-                    print(
-                        f"Actual: {ACTUAL_FILE}"
-                    )
-                    print(
-                        f"Histórico: {archivo_historico}"
-                    )
-
-                except Exception as error:
-
-                    print(
-                        f"Error guardando radar: {error}"
-                    )
-
-        page.on(
-            "response",
-            recibir_respuesta
-        )
-
-        # ======================================
-        # ABRIR SINARAME
-        # ======================================
 
         print("======================================")
         print("ABRIENDO SINARAME")
@@ -119,11 +41,8 @@ def main():
 
         print("Página cargada.")
 
-        time.sleep(8)
-
-        # ======================================
-        # BUSCAR SELECTOR
-        # ======================================
+        # Esperar que Blazor termine de cargar
+        page.wait_for_timeout(10000)
 
         print("")
         print("Buscando selector de radares...")
@@ -159,12 +78,12 @@ def main():
         print("Selector encontrado.")
 
         # ======================================
-        # BUSCAR BAHÍA BLANCA
+        # ENCONTRAR OPCIÓN RMA10
         # ======================================
 
         opciones = selector.locator("option")
 
-        seleccionada = False
+        valor_rma10 = None
 
         for i in range(opciones.count()):
 
@@ -183,80 +102,109 @@ def main():
                 or "RMA10" in texto
             ):
 
-                print("")
-                print(
-                    "Seleccionando Bahía Blanca (RMA10)..."
-                )
-
-                selector.select_option(
-                    value=valor
-                )
-
-                seleccionada = True
-
+                valor_rma10 = valor
                 break
 
-        if not seleccionada:
+        if valor_rma10 is None:
 
             raise RuntimeError(
-                "No se pudo seleccionar RMA10."
+                "No se encontró Bahía Blanca RMA10."
             )
 
-        print(
-            "RMA10 seleccionado."
-        )
-
-        # ======================================
-        # ESPERAR IMAGEN
-        # ======================================
-
         print("")
+        print("Seleccionando RMA10...")
         print("Esperando imagen del radar...")
 
-        for segundo in range(40):
-
-            if radar_encontrado:
-                break
-
-            time.sleep(1)
-
-            print(
-                f"Esperando: {segundo + 1}/40"
-            )
-
         # ======================================
-        # RESULTADO
+        # SELECCIONAR Y ESPERAR PNG
         # ======================================
 
-        print("")
-        print("======================================")
+        try:
 
-        if radar_encontrado:
+            with page.expect_response(
+                lambda response:
+                    "/cache/RMA10/" in response.url
+                    and ".png" in response.url,
+                timeout=90000
+            ) as respuesta_esperada:
+
+                selector.select_option(
+                    value=valor_rma10
+                )
+
+            respuesta = respuesta_esperada.value
+
+            print("")
+            print("======================================")
+            print("IMAGEN RMA10 ENCONTRADA")
+            print("======================================")
+
+            print(respuesta.url)
+            print(
+                f"HTTP: {respuesta.status}"
+            )
+
+            # ==================================
+            # DESCARGAR CONTENIDO
+            # ==================================
+
+            contenido = respuesta.body()
+
+            if not contenido:
+
+                raise RuntimeError(
+                    "La respuesta del radar está vacía."
+                )
+
+            # Guardar actual
+            ACTUAL_FILE.write_bytes(
+                contenido
+            )
+
+            # Nombre original
+            nombre = respuesta.url.split("/")[-1]
+
+            historico = HISTORICO_DIR / nombre
+
+            historico.write_bytes(
+                contenido
+            )
+
+            print("")
+            print("======================================")
+            print("RADAR DESCARGADO CORRECTAMENTE")
+            print("======================================")
 
             print(
-                "ÉXITO: RADAR RMA10 DESCARGADO"
+                f"Archivo actual: {ACTUAL_FILE}"
             )
 
             print(
-                f"Archivo: {ACTUAL_FILE}"
+                f"Histórico: {historico}"
             )
 
             print(
-                f"Histórico: {archivo_historico}"
+                f"Tamaño: {len(contenido)} bytes"
             )
 
-        else:
+        except Exception as error:
 
-            print(
-                "ERROR: NO SE ENCONTRÓ LA IMAGEN RMA10"
+            print("")
+            print("======================================")
+            print("ERROR")
+            print("======================================")
+
+            print(error)
+
+            # Guardar captura para diagnóstico
+            page.screenshot(
+                path=str(
+                    OUTPUT_DIR / "error_rma10.png"
+                ),
+                full_page=True
             )
 
-            raise RuntimeError(
-                "SINARAME no entregó una imagen "
-                "PNG de RMA10 durante la prueba."
-            )
-
-        print("======================================")
+            raise
 
         browser.close()
 
