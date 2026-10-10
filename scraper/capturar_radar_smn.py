@@ -1,230 +1,197 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
-from urllib.parse import urljoin
-import requests
-import re
+from playwright.sync_api import sync_playwright
+import time
 
-BASE_URL = "https://radares.hidricosargentina.gob.ar/"
+URL = "https://radares.hidricosargentina.gob.ar/"
 
 OUTPUT_DIR = Path("data/radar")
-HTML_FILE = OUTPUT_DIR / "sinarame.html"
-REPORT_FILE = OUTPUT_DIR / "sinarame_debug.txt"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (ClimaAR Radar Diagnostic)"
-}
+REPORT_FILE = OUTPUT_DIR / "sinarame_network.txt"
+SCREENSHOT_FILE = OUTPUT_DIR / "sinarame_rma10.png"
 
 
 def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    requests_found = []
+
     print("======================================")
-    print("CLIMAAR - DIAGNOSTICO SINARAME")
+    print("CLIMAAR - CAPTURA SINARAME RMA10")
     print("======================================")
-    print()
 
-    print("Descargando página principal...")
+    with sync_playwright() as p:
 
-    r = requests.get(
-        BASE_URL,
-        headers=HEADERS,
-        timeout=30
-    )
+        browser = p.chromium.launch(
+            headless=True
+        )
 
-    print("HTTP:", r.status_code)
-    print("Tamaño:", len(r.content), "bytes")
+        page = browser.new_page(
+            viewport={
+                "width": 1920,
+                "height": 1080
+            }
+        )
 
-    r.raise_for_status()
+        def registrar_request(request):
 
-    html = r.text
+            url = request.url.lower()
 
-    HTML_FILE.write_text(
-        html,
-        encoding="utf-8"
-    )
-
-    print("HTML guardado:", HTML_FILE)
-    print()
-
-    # Buscar scripts
-    scripts = re.findall(
-        r'<script[^>]+src=["\']([^"\']+)["\']',
-        html,
-        re.IGNORECASE
-    )
-
-    print("Scripts encontrados:", len(scripts))
-    print()
-
-    report = []
-
-    report.append("CLIMAAR - DIAGNOSTICO SINARAME")
-    report.append("=" * 50)
-    report.append("")
-    report.append(f"HTTP principal: {r.status_code}")
-    report.append(f"Tamaño HTML: {len(r.content)} bytes")
-    report.append("")
-    report.append("SCRIPTS:")
-    report.append("")
-
-    for script in scripts:
-
-        url = urljoin(BASE_URL, script)
-
-        print("Descargando JS:")
-        print(url)
-
-        try:
-
-            js = requests.get(
-                url,
-                headers=HEADERS,
-                timeout=30
-            )
-
-            print(
-                "  HTTP:",
-                js.status_code,
-                "|",
-                len(js.content),
-                "bytes"
-            )
-
-            report.append("")
-            report.append("=" * 70)
-            report.append(f"JS: {url}")
-            report.append(f"HTTP: {js.status_code}")
-            report.append(f"Tamaño: {len(js.content)}")
-            report.append("=" * 70)
-
-            if js.status_code != 200:
-                continue
-
-            texto = js.text
-
-            # Palabras importantes
             palabras = [
-                "RMA10",
-                "RMA",
-                "/cache/",
+                "rma10",
+                "radar",
                 ".png",
                 ".jpg",
-                "radar",
-                "frame",
-                "frames",
-                "imagen",
-                "images",
-                "latest",
-                "api",
-                "http://",
-                "https://"
+                ".jpeg",
+                "cache",
+                "image",
+                "frame"
             ]
 
-            encontrados = set()
+            if any(palabra in url for palabra in palabras):
 
-            for palabra in palabras:
+                linea = f"REQUEST {request.method} {request.url}"
 
-                if palabra.lower() in texto.lower():
-                    encontrados.add(palabra)
+                print(linea)
 
-            if encontrados:
+                requests_found.append(linea)
 
-                report.append("")
-                report.append(
-                    "PALABRAS ENCONTRADAS: "
-                    + ", ".join(sorted(encontrados))
+        def registrar_response(response):
+
+            url = response.url.lower()
+
+            palabras = [
+                "rma10",
+                "radar",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                "cache",
+                "image",
+                "frame"
+            ]
+
+            if any(palabra in url for palabra in palabras):
+
+                linea = (
+                    f"RESPONSE {response.status} "
+                    f"{response.url}"
                 )
 
-                # Mostrar URLs que aparecen en JS
-                urls = re.findall(
-                    r'https?://[^\s"\'<>]+',
-                    texto
-                )
+                print(linea)
 
-                if urls:
-                    report.append("")
-                    report.append("URLS ENCONTRADAS:")
+                requests_found.append(linea)
 
-                    for u in sorted(set(urls)):
-                        report.append(u[:500])
+        page.on("request", registrar_request)
+        page.on("response", registrar_response)
 
-                # Buscar líneas relacionadas
-                report.append("")
-                report.append("FRAGMENTOS RELEVANTES:")
+        print()
+        print("Abriendo SINARAME...")
 
-                lineas = texto.splitlines()
+        page.goto(
+            URL,
+            wait_until="networkidle",
+            timeout=60000
+        )
 
-                contador = 0
+        print("Página cargada.")
 
-                for i, linea in enumerate(lineas):
+        time.sleep(3)
 
-                    linea_lower = linea.lower()
+        print()
+        print("Buscando selector RMA10...")
 
-                    if any(
-                        palabra.lower() in linea_lower
-                        for palabra in palabras
-                    ):
+        selector = page.locator("#radar-selector")
 
-                        fragmento = linea.strip()
+        selector.wait_for(
+            state="visible",
+            timeout=30000
+        )
 
-                        if fragmento:
-                            report.append(
-                                f"[linea {i + 1}] "
-                                + fragmento[:1000]
-                            )
+        print("Selector encontrado.")
 
-                            contador += 1
+        print()
+        print("Seleccionando Bahía Blanca (RMA10)...")
 
-                            if contador >= 80:
-                                break
+        selector.select_option("RMA10")
 
-        except Exception as e:
+        print("RMA10 seleccionado.")
 
-            print("  ERROR:", e)
+        print()
+        print("Esperando carga del radar...")
 
-            report.append(
-                f"ERROR descargando {url}: {e}"
-            )
+        time.sleep(15)
 
-    # Buscar información directamente en HTML
-    report.append("")
-    report.append("=" * 70)
-    report.append("BUSQUEDA DIRECTA EN HTML")
-    report.append("=" * 70)
+        # Guardar captura visual
+        page.screenshot(
+            path=str(SCREENSHOT_FILE),
+            full_page=True
+        )
 
-    for palabra in [
-        "RMA10",
-        "/cache/",
-        ".png",
-        ".jpg",
-        "radar",
-        "frame",
-        "api"
-    ]:
+        print()
+        print("Captura guardada:")
+        print(SCREENSHOT_FILE)
 
-        if palabra.lower() in html.lower():
+        # Buscar imágenes visibles
+        print()
+        print("IMAGENES EN LA PAGINA:")
 
-            report.append(
-                f"ENCONTRADO EN HTML: {palabra}"
-            )
+        imagenes = page.locator("img")
+
+        cantidad = imagenes.count()
+
+        print("Cantidad:", cantidad)
+
+        for i in range(cantidad):
+
+            try:
+
+                src = imagenes.nth(i).get_attribute("src")
+
+                if src:
+                    linea = f"IMG {src}"
+
+                    print(linea)
+                    requests_found.append(linea)
+
+            except Exception:
+                pass
+
+        # Guardar HTML final
+        html_file = OUTPUT_DIR / "sinarame_rma10.html"
+
+        html_file.write_text(
+            page.content(),
+            encoding="utf-8"
+        )
+
+        print()
+        print("HTML final guardado:")
+        print(html_file)
+
+        browser.close()
+
+    # Eliminar duplicados manteniendo orden
+    unicas = []
+
+    for item in requests_found:
+
+        if item not in unicas:
+            unicas.append(item)
 
     REPORT_FILE.write_text(
-        "\n".join(report),
+        "\n".join(unicas),
         encoding="utf-8"
     )
 
     print()
     print("======================================")
-    print("DIAGNOSTICO TERMINADO")
+    print("CAPTURA TERMINADA")
     print("======================================")
     print()
-    print("Archivos generados:")
-    print(HTML_FILE)
-    print(REPORT_FILE)
-    print()
-    print("Ahora subí estos archivos como artifacts.")
+    print("Peticiones encontradas:", len(unicas))
+    print("Reporte:", REPORT_FILE)
     print()
 
 
