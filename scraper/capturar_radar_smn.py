@@ -27,9 +27,9 @@ def main():
             }
         )
 
-        # -----------------------------
+        # ==============================
         # REQUESTS
-        # -----------------------------
+        # ==============================
         def registrar_request(request):
             linea = (
                 f"REQUEST | "
@@ -43,9 +43,9 @@ def main():
 
         page.on("request", registrar_request)
 
-        # -----------------------------
+        # ==============================
         # RESPONSES
-        # -----------------------------
+        # ==============================
         def registrar_response(response):
             linea = (
                 f"RESPONSE | "
@@ -59,9 +59,9 @@ def main():
 
         page.on("response", registrar_response)
 
-        # -----------------------------
+        # ==============================
         # ERRORES JAVASCRIPT
-        # -----------------------------
+        # ==============================
         def registrar_error(error):
             linea = f"PAGEERROR | {error}"
 
@@ -70,22 +70,26 @@ def main():
 
         page.on("pageerror", registrar_error)
 
-        # -----------------------------
+        # ==============================
         # CONSOLA
-        # -----------------------------
+        # ==============================
         def registrar_console(msg):
             texto = msg.text
 
-            linea = f"CONSOLE | {msg.type} | {texto}"
+            linea = (
+                f"CONSOLE | "
+                f"{msg.type} | "
+                f"{texto}"
+            )
 
             eventos.append(linea)
             print(linea)
 
         page.on("console", registrar_console)
 
-        # -----------------------------
+        # ==============================
         # WEBSOCKETS
-        # -----------------------------
+        # ==============================
         def registrar_websocket(ws):
             print(f"WEBSOCKET OPEN | {ws.url}")
 
@@ -97,7 +101,10 @@ def main():
                 texto = str(mensaje)
 
                 if len(texto) > 10000:
-                    texto = texto[:10000] + " [TRUNCADO]"
+                    texto = (
+                        texto[:10000]
+                        + " [TRUNCADO]"
+                    )
 
                 linea = (
                     f"WEBSOCKET RECEIVED | "
@@ -109,4 +116,10 @@ def main():
 
                 print(
                     "WEBSOCKET RECEIVED:",
-                    texto[:200
+                    texto[:2000]
+                )
+
+            def enviado(mensaje):
+                texto = str(mensaje)
+
+                if len(texto)
