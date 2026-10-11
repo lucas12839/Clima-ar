@@ -1,140 +1,228 @@
-name: Descargar Radar RMA10
+#!/usr/bin/env python3
 
-on:
-  workflow_dispatch:
-
-jobs:
-
-  descargar-radar:
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      # ==================================================
-      # REPOSITORIO
-      # ==================================================
-
-      - name: Descargar repositorio
-        uses: actions/checkout@v4
+from pathlib import Path
+from playwright.sync_api import sync_playwright
 
 
-      # ==================================================
-      # PYTHON
-      # ==================================================
+URL = "https://radares.hidricosargentina.gob.ar/"
 
-      - name: Configurar Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+OUTPUT_DIR = Path("data/radar")
+HISTORICO_DIR = OUTPUT_DIR / "historico"
+ACTUAL_FILE = OUTPUT_DIR / "actual.png"
+RADAR_TIMESTAMP_FILE = OUTPUT_DIR / "radar_timestamp.txt"
 
 
-      # ==================================================
-      # DEPENDENCIAS
-      # ==================================================
+def main():
 
-      - name: Instalar dependencias
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          playwright install --with-deps chromium
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    HISTORICO_DIR.mkdir(parents=True, exist_ok=True)
+
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=True
+        )
+
+        page = browser.new_page(
+            viewport={
+                "width": 1920,
+                "height": 1080
+            }
+        )
+
+        print("======================================")
+        print("ABRIENDO SINARAME")
+        print("======================================")
+
+        page.goto(
+            URL,
+            wait_until="domcontentloaded",
+            timeout=60000
+        )
+
+        print("Página cargada.")
+
+        # Esperar que Blazor termine de cargar
+        page.wait_for_timeout(10000)
+
+        print("")
+        print("Buscando selector de radares...")
+
+        selects = page.locator("select")
+
+        selector = None
+
+        for i in range(selects.count()):
+
+            actual = selects.nth(i)
+
+            try:
+                texto = actual.inner_text()
+            except Exception:
+                continue
+
+            if (
+                "Bahía Blanca" in texto
+                or "Bahia Blanca" in texto
+                or "RMA10" in texto
+            ):
+
+                selector = actual
+                break
+
+        if selector is None:
+
+            raise RuntimeError(
+                "No se encontró el selector de RMA10."
+            )
+
+        print("Selector encontrado.")
+
+        # ======================================
+        # ENCONTRAR OPCIÓN RMA10
+        # ======================================
+
+        opciones = selector.locator("option")
+
+        valor_rma10 = None
+
+        for i in range(opciones.count()):
+
+            opcion = opciones.nth(i)
+
+            texto = opcion.inner_text().strip()
+            valor = opcion.get_attribute("value")
+
+            print(
+                f"Opción {i}: {texto}"
+            )
+
+            if (
+                "Bahía Blanca" in texto
+                or "Bahia Blanca" in texto
+                or "RMA10" in texto
+            ):
+
+                valor_rma10 = valor
+                break
+
+        if valor_rma10 is None:
+
+            raise RuntimeError(
+                "No se encontró Bahía Blanca RMA10."
+            )
+
+        print("")
+        print("Seleccionando RMA10...")
+        print("Esperando imagen del radar...")
+
+        # ======================================
+        # SELECCIONAR Y ESPERAR PNG
+        # ======================================
+
+        try:
+
+            with page.expect_response(
+                lambda response:
+                    "/cache/RMA10/" in response.url
+                    and ".png" in response.url,
+                timeout=90000
+            ) as respuesta_esperada:
+
+                selector.select_option(
+                    value=valor_rma10
+                )
+
+            respuesta = respuesta_esperada.value
+
+            print("")
+            print("======================================")
+            print("IMAGEN RMA10 ENCONTRADA")
+            print("======================================")
+
+            print(respuesta.url)
+            print(
+                f"HTTP: {respuesta.status}"
+            )
+
+            # ==================================
+            # DESCARGAR CONTENIDO
+            # ==================================
+
+            contenido = respuesta.body()
+
+            if not contenido:
+
+                raise RuntimeError(
+                    "La respuesta del radar está vacía."
+                )
+
+            # Guardar actual
+            ACTUAL_FILE.write_bytes(
+                contenido
+            )
+
+            # Nombre original
+            nombre = respuesta.url.split("/")[-1]
+
+            # Guardar el timestamp real del frame directamente desde la URL.
+            # Esto evita depender de nombres históricos mezclados o de la hora de ejecución.
+            import re
+            from datetime import datetime, timezone
+            m = re.search(r"(\d{14})", nombre)
+            if m:
+                dt = datetime.strptime(m.group(1), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+                RADAR_TIMESTAMP_FILE.write_text(dt.isoformat().replace("+00:00", "Z"), encoding="utf-8")
+            else:
+                m = re.search(r"(?:^|_)(\d{10})(?:\D|$)", nombre)
+                if m:
+                    dt = datetime.fromtimestamp(int(m.group(1)), timezone.utc)
+                    RADAR_TIMESTAMP_FILE.write_text(dt.isoformat().replace("+00:00", "Z"), encoding="utf-8")
+
+            historico = HISTORICO_DIR / nombre
+
+            historico.write_bytes(
+                contenido
+            )
+
+            print("")
+            print("======================================")
+            print("RADAR DESCARGADO CORRECTAMENTE")
+            print("======================================")
+
+            print(
+                f"Archivo actual: {ACTUAL_FILE}"
+            )
+
+            print(
+                f"Histórico: {historico}"
+            )
+
+            print(
+                f"Tamaño: {len(contenido)} bytes"
+            )
+
+        except Exception as error:
+
+            print("")
+            print("======================================")
+            print("ERROR")
+            print("======================================")
+
+            print(error)
+
+            # Guardar captura para diagnóstico
+            page.screenshot(
+                path=str(
+                    OUTPUT_DIR / "error_rma10.png"
+                ),
+                full_page=True
+            )
+
+            raise
+
+        browser.close()
 
 
-      # ==================================================
-      # MÁSCARA ESTÁTICA
-      # ==================================================
-
-      - name: Recuperar mascara estatica
-        id: mascara
-        uses: actions/cache@v4
-        with:
-          path: |
-            data/radar/mascara_ecos_estaticos.png
-            data/radar/mascara_ecos_estaticos.json
-          key: climaar-rma10-mascara-estatica-v1
-
-
-      # ==================================================
-      # HISTORIAL TEMPORAL
-      # ==================================================
-
-      - name: Recuperar historial temporal
-        uses: actions/cache@v4
-        with:
-          path: |
-            data/radar/seguimiento
-          key: climaar-rma10-temporal-${{ github.run_id }}
-          restore-keys: |
-            climaar-rma10-temporal-
-
-
-      # ==================================================
-      # CAPTURAR RADAR
-      # ==================================================
-
-      - name: Descargar radar RMA10
-        env:
-          CLIMAAR_CAPTURE_MODE: ${{ steps.mascara.outputs.cache-hit == 'true' && 'rapido' || 'inicial' }}
-        run: |
-          python scraper/capturar_radar_smn.py
-
-
-      # ==================================================
-      # GENERAR MÁSCARA INICIAL
-      # ==================================================
-
-      - name: Generar mascara estatica inicial
-        if: steps.mascara.outputs.cache-hit != 'true'
-        run: |
-          python scripts/generar_mascara_estatica.py
-
-
-      # ==================================================
-      # PROCESAR RADAR
-      # ==================================================
-
-      - name: Procesar radar
-        run: |
-          python procesador_radar.py
-
-
-      # ==================================================
-      # SEGUIMIENTO TEMPORAL
-      # ==================================================
-
-      - name: Analizar evolucion temporal
-        run: |
-          python seguimiento_temporal.py
-
-
-      # ==================================================
-      # SUBIR RESULTADOS
-      # ==================================================
-
-      - name: Subir radar
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: radar-rma10
-          path: |
-            data/radar/actual.png
-            data/radar/historico/
-            data/radar/mascara_ecos_estaticos.png
-            data/radar/mascara_ecos_estaticos.json
-            data/radar/resultado_procesamiento.json
-            data/radar/seguimiento/
-          if-no-files-found: warn
-
-
-      # ==================================================
-      # MOSTRAR ARCHIVOS
-      # ==================================================
-
-      - name: Mostrar archivos generados
-        if: always()
-        run: |
-          echo "======================================"
-          echo "ARCHIVOS GENERADOS"
-          echo "======================================"
-
-          find data/radar -type f -print 2>/dev/null || true
+if __name__ == "__main__":
+    main()
