@@ -305,16 +305,20 @@ def compatibilidad(actual, anterior, minutos):
         10.0 * similitud_forma
     )
 
-    # Sin solapamiento prácticamente no permitimos asociaciones
-    # salvo que tamaño, forma y distancia sean muy coherentes.
+    # Sin solapamiento: exigimos evidencia fuerte de que sigue siendo
+    # el mismo eco. Esto evita asociaciones falsas entre núcleos
+    # cercanos pero físicamente distintos.
     if solapamiento < 0.02:
-        if ratio_area > 1.8:
+        if dist > 20.0:
             return None
 
-        if ratio_ancho > 2.0 or ratio_alto > 2.0:
+        if ratio_area > 1.5:
             return None
 
-        if dist > 45.0:
+        if ratio_ancho > 1.6 or ratio_alto > 1.6:
+            return None
+
+        if puntaje < 55.0:
             return None
 
     cambio_area = (
