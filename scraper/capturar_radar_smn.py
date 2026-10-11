@@ -15,14 +15,10 @@ ACTUAL_FILE = OUTPUT_DIR / "actual.png"
 
 MASCARA_FILE = OUTPUT_DIR / "mascara_ecos_estaticos.png"
 
-# Solo se utilizan cuando se está creando la máscara inicial
 FRAMES_INICIALES = 3
 
-# Tiempo máximo esperando la respuesta del radar
-TIMEOUT_RADAR = 20000
-
-# Tiempo máximo para cargar la página
 PAGE_TIMEOUT = 30000
+URL_TIMEOUT = 10000
 
 
 def buscar_selector_rma10(page):
@@ -69,62 +65,93 @@ def buscar_selector_rma10(page):
     )
 
 
-def guardar_respuesta(respuesta):
-
-    url = respuesta.url
-
-    nombre = url.split("/")[-1]
-
-    if (
-        not nombre.endswith(".png")
-        or "/cache/RMA10/" not in url
-    ):
-        return None
-
-    contenido = respuesta.body()
-
-    if not contenido:
-        return None
-
-    historico = HISTORICO_DIR / nombre
-
-    historico.write_bytes(contenido)
-
-    ACTUAL_FILE.write_bytes(contenido)
+def guardar_png(page, radar_url):
 
     print("")
     print("======================================")
-    print("RADAR RMA10 ENCONTRADO")
+    print("DESCARGANDO PNG RMA10")
     print("======================================")
-    print(f"URL: {url}")
-    print(f"HTTP: {respuesta.status}")
-    print(f"Archivo: {historico}")
-    print(f"Tamaño: {len(contenido)} bytes")
+    print(f"URL: {radar_url}")
 
-    return nombre
+    try:
+
+        respuesta = page.request.get(
+            radar_url,
+            timeout=URL_TIMEOUT
+        )
+
+        print(f"HTTP: {respuesta.status}")
+
+        if respuesta.status != 200:
+
+            raise RuntimeError(
+                f"El servidor respondió HTTP {respuesta.status}"
+            )
+
+        contenido = respuesta.body()
+
+        if not contenido:
+
+            raise RuntimeError(
+                "La respuesta llegó vacía."
+            )
+
+        if len(contenido) < 1000:
+
+            raise RuntimeError(
+                f"PNG demasiado pequeño: {len(contenido)} bytes"
+            )
+
+        nombre = radar_url.split("/")[-1]
+
+        historico = HISTORICO_DIR / nombre
+
+        historico.write_bytes(contenido)
+        ACTUAL_FILE.write_bytes(contenido)
+
+        print(f"Archivo: {historico}")
+        print(f"Tamaño: {len(contenido)} bytes")
+        print("CAPTURA EXITOSA")
+
+        return nombre
+
+    except Exception as error:
+
+        print(
+            f"Error descargando PNG: {error}"
+        )
+
+        return None
 
 
 def capturar_frame(page):
 
     selector, valor_rma10 = buscar_selector_rma10(page)
 
-    respuestas = []
+    radar_urls = []
 
-    def recibir_respuesta(response):
+    def detectar_request(request):
+
+        url = request.url
 
         if (
-            "/cache/RMA10/" in response.url
-            and response.url.endswith(".png")
+            "/cache/RMA10/" in url
+            and url.endswith(".png")
         ):
-            print(
-                f"Respuesta radar detectada: {response.url}"
-            )
 
-            respuestas.append(response)
+            if url not in radar_urls:
+
+                radar_urls.append(url)
+
+                print("")
+                print(
+                    "URL RMA10 DETECTADA:"
+                )
+                print(url)
 
     page.on(
-        "response",
-        recibir_respuesta
+        "request",
+        detectar_request
     )
 
     try:
@@ -141,38 +168,35 @@ def capturar_frame(page):
 
         while (
             time.monotonic() - inicio
-            < TIMEOUT_RADAR / 1000
+            < URL_TIMEOUT / 1000
         ):
 
-            for respuesta in respuestas:
+            if radar_urls:
 
-                try:
+                for radar_url in radar_urls:
 
-                    nombre = guardar_respuesta(
-                        respuesta
+                    nombre = guardar_png(
+                        page,
+                        radar_url
                     )
 
                     if nombre:
+
                         return nombre
 
-                except Exception as error:
-
-                    print(
-                        f"Error guardando respuesta: {error}"
-                    )
-
-            page.wait_for_timeout(250)
+            page.wait_for_timeout(200)
 
         raise RuntimeError(
-            "No se recibió una imagen PNG RMA10 "
-            "dentro de 20 segundos."
+            "No se detectó ninguna URL "
+            "PNG de RMA10 dentro de "
+            f"{URL_TIMEOUT / 1000:.0f} segundos."
         )
 
     finally:
 
         page.remove_listener(
-            "response",
-            recibir_respuesta
+            "request",
+            detectar_request
         )
 
 
@@ -188,16 +212,15 @@ def main():
         exist_ok=True
     )
 
-    # El workflow nos indica explícitamente el modo.
     modo = os.environ.get(
         "CLIMAAR_CAPTURE_MODE",
         ""
     ).strip().lower()
 
-    # Compatibilidad de seguridad:
-    # si no llega la variable, se decide por
-    # existencia de la máscara.
-    if modo not in {"rapido", "inicial"}:
+    if modo not in {
+        "rapido",
+        "inicial"
+    }:
 
         if MASCARA_FILE.exists():
             modo = "rapido"
@@ -272,8 +295,6 @@ def main():
                         timeout=PAGE_TIMEOUT
                     )
 
-                    # Tiempo para que la página
-                    # termine de construir los selectores.
                     page.wait_for_timeout(3000)
 
                     nombre = capturar_frame(page)
@@ -291,8 +312,7 @@ def main():
                         )
 
                         print(
-                            f"NUEVO FRAME GUARDADO: "
-                            f"{nombre}"
+                            f"NUEVO FRAME: {nombre}"
                         )
 
                 except Exception as error:
@@ -313,8 +333,7 @@ def main():
 
                     print(
                         f"Esperando {espera} "
-                        "segundos antes del "
-                        "siguiente intento..."
+                        "segundos..."
                     )
 
                     time.sleep(espera)
