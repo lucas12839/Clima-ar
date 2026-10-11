@@ -6,14 +6,19 @@ from PIL import Image
 
 
 RADAR_FILE = Path("data/radar/actual.png")
+MASCARA_FILE = Path("data/radar/mascara_ecos_estaticos.png")
 
 # Ignorar manchas demasiado pequeñas
 MIN_PIXELS = 10
 
+# Si un núcleo coincide casi completamente con la máscara
+# y no presenta una expansión significativa, se considera estático.
+UMBRAL_COINCIDENCIA_ESTATICA = 0.90
+FACTOR_EXPANSION = 1.30
+
 
 def clasificar_color(r, g, b):
 
-    # Fondo
     if max(r, g, b) < 25:
         return "FONDO"
 
@@ -22,36 +27,29 @@ def clasificar_color(r, g, b):
     if diferencia < 20:
         return "FONDO"
 
-    # Azul / Cyan
     if b > g and g > r * 1.5:
         return "AZUL/CYAN"
 
-    # Verde
     if g > r * 1.35 and g >= b * 0.95:
         return "VERDE"
 
-    # Amarillo
     if r > 100 and g > 100 and b < 100:
         if abs(r - g) < 100:
             return "AMARILLO"
 
-    # Naranja
     if r > 130 and g > 60 and g < 180 and b < 90:
         if r > g * 1.15:
             return "NARANJA"
 
-    # Rojo
     if r > 130 and r > g * 1.35 and r > b * 1.35:
         return "ROJO"
 
-    # Violeta / Magenta
     if r > 100 and b > 100 and r > g * 1.3:
         return "VIOLETA/MAGENTA"
 
     return "OTRO"
 
 
-# Prioridad de intensidad
 INTENSIDAD = {
     "FONDO": 0,
     "AZUL/CYAN": 1,
@@ -62,6 +60,31 @@ INTENSIDAD = {
     "VIOLETA/MAGENTA": 6,
     "OTRO": 0
 }
+
+
+def cargar_mascara(ancho, alto):
+
+    if not MASCARA_FILE.exists():
+        print("")
+        print("AVISO: no existe la máscara de ecos estáticos.")
+        print("Se procesará el radar normalmente.")
+        return None
+
+    mascara = Image.open(
+        MASCARA_FILE
+    ).convert("L")
+
+    if mascara.size != (ancho, alto):
+        print("")
+        print("AVISO: la máscara tiene una resolución diferente.")
+        print("Se ignorará la máscara.")
+        return None
+
+    print("")
+    print("Máscara de ecos estáticos cargada:")
+    print(MASCARA_FILE)
+
+    return mascara.load()
 
 
 def procesar_radar():
@@ -75,7 +98,9 @@ def procesar_radar():
             f"No se encontró la imagen: {RADAR_FILE}"
         )
 
-    imagen = Image.open(RADAR_FILE).convert("RGB")
+    imagen = Image.open(
+        RADAR_FILE
+    ).convert("RGB")
 
     ancho = imagen.width
     alto = imagen.height
@@ -89,8 +114,13 @@ def procesar_radar():
 
     pixeles = imagen.load()
 
+    mascara = cargar_mascara(
+        ancho,
+        alto
+    )
+
     # ======================================
-    # CLASIFICAR CADA PÍXEL
+    # CLASIFICAR CADA PIXEL
     # ======================================
 
     matriz = []
@@ -136,8 +166,14 @@ def procesar_radar():
 
             # Nuevo núcleo
             cola = deque()
-            cola.append((x, y))
-            visitados.add((x, y))
+
+            cola.append(
+                (x, y)
+            )
+
+            visitados.add(
+                (x, y)
+            )
 
             puntos = []
 
@@ -152,7 +188,9 @@ def procesar_radar():
 
                 px, py = cola.popleft()
 
-                puntos.append((px, py))
+                puntos.append(
+                    (px, py)
+                )
 
                 color_actual = matriz[py][px]
 
@@ -186,41 +224,122 @@ def procesar_radar():
                     ):
                         continue
 
-                    visitados.add((nx, ny))
-                    cola.append((nx, ny))
+                    visitados.add(
+                        (nx, ny)
+                    )
+
+                    cola.append(
+                        (nx, ny)
+                    )
 
             cantidad = len(puntos)
 
-            # Ignorar ruido muy pequeño
             if cantidad < MIN_PIXELS:
                 continue
 
-            # Intensidad máxima del núcleo
+            # ======================================
+            # COMPROBAR ECO ESTÁTICO
+            # ======================================
+
+            pixeles_en_mascara = 0
+
+            if mascara is not None:
+
+                for px, py in puntos:
+
+                    if mascara[px, py] > 0:
+                        pixeles_en_mascara += 1
+
+            porcentaje_mascara = 0
+
+            if cantidad > 0:
+                porcentaje_mascara = (
+                    pixeles_en_mascara / cantidad
+                )
+
+            # ======================================
+            # EXPANSIÓN FUERA DE LA MÁSCARA
+            # ======================================
+
+            pixeles_fuera_mascara = (
+                cantidad - pixeles_en_mascara
+            )
+
+            # Un núcleo que está casi completamente
+            # dentro de una zona estática se ignora.
+            #
+            # Si aparece una expansión importante
+            # fuera de la zona conocida, se conserva
+            # como posible precipitación.
+
+            eco_estatico = False
+
+            if mascara is not None:
+
+                if (
+                    porcentaje_mascara
+                    >= UMBRAL_COINCIDENCIA_ESTATICA
+                    and pixeles_fuera_mascara
+                    <= cantidad * 0.10
+                ):
+                    eco_estatico = True
+
+            if eco_estatico:
+
+                print(
+                    f"Eco estático ignorado: "
+                    f"X={sum(p[0] for p in puntos) // cantidad} "
+                    f"Y={sum(p[1] for p in puntos) // cantidad} "
+                    f"({cantidad} píxeles)"
+                )
+
+                continue
+
+            # ======================================
+            # INTENSIDAD MÁXIMA
+            # ======================================
+
             intensidad_maxima = max(
                 colores,
                 key=lambda c: INTENSIDAD[c]
             )
 
-            centro_x = sum(
-                p[0] for p in puntos
-            ) // cantidad
+            centro_x = (
+                sum(
+                    p[0] for p in puntos
+                ) // cantidad
+            )
 
-            centro_y = sum(
-                p[1] for p in puntos
-            ) // cantidad
+            centro_y = (
+                sum(
+                    p[1] for p in puntos
+                ) // cantidad
+            )
 
             nucleos.append({
+
                 "pixeles": cantidad,
+
                 "centro_x": centro_x,
+
                 "centro_y": centro_y,
-                "ancho": max_x - min_x + 1,
-                "alto": max_y - min_y + 1,
+
+                "ancho": (
+                    max_x - min_x + 1
+                ),
+
+                "alto": (
+                    max_y - min_y + 1
+                ),
+
                 "intensidad": intensidad_maxima,
+
                 "colores": colores
+
             })
 
     # ======================================
-    # ORDENAR NÚCLEOS POR TAMAÑO
+    # ORDENAR NÚCLEOS
     # ======================================
 
     nucleos.sort(
@@ -253,7 +372,8 @@ def procesar_radar():
         )
 
         print(
-            f"  Píxeles: {nucleo['pixeles']}"
+            f"  Píxeles: "
+            f"{nucleo['pixeles']}"
         )
 
         print(
