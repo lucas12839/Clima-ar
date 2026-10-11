@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import os
 import time
+
 from playwright.sync_api import sync_playwright
 
 
@@ -13,10 +15,14 @@ ACTUAL_FILE = OUTPUT_DIR / "actual.png"
 
 MASCARA_FILE = OUTPUT_DIR / "mascara_ecos_estaticos.png"
 
+# Solo se utilizan cuando se está creando la máscara inicial
 FRAMES_INICIALES = 3
 
-# Mucho menor que los 90 segundos anteriores
+# Tiempo máximo esperando la respuesta del radar
 TIMEOUT_RADAR = 20000
+
+# Tiempo máximo para cargar la página
+PAGE_TIMEOUT = 30000
 
 
 def buscar_selector_rma10(page):
@@ -33,27 +39,30 @@ def buscar_selector_rma10(page):
             continue
 
         if (
-            "Bahía Blanca" in texto
-            or "Bahia Blanca" in texto
-            or "RMA10" in texto
+            "Bahía Blanca" not in texto
+            and "Bahia Blanca" not in texto
+            and "RMA10" not in texto
         ):
+            continue
 
-            opciones = selector.locator("option")
+        opciones = selector.locator("option")
 
-            for j in range(opciones.count()):
+        for j in range(opciones.count()):
 
-                opcion = opciones.nth(j)
+            opcion = opciones.nth(j)
 
-                texto_opcion = opcion.inner_text().strip()
-                valor = opcion.get_attribute("value")
+            texto_opcion = opcion.inner_text().strip()
+            valor = opcion.get_attribute("value")
 
-                if (
+            if (
+                valor
+                and (
                     "Bahía Blanca" in texto_opcion
                     or "Bahia Blanca" in texto_opcion
                     or "RMA10" in texto_opcion
-                ):
-
-                    return selector, valor
+                )
+            ):
+                return selector, valor
 
     raise RuntimeError(
         "No se encontró el selector de Bahía Blanca/RMA10."
@@ -63,12 +72,13 @@ def buscar_selector_rma10(page):
 def guardar_respuesta(respuesta):
 
     url = respuesta.url
+
     nombre = url.split("/")[-1]
 
-    if not nombre.endswith(".png"):
-        return None
-
-    if "/cache/RMA10/" not in url:
+    if (
+        not nombre.endswith(".png")
+        or "/cache/RMA10/" not in url
+    ):
         return None
 
     contenido = respuesta.body()
@@ -79,6 +89,7 @@ def guardar_respuesta(respuesta):
     historico = HISTORICO_DIR / nombre
 
     historico.write_bytes(contenido)
+
     ACTUAL_FILE.write_bytes(contenido)
 
     print("")
@@ -108,6 +119,7 @@ def capturar_frame(page):
             print(
                 f"Respuesta radar detectada: {response.url}"
             )
+
             respuestas.append(response)
 
     page.on(
@@ -115,32 +127,22 @@ def capturar_frame(page):
         recibir_respuesta
     )
 
-    print("Seleccionando Bahía Blanca (RMA10)...")
-
     try:
+
+        print(
+            "Seleccionando Bahía Blanca (RMA10)..."
+        )
 
         selector.select_option(
             value=valor_rma10
         )
 
-    except Exception as error:
+        inicio = time.monotonic()
 
-        page.remove_listener(
-            "response",
-            recibir_respuesta
-        )
-
-        raise error
-
-    # Esperar como máximo 20 segundos
-    inicio = time.time()
-
-    while (
-        time.time() - inicio
-        < TIMEOUT_RADAR / 1000
-    ):
-
-        if respuestas:
+        while (
+            time.monotonic() - inicio
+            < TIMEOUT_RADAR / 1000
+        ):
 
             for respuesta in respuestas:
 
@@ -151,12 +153,6 @@ def capturar_frame(page):
                     )
 
                     if nombre:
-
-                        page.remove_listener(
-                            "response",
-                            recibir_respuesta
-                        )
-
                         return nombre
 
                 except Exception as error:
@@ -165,17 +161,19 @@ def capturar_frame(page):
                         f"Error guardando respuesta: {error}"
                     )
 
-        time.sleep(0.5)
+            page.wait_for_timeout(250)
 
-    page.remove_listener(
-        "response",
-        recibir_respuesta
-    )
+        raise RuntimeError(
+            "No se recibió una imagen PNG RMA10 "
+            "dentro de 20 segundos."
+        )
 
-    raise RuntimeError(
-        "No se recibió una imagen PNG RMA10 "
-        "dentro de 20 segundos."
-    )
+    finally:
+
+        page.remove_listener(
+            "response",
+            recibir_respuesta
+        )
 
 
 def main():
@@ -190,29 +188,39 @@ def main():
         exist_ok=True
     )
 
-    mascara_existe = MASCARA_FILE.exists()
+    # El workflow nos indica explícitamente el modo.
+    modo = os.environ.get(
+        "CLIMAAR_CAPTURE_MODE",
+        ""
+    ).strip().lower()
 
-    print("======================================")
-    print("ClimaAR - CAPTURA RMA10")
-    print("======================================")
+    # Compatibilidad de seguridad:
+    # si no llega la variable, se decide por
+    # existencia de la máscara.
+    if modo not in {"rapido", "inicial"}:
 
-    if mascara_existe:
+        if MASCARA_FILE.exists():
+            modo = "rapido"
+        else:
+            modo = "inicial"
 
-        print("Máscara estática: ACTIVA")
-        print("Modo: CAPTURA RÁPIDA")
-        print("Frames necesarios: 1")
+    if modo == "rapido":
 
         frames_necesarios = 1
 
     else:
 
-        print("Máscara estática: NO DISPONIBLE")
-        print("Modo: CAPTURA INICIAL")
-        print(
-            f"Frames necesarios: {FRAMES_INICIALES}"
-        )
-
         frames_necesarios = FRAMES_INICIALES
+
+    print("")
+    print("======================================")
+    print("ClimaAR - CAPTURA RMA10")
+    print("======================================")
+    print(f"Modo: {modo.upper()}")
+    print(
+        f"Frames necesarios: {frames_necesarios}"
+    )
+    print("======================================")
 
     frames_guardados = set()
 
@@ -231,95 +239,98 @@ def main():
 
         intento = 0
 
-        while (
-            len(frames_guardados)
-            < frames_necesarios
-        ):
+        try:
 
-            intento += 1
-
-            print("")
-            print("======================================")
-            print(
-                f"INTENTO {intento}"
-            )
-            print(
-                f"Progreso: "
-                f"{len(frames_guardados)}/"
-                f"{frames_necesarios}"
-            )
-            print("======================================")
-
-            try:
-
-                page.goto(
-                    URL,
-                    wait_until="domcontentloaded",
-                    timeout=60000
-                )
-
-                # La página necesita unos segundos
-                # para construir el selector.
-                page.wait_for_timeout(5000)
-
-                nombre = capturar_frame(page)
-
-                if nombre in frames_guardados:
-
-                    print(
-                        f"Frame repetido: {nombre}"
-                    )
-
-                else:
-
-                    frames_guardados.add(
-                        nombre
-                    )
-
-                    print(
-                        "NUEVO FRAME GUARDADO"
-                    )
-
-                    print(
-                        f"Progreso: "
-                        f"{len(frames_guardados)}/"
-                        f"{frames_necesarios}"
-                    )
-
-            except Exception as error:
-
-                print("")
-                print(
-                    f"Error en intento: {error}"
-                )
-
-            if (
+            while (
                 len(frames_guardados)
                 < frames_necesarios
             ):
 
-                # Si estamos creando la máscara,
-                # comprobamos nuevamente después
-                # de 15 segundos.
+                intento += 1
+
+                print("")
                 print(
-                    "Esperando 15 segundos "
-                    "antes del siguiente intento..."
+                    "======================================"
+                )
+                print(
+                    f"INTENTO {intento}"
+                )
+                print(
+                    f"Progreso: "
+                    f"{len(frames_guardados)}/"
+                    f"{frames_necesarios}"
+                )
+                print(
+                    "======================================"
                 )
 
-                time.sleep(15)
+                try:
 
-        print("")
-        print("======================================")
-        print("CAPTURA TERMINADA")
-        print("======================================")
+                    page.goto(
+                        URL,
+                        wait_until="domcontentloaded",
+                        timeout=PAGE_TIMEOUT
+                    )
 
-        for frame in sorted(
-            frames_guardados
-        ):
+                    # Tiempo para que la página
+                    # termine de construir los selectores.
+                    page.wait_for_timeout(3000)
 
-            print(frame)
+                    nombre = capturar_frame(page)
 
-        browser.close()
+                    if nombre in frames_guardados:
+
+                        print(
+                            f"Frame repetido: {nombre}"
+                        )
+
+                    else:
+
+                        frames_guardados.add(
+                            nombre
+                        )
+
+                        print(
+                            f"NUEVO FRAME GUARDADO: "
+                            f"{nombre}"
+                        )
+
+                except Exception as error:
+
+                    print(
+                        f"Error en intento: {error}"
+                    )
+
+                if (
+                    len(frames_guardados)
+                    < frames_necesarios
+                ):
+
+                    if modo == "inicial":
+                        espera = 15
+                    else:
+                        espera = 3
+
+                    print(
+                        f"Esperando {espera} "
+                        "segundos antes del "
+                        "siguiente intento..."
+                    )
+
+                    time.sleep(espera)
+
+        finally:
+
+            browser.close()
+
+    print("")
+    print("======================================")
+    print("CAPTURA TERMINADA")
+    print("======================================")
+
+    for frame in sorted(frames_guardados):
+
+        print(frame)
 
 
 if __name__ == "__main__":
