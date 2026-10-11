@@ -32,6 +32,10 @@ jobs:
         run: |
           python procesador_radar.py
 
+      - name: Generar mascara de ecos estaticos
+        run: |
+          python scripts/generar_mascara_estatica.py
+
       - name: Subir radar
         if: always()
         uses: actions/upload-artifact@v4
@@ -40,6 +44,8 @@ jobs:
           path: |
             data/radar/actual.png
             data/radar/historico/
+            data/radar/mascara_ecos_estaticos.png
+            data/radar/mascara_ecos_estaticos.json
           if-no-files-found: warn
 
       - name: Mostrar archivos generados
