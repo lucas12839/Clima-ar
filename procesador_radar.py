@@ -4,14 +4,29 @@ from pathlib import Path
 from collections import deque, Counter
 from PIL import Image
 import json
+import math
 
 
 RADAR_FILE = Path("data/radar/actual.png")
-MASCARA_FILE = Path("data/radar/mascara_ecos_estaticos.png")
-MASCARA_INFO = Path("data/radar/mascara_ecos_estaticos.json")
+
+MASCARA_FILE = Path(
+    "data/radar/mascara_ecos_estaticos.png"
+)
+
+INFO_MASCARA = Path(
+    "data/radar/mascara_ecos_estaticos.json"
+)
+
+HISTORICO_DIR = Path(
+    "data/radar/historico"
+)
 
 MIN_PIXELS = 10
 
+
+# ============================================================
+# COLORES DEL RADAR
+# ============================================================
 
 def clasificar_color(r, g, b):
 
@@ -58,159 +73,160 @@ INTENSIDAD = {
 }
 
 
+# ============================================================
+# CARGAR MÁSCARA ESTÁTICA
+# ============================================================
+
 def cargar_mascara():
 
     if not MASCARA_FILE.exists():
         print("Máscara estática: NO DISPONIBLE")
-        return None, None
+        return None
 
-    mascara = Image.open(MASCARA_FILE).convert("L")
+    mascara = Image.open(
+        MASCARA_FILE
+    ).convert("L")
 
-    frames = []
+    print("Máscara estática: ACTIVA")
 
-    if MASCARA_INFO.exists():
+    if INFO_MASCARA.exists():
 
-        with open(MASCARA_INFO, "r") as archivo:
-            informacion = json.load(archivo)
+        try:
 
-        for nombre in informacion.get("frames", []):
+            with open(
+                INFO_MASCARA,
+                "r",
+                encoding="utf-8"
+            ) as archivo:
+
+                info = json.load(archivo)
+
+            frames = info.get(
+                "frames",
+                []
+            )
+
+            print(
+                f"Frames base: {len(frames)}"
+            )
+
+        except Exception:
+
+            print(
+                "No se pudo leer información de la máscara."
+            )
+
+    return mascara
+
+
+# ============================================================
+# CARGAR FRAMES BASE
+# ============================================================
+
+def cargar_frames_base():
+
+    if not INFO_MASCARA.exists():
+        return []
+
+    try:
+
+        with open(
+            INFO_MASCARA,
+            "r",
+            encoding="utf-8"
+        ) as archivo:
+
+            info = json.load(archivo)
+
+        frames = []
+
+        for nombre in info.get(
+            "frames",
+            []
+        ):
 
             archivo_frame = (
-                Path("data/radar/historico") / nombre
+                HISTORICO_DIR / nombre
             )
 
             if archivo_frame.exists():
+
                 frames.append(
-                    Image.open(archivo_frame).convert("RGB")
+                    Image.open(
+                        archivo_frame
+                    ).convert("RGB")
                 )
 
-    print("Máscara estática: ACTIVA")
-    print(f"Frames base: {len(frames)}")
+        return frames
 
-    return mascara, frames
+    except Exception:
+
+        return []
 
 
-def analizar_ecos_estaticos(
-    puntos,
-    mascara,
-    frames_base
+# ============================================================
+# INTENSIDAD DE UN PIXEL
+# ============================================================
+
+def intensidad_pixel(
+    r,
+    g,
+    b
 ):
 
-    if mascara is None:
-        return False, "SIN_MASCARA"
+    categoria = clasificar_color(
+        r,
+        g,
+        b
+    )
 
-    pixeles_mascara = mascara.load()
+    return INTENSIDAD.get(
+        categoria,
+        0
+    )
 
-    dentro = 0
-    fuera = 0
 
-    aumentos_fuertes = 0
-    puntos_comparables = 0
-
-    # --------------------------------------------------
-    # COMPARAR ECO ACTUAL CONTRA LA MÁSCARA
-    # --------------------------------------------------
-
-    for x, y, categoria_actual in puntos:
-
-        if pixeles_mascara[x, y] > 0:
-            dentro += 1
-
-            if frames_base:
-
-                intensidad_actual = INTENSIDAD[categoria_actual]
-
-                intensidad_base = 0
-
-                for frame in frames_base:
-
-                    r, g, b = frame.getpixel((x, y))
-
-                    categoria_base = clasificar_color(
-                        r, g, b
-                    )
-
-                    intensidad_base = max(
-                        intensidad_base,
-                        INTENSIDAD[categoria_base]
-                    )
-
-                puntos_comparables += 1
-
-                # Aumento importante respecto del eco base
-                if intensidad_actual >= intensidad_base + 2:
-                    aumentos_fuertes += 1
-
-        else:
-            fuera += 1
-
-    total = dentro + fuera
-
-    if total == 0:
-        return False, "SIN_PIXELES"
-
-    porcentaje_dentro = dentro / total
-    porcentaje_fuera = fuera / total
-
-    porcentaje_aumento = 0
-
-    if puntos_comparables > 0:
-        porcentaje_aumento = (
-            aumentos_fuertes / puntos_comparables
-        )
-
-    # --------------------------------------------------
-    # DECISIÓN
-    # --------------------------------------------------
-
-    # Si una parte importante apareció fuera
-    # de la máscara, NO bloquear.
-    if porcentaje_fuera >= 0.20:
-        return False, "CRECIMIENTO_FUERA_MASCARA"
-
-    # Si el eco se intensificó fuertemente,
-    # recuperarlo como posible precipitación.
-    if porcentaje_aumento >= 0.10:
-        return False, "INTENSIFICACION"
-
-    # Si casi todo coincide con el eco conocido,
-    # considerarlo estático.
-    if porcentaje_dentro >= 0.80:
-        return True, "ECO_ESTATICO"
-
-    return False, "CAMBIO_DE_ECO"
-
+# ============================================================
+# PROCESAMIENTO
+# ============================================================
 
 def procesar_radar():
 
     print("======================================")
-    print("ClimaAR - DETECCIÓN DE NÚCLEOS RMA10")
+    print("ClimaAR - MOTOR DE DETECCIÓN RMA10")
     print("======================================")
 
     if not RADAR_FILE.exists():
+
         raise FileNotFoundError(
-            f"No se encontró la imagen: {RADAR_FILE}"
+            f"No se encontró: {RADAR_FILE}"
         )
 
-    imagen = Image.open(RADAR_FILE).convert("RGB")
+    imagen = Image.open(
+        RADAR_FILE
+    ).convert("RGB")
 
     ancho = imagen.width
     alto = imagen.height
 
-    print()
-    print("Imagen:")
-    print(RADAR_FILE)
+    print("")
+    print(
+        f"Imagen: {RADAR_FILE}"
+    )
 
-    print()
-    print(f"Resolución: {ancho} x {alto}")
-
-    mascara, frames_base = cargar_mascara()
+    print(
+        f"Resolución: {ancho} x {alto}"
+    )
 
     pixeles = imagen.load()
 
-    # ======================================
-    # CLASIFICAR CADA PIXEL
-    # ======================================
+    mascara = cargar_mascara()
+
+    frames_base = cargar_frames_base()
+
+    # ========================================================
+    # CLASIFICAR PIXELES
+    # ========================================================
 
     matriz = []
 
@@ -223,22 +239,32 @@ def procesar_radar():
             r, g, b = pixeles[x, y]
 
             fila.append(
-                clasificar_color(r, g, b)
+                clasificar_color(
+                    r,
+                    g,
+                    b
+                )
             )
 
         matriz.append(fila)
 
-    # ======================================
-    # BUSCAR NÚCLEOS
-    # ======================================
+    # ========================================================
+    # BUSCAR COMPONENTES CONECTADOS
+    # ========================================================
 
     visitados = set()
+
     nucleos = []
 
     direcciones = [
-        (-1, -1), (0, -1), (1, -1),
-        (-1,  0),          (1,  0),
-        (-1,  1), (0,  1), (1,  1)
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+        (-1, 0),
+        (1, 0),
+        (-1, 1),
+        (0, 1),
+        (1, 1)
     ]
 
     for y in range(alto):
@@ -250,16 +276,24 @@ def procesar_radar():
 
             categoria = matriz[y][x]
 
-            if categoria in ("FONDO", "OTRO"):
+            if categoria in (
+                "FONDO",
+                "OTRO"
+            ):
                 continue
 
             cola = deque()
 
-            cola.append((x, y))
+            cola.append(
+                (x, y)
+            )
 
-            visitados.add((x, y))
+            visitados.add(
+                (x, y)
+            )
 
             puntos = []
+
             colores = Counter()
 
             min_x = x
@@ -272,18 +306,38 @@ def procesar_radar():
                 px, py = cola.popleft()
 
                 puntos.append(
-                    (px, py, matriz[py][px])
+                    (px, py)
                 )
 
-                color_actual = matriz[py][px]
+                color_actual = matriz[
+                    py
+                ][
+                    px
+                ]
 
-                colores[color_actual] += 1
+                colores[
+                    color_actual
+                ] += 1
 
-                min_x = min(min_x, px)
-                max_x = max(max_x, px)
+                min_x = min(
+                    min_x,
+                    px
+                )
 
-                min_y = min(min_y, py)
-                max_y = max(max_y, py)
+                max_x = max(
+                    max_x,
+                    px
+                )
+
+                min_y = min(
+                    min_y,
+                    py
+                )
+
+                max_y = max(
+                    max_y,
+                    py
+                )
 
                 for dx, dy in direcciones:
 
@@ -296,10 +350,17 @@ def procesar_radar():
                     if ny < 0 or ny >= alto:
                         continue
 
-                    if (nx, ny) in visitados:
+                    if (
+                        nx,
+                        ny
+                    ) in visitados:
                         continue
 
-                    nuevo_color = matriz[ny][nx]
+                    nuevo_color = matriz[
+                        ny
+                    ][
+                        nx
+                    ]
 
                     if nuevo_color in (
                         "FONDO",
@@ -307,102 +368,404 @@ def procesar_radar():
                     ):
                         continue
 
-                    visitados.add((nx, ny))
+                    visitados.add(
+                        (
+                            nx,
+                            ny
+                        )
+                    )
 
-                    cola.append((nx, ny))
+                    cola.append(
+                        (
+                            nx,
+                            ny
+                        )
+                    )
 
-            cantidad = len(puntos)
+            cantidad = len(
+                puntos
+            )
 
             if cantidad < MIN_PIXELS:
                 continue
 
             intensidad_maxima = max(
                 colores,
-                key=lambda c: INTENSIDAD[c]
+                key=lambda c:
+                INTENSIDAD[c]
             )
 
-            centro_x = sum(
-                p[0] for p in puntos
-            ) // cantidad
+            intensidad_promedio = (
+                sum(
+                    INTENSIDAD[c]
+                    * cantidad_color
+                    for c,
+                    cantidad_color
+                    in colores.items()
+                )
+                /
+                cantidad
+            )
 
-            centro_y = sum(
-                p[1] for p in puntos
-            ) // cantidad
+            centro_x = (
+                sum(
+                    p[0]
+                    for p in puntos
+                )
+                /
+                cantidad
+            )
 
-            # ======================================
-            # FILTRO DE ECOS ESTÁTICOS
-            # ======================================
+            centro_y = (
+                sum(
+                    p[1]
+                    for p in puntos
+                )
+                /
+                cantidad
+            )
 
-            es_estatico, motivo = analizar_ecos_estaticos(
-                puntos,
-                mascara,
-                frames_base
+            ancho_nucleo = (
+                max_x - min_x + 1
+            )
+
+            alto_nucleo = (
+                max_y - min_y + 1
+            )
+
+            # =================================================
+            # ANÁLISIS CONTRA MÁSCARA
+            # =================================================
+
+            dentro_mascara = 0
+            fuera_mascara = 0
+
+            intensidad_fuera = []
+
+            for px, py in puntos:
+
+                es_estatico = (
+                    mascara is not None
+                    and mascara.getpixel(
+                        (px, py)
+                    ) > 0
+                )
+
+                if es_estatico:
+
+                    dentro_mascara += 1
+
+                else:
+
+                    fuera_mascara += 1
+
+                    intensidad_fuera.append(
+                        INTENSIDAD[
+                            matriz[py][px]
+                        ]
+                    )
+
+            porcentaje_mascara = (
+                dentro_mascara
+                /
+                cantidad
+                * 100
+            )
+
+            porcentaje_fuera = (
+                fuera_mascara
+                /
+                cantidad
+                * 100
+            )
+
+            # =================================================
+            # CLASIFICACIÓN
+            # =================================================
+
+            estado = "CAMBIO"
+
+            confianza = 50
+
+            motivo = "CAMBIO_DE_ECO"
+
+            if mascara is None:
+
+                if intensidad_maxima == "VIOLETA/MAGENTA":
+                    confianza = 70
+
+                elif intensidad_maxima == "ROJO":
+                    confianza = 65
+
+                elif intensidad_maxima == "NARANJA":
+                    confianza = 60
+
+                else:
+                    confianza = 50
+
+                estado = "PRECIPITACION"
+
+                motivo = "SIN_MASCARA"
+
+            else:
+
+                if (
+                    porcentaje_mascara >= 80
+                    and porcentaje_fuera <= 20
+                ):
+
+                    estado = "ECO_ESTATICO"
+
+                    confianza = 92
+
+                    motivo = (
+                        "COINCIDE_CON_ECO_ESTÁTICO"
+                    )
+
+                elif porcentaje_fuera >= 30:
+
+                    estado = "PRECIPITACION"
+
+                    confianza = 85
+
+                    motivo = (
+                        "ECO_FUERA_DE_MASCARA"
+                    )
+
+                elif porcentaje_fuera >= 15:
+
+                    estado = "CAMBIO"
+
+                    confianza = 70
+
+                    motivo = (
+                        "CRECIMIENTO_FUERA_MASCARA"
+                    )
+
+                else:
+
+                    estado = "CAMBIO"
+
+                    confianza = 65
+
+                    motivo = (
+                        "CAMBIO_DE_ECO"
+                    )
+
+            # =================================================
+            # AJUSTE POR INTENSIDAD
+            # =================================================
+
+            if estado != "ECO_ESTATICO":
+
+                if intensidad_maxima == "VIOLETA/MAGENTA":
+
+                    confianza += 5
+
+                elif intensidad_maxima == "ROJO":
+
+                    confianza += 4
+
+                elif intensidad_maxima == "NARANJA":
+
+                    confianza += 3
+
+                elif intensidad_maxima == "AMARILLO":
+
+                    confianza += 1
+
+            confianza = min(
+                confianza,
+                99
             )
 
             nucleos.append({
+
                 "pixeles": cantidad,
-                "centro_x": centro_x,
-                "centro_y": centro_y,
-                "ancho": max_x - min_x + 1,
-                "alto": max_y - min_y + 1,
-                "intensidad": intensidad_maxima,
-                "colores": colores,
-                "estatico": es_estatico,
-                "motivo": motivo
+
+                "centro_x": round(
+                    centro_x,
+                    1
+                ),
+
+                "centro_y": round(
+                    centro_y,
+                    1
+                ),
+
+                "ancho": ancho_nucleo,
+
+                "alto": alto_nucleo,
+
+                "intensidad_maxima":
+                    intensidad_maxima,
+
+                "intensidad_promedio":
+                    round(
+                        intensidad_promedio,
+                        2
+                    ),
+
+                "estado":
+                    estado,
+
+                "confianza":
+                    confianza,
+
+                "motivo":
+                    motivo,
+
+                "porcentaje_mascara":
+                    round(
+                        porcentaje_mascara,
+                        1
+                    ),
+
+                "porcentaje_fuera_mascara":
+                    round(
+                        porcentaje_fuera,
+                        1
+                    ),
+
+                "colores":
+                    dict(
+                        colores
+                    )
             })
 
-    # ======================================
+    # ========================================================
     # ORDENAR
-    # ======================================
+    # ========================================================
 
     nucleos.sort(
-        key=lambda n: n["pixeles"],
+        key=lambda n:
+        n["pixeles"],
         reverse=True
     )
 
-    # ======================================
-    # RESULTADO
-    # ======================================
-
-    print()
-    print("======================================")
-    print("RESULTADO DEL FILTRO")
-    print("======================================")
-
-    total = len(nucleos)
+    # ========================================================
+    # ESTADÍSTICAS
+    # ========================================================
 
     estaticos = sum(
-        1 for n in nucleos
-        if n["estatico"]
+        1
+        for n in nucleos
+        if n["estado"]
+        == "ECO_ESTATICO"
     )
 
-    precipitacion = total - estaticos
+    precipitacion = sum(
+        1
+        for n in nucleos
+        if n["estado"]
+        == "PRECIPITACION"
+    )
 
-    print(f"Núcleos detectados: {total}")
-    print(f"Ecos estáticos ignorados: {estaticos}")
-    print(f"Posibles núcleos de precipitación: {precipitacion}")
+    cambios = sum(
+        1
+        for n in nucleos
+        if n["estado"]
+        == "CAMBIO"
+    )
 
-    print()
+    # ========================================================
+    # PROBABILIDAD GLOBAL
+    # ========================================================
+
+    nucleos_reales = [
+        n
+        for n in nucleos
+        if n["estado"]
+        in (
+            "PRECIPITACION",
+            "CAMBIO"
+        )
+    ]
+
+    if nucleos_reales:
+
+        peso_total = sum(
+            n["pixeles"]
+            for n in nucleos_reales
+        )
+
+        if peso_total > 0:
+
+            probabilidad = sum(
+                n["confianza"]
+                * n["pixeles"]
+                for n in nucleos_reales
+            ) / peso_total
+
+        else:
+
+            probabilidad = 0
+
+    else:
+
+        probabilidad = 0
+
+    probabilidad = round(
+        min(
+            probabilidad,
+            99
+        ),
+        1
+    )
+
+    # ========================================================
+    # RESULTADO EN CONSOLA
+    # ========================================================
+
+    print("")
     print("======================================")
-    print("NÚCLEOS")
+    print("RESULTADO")
     print("======================================")
+
+    print(
+        f"Núcleos detectados: {len(nucleos)}"
+    )
+
+    print(
+        f"Ecos estáticos: {estaticos}"
+    )
+
+    print(
+        f"Precipitación: {precipitacion}"
+    )
+
+    print(
+        f"Cambios: {cambios}"
+    )
+
+    print(
+        f"Probabilidad radar: {probabilidad}%"
+    )
+
+    print("")
 
     for numero, nucleo in enumerate(
         nucleos[:20],
         start=1
     ):
 
-        estado = (
-            "ECO ESTÁTICO"
-            if nucleo["estatico"]
-            else "PRECIPITACIÓN / CAMBIO"
+        print(
+            f"NÚCLEO #{numero}"
         )
 
-        print()
-        print(f"NÚCLEO #{numero}")
-        print(f"  Estado: {estado}")
-        print(f"  Motivo: {nucleo['motivo']}")
-        print(f"  Píxeles: {nucleo['pixeles']}")
+        print(
+            f"  Estado: {nucleo['estado']}"
+        )
+
+        print(
+            f"  Confianza: "
+            f"{nucleo['confianza']}%"
+        )
+
+        print(
+            f"  Píxeles: "
+            f"{nucleo['pixeles']}"
+        )
 
         print(
             f"  Centro: "
@@ -418,24 +781,96 @@ def procesar_radar():
 
         print(
             f"  Intensidad máxima: "
-            f"{nucleo['intensidad']}"
+            f"{nucleo['intensidad_maxima']}"
         )
 
-        print("  Colores:")
+        print(
+            f"  Intensidad promedio: "
+            f"{nucleo['intensidad_promedio']}"
+        )
 
-        for color, cantidad in nucleo[
-            "colores"
-        ].most_common():
+        print(
+            f"  Dentro máscara: "
+            f"{nucleo['porcentaje_mascara']}%"
+        )
 
-            print(
-                f"    {color}: {cantidad}"
-            )
+        print(
+            f"  Fuera máscara: "
+            f"{nucleo['porcentaje_fuera_mascara']}%"
+        )
 
-    print()
+        print(
+            f"  Motivo: "
+            f"{nucleo['motivo']}"
+        )
+
+        print("")
+
+    # ========================================================
+    # GUARDAR RESULTADO JSON
+    # ========================================================
+
+    resultado = {
+
+        "radar": "RMA10",
+
+        "resolucion": {
+            "ancho": ancho,
+            "alto": alto
+        },
+
+        "nucleos_detectados":
+            len(nucleos),
+
+        "ecos_estaticos":
+            estaticos,
+
+        "precipitacion":
+            precipitacion,
+
+        "cambios":
+            cambios,
+
+        "probabilidad_precipitacion":
+            probabilidad,
+
+        "nucleos":
+            nucleos
+
+    }
+
+    salida = Path(
+        "data/radar/resultado_procesamiento.json"
+    )
+
+    salida.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    with open(
+        salida,
+        "w",
+        encoding="utf-8"
+    ) as archivo:
+
+        json.dump(
+            resultado,
+            archivo,
+            indent=2,
+            ensure_ascii=False
+        )
+
+    print(
+        f"Resultado guardado: {salida}"
+    )
+
+    print("")
     print("======================================")
     print("ANÁLISIS TERMINADO")
     print("======================================")
 
 
 if __name__ == "__main__":
+
     procesar_radar()
