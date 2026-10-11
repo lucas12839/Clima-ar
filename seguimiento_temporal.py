@@ -12,6 +12,7 @@ SEGUIMIENTO_DIR = RADAR_DIR / "seguimiento"
 ESTADO_FILE = SEGUIMIENTO_DIR / "estado.json"
 RESULTADO_SEGUIMIENTO = SEGUIMIENTO_DIR / "seguimiento_temporal.json"
 HISTORICO_DIR = RADAR_DIR / "historico"
+RADAR_TIMESTAMP_FILE = RADAR_DIR / "radar_timestamp.txt"
 
 # Seguimiento
 DISTANCIA_BASE = 25.0
@@ -47,43 +48,50 @@ def guardar_json(path, data):
     tmp.replace(path)
 
 
+def _parsear_timestamp_nombre(nombre):
+    """Extrae timestamp UTC desde nombres YYYYMMDDHHMMSS o epoch Unix."""
+    m = re.search(r"(\d{14})", nombre)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+
+    m = re.search(r"(?:^|_)(\d{10})(?:\D|$)", nombre)
+    if m:
+        try:
+            return datetime.fromtimestamp(int(m.group(1)), timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            pass
+
+    return None
+
+
 def obtener_timestamp_radar():
-    # Prioridad absoluta al nombre real del frame capturado.
-    archivos = sorted(
-        HISTORICO_DIR.glob("2026*.png"),
-        key=lambda p: p.name
-    )
+    """Obtiene el timestamp REAL del frame actual, evitando mezclar frames viejos."""
+    # 1) Fuente explícita escrita por el scraper desde la URL del radar.
+    if RADAR_TIMESTAMP_FILE.exists():
+        try:
+            texto = RADAR_TIMESTAMP_FILE.read_text(encoding="utf-8").strip()
+            dt = datetime.fromisoformat(texto.replace("Z", "+00:00"))
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            pass
 
-    if archivos:
-        m = re.search(r"(\d{14})", archivos[-1].stem)
-        if m:
-            try:
-                return datetime.strptime(
-                    m.group(1),
-                    "%Y%m%d%H%M%S"
-                ).replace(tzinfo=timezone.utc)
-            except ValueError:
-                pass
-
-    # Fallback: cualquier archivo que contenga timestamp YYYYMMDDHHMMSS.
+    # 2) Buscar el frame válido más reciente por nombre.
     candidatos = []
-
     for p in HISTORICO_DIR.glob("*.png"):
-        m = re.search(r"(\d{14})", p.stem)
+        if p.stat().st_size < 1000:
+            continue
+        dt = _parsear_timestamp_nombre(p.stem)
+        if dt:
+            candidatos.append((dt, p))
 
-        if m:
-            try:
-                dt = datetime.strptime(
-                    m.group(1),
-                    "%Y%m%d%H%M%S"
-                ).replace(tzinfo=timezone.utc)
+    if candidatos:
+        candidatos.sort(key=lambda x: x[0])
+        return candidatos[-1][0]
 
-                candidatos.append(dt)
-
-            except ValueError:
-                continue
-
-    return max(candidatos) if candidatos else None
+    return None
 
 
 def obtener_nucleos(resultado):
@@ -584,6 +592,36 @@ def analizar():
     estado_anterior = cargar_json(
         ESTADO_FILE
     )
+
+    # Nunca calcular movimiento si el frame actual no es posterior al anterior.
+    # Esto evita velocidades/aceleraciones falsas cuando el cache conserva un estado viejo.
+    if estado_anterior and radar_dt:
+        prev_text = estado_anterior.get("radar_timestamp")
+        if prev_text:
+            try:
+                prev_check = datetime.fromisoformat(prev_text.replace("Z", "+00:00"))
+                if radar_dt <= prev_check:
+                    print("Frame repetido o atrasado: no se actualiza el seguimiento temporal.")
+                    guardar_json(RESULTADO_SEGUIMIENTO, {
+                        "timestamp": ahora_utc(),
+                        "radar_timestamp": radar_ts,
+                        "intervalo_minutos": 0.0,
+                        "frame_anterior_disponible": True,
+                        "nucleos_actuales": len(actuales),
+                        "nucleos_nuevos": 0,
+                        "nucleos_seguimiento": 0,
+                        "nucleos_creciendo": 0,
+                        "nucleos_debilitandose": 0,
+                        "nucleos_movimiento": 0,
+                        "nucleos_estables": 0,
+                        "nucleos_desaparecidos": 0,
+                        "asociaciones": [],
+                        "tracks": tracks_anteriores,
+                        "estado": "FRAME_REPETIDO_O_ATRASADO"
+                    })
+                    return
+            except Exception:
+                pass
 
     if not estado_anterior:
         tracks = []
