@@ -24,17 +24,30 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
+      # Recupera la máscara estática ya creada.
+      # La clave v1 hace que quede fija.
+      - name: Recuperar mascara estatica
+        id: mascara
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/radar/mascara_ecos_estaticos.png
+            data/radar/mascara_ecos_estaticos.json
+          key: climaar-rma10-mascara-estatica-v1
+
       - name: Descargar radar RMA10
         run: |
           python scraper/capturar_radar_smn.py
 
-      - name: Generar mascara de ecos estaticos
+      # SOLO se genera si todavía no existe una máscara guardada.
+      - name: Generar mascara estatica inicial
+        if: steps.mascara.outputs.cache-hit != 'true'
         run: |
           python scripts/generar_mascara_estatica.py
 
       - name: Procesar radar
         run: |
-          python procesador_radar.py
+          python procesador/procesador_radar.py
 
       - name: Subir radar
         if: always()
@@ -46,7 +59,6 @@ jobs:
             data/radar/historico/
             data/radar/mascara_ecos_estaticos.png
             data/radar/mascara_ecos_estaticos.json
-            data/radar/resultado_procesamiento.json
           if-no-files-found: warn
 
       - name: Mostrar archivos generados
