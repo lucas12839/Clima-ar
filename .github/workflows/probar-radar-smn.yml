@@ -28,13 +28,13 @@ jobs:
         run: |
           python scraper/capturar_radar_smn.py
 
-      - name: Procesar radar
-        run: |
-          python procesador_radar.py
-
       - name: Generar mascara de ecos estaticos
         run: |
           python scripts/generar_mascara_estatica.py
+
+      - name: Procesar radar
+        run: |
+          python procesador/procesador_radar.py
 
       - name: Subir radar
         if: always()
@@ -46,6 +46,7 @@ jobs:
             data/radar/historico/
             data/radar/mascara_ecos_estaticos.png
             data/radar/mascara_ecos_estaticos.json
+            data/radar/resultado_procesamiento.json
           if-no-files-found: warn
 
       - name: Mostrar archivos generados
