@@ -24,8 +24,6 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
-      # Recupera la máscara estática ya creada.
-      # La clave v1 hace que quede fija.
       - name: Recuperar mascara estatica
         id: mascara
         uses: actions/cache@v4
@@ -39,7 +37,6 @@ jobs:
         run: |
           python scraper/capturar_radar_smn.py
 
-      # SOLO se genera si todavía no existe una máscara guardada.
       - name: Generar mascara estatica inicial
         if: steps.mascara.outputs.cache-hit != 'true'
         run: |
@@ -47,7 +44,7 @@ jobs:
 
       - name: Procesar radar
         run: |
-          python procesador/procesador_radar.py
+          python procesador_radar.py
 
       - name: Subir radar
         if: always()
