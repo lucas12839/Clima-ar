@@ -1,257 +1,27 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
-import os
 import time
 
 from playwright.sync_api import sync_playwright
 
 
 URL = "https://radares.hidricosargentina.gob.ar/"
-
 OUTPUT_DIR = Path("data/radar")
-HISTORICO_DIR = OUTPUT_DIR / "historico"
-ACTUAL_FILE = OUTPUT_DIR / "actual.png"
-
-MASCARA_FILE = OUTPUT_DIR / "mascara_ecos_estaticos.png"
-
-FRAMES_INICIALES = 3
-
-PAGE_TIMEOUT = 30000
-URL_TIMEOUT = 10000
-
-
-def buscar_selector_rma10(page):
-
-    selects = page.locator("select")
-
-    for i in range(selects.count()):
-
-        selector = selects.nth(i)
-
-        try:
-            texto = selector.inner_text()
-        except Exception:
-            continue
-
-        if (
-            "Bahía Blanca" not in texto
-            and "Bahia Blanca" not in texto
-            and "RMA10" not in texto
-        ):
-            continue
-
-        opciones = selector.locator("option")
-
-        for j in range(opciones.count()):
-
-            opcion = opciones.nth(j)
-
-            texto_opcion = opcion.inner_text().strip()
-            valor = opcion.get_attribute("value")
-
-            if (
-                valor
-                and (
-                    "Bahía Blanca" in texto_opcion
-                    or "Bahia Blanca" in texto_opcion
-                    or "RMA10" in texto_opcion
-                )
-            ):
-                return selector, valor
-
-    raise RuntimeError(
-        "No se encontró el selector de Bahía Blanca/RMA10."
-    )
-
-
-def guardar_png(page, radar_url):
-
-    print("")
-    print("======================================")
-    print("DESCARGANDO PNG RMA10")
-    print("======================================")
-    print(f"URL: {radar_url}")
-
-    try:
-
-        respuesta = page.request.get(
-            radar_url,
-            timeout=URL_TIMEOUT
-        )
-
-        print(f"HTTP: {respuesta.status}")
-
-        if respuesta.status != 200:
-
-            raise RuntimeError(
-                f"El servidor respondió HTTP {respuesta.status}"
-            )
-
-        contenido = respuesta.body()
-
-        if not contenido:
-
-            raise RuntimeError(
-                "La respuesta llegó vacía."
-            )
-
-        if len(contenido) < 1000:
-
-            raise RuntimeError(
-                f"PNG demasiado pequeño: {len(contenido)} bytes"
-            )
-
-        nombre = radar_url.split("/")[-1]
-
-        historico = HISTORICO_DIR / nombre
-
-        historico.write_bytes(contenido)
-        ACTUAL_FILE.write_bytes(contenido)
-
-        print(f"Archivo: {historico}")
-        print(f"Tamaño: {len(contenido)} bytes")
-        print("CAPTURA EXITOSA")
-
-        return nombre
-
-    except Exception as error:
-
-        print(
-            f"Error descargando PNG: {error}"
-        )
-
-        return None
-
-
-def capturar_frame(page):
-
-    selector, valor_rma10 = buscar_selector_rma10(page)
-
-    radar_urls = []
-
-    def detectar_request(request):
-
-        url = request.url
-
-        if (
-            "/cache/RMA10/" in url
-            and url.endswith(".png")
-        ):
-
-            if url not in radar_urls:
-
-                radar_urls.append(url)
-
-                print("")
-                print(
-                    "URL RMA10 DETECTADA:"
-                )
-                print(url)
-
-    page.on(
-        "request",
-        detectar_request
-    )
-
-    try:
-
-        print(
-            "Seleccionando Bahía Blanca (RMA10)..."
-        )
-
-        selector.select_option(
-            value=valor_rma10
-        )
-
-        inicio = time.monotonic()
-
-        while (
-            time.monotonic() - inicio
-            < URL_TIMEOUT / 1000
-        ):
-
-            if radar_urls:
-
-                for radar_url in radar_urls:
-
-                    nombre = guardar_png(
-                        page,
-                        radar_url
-                    )
-
-                    if nombre:
-
-                        return nombre
-
-            page.wait_for_timeout(200)
-
-        raise RuntimeError(
-            "No se detectó ninguna URL "
-            "PNG de RMA10 dentro de "
-            f"{URL_TIMEOUT / 1000:.0f} segundos."
-        )
-
-    finally:
-
-        page.remove_listener(
-            "request",
-            detectar_request
-        )
+DIAGNOSTICO = OUTPUT_DIR / "diagnostico_sinarame.png"
 
 
 def main():
 
-    OUTPUT_DIR.mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    HISTORICO_DIR.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    modo = os.environ.get(
-        "CLIMAAR_CAPTURE_MODE",
-        ""
-    ).strip().lower()
-
-    if modo not in {
-        "rapido",
-        "inicial"
-    }:
-
-        if MASCARA_FILE.exists():
-            modo = "rapido"
-        else:
-            modo = "inicial"
-
-    if modo == "rapido":
-
-        frames_necesarios = 1
-
-    else:
-
-        frames_necesarios = FRAMES_INICIALES
-
-    print("")
     print("======================================")
-    print("ClimaAR - CAPTURA RMA10")
+    print("ClimaAR - DIAGNOSTICO SINARAME")
     print("======================================")
-    print(f"Modo: {modo.upper()}")
-    print(
-        f"Frames necesarios: {frames_necesarios}"
-    )
-    print("======================================")
-
-    frames_guardados = set()
 
     with sync_playwright() as p:
 
-        browser = p.chromium.launch(
-            headless=True
-        )
+        browser = p.chromium.launch(headless=True)
 
         page = browser.new_page(
             viewport={
@@ -260,96 +30,207 @@ def main():
             }
         )
 
-        intento = 0
+        requests = []
+        websockets = []
+
+        def detectar_request(request):
+            url = request.url
+
+            if "RMA10" in url or "/cache/" in url:
+                requests.append(url)
+                print("REQUEST:", url)
+
+        def detectar_websocket(ws):
+            websockets.append(ws.url)
+            print("WEBSOCKET:", ws.url)
+
+        page.on("request", detectar_request)
+        page.on("websocket", detectar_websocket)
 
         try:
 
-            while (
-                len(frames_guardados)
-                < frames_necesarios
-            ):
+            print("1. Abriendo SINARAME...")
 
-                intento += 1
+            page.goto(
+                URL,
+                wait_until="domcontentloaded",
+                timeout=20000
+            )
 
-                print("")
-                print(
-                    "======================================"
-                )
-                print(
-                    f"INTENTO {intento}"
-                )
-                print(
-                    f"Progreso: "
-                    f"{len(frames_guardados)}/"
-                    f"{frames_necesarios}"
-                )
-                print(
-                    "======================================"
-                )
+            print("Página cargada:", page.url)
+
+            page.wait_for_timeout(5000)
+
+            print("")
+            print("2. Buscando selector RMA10...")
+
+            selects = page.locator("select")
+            print("Cantidad de SELECT:", selects.count())
+
+            encontrado = False
+
+            for i in range(selects.count()):
+
+                selector = selects.nth(i)
 
                 try:
+                    texto = selector.inner_text()
+                except Exception:
+                    continue
 
-                    page.goto(
-                        URL,
-                        wait_until="domcontentloaded",
-                        timeout=PAGE_TIMEOUT
-                    )
-
-                    page.wait_for_timeout(3000)
-
-                    nombre = capturar_frame(page)
-
-                    if nombre in frames_guardados:
-
-                        print(
-                            f"Frame repetido: {nombre}"
-                        )
-
-                    else:
-
-                        frames_guardados.add(
-                            nombre
-                        )
-
-                        print(
-                            f"NUEVO FRAME: {nombre}"
-                        )
-
-                except Exception as error:
-
-                    print(
-                        f"Error en intento: {error}"
-                    )
+                print(f"SELECT {i}: {texto[:500]}")
 
                 if (
-                    len(frames_guardados)
-                    < frames_necesarios
+                    "Bahía Blanca" in texto
+                    or "Bahia Blanca" in texto
+                    or "RMA10" in texto
                 ):
 
-                    if modo == "inicial":
-                        espera = 15
-                    else:
-                        espera = 3
+                    opciones = selector.locator("option")
 
-                    print(
-                        f"Esperando {espera} "
-                        "segundos..."
-                    )
+                    for j in range(opciones.count()):
 
-                    time.sleep(espera)
+                        opcion = opciones.nth(j)
+
+                        texto_opcion = opcion.inner_text().strip()
+                        valor = opcion.get_attribute("value")
+
+                        print(
+                            f"  OPCION {j}: "
+                            f"{texto_opcion} | value={valor}"
+                        )
+
+                        if (
+                            valor
+                            and (
+                                "Bahía Blanca" in texto_opcion
+                                or "Bahia Blanca" in texto_opcion
+                                or "RMA10" in texto_opcion
+                            )
+                        ):
+
+                            print("")
+                            print("3. SELECCIONANDO RMA10...")
+                            print(
+                                f"Valor seleccionado: {valor}"
+                            )
+
+                            selector.select_option(
+                                value=valor
+                            )
+
+                            encontrado = True
+                            break
+
+                if encontrado:
+                    break
+
+            if not encontrado:
+                print("ERROR: NO SE ENCONTRÓ RMA10.")
+
+            print("")
+            print("4. Esperando respuesta del sitio...")
+
+            page.wait_for_timeout(5000)
+
+            print("")
+            print("5. BUSCANDO IMÁGENES EN EL HTML")
+            print("======================================")
+
+            imagenes = page.locator("img")
+
+            print(
+                "Cantidad de imágenes:",
+                imagenes.count()
+            )
+
+            for i in range(imagenes.count()):
+
+                img = imagenes.nth(i)
+
+                try:
+                    src = img.get_attribute("src")
+                    alt = img.get_attribute("alt")
+
+                    if src:
+                        print(
+                            f"IMG {i}: "
+                            f"src={src} "
+                            f"alt={alt}"
+                        )
+
+                except Exception:
+                    pass
+
+            print("")
+            print("6. TEXTO RELEVANTE DE LA PÁGINA")
+            print("======================================")
+
+            texto = page.locator("body").inner_text()
+
+            for linea in texto.splitlines():
+
+                linea = linea.strip()
+
+                if (
+                    "Fecha frame" in linea
+                    or "Última actualización" in linea
+                    or "Bahía Blanca" in linea
+                    or "RMA10" in linea
+                    or "Reconect" in linea
+                    or "sesión" in linea
+                    or "servidor" in linea
+                    or "error" in linea.lower()
+                ):
+                    print(linea)
+
+            print("")
+            print("7. WEBSOCKETS")
+            print("======================================")
+
+            if websockets:
+                for ws in websockets:
+                    print(ws)
+            else:
+                print("NO SE DETECTARON WEBSOCKETS")
+
+            print("")
+            print("8. REQUESTS RMA10/CACHE")
+            print("======================================")
+
+            if requests:
+                for url in requests:
+                    print(url)
+            else:
+                print("NO SE DETECTARON REQUESTS RMA10/CACHE")
+
+            print("")
+            print("9. GUARDANDO CAPTURA DE PANTALLA...")
+
+            page.screenshot(
+                path=str(DIAGNOSTICO),
+                full_page=True
+            )
+
+            print(
+                "Captura:",
+                DIAGNOSTICO
+            )
+
+            print("")
+            print("======================================")
+            print("DIAGNOSTICO TERMINADO")
+            print("======================================")
+
+        except Exception as error:
+
+            print("")
+            print("ERROR GENERAL:")
+            print(error)
 
         finally:
 
             browser.close()
-
-    print("")
-    print("======================================")
-    print("CAPTURA TERMINADA")
-    print("======================================")
-
-    for frame in sorted(frames_guardados):
-
-        print(frame)
 
 
 if __name__ == "__main__":
