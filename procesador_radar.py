@@ -4,7 +4,6 @@ from pathlib import Path
 from collections import deque, Counter
 from PIL import Image
 import json
-import math
 
 
 RADAR_FILE = Path("data/radar/actual.png")
@@ -15,10 +14,6 @@ MASCARA_FILE = Path(
 
 INFO_MASCARA = Path(
     "data/radar/mascara_ecos_estaticos.json"
-)
-
-HISTORICO_DIR = Path(
-    "data/radar/historico"
 )
 
 MIN_PIXELS = 10
@@ -48,7 +43,7 @@ def clasificar_color(r, g, b):
         if abs(r - g) < 100:
             return "AMARILLO"
 
-    if r > 130 and g > 60 and g < 180 and b < 90:
+    if r > 130 and 60 < g < 180 and b < 90:
         if r > g * 1.15:
             return "NARANJA"
 
@@ -74,20 +69,72 @@ INTENSIDAD = {
 
 
 # ============================================================
+# NIVEL DE INTENSIDAD
+# ============================================================
+
+def nivel_intensidad(intensidad_maxima, intensidad_promedio):
+
+    maxima = INTENSIDAD.get(
+        intensidad_maxima,
+        0
+    )
+
+    promedio = intensidad_promedio
+
+    if maxima >= 6:
+        return "SEVERA"
+
+    if maxima == 5:
+        return "MUY_FUERTE"
+
+    if maxima == 4:
+        return "FUERTE"
+
+    if maxima == 3:
+        return "MODERADA"
+
+    if maxima == 2:
+        return "DEBIL"
+
+    if maxima == 1:
+        return "MUY_DEBIL"
+
+    if promedio >= 4:
+        return "FUERTE"
+
+    if promedio >= 3:
+        return "MODERADA"
+
+    if promedio >= 2:
+        return "DEBIL"
+
+    if promedio >= 1:
+        return "MUY_DEBIL"
+
+    return "SIN_ECO"
+
+
+# ============================================================
 # CARGAR MÁSCARA ESTÁTICA
 # ============================================================
 
 def cargar_mascara():
 
     if not MASCARA_FILE.exists():
-        print("Máscara estática: NO DISPONIBLE")
+
+        print(
+            "Máscara estática: NO DISPONIBLE"
+        )
+
         return None
 
     mascara = Image.open(
         MASCARA_FILE
     ).convert("L")
 
-    print("Máscara estática: ACTIVA")
+    print(
+        "Máscara estática: ACTIVA"
+    )
 
     if INFO_MASCARA.exists():
 
@@ -120,81 +167,22 @@ def cargar_mascara():
 
 
 # ============================================================
-# CARGAR FRAMES BASE
-# ============================================================
-
-def cargar_frames_base():
-
-    if not INFO_MASCARA.exists():
-        return []
-
-    try:
-
-        with open(
-            INFO_MASCARA,
-            "r",
-            encoding="utf-8"
-        ) as archivo:
-
-            info = json.load(archivo)
-
-        frames = []
-
-        for nombre in info.get(
-            "frames",
-            []
-        ):
-
-            archivo_frame = (
-                HISTORICO_DIR / nombre
-            )
-
-            if archivo_frame.exists():
-
-                frames.append(
-                    Image.open(
-                        archivo_frame
-                    ).convert("RGB")
-                )
-
-        return frames
-
-    except Exception:
-
-        return []
-
-
-# ============================================================
-# INTENSIDAD DE UN PIXEL
-# ============================================================
-
-def intensidad_pixel(
-    r,
-    g,
-    b
-):
-
-    categoria = clasificar_color(
-        r,
-        g,
-        b
-    )
-
-    return INTENSIDAD.get(
-        categoria,
-        0
-    )
-
-
-# ============================================================
 # PROCESAMIENTO
 # ============================================================
 
 def procesar_radar():
 
-    print("======================================")
-    print("ClimaAR - MOTOR DE DETECCIÓN RMA10")
-    print("======================================")
+    print(
+        "======================================"
+    )
+
+    print(
+        "ClimaAR - MOTOR DE DETECCIÓN RMA10"
+    )
+
+    print(
+        "======================================"
+    )
 
     if not RADAR_FILE.exists():
 
@@ -222,7 +210,6 @@ def procesar_radar():
 
     mascara = cargar_mascara()
 
-    frames_base = cargar_frames_base()
 
     # ========================================================
     # CLASIFICAR PIXELES
@@ -248,8 +235,9 @@ def procesar_radar():
 
         matriz.append(fila)
 
+
     # ========================================================
-    # BUSCAR COMPONENTES CONECTADOS
+    # BUSCAR NÚCLEOS
     # ========================================================
 
     visitados = set()
@@ -389,6 +377,11 @@ def procesar_radar():
             if cantidad < MIN_PIXELS:
                 continue
 
+
+            # =================================================
+            # INTENSIDADES
+            # =================================================
+
             intensidad_maxima = max(
                 colores,
                 key=lambda c:
@@ -397,15 +390,23 @@ def procesar_radar():
 
             intensidad_promedio = (
                 sum(
-                    INTENSIDAD[c]
-                    * cantidad_color
-                    for c,
-                    cantidad_color
+                    INTENSIDAD[c] * cantidad_color
+                    for c, cantidad_color
                     in colores.items()
                 )
                 /
                 cantidad
             )
+
+            nivel = nivel_intensidad(
+                intensidad_maxima,
+                intensidad_promedio
+            )
+
+
+            # =================================================
+            # CENTRO Y TAMAÑO
+            # =================================================
 
             centro_x = (
                 sum(
@@ -433,14 +434,13 @@ def procesar_radar():
                 max_y - min_y + 1
             )
 
+
             # =================================================
-            # ANÁLISIS CONTRA MÁSCARA
+            # MÁSCARA ESTÁTICA
             # =================================================
 
             dentro_mascara = 0
             fuera_mascara = 0
-
-            intensidad_fuera = []
 
             for px, py in puntos:
 
@@ -459,28 +459,25 @@ def procesar_radar():
 
                     fuera_mascara += 1
 
-                    intensidad_fuera.append(
-                        INTENSIDAD[
-                            matriz[py][px]
-                        ]
-                    )
-
             porcentaje_mascara = (
                 dentro_mascara
                 /
                 cantidad
-                * 100
+                *
+                100
             )
 
             porcentaje_fuera = (
                 fuera_mascara
                 /
                 cantidad
-                * 100
+                *
+                100
             )
 
+
             # =================================================
-            # CLASIFICACIÓN
+            # CLASIFICACIÓN PRECIPITACIÓN
             # =================================================
 
             estado = "CAMBIO"
@@ -491,21 +488,27 @@ def procesar_radar():
 
             if mascara is None:
 
-                if intensidad_maxima == "VIOLETA/MAGENTA":
-                    confianza = 70
-
-                elif intensidad_maxima == "ROJO":
-                    confianza = 65
-
-                elif intensidad_maxima == "NARANJA":
-                    confianza = 60
-
-                else:
-                    confianza = 50
-
                 estado = "PRECIPITACION"
 
                 motivo = "SIN_MASCARA"
+
+                if intensidad_maxima == "VIOLETA/MAGENTA":
+                    confianza = 92
+
+                elif intensidad_maxima == "ROJO":
+                    confianza = 88
+
+                elif intensidad_maxima == "NARANJA":
+                    confianza = 84
+
+                elif intensidad_maxima == "AMARILLO":
+                    confianza = 80
+
+                elif intensidad_maxima == "VERDE":
+                    confianza = 75
+
+                else:
+                    confianza = 65
 
             else:
 
@@ -526,11 +529,13 @@ def procesar_radar():
 
                     estado = "PRECIPITACION"
 
-                    confianza = 85
-
                     motivo = (
                         "ECO_FUERA_DE_MASCARA"
                     )
+
+                    if intensidad_maxima >= "":
+
+                        confianza = 85
 
                 elif porcentaje_fuera >= 15:
 
@@ -552,50 +557,58 @@ def procesar_radar():
                         "CAMBIO_DE_ECO"
                     )
 
+
             # =================================================
             # AJUSTE POR INTENSIDAD
             # =================================================
 
             if estado != "ECO_ESTATICO":
 
-                if intensidad_maxima == "VIOLETA/MAGENTA":
+                nivel_numero = INTENSIDAD.get(
+                    intensidad_maxima,
+                    0
+                )
 
-                    confianza += 5
+                confianza += (
+                    nivel_numero
+                    * 2
+                )
 
-                elif intensidad_maxima == "ROJO":
+                if nivel_numero >= 5:
+                    confianza += 2
 
-                    confianza += 4
+                confianza = min(
+                    confianza,
+                    99
+                )
 
-                elif intensidad_maxima == "NARANJA":
 
-                    confianza += 3
-
-                elif intensidad_maxima == "AMARILLO":
-
-                    confianza += 1
-
-            confianza = min(
-                confianza,
-                99
-            )
+            # =================================================
+            # GUARDAR NÚCLEO
+            # =================================================
 
             nucleos.append({
 
-                "pixeles": cantidad,
+                "pixeles":
+                    cantidad,
 
-                "centro_x": round(
-                    centro_x,
-                    1
-                ),
+                "centro_x":
+                    round(
+                        centro_x,
+                        1
+                    ),
 
-                "centro_y": round(
-                    centro_y,
-                    1
-                ),
+                "centro_y":
+                    round(
+                        centro_y,
+                        1
+                    ),
 
-                "ancho": ancho_nucleo,
+                "ancho":
+                    ancho_nucleo,
 
-                "alto": alto_nucleo,
+                "alto":
+                    alto_nucleo,
 
                 "intensidad_maxima":
                     intensidad_maxima,
@@ -605,6 +618,9 @@ def procesar_radar():
                         intensidad_promedio,
                         2
                     ),
+
+                "nivel_intensidad":
+                    nivel,
 
                 "estado":
                     estado,
@@ -633,6 +649,7 @@ def procesar_radar():
                     )
             })
 
+
     # ========================================================
     # ORDENAR
     # ========================================================
@@ -643,6 +660,7 @@ def procesar_radar():
         reverse=True
     )
 
+
     # ========================================================
     # ESTADÍSTICAS
     # ========================================================
@@ -651,22 +669,51 @@ def procesar_radar():
         1
         for n in nucleos
         if n["estado"]
-        == "ECO_ESTATICO"
+        ==
+        "ECO_ESTATICO"
     )
 
     precipitacion = sum(
         1
         for n in nucleos
         if n["estado"]
-        == "PRECIPITACION"
+        ==
+        "PRECIPITACION"
     )
 
     cambios = sum(
         1
         for n in nucleos
         if n["estado"]
-        == "CAMBIO"
+        ==
+        "CAMBIO"
     )
+
+
+    # ========================================================
+    # ESTADÍSTICAS DE INTENSIDAD
+    # ========================================================
+
+    niveles = [
+        "MUY_DEBIL",
+        "DEBIL",
+        "MODERADA",
+        "FUERTE",
+        "MUY_FUERTE",
+        "SEVERA"
+    ]
+
+    conteo_intensidad = {}
+
+    for nivel in niveles:
+
+        conteo_intensidad[nivel] = sum(
+            1
+            for n in nucleos
+            if n["estado"] != "ECO_ESTATICO"
+            and n["nivel_intensidad"] == nivel
+        )
+
 
     # ========================================================
     # PROBABILIDAD GLOBAL
@@ -686,6 +733,14 @@ def procesar_radar():
 
         peso_total = sum(
             n["pixeles"]
+            *
+            max(
+                1,
+                INTENSIDAD.get(
+                    n["intensidad_maxima"],
+                    1
+                )
+            )
             for n in nucleos_reales
         )
 
@@ -693,7 +748,16 @@ def procesar_radar():
 
             probabilidad = sum(
                 n["confianza"]
-                * n["pixeles"]
+                *
+                n["pixeles"]
+                *
+                max(
+                    1,
+                    INTENSIDAD.get(
+                        n["intensidad_maxima"],
+                        1
+                    )
+                )
                 for n in nucleos_reales
             ) / peso_total
 
@@ -713,14 +777,23 @@ def procesar_radar():
         1
     )
 
+
     # ========================================================
-    # RESULTADO EN CONSOLA
+    # RESULTADO
     # ========================================================
 
     print("")
-    print("======================================")
-    print("RESULTADO")
-    print("======================================")
+    print(
+        "======================================"
+    )
+
+    print(
+        "RESULTADO"
+    )
+
+    print(
+        "======================================"
+    )
 
     print(
         f"Núcleos detectados: {len(nucleos)}"
@@ -743,6 +816,46 @@ def procesar_radar():
     )
 
     print("")
+    print(
+        "INTENSIDAD DE LOS NÚCLEOS"
+    )
+
+    print(
+        f"  Muy débiles: "
+        f"{conteo_intensidad['MUY_DEBIL']}"
+    )
+
+    print(
+        f"  Débiles: "
+        f"{conteo_intensidad['DEBIL']}"
+    )
+
+    print(
+        f"  Moderadas: "
+        f"{conteo_intensidad['MODERADA']}"
+    )
+
+    print(
+        f"  Fuertes: "
+        f"{conteo_intensidad['FUERTE']}"
+    )
+
+    print(
+        f"  Muy fuertes: "
+        f"{conteo_intensidad['MUY_FUERTE']}"
+    )
+
+    print(
+        f"  Severas: "
+        f"{conteo_intensidad['SEVERA']}"
+    )
+
+    print("")
+
+
+    # ========================================================
+    # MOSTRAR NÚCLEOS
+    # ========================================================
 
     for numero, nucleo in enumerate(
         nucleos[:20],
@@ -754,7 +867,13 @@ def procesar_radar():
         )
 
         print(
-            f"  Estado: {nucleo['estado']}"
+            f"  Estado: "
+            f"{nucleo['estado']}"
+        )
+
+        print(
+            f"  Intensidad: "
+            f"{nucleo['nivel_intensidad']}"
         )
 
         print(
@@ -796,7 +915,7 @@ def procesar_radar():
 
         print(
             f"  Fuera máscara: "
-            f"{nucleo['porcentaje_fuera_mascara']}%"
+            f"{nucleo['porcentaje_fuera']}%"
         )
 
         print(
@@ -806,13 +925,15 @@ def procesar_radar():
 
         print("")
 
+
     # ========================================================
-    # GUARDAR RESULTADO JSON
+    # GUARDAR JSON
     # ========================================================
 
     resultado = {
 
-        "radar": "RMA10",
+        "radar":
+            "RMA10",
 
         "resolucion": {
             "ancho": ancho,
@@ -834,10 +955,12 @@ def procesar_radar():
         "probabilidad_precipitacion":
             probabilidad,
 
+        "intensidad": conteo_intensidad,
+
         "nucleos":
             nucleos
-
     }
+
 
     salida = Path(
         "data/radar/resultado_procesamiento.json"
@@ -866,9 +989,17 @@ def procesar_radar():
     )
 
     print("")
-    print("======================================")
-    print("ANÁLISIS TERMINADO")
-    print("======================================")
+    print(
+        "======================================"
+    )
+
+    print(
+        "ANÁLISIS TERMINADO"
+    )
+
+    print(
+        "======================================"
+    )
 
 
 if __name__ == "__main__":
