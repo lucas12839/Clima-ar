@@ -4,25 +4,45 @@ on:
   workflow_dispatch:
 
 jobs:
+
   descargar-radar:
 
     runs-on: ubuntu-latest
 
     steps:
 
+      # ==================================================
+      # REPOSITORIO
+      # ==================================================
+
       - name: Descargar repositorio
         uses: actions/checkout@v4
+
+
+      # ==================================================
+      # PYTHON
+      # ==================================================
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+
+      # ==================================================
+      # DEPENDENCIAS
+      # ==================================================
+
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           playwright install --with-deps chromium
+
+
+      # ==================================================
+      # MÁSCARA ESTÁTICA
+      # ==================================================
 
       - name: Recuperar mascara estatica
         id: mascara
@@ -33,20 +53,63 @@ jobs:
             data/radar/mascara_ecos_estaticos.json
           key: climaar-rma10-mascara-estatica-v1
 
+
+      # ==================================================
+      # HISTORIAL TEMPORAL
+      # ==================================================
+
+      - name: Recuperar historial temporal
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/radar/seguimiento
+          key: climaar-rma10-temporal-${{ github.run_id }}
+          restore-keys: |
+            climaar-rma10-temporal-
+
+
+      # ==================================================
+      # CAPTURAR RADAR
+      # ==================================================
+
       - name: Descargar radar RMA10
         env:
           CLIMAAR_CAPTURE_MODE: ${{ steps.mascara.outputs.cache-hit == 'true' && 'rapido' || 'inicial' }}
         run: |
           python scraper/capturar_radar_smn.py
 
+
+      # ==================================================
+      # GENERAR MÁSCARA INICIAL
+      # ==================================================
+
       - name: Generar mascara estatica inicial
         if: steps.mascara.outputs.cache-hit != 'true'
         run: |
           python scripts/generar_mascara_estatica.py
 
+
+      # ==================================================
+      # PROCESAR RADAR
+      # ==================================================
+
       - name: Procesar radar
         run: |
           python procesador_radar.py
+
+
+      # ==================================================
+      # SEGUIMIENTO TEMPORAL
+      # ==================================================
+
+      - name: Analizar evolucion temporal
+        run: |
+          python seguimiento_temporal.py
+
+
+      # ==================================================
+      # SUBIR RESULTADOS
+      # ==================================================
 
       - name: Subir radar
         if: always()
@@ -59,7 +122,13 @@ jobs:
             data/radar/mascara_ecos_estaticos.png
             data/radar/mascara_ecos_estaticos.json
             data/radar/resultado_procesamiento.json
+            data/radar/seguimiento/
           if-no-files-found: warn
+
+
+      # ==================================================
+      # MOSTRAR ARCHIVOS
+      # ==================================================
 
       - name: Mostrar archivos generados
         if: always()
@@ -67,4 +136,5 @@ jobs:
           echo "======================================"
           echo "ARCHIVOS GENERADOS"
           echo "======================================"
+
           find data/radar -type f -print 2>/dev/null || true
