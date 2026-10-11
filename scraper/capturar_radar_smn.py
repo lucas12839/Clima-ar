@@ -1,145 +1,308 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 import os
 import time
-import requests
+import re
+
+from playwright.sync_api import sync_playwright
 
 
-BASE_URL = "https://radares.hidricosargentina.gob.ar"
+URL = "https://radares.hidricosargentina.gob.ar/"
 
 OUTPUT_DIR = Path("data/radar")
 HISTORICO_DIR = OUTPUT_DIR / "historico"
 ACTUAL_FILE = OUTPUT_DIR / "actual.png"
 
-RADAR = "RMA10"
+MAX_INTENTOS = 5
+ESPERA_IMAGEN = 30
 
 FRAMES_INICIALES = 3
 
-# Cuántos minutos hacia atrás buscar
-MINUTOS_BUSQUEDA = 120
 
-# Intervalo habitual de los frames
-INTERVALO_MINUTOS = 10
+def buscar_url_rma10(page):
 
-
-def descargar_frame(timestamp):
-
-    nombre = timestamp.strftime("%Y%m%d%H%M%S") + ".png"
-
-    url = (
-        f"{BASE_URL}/cache/"
-        f"{RADAR}/{nombre}"
-    )
-
-    print(f"Probando: {nombre}")
-
+    # Primero buscamos directamente en las imágenes del DOM
     try:
 
-        respuesta = requests.get(
-            url,
-            timeout=15
+        imagenes = page.locator(
+            'img[src*="/cache/RMA10/"]'
         )
 
-    except Exception as e:
+        cantidad = imagenes.count()
 
-        print(f"Error de conexión: {e}")
-        return None
+        for i in range(cantidad):
 
-    if respuesta.status_code != 200:
+            src = imagenes.nth(i).get_attribute("src")
 
-        print(
-            f"  HTTP {respuesta.status_code}"
+            if src and re.search(
+                r"/cache/RMA10/\d+\.png",
+                src,
+                re.IGNORECASE
+            ):
+
+                if src.startswith("/"):
+
+                    src = (
+                        "https://radares.hidricosargentina.gob.ar"
+                        + src
+                    )
+
+                return src
+
+    except Exception:
+        pass
+
+    # Si no apareció como locator, buscamos en el HTML
+    try:
+
+        html = page.content()
+
+        patrones = [
+            r'["\']([^"\']*?/cache/RMA10/\d+\.png)["\']',
+            r'(/cache/RMA10/\d+\.png)',
+            r'(https?://[^"\']*?/cache/RMA10/\d+\.png)',
+        ]
+
+        for patron in patrones:
+
+            resultados = re.findall(
+                patron,
+                html,
+                flags=re.IGNORECASE
+            )
+
+            if resultados:
+
+                url = resultados[-1]
+
+                if url.startswith("/"):
+
+                    url = (
+                        "https://radares.hidricosargentina.gob.ar"
+                        + url
+                    )
+
+                return url
+
+    except Exception:
+        pass
+
+    return None
+
+
+def seleccionar_rma10(page):
+
+    selects = page.locator("select")
+
+    print(
+        f"Selectores encontrados: "
+        f"{selects.count()}"
+    )
+
+    for i in range(selects.count()):
+
+        selector = selects.nth(i)
+
+        try:
+            texto = selector.inner_text()
+        except Exception:
+            continue
+
+        if (
+            "Bahía Blanca" not in texto
+            and "Bahia Blanca" not in texto
+            and "RMA10" not in texto
+        ):
+            continue
+
+        opciones = selector.locator("option")
+
+        for j in range(opciones.count()):
+
+            opcion = opciones.nth(j)
+
+            texto_opcion = (
+                opcion.inner_text().strip()
+            )
+
+            valor = opcion.get_attribute(
+                "value"
+            )
+
+            if (
+                valor
+                and (
+                    "Bahía Blanca"
+                    in texto_opcion
+                    or
+                    "Bahia Blanca"
+                    in texto_opcion
+                    or
+                    "RMA10"
+                    in texto_opcion
+                )
+            ):
+
+                print(
+                    f"Seleccionando: "
+                    f"{texto_opcion} | "
+                    f"value={valor}"
+                )
+
+                selector.select_option(
+                    value=valor
+                )
+
+                return True
+
+    return False
+
+
+def descargar_radar(page, url):
+
+    print("")
+    print("======================================")
+    print("URL RMA10 ENCONTRADA")
+    print("======================================")
+    print(url)
+
+    respuesta = page.request.get(
+        url,
+        timeout=20000
+    )
+
+    print(
+        f"HTTP: {respuesta.status}"
+    )
+
+    if respuesta.status != 200:
+
+        raise RuntimeError(
+            f"HTTP {respuesta.status}"
         )
 
-        return None
+    contenido = respuesta.body()
 
-    contenido = respuesta.content
-
-    # Evitar guardar respuestas inválidas
     if len(contenido) < 1000:
 
-        print(
-            f"  Respuesta demasiado pequeña: "
+        raise RuntimeError(
+            f"Archivo inválido: "
             f"{len(contenido)} bytes"
         )
 
-        return None
+    nombre = url.split("/")[-1]
 
-    historico = HISTORICO_DIR / nombre
+    historico = (
+        HISTORICO_DIR / nombre
+    )
 
-    historico.write_bytes(contenido)
-    ACTUAL_FILE.write_bytes(contenido)
+    historico.write_bytes(
+        contenido
+    )
+
+    ACTUAL_FILE.write_bytes(
+        contenido
+    )
 
     print(
-        f"  OK -> {nombre} "
-        f"({len(contenido)} bytes)"
+        f"Guardado: {historico}"
     )
+
+    print(
+        f"Tamaño: {len(contenido)} bytes"
+    )
+
+    print("")
+    print("CAPTURA EXITOSA")
 
     return nombre
 
 
-def buscar_frames(cantidad):
+def intentar_captura(page):
 
-    ahora = datetime.now(timezone.utc)
+    print("Abriendo SINARAME...")
 
-    # Redondeamos al múltiplo de 10 minutos
-    minuto = (
-        ahora.minute
-        - ahora.minute % INTERVALO_MINUTOS
+    page.goto(
+        URL,
+        wait_until="domcontentloaded",
+        timeout=30000
     )
 
-    base = ahora.replace(
-        minute=minuto,
-        second=0,
-        microsecond=0
-    )
+    # Tiempo inicial para que cargue Blazor
+    page.wait_for_timeout(5000)
 
-    encontrados = []
+    print("Seleccionando RMA10...")
 
-    print("")
-    print("======================================")
-    print("BUSCANDO FRAMES RMA10")
-    print("======================================")
-    print(f"Hora UTC: {ahora}")
-    print(f"Desde: {base}")
-    print("")
+    if not seleccionar_rma10(page):
 
-    pasos = (
-        MINUTOS_BUSQUEDA //
-        INTERVALO_MINUTOS
-    )
-
-    for i in range(pasos + 1):
-
-        timestamp = (
-            base -
-            timedelta(
-                minutes=i *
-                INTERVALO_MINUTOS
-            )
+        raise RuntimeError(
+            "No se encontró el selector RMA10."
         )
 
-        nombre = descargar_frame(timestamp)
+    print("")
+    print(
+        f"Buscando imagen RMA10 "
+        f"durante {ESPERA_IMAGEN} segundos..."
+    )
 
-        if nombre:
+    inicio = time.monotonic()
 
-            if nombre not in encontrados:
+    while (
+        time.monotonic() - inicio
+        < ESPERA_IMAGEN
+    ):
 
-                encontrados.append(nombre)
+        radar_url = buscar_url_rma10(page)
 
-                print(
-                    f"FRAME ENCONTRADO "
-                    f"({len(encontrados)}/{cantidad})"
-                )
+        if radar_url:
 
-            if len(encontrados) >= cantidad:
-                break
+            print(
+                "Imagen RMA10 detectada."
+            )
 
-        time.sleep(0.2)
+            return descargar_radar(
+                page,
+                radar_url
+            )
 
-    return encontrados
+        print(
+            "Esperando imagen RMA10..."
+        )
+
+        time.sleep(1)
+
+    # Información de diagnóstico
+    print("")
+    print("======================================")
+    print("DIAGNÓSTICO")
+    print("======================================")
+
+    try:
+
+        texto = page.locator(
+            "body"
+        ).inner_text()
+
+        for linea in texto.splitlines():
+
+            if (
+                "Bahía Blanca" in linea
+                or "RMA10" in linea
+                or "Fecha frame" in linea
+                or "Última actualización"
+                in linea
+            ):
+
+                print(linea)
+
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "SINARAME no entregó una "
+        "URL PNG RMA10."
+    )
 
 
 def main():
@@ -171,50 +334,4 @@ def main():
 
             modo = "rapido"
 
-        else:
-
-            modo = "inicial"
-
-    if modo == "rapido":
-        cantidad = 1
-    else:
-        cantidad = FRAMES_INICIALES
-
-    print("")
-    print("======================================")
-    print("ClimaAR - CAPTURA DIRECTA RMA10")
-    print("======================================")
-    print(f"Modo: {modo.upper()}")
-    print(f"Frames necesarios: {cantidad}")
-    print("======================================")
-
-    frames = buscar_frames(cantidad)
-
-    print("")
-    print("======================================")
-    print("RESULTADO")
-    print("======================================")
-
-    if not frames:
-
-        raise RuntimeError(
-            "No se encontró ningún PNG "
-            "RMA10 en los últimos "
-            f"{MINUTOS_BUSQUEDA} minutos."
-        )
-
-    for frame in frames:
-
-        print(frame)
-
-    print("")
-    print(
-        f"Frames encontrados: "
-        f"{len(frames)}"
-    )
-
-    print("CAPTURA EXITOSA")
-
-
-if __name__ == "__main__":
-    main()
+       
