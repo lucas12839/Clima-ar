@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import time
 from playwright.sync_api import sync_playwright
 
 
@@ -13,20 +14,21 @@ ACTUAL_FILE = OUTPUT_DIR / "actual.png"
 MASCARA_FILE = OUTPUT_DIR / "mascara_ecos_estaticos.png"
 
 FRAMES_INICIALES = 3
-TIMEOUT_RESPUESTA = 90000
+
+# Mucho menor que los 90 segundos anteriores
+TIMEOUT_RADAR = 20000
 
 
 def buscar_selector_rma10(page):
 
     selects = page.locator("select")
-    selector = None
 
     for i in range(selects.count()):
 
-        actual = selects.nth(i)
+        selector = selects.nth(i)
 
         try:
-            texto = actual.inner_text()
+            texto = selector.inner_text()
         except Exception:
             continue
 
@@ -35,85 +37,145 @@ def buscar_selector_rma10(page):
             or "Bahia Blanca" in texto
             or "RMA10" in texto
         ):
-            selector = actual
-            break
 
-    if selector is None:
-        raise RuntimeError(
-            "No se encontró el selector de RMA10."
-        )
+            opciones = selector.locator("option")
 
-    opciones = selector.locator("option")
-    valor_rma10 = None
+            for j in range(opciones.count()):
 
-    for i in range(opciones.count()):
+                opcion = opciones.nth(j)
 
-        opcion = opciones.nth(i)
+                texto_opcion = opcion.inner_text().strip()
+                valor = opcion.get_attribute("value")
 
-        texto = opcion.inner_text().strip()
-        valor = opcion.get_attribute("value")
+                if (
+                    "Bahía Blanca" in texto_opcion
+                    or "Bahia Blanca" in texto_opcion
+                    or "RMA10" in texto_opcion
+                ):
 
-        print(f"Opción {i}: {texto}")
+                    return selector, valor
 
-        if (
-            "Bahía Blanca" in texto
-            or "Bahia Blanca" in texto
-            or "RMA10" in texto
-        ):
-            valor_rma10 = valor
-            break
-
-    if valor_rma10 is None:
-        raise RuntimeError(
-            "No se encontró Bahía Blanca RMA10."
-        )
-
-    return selector, valor_rma10
+    raise RuntimeError(
+        "No se encontró el selector de Bahía Blanca/RMA10."
+    )
 
 
-def capturar_frame(page):
+def guardar_respuesta(respuesta):
 
-    selector, valor_rma10 = buscar_selector_rma10(page)
+    url = respuesta.url
+    nombre = url.split("/")[-1]
 
-    print("Seleccionando RMA10...")
-    print("Esperando imagen del radar...")
+    if not nombre.endswith(".png"):
+        return None
 
-    with page.expect_response(
-        lambda response:
-            "/cache/RMA10/" in response.url
-            and ".png" in response.url,
-        timeout=TIMEOUT_RESPUESTA
-    ) as respuesta_esperada:
-
-        selector.select_option(
-            value=valor_rma10
-        )
-
-    respuesta = respuesta_esperada.value
-
-    url_imagen = respuesta.url
-    nombre = url_imagen.split("/")[-1]
-
-    print(f"Imagen encontrada: {url_imagen}")
-    print(f"HTTP: {respuesta.status}")
+    if "/cache/RMA10/" not in url:
+        return None
 
     contenido = respuesta.body()
 
     if not contenido:
-        raise RuntimeError(
-            "La respuesta del radar está vacía."
-        )
+        return None
 
     historico = HISTORICO_DIR / nombre
 
     historico.write_bytes(contenido)
     ACTUAL_FILE.write_bytes(contenido)
 
-    print("FRAME GUARDADO")
+    print("")
+    print("======================================")
+    print("RADAR RMA10 ENCONTRADO")
+    print("======================================")
+    print(f"URL: {url}")
+    print(f"HTTP: {respuesta.status}")
     print(f"Archivo: {historico}")
     print(f"Tamaño: {len(contenido)} bytes")
 
     return nombre
+
+
+def capturar_frame(page):
+
+    selector, valor_rma10 = buscar_selector_rma10(page)
+
+    respuestas = []
+
+    def recibir_respuesta(response):
+
+        if (
+            "/cache/RMA10/" in response.url
+            and response.url.endswith(".png")
+        ):
+            print(
+                f"Respuesta radar detectada: {response.url}"
+            )
+            respuestas.append(response)
+
+    page.on(
+        "response",
+        recibir_respuesta
+    )
+
+    print("Seleccionando Bahía Blanca (RMA10)...")
+
+    try:
+
+        selector.select_option(
+            value=valor_rma10
+        )
+
+    except Exception as error:
+
+        page.remove_listener(
+            "response",
+            recibir_respuesta
+        )
+
+        raise error
+
+    # Esperar como máximo 20 segundos
+    inicio = time.time()
+
+    while (
+        time.time() - inicio
+        < TIMEOUT_RADAR / 1000
+    ):
+
+        if respuestas:
+
+            for respuesta in respuestas:
+
+                try:
+
+                    nombre = guardar_respuesta(
+                        respuesta
+                    )
+
+                    if nombre:
+
+                        page.remove_listener(
+                            "response",
+                            recibir_respuesta
+                        )
+
+                        return nombre
+
+                except Exception as error:
+
+                    print(
+                        f"Error guardando respuesta: {error}"
+                    )
+
+        time.sleep(0.5)
+
+    page.remove_listener(
+        "response",
+        recibir_respuesta
+    )
+
+    raise RuntimeError(
+        "No se recibió una imagen PNG RMA10 "
+        "dentro de 20 segundos."
+    )
 
 
 def main():
@@ -128,32 +190,31 @@ def main():
         exist_ok=True
     )
 
-    # ========================================================
-    # DETERMINAR MODO
-    # ========================================================
-
     mascara_existe = MASCARA_FILE.exists()
+
+    print("======================================")
+    print("ClimaAR - CAPTURA RMA10")
+    print("======================================")
 
     if mascara_existe:
 
-        print("======================================")
-        print("CAPTURA RÁPIDA RMA10")
-        print("======================================")
-        print("Máscara estática encontrada.")
-        print("Se capturará solamente 1 frame.")
-        print("No se esperarán 3 actualizaciones.")
+        print("Máscara estática: ACTIVA")
+        print("Modo: CAPTURA RÁPIDA")
+        print("Frames necesarios: 1")
+
+        frames_necesarios = 1
 
     else:
 
-        print("======================================")
-        print("CAPTURA INICIAL DE RMA10")
-        print("======================================")
-        print("No existe máscara estática.")
-        print(f"Se capturarán {FRAMES_INICIALES} frames distintos.")
+        print("Máscara estática: NO DISPONIBLE")
+        print("Modo: CAPTURA INICIAL")
+        print(
+            f"Frames necesarios: {FRAMES_INICIALES}"
+        )
 
-    # ========================================================
-    # NAVEGADOR
-    # ========================================================
+        frames_necesarios = FRAMES_INICIALES
+
+    frames_guardados = set()
 
     with sync_playwright() as p:
 
@@ -168,46 +229,28 @@ def main():
             }
         )
 
-        # ====================================================
-        # MODO RÁPIDO
-        # ====================================================
+        intento = 0
 
-        if mascara_existe:
+        while (
+            len(frames_guardados)
+            < frames_necesarios
+        ):
 
-            page.goto(
-                URL,
-                wait_until="domcontentloaded",
-                timeout=60000
-            )
-
-            page.wait_for_timeout(5000)
-
-            nombre = capturar_frame(page)
+            intento += 1
 
             print("")
             print("======================================")
-            print("CAPTURA RÁPIDA TERMINADA")
+            print(
+                f"INTENTO {intento}"
+            )
+            print(
+                f"Progreso: "
+                f"{len(frames_guardados)}/"
+                f"{frames_necesarios}"
+            )
             print("======================================")
-            print(f"Frame: {nombre}")
 
-        # ====================================================
-        # MODO INICIAL
-        # ====================================================
-
-        else:
-
-            frames_guardados = set()
-
-            while len(frames_guardados) < FRAMES_INICIALES:
-
-                print("")
-                print("======================================")
-                print(
-                    f"PROGRESO: "
-                    f"{len(frames_guardados)}/"
-                    f"{FRAMES_INICIALES}"
-                )
-                print("======================================")
+            try:
 
                 page.goto(
                     URL,
@@ -215,6 +258,8 @@ def main():
                     timeout=60000
                 )
 
+                # La página necesita unos segundos
+                # para construir el selector.
                 page.wait_for_timeout(5000)
 
                 nombre = capturar_frame(page)
@@ -225,36 +270,54 @@ def main():
                         f"Frame repetido: {nombre}"
                     )
 
-                    print(
-                        "Esperando 30 segundos "
-                        "para comprobar si el radar actualizó..."
-                    )
-
-                    page.wait_for_timeout(30000)
-
                 else:
 
-                    frames_guardados.add(nombre)
+                    frames_guardados.add(
+                        nombre
+                    )
 
                     print(
-                        "NUEVO FRAME"
+                        "NUEVO FRAME GUARDADO"
                     )
 
                     print(
                         f"Progreso: "
                         f"{len(frames_guardados)}/"
-                        f"{FRAMES_INICIALES}"
+                        f"{frames_necesarios}"
                     )
 
-            print("")
-            print("======================================")
-            print("3 FRAMES DISTINTOS OBTENIDOS")
-            print("======================================")
+            except Exception as error:
 
-            for frame in sorted(
-                frames_guardados
+                print("")
+                print(
+                    f"Error en intento: {error}"
+                )
+
+            if (
+                len(frames_guardados)
+                < frames_necesarios
             ):
-                print(frame)
+
+                # Si estamos creando la máscara,
+                # comprobamos nuevamente después
+                # de 15 segundos.
+                print(
+                    "Esperando 15 segundos "
+                    "antes del siguiente intento..."
+                )
+
+                time.sleep(15)
+
+        print("")
+        print("======================================")
+        print("CAPTURA TERMINADA")
+        print("======================================")
+
+        for frame in sorted(
+            frames_guardados
+        ):
+
+            print(frame)
 
         browser.close()
 
