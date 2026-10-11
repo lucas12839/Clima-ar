@@ -385,6 +385,45 @@ def crear_track(track_id, actual, timestamp):
     }
 
 
+def rumbo_meteorologico(dx, dy):
+    """Convierte desplazamiento de imagen norte-arriba a rumbo meteorologico."""
+    if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+        return None, "SIN_MOVIMIENTO"
+
+    rumbo = math.degrees(math.atan2(dx, -dy)) % 360.0
+
+    sectores = [
+        "N", "NNE", "NE", "ENE",
+        "E", "ESE", "SE", "SSE",
+        "S", "SSO", "SO", "OSO",
+        "O", "ONO", "NO", "NNO"
+    ]
+    indice = int((rumbo + 11.25) // 22.5) % 16
+    return rumbo, sectores[indice]
+
+
+def calcular_confianza_movimiento(match, desplazamiento, minutos):
+    score = float(match.get("puntaje", 0.0))
+    iou_val = float(match.get("iou", 0.0))
+    dist = float(match.get("distancia", 0.0))
+
+    confianza = 45.0 + score * 0.45
+
+    if iou_val >= 0.20:
+        confianza += 8.0
+    elif iou_val <= 0.02:
+        confianza -= 5.0
+
+    limite = umbral_distancia(minutos)
+    if limite > 0:
+        confianza -= max(0.0, (dist / limite) * 8.0)
+
+    if desplazamiento < MOVIMIENTO_MINIMO:
+        confianza -= 5.0
+
+    return round(max(0.0, min(99.0, confianza)), 1)
+
+
 def actualizar_track(
     track,
     actual,
@@ -395,124 +434,117 @@ def actualizar_track(
 ):
     dx = actual["x"] - anterior["x"]
     dy = actual["y"] - anterior["y"]
-
     desplazamiento = math.hypot(dx, dy)
-
-    velocidad = (
-        desplazamiento /
-        max(minutos, 0.1)
-    )
-
+    velocidad = desplazamiento / max(minutos, 0.1)
     cambio_area = match["cambio_area"]
 
     if cambio_area >= CAMBIO_AREA_CRECE:
         evolucion = "CRECIENDO"
-
     elif cambio_area <= CAMBIO_AREA_DEBILITA:
         evolucion = "DEBILITANDOSE"
-
     else:
         evolucion = "ESTABLE"
 
-    direccion = (
-        math.degrees(
-            math.atan2(dy, dx)
-        ) + 360.0
-    ) % 360.0
+    rumbo, direccion = rumbo_meteorologico(dx, dy)
+
+    historial = track.setdefault("historial", [])
+
+    rumbo_anterior = None
+    for item in reversed(historial):
+        valor = item.get("rumbo_grados")
+        if isinstance(valor, (int, float)):
+            rumbo_anterior = float(valor)
+            break
+
+    cambio_rumbo = None
+    if rumbo is not None and rumbo_anterior is not None:
+        diferencia = abs(rumbo - rumbo_anterior) % 360.0
+        cambio_rumbo = min(diferencia, 360.0 - diferencia)
+
+    velocidad_anterior = track.get("velocidad_pixeles_min")
+    aceleracion = None
+
+    if isinstance(velocidad_anterior, (int, float)):
+        aceleracion = (
+            velocidad - float(velocidad_anterior)
+        ) / max(minutos, 0.1)
+
+    if aceleracion is not None and aceleracion > 0.02:
+        tendencia_velocidad = "ACELERANDO"
+    elif aceleracion is not None and aceleracion < -0.02:
+        tendencia_velocidad = "FRENANDO"
+    else:
+        tendencia_velocidad = "ESTABLE"
+
+    confianza_movimiento = calcular_confianza_movimiento(
+        match,
+        desplazamiento,
+        minutos
+    )
 
     track["ultimo_frame"] = timestamp
-    track["frames"] = (
-        int(track.get("frames", 0)) + 1
-    )
+    track["frames"] = int(track.get("frames", 0)) + 1
     track["missed_frames"] = 0
-
     track["x"] = actual["x"]
     track["y"] = actual["y"]
     track["pixeles"] = actual["pixeles"]
     track["intensidad"] = actual["intensidad"]
-    track["nivel_intensidad"] = (
-        actual["nivel_intensidad"]
-    )
-
+    track["nivel_intensidad"] = actual["nivel_intensidad"]
     track["estado"] = evolucion
 
-    track["desplazamiento_pixeles"] = round(
-        desplazamiento,
-        2
+    track["dx_pixeles"] = round(dx, 2)
+    track["dy_pixeles"] = round(dy, 2)
+    track["desplazamiento_pixeles"] = round(desplazamiento, 2)
+    track["velocidad_pixeles_min"] = round(velocidad, 3)
+    track["rumbo_grados"] = round(rumbo, 1) if rumbo is not None else None
+    track["direccion"] = direccion
+    track["cambio_rumbo_grados"] = (
+        round(cambio_rumbo, 1)
+        if cambio_rumbo is not None else None
     )
-
-    track["velocidad_pixeles_min"] = round(
-        velocidad,
-        3
+    track["aceleracion_pixeles_min2"] = (
+        round(aceleracion, 4)
+        if aceleracion is not None else None
     )
+    track["tendencia_velocidad"] = tendencia_velocidad
+    track["confianza_movimiento"] = confianza_movimiento
 
-    track["direccion_grados"] = round(
-        direccion,
-        1
-    )
+    track["cambio_area_porcentaje"] = round(cambio_area, 1)
+    track["iou"] = round(match["iou"], 3)
+    track["ratio_area"] = round(match["ratio_area"], 3)
+    track["ratio_ancho"] = round(match["ratio_ancho"], 3)
+    track["ratio_alto"] = round(match["ratio_alto"], 3)
 
-    track["cambio_area_porcentaje"] = round(
-        cambio_area,
-        1
-    )
+    historial.append({
+        "timestamp": timestamp,
+        "x": actual["x"],
+        "y": actual["y"],
+        "pixeles": actual["pixeles"],
+        "intensidad": actual["intensidad"],
+        "estado": evolucion,
+        "dx_pixeles": round(dx, 2),
+        "dy_pixeles": round(dy, 2),
+        "desplazamiento_pixeles": round(desplazamiento, 2),
+        "velocidad_pixeles_min": round(velocidad, 3),
+        "rumbo_grados": round(rumbo, 1) if rumbo is not None else None,
+        "direccion": direccion,
+        "cambio_rumbo_grados": (
+            round(cambio_rumbo, 1)
+            if cambio_rumbo is not None else None
+        ),
+        "aceleracion_pixeles_min2": (
+            round(aceleracion, 4)
+            if aceleracion is not None else None
+        ),
+        "tendencia_velocidad": tendencia_velocidad,
+        "confianza_movimiento": confianza_movimiento,
+        "cambio_area_porcentaje": round(cambio_area, 1),
+    })
 
-    track["iou"] = round(
-        match["iou"],
-        3
-    )
-
-    track["ratio_area"] = round(
-        match["ratio_area"],
-        3
-    )
-
-    track["ratio_ancho"] = round(
-        match["ratio_ancho"],
-        3
-    )
-
-    track["ratio_alto"] = round(
-        match["ratio_alto"],
-        3
-    )
-
-    historial = track.setdefault(
-        "historial",
-        []
-    )
-
-    historial.append(
-        {
-            "timestamp": timestamp,
-            "x": actual["x"],
-            "y": actual["y"],
-            "pixeles": actual["pixeles"],
-            "intensidad": actual["intensidad"],
-            "estado": evolucion,
-            "desplazamiento_pixeles": round(
-                desplazamiento,
-                2
-            ),
-            "velocidad_pixeles_min": round(
-                velocidad,
-                3
-            ),
-            "direccion_grados": round(
-                direccion,
-                1
-            ),
-            "cambio_area_porcentaje": round(
-                cambio_area,
-                1
-            ),
-        }
-    )
-
-    track["historial"] = historial[
-        -MAX_HISTORIAL:
-    ]
+    track["historial"] = historial[-MAX_HISTORIAL:]
 
     return evolucion, desplazamiento
+
 
 
 def analizar():
@@ -932,6 +964,16 @@ def analizar():
                     match["puntaje"],
                     2
                 ),
+                    "dx_pixeles": track.get("dx_pixeles"),
+                    "dy_pixeles": track.get("dy_pixeles"),
+                    "desplazamiento_pixeles": track.get("desplazamiento_pixeles"),
+                    "velocidad_pixeles_min": track.get("velocidad_pixeles_min"),
+                    "rumbo_grados": track.get("rumbo_grados"),
+                    "direccion": track.get("direccion"),
+                    "cambio_rumbo_grados": track.get("cambio_rumbo_grados"),
+                    "aceleracion_pixeles_min2": track.get("aceleracion_pixeles_min2"),
+                    "tendencia_velocidad": track.get("tendencia_velocidad"),
+                    "confianza_movimiento": track.get("confianza_movimiento"),
             }
         )
 
