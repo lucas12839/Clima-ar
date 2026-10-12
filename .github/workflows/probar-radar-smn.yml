@@ -3,6 +3,9 @@ name: Probar Radar SMN
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   descargar-radar:
     runs-on: ubuntu-latest
@@ -14,6 +17,8 @@ jobs:
       # =========================================================
       - name: Descargar repositorio
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # =========================================================
       # 2. CONFIGURAR PYTHON
@@ -45,22 +50,12 @@ jobs:
           key: climaar-rma10-mascara-estatica-v1
 
       # =========================================================
-      # 5. RECUPERAR HISTORIAL TEMPORAL
-      #
-      # IMPORTANTE:
-      # Cada ejecución tiene una clave nueva.
-      # restore-keys permite recuperar la caché anterior.
-      # Al finalizar, GitHub guarda el nuevo estado.
+      # 5. CREAR DIRECTORIOS TEMPORALES
       # =========================================================
-      - name: Recuperar historial temporal
-        id: temporal
-        uses: actions/cache@v4
-        with:
-          path: |
-            data/radar/seguimiento
-          key: climaar-rma10-temporal-${{ github.run_id }}
-          restore-keys: |
-            climaar-rma10-temporal-
+      - name: Preparar directorios
+        run: |
+          mkdir -p data/radar/seguimiento
+          mkdir -p data/radar/historico
 
       # =========================================================
       # 6. DESCARGAR RADAR RMA10
@@ -72,7 +67,7 @@ jobs:
           python scraper/capturar_radar_smn.py
 
       # =========================================================
-      # 7. GENERAR MÁSCARA ESTÁTICA SI NO EXISTE
+      # 7. GENERAR MÁSCARA SI NO EXISTE
       # =========================================================
       - name: Generar mascara estatica inicial
         if: steps.mascara.outputs.cache-hit != 'true'
@@ -88,6 +83,9 @@ jobs:
 
       # =========================================================
       # 9. SEGUIMIENTO TEMPORAL
+      #
+      # estado.json ya está en el repositorio.
+      # seguimiento_temporal.py lo recupera automáticamente.
       # =========================================================
       - name: Seguimiento temporal
         run: |
@@ -101,7 +99,7 @@ jobs:
           python prediccion_evolucion.py
 
       # =========================================================
-      # 11. MOSTRAR ESTADO TEMPORAL
+      # 11. MOSTRAR ESTADO
       # =========================================================
       - name: Mostrar estado temporal
         if: always()
@@ -118,7 +116,7 @@ jobs:
 
           echo ""
           echo "======================================"
-          echo "SEGUIMIENTO TEMPORAL"
+          echo "SEGUIMIENTO"
           echo "======================================"
 
           if [ -f data/radar/seguimiento/seguimiento_temporal.json ]; then
@@ -128,7 +126,28 @@ jobs:
           fi
 
       # =========================================================
-      # 12. SUBIR ARTEFACTOS
+      # 12. GUARDAR ESTADO EN GITHUB
+      #
+      # Esto es lo importante.
+      # El siguiente Action recuperará este estado.
+      # =========================================================
+      - name: Guardar estado temporal
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f data/radar/seguimiento/estado.json
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios en el estado temporal."
+          else
+            git commit -m "Actualizar estado temporal RMA10"
+            git push
+          fi
+
+      # =========================================================
+      # 13. SUBIR ARTEFACTOS
       # =========================================================
       - name: Subir radar
         if: always()
@@ -146,7 +165,7 @@ jobs:
           if-no-files-found: warn
 
       # =========================================================
-      # 13. MOSTRAR ARCHIVOS GENERADOS
+      # 14. MOSTRAR ARCHIVOS
       # =========================================================
       - name: Mostrar archivos generados
         if: always()
