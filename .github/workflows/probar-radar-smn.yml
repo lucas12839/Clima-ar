@@ -6,7 +6,6 @@ on:
 jobs:
   descargar-radar:
     runs-on: ubuntu-latest
-
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
@@ -14,7 +13,7 @@ jobs:
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
 
       - name: Instalar dependencias
         run: |
@@ -31,24 +30,20 @@ jobs:
             data/radar/mascara_ecos_estaticos.json
           key: climaar-rma10-mascara-estatica-v1
 
-      - name: Recuperar historial temporal
+      - name: Recuperar historial temporal v2
+        id: temporal
         uses: actions/cache@v4
         with:
           path: data/radar/seguimiento
-          key: climaar-rma10-temporal-${{ github.run_id }}
+          key: climaar-rma10-temporal-v2-${{ github.run_id }}
           restore-keys: |
-            climaar-rma10-temporal-
+            climaar-rma10-temporal-v2-
 
       - name: Descargar radar RMA10
         env:
           CLIMAAR_CAPTURE_MODE: ${{ steps.mascara.outputs.cache-hit == 'true' && 'rapido' || 'inicial' }}
         run: |
           python scraper/capturar_radar_smn.py
-
-      - name: Verificar timestamp del radar
-        run: |
-          echo "TIMESTAMP DEL FRAME:"
-          cat data/radar/radar_timestamp.txt
 
       - name: Generar mascara estatica inicial
         if: steps.mascara.outputs.cache-hit != 'true'
@@ -59,7 +54,7 @@ jobs:
         run: |
           python procesador_radar.py
 
-      - name: Analizar evolucion temporal
+      - name: Seguimiento temporal v2
         run: |
           python seguimiento_temporal.py
 
@@ -81,7 +76,7 @@ jobs:
       - name: Mostrar archivos generados
         if: always()
         run: |
-          echo "======================================"
-          echo "ARCHIVOS GENERADOS"
-          echo "======================================"
+          echo '======================================'
+          echo 'ARCHIVOS GENERADOS'
+          echo '======================================'
           find data/radar -type f -print 2>/dev/null || true
