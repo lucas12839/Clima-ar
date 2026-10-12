@@ -34,8 +34,7 @@ jobs:
       - name: Recuperar historial temporal
         uses: actions/cache@v4
         with:
-          path: |
-            data/radar/seguimiento
+          path: data/radar/seguimiento
           key: climaar-rma10-temporal-${{ github.run_id }}
           restore-keys: |
             climaar-rma10-temporal-
@@ -45,6 +44,11 @@ jobs:
           CLIMAAR_CAPTURE_MODE: ${{ steps.mascara.outputs.cache-hit == 'true' && 'rapido' || 'inicial' }}
         run: |
           python scraper/capturar_radar_smn.py
+
+      - name: Verificar timestamp del radar
+        run: |
+          echo "TIMESTAMP DEL FRAME:"
+          cat data/radar/radar_timestamp.txt
 
       - name: Generar mascara estatica inicial
         if: steps.mascara.outputs.cache-hit != 'true'
@@ -66,6 +70,7 @@ jobs:
           name: radar-rma10
           path: |
             data/radar/actual.png
+            data/radar/radar_timestamp.txt
             data/radar/historico/
             data/radar/mascara_ecos_estaticos.png
             data/radar/mascara_ecos_estaticos.json
