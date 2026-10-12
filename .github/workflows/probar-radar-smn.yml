@@ -1,4 +1,4 @@
-name: Descargar Radar RMA10
+name: Probar Radar SMN
 
 on:
   workflow_dispatch:
@@ -6,14 +6,16 @@ on:
 jobs:
   descargar-radar:
     runs-on: ubuntu-latest
+
     steps:
+
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Instalar dependencias
         run: |
@@ -30,14 +32,15 @@ jobs:
             data/radar/mascara_ecos_estaticos.json
           key: climaar-rma10-mascara-estatica-v1
 
-      - name: Recuperar historial temporal v2
+      - name: Recuperar historial temporal
         id: temporal
         uses: actions/cache@v4
         with:
-          path: data/radar/seguimiento
-          key: climaar-rma10-temporal-v2-${{ github.run_id }}
+          path: |
+            data/radar/seguimiento
+          key: climaar-rma10-temporal-v2
           restore-keys: |
-            climaar-rma10-temporal-v2-
+            climaar-rma10-temporal-v2
 
       - name: Descargar radar RMA10
         env:
@@ -54,9 +57,13 @@ jobs:
         run: |
           python procesador_radar.py
 
-      - name: Seguimiento temporal v2
+      - name: Seguimiento temporal
         run: |
           python seguimiento_temporal.py
+
+      - name: Prediccion de evolucion
+        run: |
+          python prediccion_evolucion.py
 
       - name: Subir radar
         if: always()
@@ -65,7 +72,6 @@ jobs:
           name: radar-rma10
           path: |
             data/radar/actual.png
-            data/radar/radar_timestamp.txt
             data/radar/historico/
             data/radar/mascara_ecos_estaticos.png
             data/radar/mascara_ecos_estaticos.json
@@ -76,7 +82,7 @@ jobs:
       - name: Mostrar archivos generados
         if: always()
         run: |
-          echo '======================================'
-          echo 'ARCHIVOS GENERADOS'
-          echo '======================================'
+          echo "======================================"
+          echo "ARCHIVOS GENERADOS"
+          echo "======================================"
           find data/radar -type f -print 2>/dev/null || true
