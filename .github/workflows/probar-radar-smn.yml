@@ -5,229 +5,155 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   descargar-radar:
     runs-on: ubuntu-latest
 
     steps:
-
-      # =========================================================
-      # 1. DESCARGAR REPOSITORIO
-      # =========================================================
       - name: Descargar repositorio
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # =========================================================
-      # 2. CONFIGURAR PYTHON
-      # =========================================================
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # =========================================================
-      # 3. INSTALAR DEPENDENCIAS
-      # =========================================================
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
-      # =========================================================
-      # 4. RECUPERAR MÁSCARA ESTÁTICA
-      # =========================================================
-      - name: Recuperar mascara estatica
+      - name: Recuperar máscara estática
         id: mascara
         uses: actions/cache@v4
         with:
           path: |
             data/radar/mascara_ecos_estaticos.png
             data/radar/mascara_ecos_estaticos.json
-          key: climaar-rma10-mascara-estatica-v1
+            data/radar/mascara_ecos_estaticos_confianza.png
+          key: climaar-rma10-mascara-estatica-v2
 
-      # =========================================================
-      # 5. PREPARAR DIRECTORIOS
-      # =========================================================
       - name: Preparar directorios
         run: |
           mkdir -p data/radar/seguimiento
           mkdir -p data/radar/historico
           mkdir -p .climaar
 
-      # =========================================================
-      # 6. RECUPERAR ESTADO PERSISTENTE
-      # =========================================================
+      - name: Recuperar historial de radar del último artefacto
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ARTIFACT_ID=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=radar-rma10&per_page=20" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id')
+
+          if [ "$ARTIFACT_ID" != "null" ] && [ -n "$ARTIFACT_ID" ]; then
+            echo "Recuperando artefacto anterior: $ARTIFACT_ID"
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+              > /tmp/radar_anterior.zip
+
+            mkdir -p /tmp/radar_anterior
+            unzip -q /tmp/radar_anterior.zip -d /tmp/radar_anterior
+
+            find /tmp/radar_anterior -type f \
+              -path "*/historico/*.png" \
+              -exec cp -n {} data/radar/historico/ \; || true
+          else
+            echo "No hay artefacto anterior disponible."
+          fi
+
+          echo "Frames históricos disponibles:"
+          find data/radar/historico -type f -name '*.png' | wc -l
+
       - name: Recuperar estado persistente
         run: |
           if [ -f .climaar/estado_rma10.json ]; then
-            echo "======================================"
-            echo "ESTADO ANTERIOR ENCONTRADO"
-            echo "======================================"
-
             cp .climaar/estado_rma10.json \
               data/radar/seguimiento/estado.json
-
-            python - <<'PY'
-          import json
-
-          p = "data/radar/seguimiento/estado.json"
-
-          with open(p, "r", encoding="utf-8") as f:
-              d = json.load(f)
-
-          print("schema_version:", d.get("schema_version"))
-          print("ultimo_radar_timestamp:",
-                d.get("ultimo_radar_timestamp"))
-          print("tracks:",
-                len(d.get("tracks", [])))
-          print("tracks_activos:",
-                len(d.get("tracks_activos", [])))
-          PY
-
+            echo "Estado anterior recuperado."
           else
-            echo "======================================"
-            echo "NO EXISTE ESTADO ANTERIOR"
-            echo "SE CREARÁ PRIMER FRAME"
-            echo "======================================"
+            echo "No existe estado anterior. Se creará primer frame."
           fi
 
-      # =========================================================
-      # 7. DESCARGAR RADAR
-      # =========================================================
       - name: Descargar radar RMA10
         env:
           CLIMAAR_CAPTURE_MODE: ${{ steps.mascara.outputs.cache-hit == 'true' && 'rapido' || 'inicial' }}
         run: |
           python scraper/capturar_radar_smn.py
 
-      # =========================================================
-      # 8. GENERAR MÁSCARA SI NO EXISTE
-      # =========================================================
-      - name: Generar mascara estatica inicial
+      - name: Aprender ecos estáticos
         if: steps.mascara.outputs.cache-hit != 'true'
         run: |
           python scripts/generar_mascara_estatica.py
 
-      # =========================================================
-      # 9. PROCESAR RADAR
-      # =========================================================
       - name: Procesar radar
         run: |
           python procesador_radar.py
 
-      # =========================================================
-      # 10. SEGUIMIENTO TEMPORAL
-      # =========================================================
       - name: Seguimiento temporal
         run: |
           python seguimiento_temporal.py
 
-      # =========================================================
-      # 11. PREDICCIÓN
-      # =========================================================
-      - name: Prediccion de evolucion
+      - name: Predicción de evolución
         run: |
           python prediccion_evolucion.py
 
-      # =========================================================
-      # 12. GUARDAR NUEVO ESTADO PERSISTENTE
-      # =========================================================
       - name: Guardar estado persistente
         if: success()
         run: |
           if [ -f data/radar/seguimiento/estado.json ]; then
             cp data/radar/seguimiento/estado.json \
               .climaar/estado_rma10.json
-
-            echo "======================================"
-            echo "NUEVO ESTADO GUARDADO"
-            echo "======================================"
-
-            python - <<'PY'
-          import json
-
-          p = ".climaar/estado_rma10.json"
-
-          with open(p, "r", encoding="utf-8") as f:
-              d = json.load(f)
-
-          print("schema_version:", d.get("schema_version"))
-          print("ultimo_radar_timestamp:",
-                d.get("ultimo_radar_timestamp"))
-          print("tracks:",
-                len(d.get("tracks", [])))
-          print("tracks_activos:",
-                len(d.get("tracks_activos", [])))
-          PY
           else
             echo "ERROR: no se generó estado.json"
             exit 1
           fi
 
-      # =========================================================
-      # 13. COMPROBAR CAMBIOS
-      # =========================================================
-      - name: Comprobar estado Git
-        if: always()
-        run: |
-          echo "======================================"
-          echo "ESTADO GIT"
-          echo "======================================"
-
-          git status --short
-
-          echo ""
-          echo "======================================"
-          echo "ESTADO PERSISTENTE"
-          echo "======================================"
-
-          if [ -f .climaar/estado_rma10.json ]; then
-            ls -lh .climaar/estado_rma10.json
-          else
-            echo "NO EXISTE .climaar/estado_rma10.json"
-          fi
-
-      # =========================================================
-      # 14. COMMIT + PUSH
-      # =========================================================
-      - name: Persistir estado en GitHub
+      - name: Persistir estado y máscara
         if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -f .climaar/estado_rma10.json
+          git add -f data/radar/mascara_ecos_estaticos.png
+          git add -f data/radar/mascara_ecos_estaticos.json
+          git add -f data/radar/mascara_ecos_estaticos_confianza.png
 
           if git diff --cached --quiet; then
             echo "No hay cambios para guardar."
           else
-            git commit -m "Actualizar estado temporal RMA10"
+            git commit -m "Actualizar estado y aprendizaje estatico RMA10"
             git push
           fi
 
-      # =========================================================
-      # 15. MOSTRAR SEGUIMIENTO
-      # =========================================================
-      - name: Mostrar seguimiento
+      - name: Mostrar resultado
         if: always()
         run: |
-          echo "======================================"
-          echo "SEGUIMIENTO TEMPORAL"
-          echo "======================================"
-
+          echo "===== SEGUIMIENTO ====="
           if [ -f data/radar/seguimiento/seguimiento_temporal.json ]; then
             cat data/radar/seguimiento/seguimiento_temporal.json
-          else
-            echo "No existe seguimiento_temporal.json"
           fi
 
-      # =========================================================
-      # 16. SUBIR ARTEFACTOS
-      # =========================================================
+          echo ""
+          echo "===== PREDICCION ====="
+          if [ -f data/radar/seguimiento/prediccion_evolucion.json ]; then
+            python - <<'PY'
+          import json
+          p = "data/radar/seguimiento/prediccion_evolucion.json"
+          d = json.load(open(p, encoding="utf-8"))
+          print(json.dumps(d.get("resumen", {}), ensure_ascii=False, indent=2))
+          PY
+          fi
+
       - name: Subir radar
         if: always()
         uses: actions/upload-artifact@v4
@@ -238,19 +164,13 @@ jobs:
             data/radar/historico/
             data/radar/mascara_ecos_estaticos.png
             data/radar/mascara_ecos_estaticos.json
+            data/radar/mascara_ecos_estaticos_confianza.png
             data/radar/resultado_procesamiento.json
             data/radar/seguimiento/
             data/radar/radar_timestamp.txt
           if-no-files-found: warn
 
-      # =========================================================
-      # 17. MOSTRAR ARCHIVOS
-      # =========================================================
       - name: Mostrar archivos generados
         if: always()
         run: |
-          echo "======================================"
-          echo "ARCHIVOS GENERADOS"
-          echo "======================================"
-
           find data/radar -type f -print 2>/dev/null || true
