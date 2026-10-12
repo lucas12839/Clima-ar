@@ -11,7 +11,7 @@ RESULTADO_SEGUIMIENTO = SEGUIMIENTO_DIR / 'seguimiento_temporal.json'
 HISTORICO_DIR = RADAR_DIR / 'historico'
 TIMESTAMP_FILE = RADAR_DIR / 'radar_timestamp.txt'
 
-STATE_SCHEMA_VERSION = 2
+STATE_SCHEMA_VERSION = 3
 DISTANCIA_BASE = 25.0
 DISTANCIA_MAXIMA = 90.0
 CAMBIO_AREA_CRECE = 15.0
@@ -122,26 +122,47 @@ def umbral_distancia(minutos):
 
 
 def compatibilidad(a,b,minutos):
-    dist = distancia(a,b); limite = umbral_distancia(minutos)
-    if dist > limite: return None
+    dist = distancia(a,b)
+    limite = umbral_distancia(minutos)
+    if dist > limite:
+        return None
     aa, ab = max(1,a['pixeles']), max(1,b['pixeles'])
     ratio_area = max(aa,ab)/min(aa,ab)
     ov = iou(a,b)
     rw = max(a['ancho'],b['ancho'])/max(1,min(a['ancho'],b['ancho']))
     rh = max(a['alto'],b['alto'])/max(1,min(a['alto'],b['alto']))
+
+    # Regla dura: sin solapamiento no asumimos identidad salvo que el cambio
+    # sea muy pequeño. Esto evita falsos movimientos de pequeños ecos.
+    if ov <= 0.0:
+        if dist > 7.0 or ratio_area > 1.30 or rw > 1.50 or rh > 1.50:
+            return None
+    elif ov < 0.05:
+        if dist > 10.0 or ratio_area > 1.40 or rw > 1.80 or rh > 1.80:
+            return None
+    elif ov < 0.12:
+        if dist > 18.0 and ratio_area > 1.80:
+            return None
+
     if ratio_area > 2.5 and ov < .15: return None
     if rw > 2.8 and rh > 2.0: return None
     if rw > 3.5 or rh > 3.5: return None
     if dist > max(35, limite*.65) and (ov < .08 or ratio_area > 2.0): return None
-    if ov <= 0:
-        if dist > 20 or ratio_area > 1.5 or rw > 1.6 or rh > 1.6: return None
+
     close = max(0, 1-dist/limite)
     sim_area = max(0, 1-abs(math.log(aa/ab))/math.log(2.5))
     sim_shape = max(0, 1-(abs(math.log(rw))+abs(math.log(rh)))/math.log(3.0))
     score = 35*close + 35*ov + 20*sim_area + 10*sim_shape
-    if score < 45: return None
-    return {'puntaje':score,'distancia':dist,'iou':ov,'cambio_area':(aa-ab)/ab*100,'ratio_area':ratio_area,'ratio_ancho':rw,'ratio_alto':rh}
 
+    # Para enlaces con poco solapamiento exigimos evidencia fuerte.
+    min_score = 60.0 if ov < 0.05 else 50.0
+    if score < min_score:
+        return None
+    return {
+        'puntaje':score,'distancia':dist,'iou':ov,
+        'cambio_area':(aa-ab)/ab*100,'ratio_area':ratio_area,
+        'ratio_ancho':rw,'ratio_alto':rh
+    }
 
 def rumbo(dx,dy):
     if abs(dx)<1e-9 and abs(dy)<1e-9: return None, None
@@ -172,8 +193,67 @@ def historial_limpio(track):
     return hist
 
 
+def migrar_estado_v2_y_reparar(state):
+    """Repara asociaciones débiles del último frame antes de continuar.
+    Si el último enlace tuvo IoU casi nulo y baja confianza, el frame actual
+    se separa del track anterior y pasa a ser un track nuevo. El track viejo
+    vuelve a su último punto realmente confirmado.
+    """
+    if not isinstance(state, dict):
+        return state
+    if state.get('schema_version') != 2:
+        return state
+    radar_ts = state.get('radar_timestamp')
+    tracks = state.get('tracks', []) if isinstance(state.get('tracks', []), list) else []
+    nucleos = state.get('nucleos', []) if isinstance(state.get('nucleos', []), list) else []
+    by_id = {int(t.get('id')): t for t in tracks if isinstance(t,dict) and str(t.get('id','')).isdigit()}
+    max_id = max(by_id.keys() or [0])
+    cambios = 0
+    for n in nucleos:
+        if not isinstance(n, dict):
+            continue
+        tid = n.get('track_id')
+        try: tid = int(tid)
+        except Exception: continue
+        t = by_id.get(tid)
+        if not t: continue
+        hist = t.get('historial', []) if isinstance(t.get('historial', []), list) else []
+        if len(hist) < 2: continue
+        last = hist[-1]
+        if last.get('timestamp') != radar_ts: continue
+        iou_v = float(last.get('iou', t.get('iou', 0)) or 0)
+        conf_v = float(last.get('confianza_movimiento', t.get('confianza_movimiento', 100)) or 0)
+        # Asociación demasiado débil: no debe transmitir movimiento/evolución.
+        if iou_v < 0.05 and conf_v < 60:
+            hist.pop()
+            t['historial'] = hist
+            prev = hist[-1]
+            t.update({
+                'ultimo_frame': prev['timestamp'], 'frames': max(1, int(t.get('frames',2))-1),
+                'x': prev['x'], 'y': prev['y'], 'pixeles': prev['pixeles'],
+                'intensidad': prev.get('intensidad','DESCONOCIDA'),
+                'estado': prev.get('estado','NUEVO'), 'missed_frames': 0,
+                'activo': True
+            })
+            for k in ('desplazamiento_pixeles','velocidad_pixeles_min','rumbo_grados','direccion',
+                      'cambio_rumbo_grados','aceleracion_pixeles_min2','tendencia_velocidad',
+                      'confianza_movimiento','cambio_area_porcentaje','iou','ratio_area'):
+                t.pop(k, None)
+            max_id += 1
+            nuevo = crear_track(max_id, n, radar_ts)
+            tracks.append(nuevo)
+            n['track_id'] = max_id
+            cambios += 1
+    state['tracks'] = tracks
+    state['nucleos'] = nucleos
+    state['schema_version'] = STATE_SCHEMA_VERSION
+    if cambios:
+        print(f'Reparación temporal: {cambios} asociaciones débiles separadas del track anterior.')
+    return state
+
+
 def sanitizar_estado(state):
-    if not isinstance(state,dict) or state.get('schema_version') != STATE_SCHEMA_VERSION:
+    if not isinstance(state,dict) or state.get('schema_version') not in (2, STATE_SCHEMA_VERSION):
         return None, 'SCHEMA_ANTERIOR'
     prev = parse_dt(state.get('radar_timestamp'))
     if not prev: return None, 'RADAR_TIMESTAMP_INVALIDO'
@@ -246,6 +326,8 @@ def analizar():
     radar_dt=obtener_timestamp_radar(); radar_ts=iso(radar_dt)
     print(f'Núcleos actuales: {len(actuales)}'); print(f'Frame recibido: {radar_ts or "NO DISPONIBLE"}')
     state_raw=cargar_json(ESTADO_FILE)
+    if state_raw and state_raw.get('schema_version') == 2:
+        state_raw = migrar_estado_v2_y_reparar(state_raw)
     state,reason=sanitizar_estado(state_raw) if state_raw else (None,None)
     if state_raw and state is None: print(f'Estado anterior descartado: {reason}. Se inicia historial limpio.')
     if radar_dt is None: raise RuntimeError('No se pudo determinar el timestamp real del radar.')
