@@ -1,160 +1,77 @@
 #!/usr/bin/env python3
-
 from pathlib import Path
-from datetime import datetime, timezone
-from io import BytesIO
-import re
-
+import io, re, time
 from PIL import Image
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
-URL = "https://radares.hidricosargentina.gob.ar/"
-OUTPUT_DIR = Path("data/radar")
-HISTORICO_DIR = OUTPUT_DIR / "historico"
-ACTUAL_FILE = OUTPUT_DIR / "actual.png"
-RADAR_TIMESTAMP_FILE = OUTPUT_DIR / "radar_timestamp.txt"
+URL='https://radares.hidricosargentina.gob.ar/'
+OUT=Path('data/radar'); HIST=OUT/'historico'; ACTUAL=OUT/'actual.png'; TSFILE=OUT/'radar_timestamp.txt'
+MAX_RETRIES=5
 
-MAX_INTENTOS = 5
-MIN_BYTES = 1000
-MIN_VISIBLE_RATIO = 0.01
-
-
-def timestamp_desde_nombre(nombre):
-    m = re.search(r"(\d{14})", nombre)
-    if m:
-        try:
-            return datetime.strptime(m.group(1), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-        except ValueError:
-            pass
-    m = re.search(r"(?:^|_)(\d{10})(?:\D|$)", nombre)
-    if m:
-        try:
-            return datetime.fromtimestamp(int(m.group(1)), timezone.utc)
-        except (ValueError, OSError, OverflowError):
-            pass
-    return None
-
-
-def validar_png(contenido):
-    if len(contenido) < MIN_BYTES:
-        return False, "archivo demasiado pequeño"
+def validar_png(data):
+    if not data or len(data)<1000: return False, 'archivo vacio/pequeno'
     try:
-        with Image.open(BytesIO(contenido)) as img:
-            img.load()
-            rgba = img.convert("RGBA")
-            pixels = list(rgba.getdata())
-            if not pixels:
-                return False, "imagen sin píxeles"
-            visibles = sum(1 for r, g, b, a in pixels if a >= 10 and max(r, g, b) >= 8)
-            ratio = visibles / len(pixels)
-            if ratio < MIN_VISIBLE_RATIO:
-                return False, f"imagen casi transparente/vacía ({ratio:.4%} visible)"
-            return True, f"{img.width}x{img.height}, {ratio:.2%} visible"
-    except Exception as exc:
-        return False, f"PNG inválido: {exc}"
+        im=Image.open(io.BytesIO(data)).convert('RGBA')
+        if im.width<100 or im.height<100: return False, f'resolucion {im.width}x{im.height}'
+        alpha=im.getchannel('A')
+        if alpha.getextrema()[1] < 3: return False, 'imagen completamente transparente'
+        visible=sum(1 for a in alpha.getdata() if a>2)
+        if visible/(im.width*im.height)<0.01: return False, 'menos de 1% de pixeles visibles'
+        return True, f'{im.width}x{im.height}, {len(data)} bytes'
+    except Exception as e: return False, f'PNG invalido: {e}'
 
-
-def encontrar_selector(page):
-    selects = page.locator("select")
-    for i in range(selects.count()):
-        actual = selects.nth(i)
-        try:
-            texto = actual.inner_text()
-        except Exception:
-            continue
-        if "Bahía Blanca" in texto or "Bahia Blanca" in texto or "RMA10" in texto:
-            return actual
-    return None
-
-
-def encontrar_valor_rma10(selector):
-    opciones = selector.locator("option")
-    for i in range(opciones.count()):
-        opcion = opciones.nth(i)
-        texto = opcion.inner_text().strip()
-        valor = opcion.get_attribute("value")
-        if "Bahía Blanca" in texto or "Bahia Blanca" in texto or "RMA10" in texto:
-            return valor
-    return None
-
+def extraer_url_rma10(page):
+    urls=page.locator('img').evaluate_all("els => els.map(e => e.src || e.getAttribute('src') || '')")
+    for u in urls:
+        if '/cache/RMA10/' in u and u.lower().endswith('.png'): return u
+    html=page.content()
+    m=re.search(r'https?://[^\"\']*/cache/RMA10/[^\"\']+\.png|/cache/RMA10/[^\"\']+\.png',html,re.I)
+    return m.group(0) if m else None
 
 def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    HISTORICO_DIR.mkdir(parents=True, exist_ok=True)
-
+    OUT.mkdir(parents=True,exist_ok=True); HIST.mkdir(parents=True,exist_ok=True)
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1920, "height": 1080})
+        browser=p.chromium.launch(headless=True)
+        page=browser.new_page(viewport={'width':1920,'height':1080})
+        try:
+            for intento in range(1,MAX_RETRIES+1):
+                print(f'Intento {intento}/{MAX_RETRIES}')
+                try:
+                    page.goto(URL,wait_until='domcontentloaded',timeout=60000)
+                    page.wait_for_timeout(10000)
+                    selects=page.locator('select'); selector=None
+                    for i in range(selects.count()):
+                        s=selects.nth(i)
+                        try: txt=s.inner_text()
+                        except Exception: continue
+                        if 'Bahía Blanca' in txt or 'Bahia Blanca' in txt or 'RMA10' in txt: selector=s; break
+                    if selector is None: raise RuntimeError('No se encontro selector RMA10')
+                    opts=selector.locator('option'); value=None
+                    for i in range(opts.count()):
+                        o=opts.nth(i); txt=o.inner_text().strip(); val=o.get_attribute('value')
+                        if 'Bahía Blanca' in txt or 'Bahia Blanca' in txt or 'RMA10' in txt: value=val; break
+                    if value is None: raise RuntimeError('No se encontro Bahía Blanca RMA10')
+                    with page.expect_response(lambda r:'/cache/RMA10/' in r.url and '.png' in r.url.lower(),timeout=90000) as expected:
+                        selector.select_option(value=value)
+                    response=expected.value; data=response.body()
+                    ok,detail=validar_png(data)
+                    print(response.url); print(f'HTTP {response.status} | {detail}')
+                    if not ok: raise RuntimeError(detail)
+                    name=response.url.rstrip('/').split('/')[-1]
+                    m=re.search(r'(\d{14})\.png$',name)
+                    if not m: raise RuntimeError(f'URL sin timestamp: {name}')
+                    ts=m.group(1)
+                    ACTUAL.write_bytes(data); (HIST/name).write_bytes(data)
+                    iso=f'{ts[:4]}-{ts[4:6]}-{ts[6:8]}T{ts[8:10]}:{ts[10:12]}:{ts[12:14]}Z'
+                    TSFILE.write_text(iso,encoding='utf-8')
+                    print(f'OK RMA10 {name} -> {iso}')
+                    return
+                except Exception as e:
+                    print(f'Fallo: {e}')
+                    if intento<MAX_RETRIES: time.sleep(4)
+                    else:
+                        page.screenshot(path=str(OUT/'error_rma10.png'),full_page=True)
+                        raise
+        finally: browser.close()
 
-        ultimo_error = None
-
-        for intento in range(1, MAX_INTENTOS + 1):
-            print(f"======================================")
-            print(f"INTENTO RMA10 {intento}/{MAX_INTENTOS}")
-            print(f"======================================")
-
-            try:
-                page.goto(URL, wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_timeout(10000)
-
-                selector = encontrar_selector(page)
-                if selector is None:
-                    raise RuntimeError("No se encontró el selector de RMA10.")
-
-                valor_rma10 = encontrar_valor_rma10(selector)
-                if valor_rma10 is None:
-                    raise RuntimeError("No se encontró Bahía Blanca RMA10.")
-
-                with page.expect_response(
-                    lambda response: "/cache/RMA10/" in response.url and ".png" in response.url,
-                    timeout=90000,
-                ) as respuesta_esperada:
-                    selector.select_option(value=valor_rma10)
-
-                respuesta = respuesta_esperada.value
-                contenido = respuesta.body()
-                ok, detalle = validar_png(contenido)
-                print(f"URL: {respuesta.url}")
-                print(f"HTTP: {respuesta.status}")
-                print(f"Validación: {detalle}")
-
-                if not ok:
-                    raise RuntimeError(detalle)
-                if respuesta.status != 200:
-                    raise RuntimeError(f"HTTP {respuesta.status}")
-
-                nombre = respuesta.url.split("/")[-1]
-                dt = timestamp_desde_nombre(nombre)
-                if dt is None:
-                    raise RuntimeError(f"No se pudo obtener timestamp desde {nombre}")
-
-                ACTUAL_FILE.write_bytes(contenido)
-                (HISTORICO_DIR / nombre).write_bytes(contenido)
-                RADAR_TIMESTAMP_FILE.write_text(
-                    dt.isoformat().replace("+00:00", "Z"),
-                    encoding="utf-8",
-                )
-
-                print("======================================")
-                print("RADAR RMA10 VALIDADO Y GUARDADO")
-                print("======================================")
-                print(f"Frame: {dt.isoformat().replace('+00:00', 'Z')}")
-                print(f"Actual: {ACTUAL_FILE}")
-                print(f"Histórico: {HISTORICO_DIR / nombre}")
-                print(f"Tamaño: {len(contenido)} bytes")
-                browser.close()
-                return
-
-            except (PlaywrightTimeoutError, Exception) as exc:
-                ultimo_error = exc
-                print(f"Fallo intento {intento}: {exc}")
-                if intento < MAX_INTENTOS:
-                    page.wait_for_timeout(3000)
-
-        page.screenshot(path=str(OUTPUT_DIR / "error_rma10.png"), full_page=True)
-        browser.close()
-        raise RuntimeError(f"SINARAME no entregó un PNG RMA10 válido después de {MAX_INTENTOS} intentos: {ultimo_error}")
-
-
-if __name__ == "__main__":
-    main()
+if __name__=='__main__': main()
