@@ -50,15 +50,53 @@ jobs:
           key: climaar-rma10-mascara-estatica-v1
 
       # =========================================================
-      # 5. CREAR DIRECTORIOS TEMPORALES
+      # 5. PREPARAR DIRECTORIOS
       # =========================================================
       - name: Preparar directorios
         run: |
           mkdir -p data/radar/seguimiento
           mkdir -p data/radar/historico
+          mkdir -p .climaar
 
       # =========================================================
-      # 6. DESCARGAR RADAR RMA10
+      # 6. RECUPERAR ESTADO PERSISTENTE
+      # =========================================================
+      - name: Recuperar estado persistente
+        run: |
+          if [ -f .climaar/estado_rma10.json ]; then
+            echo "======================================"
+            echo "ESTADO ANTERIOR ENCONTRADO"
+            echo "======================================"
+
+            cp .climaar/estado_rma10.json \
+              data/radar/seguimiento/estado.json
+
+            python - <<'PY'
+          import json
+
+          p = "data/radar/seguimiento/estado.json"
+
+          with open(p, "r", encoding="utf-8") as f:
+              d = json.load(f)
+
+          print("schema_version:", d.get("schema_version"))
+          print("ultimo_radar_timestamp:",
+                d.get("ultimo_radar_timestamp"))
+          print("tracks:",
+                len(d.get("tracks", [])))
+          print("tracks_activos:",
+                len(d.get("tracks_activos", [])))
+          PY
+
+          else
+            echo "======================================"
+            echo "NO EXISTE ESTADO ANTERIOR"
+            echo "SE CREARÁ PRIMER FRAME"
+            echo "======================================"
+          fi
+
+      # =========================================================
+      # 7. DESCARGAR RADAR
       # =========================================================
       - name: Descargar radar RMA10
         env:
@@ -67,7 +105,7 @@ jobs:
           python scraper/capturar_radar_smn.py
 
       # =========================================================
-      # 7. GENERAR MÁSCARA SI NO EXISTE
+      # 8. GENERAR MÁSCARA SI NO EXISTE
       # =========================================================
       - name: Generar mascara estatica inicial
         if: steps.mascara.outputs.cache-hit != 'true'
@@ -75,48 +113,110 @@ jobs:
           python scripts/generar_mascara_estatica.py
 
       # =========================================================
-      # 8. PROCESAR RADAR
+      # 9. PROCESAR RADAR
       # =========================================================
       - name: Procesar radar
         run: |
           python procesador_radar.py
 
       # =========================================================
-      # 9. SEGUIMIENTO TEMPORAL
-      #
-      # estado.json ya está en el repositorio.
-      # seguimiento_temporal.py lo recupera automáticamente.
+      # 10. SEGUIMIENTO TEMPORAL
       # =========================================================
       - name: Seguimiento temporal
         run: |
           python seguimiento_temporal.py
 
       # =========================================================
-      # 10. PREDICCIÓN DE EVOLUCIÓN
+      # 11. PREDICCIÓN
       # =========================================================
       - name: Prediccion de evolucion
         run: |
           python prediccion_evolucion.py
 
       # =========================================================
-      # 11. MOSTRAR ESTADO
+      # 12. GUARDAR NUEVO ESTADO PERSISTENTE
       # =========================================================
-      - name: Mostrar estado temporal
+      - name: Guardar estado persistente
+        if: success()
+        run: |
+          if [ -f data/radar/seguimiento/estado.json ]; then
+            cp data/radar/seguimiento/estado.json \
+              .climaar/estado_rma10.json
+
+            echo "======================================"
+            echo "NUEVO ESTADO GUARDADO"
+            echo "======================================"
+
+            python - <<'PY'
+          import json
+
+          p = ".climaar/estado_rma10.json"
+
+          with open(p, "r", encoding="utf-8") as f:
+              d = json.load(f)
+
+          print("schema_version:", d.get("schema_version"))
+          print("ultimo_radar_timestamp:",
+                d.get("ultimo_radar_timestamp"))
+          print("tracks:",
+                len(d.get("tracks", [])))
+          print("tracks_activos:",
+                len(d.get("tracks_activos", [])))
+          PY
+          else
+            echo "ERROR: no se generó estado.json"
+            exit 1
+          fi
+
+      # =========================================================
+      # 13. COMPROBAR CAMBIOS
+      # =========================================================
+      - name: Comprobar estado Git
         if: always()
         run: |
           echo "======================================"
-          echo "ESTADO TEMPORAL"
+          echo "ESTADO GIT"
           echo "======================================"
 
-          if [ -f data/radar/seguimiento/estado.json ]; then
-            cat data/radar/seguimiento/estado.json
-          else
-            echo "No existe estado.json"
-          fi
+          git status --short
 
           echo ""
           echo "======================================"
-          echo "SEGUIMIENTO"
+          echo "ESTADO PERSISTENTE"
+          echo "======================================"
+
+          if [ -f .climaar/estado_rma10.json ]; then
+            ls -lh .climaar/estado_rma10.json
+          else
+            echo "NO EXISTE .climaar/estado_rma10.json"
+          fi
+
+      # =========================================================
+      # 14. COMMIT + PUSH
+      # =========================================================
+      - name: Persistir estado en GitHub
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f .climaar/estado_rma10.json
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios para guardar."
+          else
+            git commit -m "Actualizar estado temporal RMA10"
+            git push
+          fi
+
+      # =========================================================
+      # 15. MOSTRAR SEGUIMIENTO
+      # =========================================================
+      - name: Mostrar seguimiento
+        if: always()
+        run: |
+          echo "======================================"
+          echo "SEGUIMIENTO TEMPORAL"
           echo "======================================"
 
           if [ -f data/radar/seguimiento/seguimiento_temporal.json ]; then
@@ -126,28 +226,7 @@ jobs:
           fi
 
       # =========================================================
-      # 12. GUARDAR ESTADO EN GITHUB
-      #
-      # Esto es lo importante.
-      # El siguiente Action recuperará este estado.
-      # =========================================================
-      - name: Guardar estado temporal
-        if: success()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -f data/radar/seguimiento/estado.json
-
-          if git diff --cached --quiet; then
-            echo "No hay cambios en el estado temporal."
-          else
-            git commit -m "Actualizar estado temporal RMA10"
-            git push
-          fi
-
-      # =========================================================
-      # 13. SUBIR ARTEFACTOS
+      # 16. SUBIR ARTEFACTOS
       # =========================================================
       - name: Subir radar
         if: always()
@@ -165,7 +244,7 @@ jobs:
           if-no-files-found: warn
 
       # =========================================================
-      # 14. MOSTRAR ARCHIVOS
+      # 17. MOSTRAR ARCHIVOS
       # =========================================================
       - name: Mostrar archivos generados
         if: always()
@@ -173,4 +252,5 @@ jobs:
           echo "======================================"
           echo "ARCHIVOS GENERADOS"
           echo "======================================"
+
           find data/radar -type f -print 2>/dev/null || true
