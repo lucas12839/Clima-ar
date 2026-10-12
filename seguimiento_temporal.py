@@ -1,255 +1,220 @@
-#!/usr/bin/env python3
-
-from pathlib import Path
-from datetime import datetime, timezone
 import json
 import math
-import re
+from pathlib import Path
+from datetime import datetime, timezone
 
-RADAR_DIR = Path("data/radar")
-RESULTADO_FILE = RADAR_DIR / "resultado_procesamiento.json"
-SEGUIMIENTO_DIR = RADAR_DIR / "seguimiento"
-ESTADO_FILE = SEGUIMIENTO_DIR / "estado.json"
-RESULTADO_SEGUIMIENTO = SEGUIMIENTO_DIR / "seguimiento_temporal.json"
-HISTORICO_DIR = RADAR_DIR / "historico"
-TIMESTAMP_FILE = RADAR_DIR / "radar_timestamp.txt"
+BASE = Path("data/radar")
+RESULTADO = BASE / "resultado_procesamiento.json"
+SEGUIMIENTO = BASE / "seguimiento"
+ESTADO = SEGUIMIENTO / "estado.json"
+SALIDA = SEGUIMIENTO / "seguimiento_temporal.json"
 
-STATE_SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
-DISTANCIA_BASE = 25.0
-DISTANCIA_MAXIMA = 90.0
+MIN_INTERVALO = 2.0
+MAX_INTERVALO = 30.0
 
-CAMBIO_AREA_CRECE = 15.0
-CAMBIO_AREA_DEBILITA = -15.0
-MOVIMIENTO_MINIMO = 5.0
+MAX_DISTANCIA = 45.0
+MAX_DISTANCIA_SIN_OVERLAP = 25.0
 
-MAX_HISTORIAL = 12
 MAX_MISSED_FRAMES = 2
 
-MIN_INTERVAL_MIN = 2.0
-MAX_INTERVAL_MIN = 30.0
 
+# ---------------------------------------------------------
+# UTILIDADES
+# ---------------------------------------------------------
 
-def ahora_utc():
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def parse_dt(value):
-    if not value or not isinstance(value, str):
-        return None
-
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-
-        return dt.astimezone(timezone.utc)
-
-    except Exception:
-        return None
-
-
-def iso(dt):
-    if not dt:
-        return None
-
-    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def cargar_json(path):
+def cargar_json(path, default=None):
     if not path.exists():
-        return None
-
+        return default
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-
-    except Exception as e:
-        print(f"No se pudo leer {path}: {e}")
-        return None
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
 
 
 def guardar_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
-    tmp = path.with_suffix(".tmp")
 
-    tmp.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8"
+def numero(v, default=0.0):
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def entero(v, default=0):
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+
+def timestamp_radar():
+    archivos = sorted(
+        BASE.glob("historico/*.png"),
+        key=lambda p: p.name
     )
-
-    tmp.replace(path)
-
-
-def obtener_timestamp_radar():
-
-    if TIMESTAMP_FILE.exists():
-
-        dt = parse_dt(
-            TIMESTAMP_FILE.read_text(
-                encoding="utf-8"
-            ).strip()
-        )
-
-        if dt:
-            return dt
 
     candidatos = []
 
-    for p in HISTORICO_DIR.glob("*.png"):
+    for p in archivos:
+        if len(p.stem) == 14 and p.stem.isdigit():
+            candidatos.append(p.stem)
 
-        m = re.search(r"(\d{14})", p.stem)
+    if not candidatos:
+        raise RuntimeError("No se encontró timestamp de radar.")
 
-        if not m:
-            continue
+    ts = candidatos[-1]
 
-        try:
+    dt = datetime.strptime(ts, "%Y%m%d%H%M%S")
+    dt = dt.replace(tzinfo=timezone.utc)
 
-            candidatos.append(
-                datetime.strptime(
-                    m.group(1),
-                    "%Y%m%d%H%M%S"
-                ).replace(tzinfo=timezone.utc)
-            )
-
-        except ValueError:
-            pass
-
-    return max(candidatos) if candidatos else None
+    return dt
 
 
-def obtener_nucleos(resultado):
-
-    if not isinstance(resultado, dict):
-        return []
-
-    for key in (
-        "nucleos",
-        "núcleos",
-        "cells",
-        "ecos",
-        "detected_cells"
-    ):
-
-        valor = resultado.get(key)
-
-        if isinstance(valor, list):
-            return valor
-
-    return []
+def iso(dt):
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def normalizar_nucleo(n):
-
-    if not isinstance(n, dict):
+def parse_iso(value):
+    if not value:
         return None
 
     try:
-
-        return {
-            "x": float(
-                n.get(
-                    "centro_x",
-                    n.get("x", 0)
-                )
-            ),
-
-            "y": float(
-                n.get(
-                    "centro_y",
-                    n.get("y", 0)
-                )
-            ),
-
-            "pixeles": max(
-                1,
-                int(
-                    n.get(
-                        "pixeles",
-                        n.get("area", 0)
-                    )
-                )
-            ),
-
-            "ancho": max(
-                1.0,
-                float(
-                    n.get(
-                        "ancho",
-                        n.get("width", 1)
-                    )
-                )
-            ),
-
-            "alto": max(
-                1.0,
-                float(
-                    n.get(
-                        "alto",
-                        n.get("height", 1)
-                    )
-                )
-            ),
-
-            "intensidad": n.get(
-                "intensidad_maxima",
-                n.get("intensity", "DESCONOCIDA")
-            ),
-
-            "nivel_intensidad": n.get(
-                "nivel_intensidad",
-                "DESCONOCIDO"
-            ),
-
-            "estado": n.get(
-                "estado",
-                "DESCONOCIDO"
-            ),
-
-            "confianza": float(
-                n.get("confianza", 0)
-            )
-        }
-
+        return datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
     except Exception:
-
         return None
 
 
-def distancia(a, b):
+# ---------------------------------------------------------
+# NORMALIZACIÓN DE NÚCLEOS
+# ---------------------------------------------------------
 
-    return math.hypot(
-        a["x"] - b["x"],
-        a["y"] - b["y"]
+def normalizar_nucleo(n, indice=0):
+
+    x = numero(
+        n.get("x", n.get("centro_x", n.get("centroid_x", 0)))
+    )
+
+    y = numero(
+        n.get("y", n.get("centro_y", n.get("centroid_y", 0)))
+    )
+
+    pixeles = entero(
+        n.get("pixeles", n.get("pixels", n.get("area", 0)))
+    )
+
+    ancho = numero(
+        n.get("ancho", n.get("width", 1)),
+        1
+    )
+
+    alto = numero(
+        n.get("alto", n.get("height", 1)),
+        1
+    )
+
+    intensidad = entero(
+        n.get(
+            "intensidad_maxima",
+            n.get("max_intensity", n.get("intensidad", 0))
+        )
+    )
+
+    nivel = n.get(
+        "nivel_intensidad",
+        n.get("level", "")
+    )
+
+    confianza = numero(
+        n.get("confianza", n.get("confidence", 0))
+    )
+
+    estado = n.get(
+        "estado",
+        n.get("state", "")
+    )
+
+    return {
+        "indice": indice,
+        "x": x,
+        "y": y,
+        "pixeles": pixeles,
+        "ancho": max(ancho, 1),
+        "alto": max(alto, 1),
+        "intensidad": intensidad,
+        "nivel_intensidad": nivel,
+        "confianza": confianza,
+        "estado": estado
+    }
+
+
+def obtener_nucleos():
+
+    data = cargar_json(RESULTADO, {})
+
+    candidatos = (
+        data.get("nucleos")
+        or data.get("núcleos")
+        or data.get("cells")
+        or data.get("ecos")
+        or data.get("detected_cells")
+        or []
+    )
+
+    return [
+        normalizar_nucleo(n, i)
+        for i, n in enumerate(candidatos)
+    ]
+
+
+# ---------------------------------------------------------
+# GEOMETRÍA
+# ---------------------------------------------------------
+
+def bbox(n):
+
+    x = n["x"]
+    y = n["y"]
+
+    w = max(n["ancho"], 1)
+    h = max(n["alto"], 1)
+
+    return (
+        x - w / 2,
+        y - h / 2,
+        x + w / 2,
+        y + h / 2
     )
 
 
 def iou(a, b):
 
-    al = a["x"] - a["ancho"] / 2
-    ar = a["x"] + a["ancho"] / 2
-    at = a["y"] - a["alto"] / 2
-    ab = a["y"] + a["alto"] / 2
+    ax1, ay1, ax2, ay2 = bbox(a)
+    bx1, by1, bx2, by2 = bbox(b)
 
-    bl = b["x"] - b["ancho"] / 2
-    br = b["x"] + b["ancho"] / 2
-    bt = b["y"] - b["alto"] / 2
-    bb = b["y"] + b["alto"] / 2
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
 
-    inter = (
-        max(0.0, min(ar, br) - max(al, bl))
-        *
-        max(0.0, min(ab, bb) - max(at, bt))
-    )
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
 
-    union = (
-        a["ancho"] * a["alto"]
-        +
-        b["ancho"] * b["alto"]
-        -
-        inter
-    )
+    iw = max(0, ix2 - ix1)
+    ih = max(0, iy2 - iy1)
+
+    inter = iw * ih
+
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+
+    union = area_a + area_b - inter
 
     if union <= 0:
         return 0.0
@@ -257,152 +222,133 @@ def iou(a, b):
     return inter / union
 
 
-def umbral_distancia(minutos):
+def distancia(a, b):
 
-    return min(
-        DISTANCIA_MAXIMA,
-        max(
-            DISTANCIA_BASE,
-            DISTANCIA_BASE + minutos * 5.0
-        )
+    return math.hypot(
+        b["x"] - a["x"],
+        b["y"] - a["y"]
     )
 
 
-def compatibilidad(a, b, minutos):
+def similitud_area(a, b):
 
-    dist = distancia(a, b)
+    aa = max(a["pixeles"], 1)
+    ab = max(b["pixeles"], 1)
 
-    limite = umbral_distancia(minutos)
+    ratio = aa / ab
 
-    if dist > limite:
+    if ratio <= 0:
+        return 0.0
+
+    return min(ratio, 1 / ratio)
+
+
+def similitud_forma(a, b):
+
+    wa = max(a["ancho"], 1)
+    wb = max(b["ancho"], 1)
+
+    ha = max(a["alto"], 1)
+    hb = max(b["alto"], 1)
+
+    sw = min(wa, wb) / max(wa, wb)
+    sh = min(ha, hb) / max(ha, hb)
+
+    return (sw + sh) / 2
+
+
+# ---------------------------------------------------------
+# COMPATIBILIDAD
+# ---------------------------------------------------------
+
+def compatibilidad(anterior, actual):
+
+    d = distancia(anterior, actual)
+    overlap = iou(anterior, actual)
+
+    area_ratio = max(
+        anterior["pixeles"],
+        1
+    ) / max(
+        actual["pixeles"],
+        1
+    )
+
+    area_ratio_inv = 1 / area_ratio if area_ratio else 999
+
+    area_min = min(area_ratio, area_ratio_inv)
+
+    forma = similitud_forma(anterior, actual)
+
+    # ---------------------------------------------
+    # RECHAZOS DUROS
+    # ---------------------------------------------
+
+    if d > MAX_DISTANCIA:
         return None
 
-    aa = max(1, a["pixeles"])
-    ab = max(1, b["pixeles"])
+    # Sin solapamiento necesitamos mucha más evidencia.
+    if overlap < 0.02:
 
-    ratio_area = max(aa, ab) / min(aa, ab)
-
-    ov = iou(a, b)
-
-    rw = (
-        max(a["ancho"], b["ancho"])
-        /
-        max(1, min(a["ancho"], b["ancho"]))
-    )
-
-    rh = (
-        max(a["alto"], b["alto"])
-        /
-        max(1, min(a["alto"], b["alto"]))
-    )
-
-    # Sin solapamiento:
-    # solamente aceptamos cambios muy pequeños.
-
-    if ov <= 0.0:
-
-        if (
-            dist > 7.0
-            or ratio_area > 1.30
-            or rw > 1.50
-            or rh > 1.50
-        ):
+        if d > MAX_DISTANCIA_SIN_OVERLAP:
             return None
 
-    elif ov < 0.05:
-
-        if (
-            dist > 10.0
-            or ratio_area > 1.40
-            or rw > 1.80
-            or rh > 1.80
-        ):
+        if area_min < 0.65:
             return None
 
-    elif ov < 0.12:
-
-        if dist > 18.0 and ratio_area > 1.80:
+        if forma < 0.55:
             return None
 
-    if ratio_area > 2.5 and ov < 0.15:
-        return None
+    # Si hay solapamiento podemos aceptar cambios
+    # moderados de área.
+    else:
 
-    if rw > 2.8 and rh > 2.0:
-        return None
+        if area_min < 0.40:
+            return None
 
-    if rw > 3.5 or rh > 3.5:
-        return None
+        if forma < 0.35:
+            return None
 
-    if (
-        dist > max(35, limite * 0.65)
-        and
-        (ov < 0.08 or ratio_area > 2.0)
-    ):
-        return None
+    # ---------------------------------------------
+    # PUNTAJES
+    # ---------------------------------------------
 
-    close = max(
-        0,
-        1 - dist / limite
+    proximidad = max(
+        0.0,
+        1.0 - d / MAX_DISTANCIA
     )
 
-    sim_area = max(
-        0,
-        1 -
-        abs(math.log(aa / ab))
-        /
-        math.log(2.5)
-    )
+    area_score = area_min
 
-    sim_shape = max(
-        0,
-        1 -
-        (
-            abs(math.log(rw))
-            +
-            abs(math.log(rh))
-        )
-        /
-        math.log(3.0)
-    )
+    forma_score = forma
 
     score = (
-        35 * close
-        +
-        35 * ov
-        +
-        20 * sim_area
-        +
-        10 * sim_shape
+        proximidad * 40
+        + overlap * 35
+        + area_score * 15
+        + forma_score * 10
     )
 
-    min_score = 60.0 if ov < 0.05 else 50.0
-
-    if score < min_score:
-        return None
-
     return {
-        "puntaje": score,
-        "distancia": dist,
-        "iou": ov,
-        "cambio_area": (
-            (aa - ab) / ab * 100
-        ),
-        "ratio_area": ratio_area,
-        "ratio_ancho": rw,
-        "ratio_alto": rh
+        "score": round(score, 2),
+        "distancia": round(d, 3),
+        "iou": round(overlap, 4),
+        "similitud_area": round(area_score, 4),
+        "similitud_forma": round(forma_score, 4)
     }
 
 
+# ---------------------------------------------------------
+# DIRECCIÓN
+# ---------------------------------------------------------
+
 def rumbo(dx, dy):
 
-    if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+    if abs(dx) < 0.01 and abs(dy) < 0.01:
         return None, None
 
-    grados = (
-        math.degrees(
-            math.atan2(dx, -dy)
-        )
-        + 360
+    grados = math.degrees(
+        math.atan2(dx, -dy)
     ) % 360
 
     sectores = [
@@ -425,1161 +371,887 @@ def rumbo(dx, dy):
     ]
 
     indice = int(
-        (grados + 11.25) / 22.5
-    ) % 16
+        ((grados + 11.25) % 360) / 22.5
+    )
 
     return grados, sectores[indice]
 
 
-def crear_track(track_id, nucleo, timestamp):
+# ---------------------------------------------------------
+# TRACKS
+# ---------------------------------------------------------
+
+def crear_track(track_id, nucleo, radar_ts):
 
     return {
-        "id": track_id,
-        "primer_frame": timestamp,
-        "ultimo_frame": timestamp,
-        "frames": 1,
-        "missed_frames": 0,
+        "track_id": track_id,
         "activo": True,
+
+        "primer_frame": radar_ts,
+        "ultimo_frame": radar_ts,
+
         "presente_en_ultimo_frame": True,
+        "missed_frames": 0,
 
         "x": nucleo["x"],
         "y": nucleo["y"],
+
         "pixeles": nucleo["pixeles"],
+        "ancho": nucleo["ancho"],
+        "alto": nucleo["alto"],
 
         "intensidad": nucleo["intensidad"],
         "nivel_intensidad": nucleo["nivel_intensidad"],
+        "estado": nucleo["estado"],
+        "confianza": nucleo["confianza"],
 
-        "estado": "NUEVO",
+        "velocidad_pixeles_min": 0.0,
+        "rumbo_grados": None,
+        "direccion": None,
+
+        "aceleracion_pixeles_min2": 0.0,
+        "cambio_rumbo_grados": 0.0,
 
         "historial": [
             {
-                "timestamp": timestamp,
+                "timestamp": radar_ts,
                 "x": nucleo["x"],
                 "y": nucleo["y"],
                 "pixeles": nucleo["pixeles"],
-                "intensidad": nucleo["intensidad"],
-                "nivel_intensidad": nucleo["nivel_intensidad"],
-                "estado": "NUEVO"
+                "ancho": nucleo["ancho"],
+                "alto": nucleo["alto"],
+                "intensidad": nucleo["intensidad"]
             }
         ]
     }
 
 
-def historial_limpio(track):
-
-    raw = track.get(
-        "historial",
-        []
-    )
-
-    if not isinstance(raw, list):
-        raw = []
-
-    por_timestamp = {}
-
-    for h in raw:
-
-        if not isinstance(h, dict):
-            continue
-
-        dt = parse_dt(
-            h.get("timestamp")
-        )
-
-        if not dt:
-            continue
-
-        h = dict(h)
-
-        h["timestamp"] = iso(dt)
-
-        por_timestamp[h["timestamp"]] = h
-
-    historial = sorted(
-        por_timestamp.values(),
-        key=lambda h: parse_dt(h["timestamp"])
-    )
-
-    historial = historial[-MAX_HISTORIAL:]
-
-    track["historial"] = historial
-
-    if historial:
-
-        track["primer_frame"] = historial[0]["timestamp"]
-        track["ultimo_frame"] = historial[-1]["timestamp"]
-
-    return historial
-
-
-def actualizar_movimiento(
+def actualizar_track(
     track,
-    anterior,
-    actual,
-    intervalo
+    nucleo,
+    radar_ts,
+    intervalo,
+    calidad
 ):
 
-    dx = actual["x"] - anterior["x"]
-    dy = actual["y"] - anterior["y"]
+    anterior_x = track["x"]
+    anterior_y = track["y"]
 
-    desplazamiento = math.hypot(
-        dx,
-        dy
+    anterior_velocidad = numero(
+        track.get("velocidad_pixeles_min", 0)
     )
 
-    velocidad = (
-        desplazamiento / intervalo
-        if intervalo > 0
-        else 0
-    )
+    anterior_rumbo = track.get("rumbo_grados")
 
-    grados, direccion = rumbo(
-        dx,
-        dy
-    )
+    dx = nucleo["x"] - anterior_x
+    dy = nucleo["y"] - anterior_y
 
-    cambio_area = (
-        (actual["pixeles"] - anterior["pixeles"])
-        /
-        max(1, anterior["pixeles"])
-        *
-        100
-    )
+    desplazamiento = math.hypot(dx, dy)
 
-    aceleracion = None
-    cambio_rumbo = None
-    tendencia = "ESTABLE"
+    velocidad = 0.0
 
-    historial = track.get(
-        "historial",
-        []
-    )
-
-    movimientos_previos = []
-
-    for i in range(
-        max(1, len(historial) - 5),
-        len(historial)
+    if (
+        intervalo >= MIN_INTERVALO
+        and intervalo <= MAX_INTERVALO
     ):
+        velocidad = desplazamiento / intervalo
 
-        h1 = historial[i - 1]
-        h2 = historial[i]
+    grados, direccion = rumbo(dx, dy)
 
-        t1 = parse_dt(
-            h1.get("timestamp")
-        )
+    aceleracion = 0.0
 
-        t2 = parse_dt(
-            h2.get("timestamp")
-        )
-
-        if not t1 or not t2:
-            continue
-
-        mins = (
-            t2 - t1
-        ).total_seconds() / 60
-
-        if (
-            mins < MIN_INTERVAL_MIN
-            or mins > MAX_INTERVAL_MIN
-        ):
-            continue
-
-        ddx = h2["x"] - h1["x"]
-        ddy = h2["y"] - h1["y"]
-
-        sp = math.hypot(
-            ddx,
-            ddy
-        ) / mins
-
-        br, _ = rumbo(
-            ddx,
-            ddy
-        )
-
-        movimientos_previos.append(
-            {
-                "velocidad": sp,
-                "rumbo": br
-            }
-        )
-
-    if movimientos_previos:
-
-        anterior_mov = movimientos_previos[-1]
-
+    if (
+        intervalo >= MIN_INTERVALO
+        and intervalo <= MAX_INTERVALO
+    ):
         aceleracion = (
-            velocidad
-            -
-            anterior_mov["velocidad"]
+            velocidad - anterior_velocidad
         ) / intervalo
 
-        if grados is not None and anterior_mov["rumbo"] is not None:
+    cambio_rumbo = 0.0
 
-            cambio_rumbo = abs(
-                (
-                    grados
-                    -
-                    anterior_mov["rumbo"]
-                    +
-                    180
-                )
-                % 360
-                - 180
-            )
+    if (
+        anterior_rumbo is not None
+        and grados is not None
+    ):
+        cambio_rumbo = abs(
+            (grados - anterior_rumbo + 180) % 360 - 180
+        )
 
-    if velocidad > 0:
+    historial = track.setdefault("historial", [])
 
-        if aceleracion is not None:
+    historial.append({
+        "timestamp": radar_ts,
+        "x": nucleo["x"],
+        "y": nucleo["y"],
+        "pixeles": nucleo["pixeles"],
+        "ancho": nucleo["ancho"],
+        "alto": nucleo["alto"],
+        "intensidad": nucleo["intensidad"]
+    })
 
-            if aceleracion > 0.01:
-                tendencia = "ACELERANDO"
-
-            elif aceleracion < -0.01:
-                tendencia = "DESACELERANDO"
-
-            else:
-                tendencia = "VELOCIDAD_ESTABLE"
-
-    confianza = 50.0
-
-    if desplazamiento >= MOVIMIENTO_MINIMO:
-        confianza += 20
-
-    if track.get("frames", 1) >= 3:
-        confianza += 10
-
-    if cambio_area is not None:
-        confianza += 5
-
-    if cambio_rumbo is not None:
-        if cambio_rumbo <= 30:
-            confianza += 10
-        elif cambio_rumbo > 90:
-            confianza -= 10
-
-    confianza = max(
-        0,
-        min(99, confianza)
-    )
+    # Conservamos bastante historia para predicción.
+    if len(historial) > 20:
+        del historial[:-20]
 
     track.update({
+        "activo": True,
+        "ultimo_frame": radar_ts,
+        "presente_en_ultimo_frame": True,
+        "missed_frames": 0,
+
+        "x": nucleo["x"],
+        "y": nucleo["y"],
+
+        "pixeles": nucleo["pixeles"],
+        "ancho": nucleo["ancho"],
+        "alto": nucleo["alto"],
+
+        "intensidad": nucleo["intensidad"],
+        "nivel_intensidad": nucleo["nivel_intensidad"],
+        "estado": nucleo["estado"],
+        "confianza": nucleo["confianza"],
 
         "dx_pixeles": dx,
         "dy_pixeles": dy,
 
-        "desplazamiento_pixeles":
-            desplazamiento,
+        "desplazamiento_pixeles": desplazamiento,
+        "velocidad_pixeles_min": velocidad,
 
-        "velocidad_pixeles_min":
-            velocidad,
+        "rumbo_grados": grados,
+        "direccion": direccion,
 
-        "rumbo_grados":
-            grados,
+        "aceleracion_pixeles_min2": aceleracion,
+        "cambio_rumbo_grados": cambio_rumbo,
 
-        "direccion":
-            direccion,
-
-        "cambio_rumbo_grados":
-            cambio_rumbo,
-
-        "aceleracion_pixeles_min2":
-            aceleracion,
-
-        "tendencia_velocidad":
-            tendencia,
-
-        "confianza_movimiento":
-            confianza,
-
-        "cambio_area_porcentaje":
-            cambio_area
+        "calidad_movimiento": calidad
     })
 
 
-def siguiente_id(tracks):
+# ---------------------------------------------------------
+# ESTADO NUEVO
+# ---------------------------------------------------------
 
-    ids = []
+def estado_nuevo():
 
-    for t in tracks:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "ultimo_radar_timestamp": None,
+        "siguiente_track_id": 1,
 
-        try:
-            ids.append(
-                int(t.get("id"))
-            )
-        except Exception:
-            pass
+        # TODOS los tracks históricos.
+        "tracks": [],
 
-    return max(ids or [0]) + 1
+        # SOLO los tracks que pertenecen al último frame.
+        "tracks_activos": [],
+
+        "ultimo_frame_nucleos": []
+    }
 
 
-def main():
+# ---------------------------------------------------------
+# LIMPIAR ESTADO ANTIGUO
+# ---------------------------------------------------------
 
-    resultado = cargar_json(
-        RESULTADO_FILE
+def normalizar_estado_viejo(estado):
+
+    if not isinstance(estado, dict):
+        return estado_nuevo()
+
+    nuevo = estado_nuevo()
+
+    nuevo["ultimo_radar_timestamp"] = estado.get(
+        "ultimo_radar_timestamp"
     )
 
-    if resultado is None:
-        raise RuntimeError(
-            "No existe resultado_procesamiento.json"
-        )
+    tracks = estado.get("tracks", [])
 
-    radar_dt = obtener_timestamp_radar()
-
-    if radar_dt is None:
-        raise RuntimeError(
-            "No se pudo determinar el timestamp real del radar."
-        )
-
-    radar_timestamp = iso(radar_dt)
-
-    nucleos_raw = obtener_nucleos(
-        resultado
-    )
-
-    nucleos = []
-
-    for n in nucleos_raw:
-
-        normalizado = normalizar_nucleo(n)
-
-        if normalizado:
-            nucleos.append(normalizado)
-
-    SEGUIMIENTO_DIR.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    estado = cargar_json(
-        ESTADO_FILE
-    )
-
-    if estado:
-        estado = dict(estado)
-
-    # Primer frame
-    if not estado:
-
+    if not isinstance(tracks, list):
         tracks = []
 
-        for nucleo in nucleos:
+    # Reparar IDs inválidos.
+    max_id = 0
 
-            tid = len(tracks) + 1
+    for track in tracks:
 
-            track = crear_track(
-                tid,
-                nucleo,
-                radar_timestamp
-            )
+        if not isinstance(track, dict):
+            continue
 
-            tracks.append(track)
+        tid = track.get("track_id")
 
-        for i, nucleo in enumerate(nucleos):
+        try:
+            tid = int(tid)
+        except Exception:
+            continue
 
-            nucleo["track_id"] = (
-                tracks[i]["id"]
-            )
+        if tid <= 0:
+            continue
 
-        estado = {
-            "schema_version":
-                STATE_SCHEMA_VERSION,
+        track["track_id"] = tid
+        max_id = max(max_id, tid)
 
-            "radar_timestamp":
-                radar_timestamp,
+        if not isinstance(track.get("historial"), list):
+            track["historial"] = []
 
-            "nucleos":
-                nucleos,
+        nuevo["tracks"].append(track)
 
-            "tracks":
-                tracks
-        }
-
-        guardar_json(
-            ESTADO_FILE,
-            estado
-        )
-
-        resultado_temporal = {
-
-            "schema_version":
-                STATE_SCHEMA_VERSION,
-
-            "radar_timestamp":
-                radar_timestamp,
-
-            "intervalo_minutos":
-                None,
-
-            "calidad_intervalo":
-                "PRIMER_FRAME",
-
-            "nucleos_actuales":
-                len(nucleos),
-
-            "nucleos_nuevos":
-                len(nucleos),
-
-            "nucleos_seguimiento":
-                0,
-
-            "nucleos_creciendo":
-                0,
-
-            "nucleos_debilitandose":
-                0,
-
-            "nucleos_movimiento":
-                0,
-
-            "nucleos_estables":
-                0,
-
-            "nucleos_desaparecidos":
-                0,
-
-            "asociaciones":
-                []
-        }
-
-        guardar_json(
-            RESULTADO_SEGUIMIENTO,
-            resultado_temporal
-        )
-
-        print(
-            f"PRIMER FRAME: {radar_timestamp}"
-        )
-
-        print(
-            f"Núcleos: {len(nucleos)}"
-        )
-
-        return
-
-    estado = dict(estado)
-
-    estado["schema_version"] = (
-        STATE_SCHEMA_VERSION
+    siguiente = entero(
+        estado.get("siguiente_track_id"),
+        max_id + 1
     )
 
-    ultimo_timestamp = parse_dt(
-        estado.get(
-            "radar_timestamp"
-        )
+    nuevo["siguiente_track_id"] = max(
+        siguiente,
+        max_id + 1
     )
 
-    if ultimo_timestamp is None:
+    # Recalcular activos únicamente a partir del último
+    # conjunto válido guardado.
+    ultimo_ts = nuevo["ultimo_radar_timestamp"]
 
-        ultimo_timestamp = radar_dt
+    activos = []
 
-    intervalo = (
-        radar_dt - ultimo_timestamp
-    ).total_seconds() / 60
+    for track in nuevo["tracks"]:
 
-    print(
-        f"Frame anterior: {iso(ultimo_timestamp)}"
-    )
+        if (
+            track.get("activo") is True
+            and track.get("ultimo_frame") == ultimo_ts
+        ):
+            activos.append(track["track_id"])
 
-    print(
-        f"Frame actual: {radar_timestamp}"
-    )
+    nuevo["tracks_activos"] = activos
 
-    print(
-        f"Intervalo: {intervalo:.1f} min"
-    )
-
-    # Frame repetido o atrasado.
-    if intervalo <= 0:
-
-        resultado_temporal = {
-
-            "schema_version":
-                STATE_SCHEMA_VERSION,
-
-            "timestamp":
-                ahora_utc(),
-
-            "radar_timestamp":
-                radar_timestamp,
-
-            "intervalo_minutos":
-                intervalo,
-
-            "frame_anterior_disponible":
-                True,
-
-            "calidad_intervalo":
-                "FRAME_REPETIDO_O_ATRASADO",
-
-            "motivo":
-                "El frame actual no es posterior al último estado procesado.",
-
-            "nucleos_actuales":
-                len(nucleos),
-
-            "nucleos_nuevos":
-                0,
-
-            "nucleos_seguimiento":
-                0,
-
-            "nucleos_creciendo":
-                0,
-
-            "nucleos_debilitandose":
-                0,
-
-            "nucleos_movimiento":
-                0,
-
-            "nucleos_estables":
-                0,
-
-            "nucleos_desaparecidos":
-                0,
-
-            "asociaciones":
-                []
-        }
-
-        guardar_json(
-            RESULTADO_SEGUIMIENTO,
-            resultado_temporal
-        )
-
-        print(
-            "FRAME REPETIDO O ATRASADO."
-        )
-
-        return
-
-    # Si pasaron más de 30 minutos,
-    # no inventamos movimiento.
-    if intervalo > MAX_INTERVAL_MIN:
-
-        tracks = estado.get(
-            "tracks",
-            []
-        )
-
-        nuevo_tracks = []
-
-        for i, nucleo in enumerate(nucleos):
-
-            tid = siguiente_id(
-                tracks + nuevo_tracks
-            )
-
-            nuevo_tracks.append(
-                crear_track(
-                    tid,
-                    nucleo,
-                    radar_timestamp
-                )
-            )
-
-            nucleo["track_id"] = tid
-
-        for track in tracks:
-
-            track["activo"] = False
-            track["presente_en_ultimo_frame"] = False
-
-        estado["radar_timestamp"] = (
-            radar_timestamp
-        )
-
-        estado["nucleos"] = nucleos
-
-        estado["tracks"] = (
-            tracks + nuevo_tracks
-        )
-
-        guardar_json(
-            ESTADO_FILE,
-            estado
-        )
-
-        resultado_temporal = {
-
-            "schema_version":
-                STATE_SCHEMA_VERSION,
-
-            "timestamp":
-                ahora_utc(),
-
-            "radar_timestamp":
-                radar_timestamp,
-
-            "intervalo_minutos":
-                intervalo,
-
-            "calidad_intervalo":
-                "GAP_MAYOR_30_MIN",
-
-            "motivo":
-                "Se inicia una nueva base sin inventar movimiento.",
-
-            "nucleos_actuales":
-                len(nucleos),
-
-            "nucleos_nuevos":
-                len(nucleos),
-
-            "nucleos_seguimiento":
-                0,
-
-            "nucleos_creciendo":
-                0,
-
-            "nucleos_debilitandose":
-                0,
-
-            "nucleos_movimiento":
-                0,
-
-            "nucleos_estables":
-                0,
-
-            "nucleos_desaparecidos":
-                0,
-
-            "asociaciones":
-                []
-        }
-
-        guardar_json(
-            RESULTADO_SEGUIMIENTO,
-            resultado_temporal
-        )
-
-        print(
-            "GAP MAYOR A 30 MINUTOS."
-        )
-
-        return
-
-    tracks = estado.get(
-        "tracks",
+    nuevo["ultimo_frame_nucleos"] = estado.get(
+        "ultimo_frame_nucleos",
         []
     )
 
-    # Sólo tracks activos pueden recibir asociación.
-    activos = [
-        t for t in tracks
-        if t.get("activo", False)
-    ]
+    return nuevo
 
-    candidatos = []
 
-    for ti, track in enumerate(activos):
+# ---------------------------------------------------------
+# CREAR NUEVA BASE
+# ---------------------------------------------------------
 
-        historial = historial_limpio(
-            track
+def nueva_base_desde_frame(
+    estado,
+    nucleos,
+    radar_ts
+):
+
+    # Los tracks anteriores quedan históricos.
+    for track in estado["tracks"]:
+        track["activo"] = False
+        track["presente_en_ultimo_frame"] = False
+
+    activos = []
+    nucleos_salida = []
+
+    for nucleo in nucleos:
+
+        tid = estado["siguiente_track_id"]
+
+        estado["siguiente_track_id"] += 1
+
+        track = crear_track(
+            tid,
+            nucleo,
+            radar_ts
         )
 
-        if not historial:
-            continue
+        estado["tracks"].append(track)
 
-        anterior = historial[-1]
+        activos.append(tid)
 
-        anterior_nucleo = {
-            "x": anterior["x"],
-            "y": anterior["y"],
-            "pixeles": anterior["pixeles"],
-            "ancho": max(
-                1,
-                track.get("ancho", 1)
-            ),
-            "alto": max(
-                1,
-                track.get("alto", 1)
+        salida = dict(nucleo)
+        salida["track_id"] = tid
+        nucleos_salida.append(salida)
+
+    estado["ultimo_radar_timestamp"] = radar_ts
+    estado["tracks_activos"] = activos
+    estado["ultimo_frame_nucleos"] = nucleos_salida
+
+    return nucleos_salida
+
+
+# ---------------------------------------------------------
+# PROCESAR FRAME
+# ---------------------------------------------------------
+
+def procesar():
+
+    nucleos = obtener_nucleos()
+
+    if not nucleos:
+        raise RuntimeError(
+            "El procesador no entregó núcleos."
+        )
+
+    radar_dt = timestamp_radar()
+    radar_ts = iso(radar_dt)
+
+    estado = normalizar_estado_viejo(
+        cargar_json(ESTADO, {})
+    )
+
+    anterior_ts = estado.get(
+        "ultimo_radar_timestamp"
+    )
+
+    anterior_dt = parse_iso(anterior_ts)
+
+    # -----------------------------------------------------
+    # PRIMER FRAME
+    # -----------------------------------------------------
+
+    if anterior_dt is None:
+
+        actuales = nueva_base_desde_frame(
+            estado,
+            nucleos,
+            radar_ts
+        )
+
+        salida = {
+            "schema_version": SCHEMA_VERSION,
+            "radar_timestamp": radar_ts,
+            "frame_anterior_disponible": False,
+            "intervalo_minutos": None,
+            "calidad_intervalo": "PRIMER_FRAME",
+
+            "nucleos_actuales": len(actuales),
+            "nucleos_nuevos": len(actuales),
+            "nucleos_seguimiento": 0,
+            "nucleos_creciendo": 0,
+            "nucleos_debilitandose": 0,
+            "nucleos_movimiento": 0,
+            "nucleos_estables": 0,
+            "nucleos_desaparecidos": 0,
+
+            "asociaciones": [],
+
+            "nucleos": actuales
+        }
+
+        guardar_json(ESTADO, estado)
+        guardar_json(SALIDA, salida)
+
+        return salida
+
+    intervalo = (
+        radar_dt - anterior_dt
+    ).total_seconds() / 60.0
+
+    # -----------------------------------------------------
+    # FRAME REPETIDO / ATRASADO
+    # -----------------------------------------------------
+
+    if intervalo <= 0:
+
+        salida = {
+            "schema_version": SCHEMA_VERSION,
+            "radar_timestamp": radar_ts,
+            "frame_anterior_disponible": True,
+            "intervalo_minutos": round(intervalo, 2),
+            "calidad_intervalo": "FRAME_REPETIDO_O_ATRASADO",
+
+            "nucleos_actuales": len(nucleos),
+            "nucleos_nuevos": 0,
+            "nucleos_seguimiento": 0,
+            "nucleos_creciendo": 0,
+            "nucleos_debilitandose": 0,
+            "nucleos_movimiento": 0,
+            "nucleos_estables": 0,
+            "nucleos_desaparecidos": 0,
+
+            "asociaciones": [],
+
+            "nucleos": nucleos,
+
+            "motivo": (
+                "El frame actual no es posterior "
+                "al último estado procesado."
             )
         }
 
-        for ni, nucleo in enumerate(nucleos):
+        # MUY IMPORTANTE:
+        # NO modificamos el estado.
+
+        guardar_json(SALIDA, salida)
+
+        return salida
+
+    # -----------------------------------------------------
+    # GAP MAYOR A 30 MIN
+    # -----------------------------------------------------
+
+    if intervalo > MAX_INTERVALO:
+
+        actuales = nueva_base_desde_frame(
+            estado,
+            nucleos,
+            radar_ts
+        )
+
+        salida = {
+            "schema_version": SCHEMA_VERSION,
+            "radar_timestamp": radar_ts,
+            "frame_anterior_disponible": True,
+            "intervalo_minutos": round(intervalo, 2),
+            "calidad_intervalo": "GAP_MAYOR_30_MIN",
+
+            "nucleos_actuales": len(actuales),
+            "nucleos_nuevos": len(actuales),
+            "nucleos_seguimiento": 0,
+            "nucleos_creciendo": 0,
+            "nucleos_debilitandose": 0,
+            "nucleos_movimiento": 0,
+            "nucleos_estables": 0,
+            "nucleos_desaparecidos": 0,
+
+            "asociaciones": [],
+
+            "nucleos": actuales,
+
+            "motivo": (
+                "El intervalo supera 30 minutos. "
+                "Se creó una nueva base sin inventar "
+                "movimiento entre frames."
+            )
+        }
+
+        guardar_json(ESTADO, estado)
+        guardar_json(SALIDA, salida)
+
+        return salida
+
+    # -----------------------------------------------------
+    # FRAME VÁLIDO
+    # -----------------------------------------------------
+
+    activos_previos = []
+
+    for track in estado["tracks"]:
+
+        if (
+            track.get("activo") is True
+            and track.get("ultimo_frame") == anterior_ts
+        ):
+            activos_previos.append(track)
+
+    # ---------------------------------------------
+    # CANDIDATOS
+    # ---------------------------------------------
+
+    candidatos = []
+
+    for track in activos_previos:
+
+        anterior = {
+            "x": numero(track.get("x")),
+            "y": numero(track.get("y")),
+            "pixeles": entero(track.get("pixeles")),
+            "ancho": numero(track.get("ancho"), 1),
+            "alto": numero(track.get("alto"), 1)
+        }
+
+        for indice, actual in enumerate(nucleos):
 
             comp = compatibilidad(
-                anterior_nucleo,
-                nucleo,
-                intervalo
+                anterior,
+                actual
             )
 
             if comp is None:
                 continue
 
-            candidatos.append(
-                (
-                    comp["puntaje"],
-                    ti,
-                    ni,
-                    comp
-                )
-            )
+            candidatos.append({
+                "track": track,
+                "indice": indice,
+                **comp
+            })
+
+    # ---------------------------------------------
+    # ASIGNACIÓN GLOBAL UNO A UNO
+    # ---------------------------------------------
 
     candidatos.sort(
-        key=lambda x: x[0],
+        key=lambda c: c["score"],
         reverse=True
     )
 
-    usados_tracks = set()
-    usados_nucleos = set()
+    asignados_tracks = set()
+    asignados_nucleos = set()
+
     asociaciones = []
 
-    for score, ti, ni, comp in candidatos:
+    for candidato in candidatos:
 
-        if ti in usados_tracks:
+        tid = candidato["track"]["track_id"]
+        indice = candidato["indice"]
+
+        if tid in asignados_tracks:
             continue
 
-        if ni in usados_nucleos:
+        if indice in asignados_nucleos:
             continue
 
-        usados_tracks.add(ti)
-        usados_nucleos.add(ni)
+        asignados_tracks.add(tid)
+        asignados_nucleos.add(indice)
 
-        asociaciones.append(
-            (
-                ti,
-                ni,
-                comp
-            )
-        )
+        asociaciones.append(candidato)
 
-    asociaciones_por_track = {}
+    # -----------------------------------------------------
+    # ACTUALIZAR TRACKS ASOCIADOS
+    # -----------------------------------------------------
 
-    for ti, ni, comp in asociaciones:
-        asociaciones_por_track[ti] = (
-            ni,
-            comp
-        )
+    salida_nucleos = []
 
-    actuales_asociados = set()
-
-    crecieron = 0
-    debilitaron = 0
+    creciendo = 0
+    debilitandose = 0
     movimiento = 0
     estables = 0
 
-    salida_asociaciones = []
+    for asociacion in asociaciones:
 
-    for ti, track in enumerate(activos):
+        track = asociacion["track"]
+        indice = asociacion["indice"]
+        nucleo = nucleos[indice]
 
-        if ti not in asociaciones_por_track:
-
-            track["missed_frames"] = (
-                int(
-                    track.get(
-                        "missed_frames",
-                        0
-                    )
-                )
-                + 1
-            )
-
-            track["presente_en_ultimo_frame"] = False
-
-            if (
-                track["missed_frames"]
-                > MAX_MISSED_FRAMES
-            ):
-                track["activo"] = False
-
-            continue
-
-        ni, comp = (
-            asociaciones_por_track[ti]
+        anterior_area = max(
+            track.get("pixeles", 1),
+            1
         )
 
-        nucleo = nucleos[ni]
+        area_change = (
+            nucleo["pixeles"] - anterior_area
+        ) / anterior_area * 100
 
-        actuales_asociados.add(
-            ni
-        )
+        if area_change >= 15:
+            creciendo += 1
+            tendencia_area = "CRECIENDO"
 
-        historial = historial_limpio(
-            track
-        )
-
-        anterior = historial[-1]
-
-        anterior_nucleo = {
-            "x": anterior["x"],
-            "y": anterior["y"],
-            "pixeles": anterior["pixeles"]
-        }
-
-        actualizar_movimiento(
-            track,
-            anterior_nucleo,
-            nucleo,
-            intervalo
-        )
-
-        track["x"] = nucleo["x"]
-        track["y"] = nucleo["y"]
-        track["pixeles"] = nucleo["pixeles"]
-
-        track["intensidad"] = (
-            nucleo["intensidad"]
-        )
-
-        track["nivel_intensidad"] = (
-            nucleo["nivel_intensidad"]
-        )
-
-        cambio_area = track.get(
-            "cambio_area_porcentaje",
-            0
-        )
-
-        if cambio_area >= CAMBIO_AREA_CRECE:
-
-            track["estado"] = "CRECIENDO"
-
-            crecieron += 1
-
-        elif (
-            cambio_area
-            <= CAMBIO_AREA_DEBILITA
-        ):
-
-            track["estado"] = (
-                "DEBILITANDOSE"
-            )
-
-            debilitaron += 1
-
-        elif (
-            track.get(
-                "desplazamiento_pixeles",
-                0
-            )
-            >= MOVIMIENTO_MINIMO
-        ):
-
-            track["estado"] = "MOVIENDOSE"
-
-            movimiento += 1
+        elif area_change <= -15:
+            debilitandose += 1
+            tendencia_area = "DEBILITANDOSE"
 
         else:
-
-            track["estado"] = "ESTABLE"
-
             estables += 1
+            tendencia_area = "ESTABLE"
 
-        track["frames"] = (
-            int(
-                track.get(
-                    "frames",
-                    1
-                )
-            )
-            + 1
+        anterior = {
+            "x": numero(track.get("x")),
+            "y": numero(track.get("y"))
+        }
+
+        dx = nucleo["x"] - anterior["x"]
+        dy = nucleo["y"] - anterior["y"]
+
+        desplazamiento = math.hypot(dx, dy)
+
+        if desplazamiento >= 5:
+            movimiento += 1
+
+        actualizar_track(
+            track,
+            nucleo,
+            radar_ts,
+            intervalo,
+            asociacion["score"]
         )
 
-        track["missed_frames"] = 0
+        salida = dict(nucleo)
 
-        track["activo"] = True
+        salida["track_id"] = track["track_id"]
 
-        track["presente_en_ultimo_frame"] = True
-
-        track["ultimo_frame"] = (
-            radar_timestamp
+        salida["area_change_pct"] = round(
+            area_change,
+            2
         )
 
-        historial.append(
-            {
-                "timestamp":
-                    radar_timestamp,
+        salida["tendencia_area"] = tendencia_area
 
-                "x":
-                    nucleo["x"],
+        salida["dx_pixeles"] = round(dx, 3)
+        salida["dy_pixeles"] = round(dy, 3)
 
-                "y":
-                    nucleo["y"],
-
-                "pixeles":
-                    nucleo["pixeles"],
-
-                "intensidad":
-                    nucleo["intensidad"],
-
-                "nivel_intensidad":
-                    nucleo["nivel_intensidad"],
-
-                "estado":
-                    track["estado"],
-
-                "iou":
-                    comp["iou"],
-
-                "confianza_movimiento":
-                    track.get(
-                        "confianza_movimiento"
-                    )
-            }
+        salida["desplazamiento_pixeles"] = round(
+            desplazamiento,
+            3
         )
 
-        track["historial"] = (
-            historial[-MAX_HISTORIAL:]
+        salida["velocidad_pixeles_min"] = round(
+            track["velocidad_pixeles_min"],
+            5
         )
 
-        nucleo["track_id"] = (
-            track["id"]
-        )
+        salida["rumbo_grados"] = track["rumbo_grados"]
+        salida["direccion"] = track["direccion"]
 
-        salida_asociaciones.append(
-            {
-                "track_id":
-                    track["id"],
+        salida_nucleos.append(salida)
 
-                "nucleo_actual":
-                    ni,
+    # -----------------------------------------------------
+    # NÚCLEOS NO ASOCIADOS = TRACKS NUEVOS
+    # -----------------------------------------------------
 
-                "puntaje":
-                    round(
-                        comp["puntaje"],
-                        2
-                    ),
-
-                "distancia_pixeles":
-                    round(
-                        comp["distancia"],
-                        2
-                    ),
-
-                "iou":
-                    round(
-                        comp["iou"],
-                        3
-                    ),
-
-                "cambio_area_porcentaje":
-                    round(
-                        comp["cambio_area"],
-                        2
-                    ),
-
-                "dx_pixeles":
-                    track.get(
-                        "dx_pixeles"
-                    ),
-
-                "dy_pixeles":
-                    track.get(
-                        "dy_pixeles"
-                    ),
-
-                "desplazamiento_pixeles":
-                    track.get(
-                        "desplazamiento_pixeles"
-                    ),
-
-                "velocidad_pixeles_min":
-                    track.get(
-                        "velocidad_pixeles_min"
-                    ),
-
-                "rumbo_grados":
-                    track.get(
-                        "rumbo_grados"
-                    ),
-
-                "direccion":
-                    track.get(
-                        "direccion"
-                    ),
-
-                "cambio_rumbo_grados":
-                    track.get(
-                        "cambio_rumbo_grados"
-                    ),
-
-                "aceleracion_pixeles_min2":
-                    track.get(
-                        "aceleracion_pixeles_min2"
-                    ),
-
-                "tendencia_velocidad":
-                    track.get(
-                        "tendencia_velocidad"
-                    ),
-
-                "confianza_movimiento":
-                    track.get(
-                        "confianza_movimiento"
-                    )
-            }
-        )
-
-    # Los núcleos que no pudieron asociarse
-    # se consideran nuevos.
     nuevos = 0
 
-    for ni, nucleo in enumerate(nucleos):
+    for indice, nucleo in enumerate(nucleos):
 
-        if ni in actuales_asociados:
+        if indice in asignados_nucleos:
             continue
 
-        tid = siguiente_id(
-            tracks
-        )
+        tid = estado["siguiente_track_id"]
 
-        nuevo_track = crear_track(
+        estado["siguiente_track_id"] += 1
+
+        track = crear_track(
             tid,
             nucleo,
-            radar_timestamp
+            radar_ts
         )
 
-        tracks.append(
-            nuevo_track
-        )
-
-        nucleo["track_id"] = tid
+        estado["tracks"].append(track)
 
         nuevos += 1
 
+        salida = dict(nucleo)
+        salida["track_id"] = tid
+        salida["nuevo"] = True
+
+        salida_nucleos.append(salida)
+
+    # -----------------------------------------------------
+    # TRACKS ANTERIORES NO ASOCIADOS
+    # -----------------------------------------------------
+
     desaparecidos = 0
 
-    for track in activos:
+    for track in activos_previos:
 
-        if not track.get(
-            "presente_en_ultimo_frame",
-            False
+        tid = track["track_id"]
+
+        if tid in asignados_tracks:
+            continue
+
+        track["presente_en_ultimo_frame"] = False
+        track["missed_frames"] = (
+            entero(track.get("missed_frames")) + 1
+        )
+
+        # Se cierra el track como activo.
+        # Se conserva entero en históricos.
+        track["activo"] = False
+
+        desaparecidos += 1
+
+    # -----------------------------------------------------
+    # ACTIVOS = SOLO LOS DEL FRAME ACTUAL
+    # -----------------------------------------------------
+
+    activos_actuales = []
+
+    for track in estado["tracks"]:
+
+        if (
+            track.get("activo") is True
+            and track.get("ultimo_frame") == radar_ts
         ):
+            activos_actuales.append(
+                track["track_id"]
+            )
 
-            if track.get(
-                "missed_frames",
-                0
-            ) == 1:
+    estado["ultimo_radar_timestamp"] = radar_ts
+    estado["tracks_activos"] = activos_actuales
+    estado["ultimo_frame_nucleos"] = salida_nucleos
 
-                desaparecidos += 1
+    # -----------------------------------------------------
+    # ASOCIACIONES DE SALIDA
+    # -----------------------------------------------------
 
-    estado["schema_version"] = (
-        STATE_SCHEMA_VERSION
-    )
+    asociaciones_salida = []
 
-    estado["radar_timestamp"] = (
-        radar_timestamp
-    )
+    for asociacion in asociaciones:
 
-    estado["nucleos"] = nucleos
+        track = asociacion["track"]
 
-    estado["tracks"] = tracks
+        asociaciones_salida.append({
+            "track_id": track["track_id"],
+            "nucleo_actual": asociacion["indice"],
 
-    guardar_json(
-        ESTADO_FILE,
-        estado
-    )
+            "score": asociacion["score"],
+            "distancia_pixeles": asociacion["distancia"],
+            "iou": asociacion["iou"],
+            "similitud_area": asociacion["similitud_area"],
+            "similitud_forma": asociacion["similitud_forma"],
 
-    resultado_temporal = {
+            "dx_pixeles": round(
+                track.get("dx_pixeles", 0),
+                3
+            ),
 
-        "schema_version":
-            STATE_SCHEMA_VERSION,
+            "dy_pixeles": round(
+                track.get("dy_pixeles", 0),
+                3
+            ),
 
-        "timestamp":
-            ahora_utc(),
+            "desplazamiento_pixeles": round(
+                track.get(
+                    "desplazamiento_pixeles",
+                    0
+                ),
+                3
+            ),
 
-        "radar_timestamp":
-            radar_timestamp,
+            "velocidad_pixeles_min": round(
+                track.get(
+                    "velocidad_pixeles_min",
+                    0
+                ),
+                5
+            ),
 
-        "intervalo_minutos":
+            "rumbo_grados": track.get(
+                "rumbo_grados"
+            ),
+
+            "direccion": track.get(
+                "direccion"
+            ),
+
+            "aceleracion_pixeles_min2": round(
+                track.get(
+                    "aceleracion_pixeles_min2",
+                    0
+                ),
+                6
+            ),
+
+            "cambio_rumbo_grados": round(
+                track.get(
+                    "cambio_rumbo_grados",
+                    0
+                ),
+                2
+            )
+        })
+
+    # -----------------------------------------------------
+    # SALIDA FINAL
+    # -----------------------------------------------------
+
+    salida = {
+        "schema_version": SCHEMA_VERSION,
+
+        "radar_timestamp": radar_ts,
+
+        "frame_anterior_disponible": True,
+
+        "intervalo_minutos": round(
             intervalo,
+            2
+        ),
 
-        "frame_anterior_disponible":
-            True,
+        "calidad_intervalo": "VALIDO",
 
-        "calidad_intervalo":
-            "VALIDO",
+        "nucleos_actuales": len(
+            salida_nucleos
+        ),
 
-        "nucleos_actuales":
-            len(nucleos),
+        "nucleos_nuevos": nuevos,
 
-        "nucleos_nuevos":
-            nuevos,
+        "nucleos_seguimiento": len(
+            asociaciones
+        ),
 
-        "nucleos_seguimiento":
-            len(salida_asociaciones),
+        "nucleos_creciendo": creciendo,
 
-        "nucleos_creciendo":
-            crecieron,
+        "nucleos_debilitandose": debilitandose,
 
-        "nucleos_debilitandose":
-            debilitaron,
+        "nucleos_movimiento": movimiento,
 
-        "nucleos_movimiento":
-            movimiento,
+        "nucleos_estables": estables,
 
-        "nucleos_estables":
-            estables,
+        "nucleos_desaparecidos": desaparecidos,
 
-        "nucleos_desaparecidos":
-            desaparecidos,
+        "asociaciones": asociaciones_salida,
 
-        "asociaciones":
-            salida_asociaciones
+        "nucleos": salida_nucleos
     }
 
     guardar_json(
-        RESULTADO_SEGUIMIENTO,
-        resultado_temporal
+        ESTADO,
+        estado
     )
 
-    print(
-        "======================================"
+    guardar_json(
+        SALIDA,
+        salida
     )
 
-    print(
-        "SEGUIMIENTO TEMPORAL"
-    )
+    return salida
 
-    print(
-        "======================================"
-    )
 
-    print(
-        f"Radar: {radar_timestamp}"
-    )
-
-    print(
-        f"Intervalo: {intervalo:.1f} min"
-    )
-
-    print(
-        f"Núcleos actuales: {len(nucleos)}"
-    )
-
-    print(
-        f"Nuevos: {nuevos}"
-    )
-
-    print(
-        f"Seguimiento: {len(salida_asociaciones)}"
-    )
-
-    print(
-        f"Creciendo: {crecieron}"
-    )
-
-    print(
-        f"Debilitándose: {debilitaron}"
-    )
-
-    print(
-        f"Moviéndose: {movimiento}"
-    )
-
-    print(
-        f"Estables: {estables}"
-    )
-
-    print(
-        f"Desaparecidos: {desaparecidos}"
-    )
-
+# ---------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------
 
 if __name__ == "__main__":
-    main()
+
+    resultado = procesar()
+
+    print("=" * 60)
+    print("SEGUIMIENTO TEMPORAL")
+    print("=" * 60)
+
+    print(
+        "Radar:",
+        resultado["radar_timestamp"]
+    )
+
+    print(
+        "Intervalo:",
+        resultado["intervalo_minutos"],
+        "min"
+    )
+
+    print(
+        "Calidad:",
+        resultado["calidad_intervalo"]
+    )
+
+    print(
+        "Núcleos:",
+        resultado["nucleos_actuales"]
+    )
+
+    print(
+        "Nuevos:",
+        resultado["nucleos_nuevos"]
+    )
+
+    print(
+        "Seguimiento:",
+        resultado["nucleos_seguimiento"]
+    )
+
+    print(
+        "Creciendo:",
+        resultado["nucleos_creciendo"]
+    )
+
+    print(
+        "Debilitándose:",
+        resultado["nucleos_debilitandose"]
+    )
+
+    print(
+        "Movimiento:",
+        resultado["nucleos_movimiento"]
+    )
+
+    print(
+        "Desaparecidos:",
+        resultado["nucleos_desaparecidos"]
+    )
+
+    print("=" * 60)
