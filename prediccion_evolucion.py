@@ -1,262 +1,326 @@
 #!/usr/bin/env python3
 
-"""
-Predicción heurística de evolución de núcleos RMA10 para ClimaAR.
-
-Todavía NO es IA meteorológica:
-extrapola la trayectoria observada y combina:
-- movimiento
-- velocidad
-- aceleración
-- cambio de área
-- tendencia de crecimiento/debilitamiento
-- dirección
-
-La velocidad permanece en píxeles/minuto hasta disponer
-de georreferenciación.
-"""
-
-from __future__ import annotations
-
+from pathlib import Path
+from datetime import datetime, timezone
+from statistics import mean, pstdev
 import json
 import math
-from datetime import datetime
-from pathlib import Path
-from statistics import mean
 
 
 INPUT = Path(
     "data/radar/seguimiento/seguimiento_temporal.json"
 )
 
+STATE = Path(
+    "data/radar/seguimiento/estado.json"
+)
+
 OUTPUT = Path(
     "data/radar/seguimiento/prediccion_evolucion.json"
 )
 
-HORIZONTES_MIN = (10, 20, 30)
+HORIZONTES = (
+    10,
+    20,
+    30
+)
+
+MIN_DT = 2.0
+MAX_DT = 30.0
+
+SECTORES = [
+    "N",
+    "NNE",
+    "NE",
+    "ENE",
+    "E",
+    "ESE",
+    "SE",
+    "SSE",
+    "S",
+    "SSO",
+    "SO",
+    "OSO",
+    "O",
+    "ONO",
+    "NO",
+    "NNO"
+]
 
 
 def clamp(valor, minimo=0.0, maximo=100.0):
-    return max(minimo, min(maximo, float(valor)))
+    return max(
+        minimo,
+        min(maximo, float(valor))
+    )
 
 
-def sector_meteorologico(grados):
+def dt(value):
+
+    if not isinstance(value, str):
+        return None
+
+    try:
+        d = datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+
+        if d.tzinfo is None:
+            d = d.replace(
+                tzinfo=timezone.utc
+            )
+
+        return d.astimezone(
+            timezone.utc
+        )
+
+    except Exception:
+        return None
+
+
+def sector(grados):
+
     if grados is None:
         return None
 
-    sectores = [
-        "N",
-        "NNE",
-        "NE",
-        "ENE",
-        "E",
-        "ESE",
-        "SE",
-        "SSE",
-        "S",
-        "SSO",
-        "SO",
-        "OSO",
-        "O",
-        "ONO",
-        "NO",
-        "NNO",
+    return SECTORES[
+        int(
+            (grados + 11.25) / 22.5
+        ) % 16
     ]
 
-    indice = int((grados % 360) / 22.5 + 0.5) % 16
 
-    return sectores[indice]
+def bearing(dx, dy):
+
+    if (
+        abs(dx) < 1e-9
+        and
+        abs(dy) < 1e-9
+    ):
+        return None
+
+    return (
+        math.degrees(
+            math.atan2(
+                dx,
+                -dy
+            )
+        ) % 360
+    )
 
 
-def diferencia_angulos(a, b):
+def angle_diff(a, b):
+
     if a is None or b is None:
         return None
 
-    return abs((a - b + 180) % 360 - 180)
-
-
-def obtener_historial_reciente(track, cantidad=4):
-
-    historial = [
-        entrada
-        for entrada in track.get("historial", [])
-        if (
-            entrada.get("timestamp")
-            and entrada.get("x") is not None
-            and entrada.get("y") is not None
-        )
-    ]
-
-    historial.sort(
-        key=lambda entrada: entrada["timestamp"]
+    return abs(
+        (
+            a - b + 180
+        ) % 360 - 180
     )
 
-    return historial[-cantidad:]
+
+def num(value):
+
+    try:
+        return float(value)
+    except Exception:
+        return None
 
 
-def calcular_movimientos(historial):
+def clean_history(track):
 
-    movimientos = []
+    raw = track.get(
+        "historial",
+        []
+    )
+
+    if not isinstance(raw, list):
+        return []
+
+    out = {}
+
+    for h in raw:
+
+        if not isinstance(h, dict):
+            continue
+
+        fecha = dt(
+            h.get("timestamp")
+        )
+
+        if not fecha:
+            continue
+
+        if (
+            h.get("x") is None
+            or
+            h.get("y") is None
+        ):
+            continue
+
+        h = dict(h)
+
+        h["timestamp"] = (
+            fecha.isoformat()
+            .replace("+00:00", "Z")
+        )
+
+        out[
+            h["timestamp"]
+        ] = h
+
+    return sorted(
+        out.values(),
+        key=lambda h: dt(
+            h["timestamp"]
+        )
+    )
+
+
+def movements(historial):
+
+    resultado = []
 
     for anterior, actual in zip(
         historial,
         historial[1:]
     ):
 
-        try:
+        t1 = dt(
+            anterior["timestamp"]
+        )
 
-            tiempo_anterior = datetime.fromisoformat(
-                anterior["timestamp"].replace("Z", "+00:00")
-            )
+        t2 = dt(
+            actual["timestamp"]
+        )
 
-            tiempo_actual = datetime.fromisoformat(
-                actual["timestamp"].replace("Z", "+00:00")
-            )
-
-            intervalo = (
-                tiempo_actual - tiempo_anterior
-            ).total_seconds() / 60.0
-
-            # Solo aceptamos intervalos temporales válidos.
-            if intervalo < 2 or intervalo > 30:
-                continue
-
-            dx = (
-                float(actual["x"])
-                - float(anterior["x"])
-            )
-
-            dy = (
-                float(actual["y"])
-                - float(anterior["y"])
-            )
-
-            velocidad = (
-                math.hypot(dx, dy)
-                / intervalo
-            )
-
-            rumbo = (
-                math.degrees(
-                    math.atan2(dx, -dy)
-                )
-                % 360
-            )
-
-            movimientos.append(
-                {
-                    "intervalo": intervalo,
-                    "vx": dx / intervalo,
-                    "vy": dy / intervalo,
-                    "velocidad": velocidad,
-                    "rumbo": rumbo,
-                }
-            )
-
-        except Exception:
+        if not t1 or not t2:
             continue
 
-    return movimientos
+        minutos = (
+            t2 - t1
+        ).total_seconds() / 60
 
+        if (
+            minutos < MIN_DT
+            or
+            minutos > MAX_DT
+        ):
+            continue
 
-def predecir_nucleo(track):
-
-    historial = obtener_historial_reciente(track)
-
-    movimientos = calcular_movimientos(historial)
-
-    if not historial:
-        return None
-
-    actual = historial[-1]
-
-    # Sin movimiento temporal válido no extrapolamos.
-    if not movimientos:
-
-        return {
-            "track_id": track.get("id"),
-            "pronostico_disponible": False,
-            "motivo": "SIN_MOVIMIENTO_VALIDO",
-            "posicion_actual": {
-                "x": actual["x"],
-                "y": actual["y"],
-            },
-        }
-
-    # Damos mayor peso a los movimientos más recientes.
-    pesos = list(
-        range(1, len(movimientos) + 1)
-    )
-
-    peso_total = sum(pesos)
-
-    vx = (
-        sum(
-            movimiento["vx"] * peso
-            for movimiento, peso
-            in zip(movimientos, pesos)
+        dx = (
+            float(actual["x"])
+            -
+            float(anterior["x"])
         )
-        / peso_total
-    )
 
-    vy = (
-        sum(
-            movimiento["vy"] * peso
-            for movimiento, peso
-            in zip(movimientos, pesos)
+        dy = (
+            float(actual["y"])
+            -
+            float(anterior["y"])
         )
-        / peso_total
-    )
 
-    velocidad = math.hypot(vx, vy)
+        vx = dx / minutos
+        vy = dy / minutos
 
-    if velocidad > 0.01:
+        velocidad = math.hypot(
+            vx,
+            vy
+        )
 
-        rumbo = (
-            math.degrees(
-                math.atan2(vx, -vy)
+        resultado.append({
+            "dt": minutos,
+            "dx": dx,
+            "dy": dy,
+            "vx": vx,
+            "vy": vy,
+            "speed": velocidad,
+            "bearing": bearing(
+                dx,
+                dy
             )
-            % 360
+        })
+
+    return resultado
+
+
+def area_series(historial):
+
+    valores = []
+
+    for h in historial:
+
+        valor = num(
+            h.get("pixeles")
         )
 
-    else:
-        rumbo = None
+        if (
+            valor is not None
+            and
+            valor > 0
+        ):
 
-    # Aceleración.
-    aceleracion = track.get(
-        "aceleracion_pixeles_min2"
+            valores.append(
+                (
+                    h["timestamp"],
+                    valor
+                )
+            )
+
+    return valores
+
+
+def intensity_num(h):
+
+    valor = h.get(
+        "nivel_intensidad"
     )
+
+    mapa = {
+        "MUY_DEBIL": 1,
+        "DEBIL": 2,
+        "MODERADA": 3,
+        "FUERTE": 4,
+        "MUY_FUERTE": 5,
+        "SEVERA": 6
+    }
 
     if (
-        aceleracion is None
-        and len(movimientos) >= 2
+        isinstance(valor, str)
+        and
+        valor in mapa
     ):
+        return mapa[valor]
 
-        aceleracion = (
-            movimientos[-1]["velocidad"]
-            - movimientos[-2]["velocidad"]
-        ) / max(
-            movimientos[-1]["intervalo"],
-            1
-        )
+    return None
 
-    # Tendencia de área.
+
+def evolution(historial):
+
+    areas = area_series(
+        historial
+    )
+
     cambios_area = []
 
-    for entrada in historial[1:]:
+    for (_, anterior), (_, actual) in zip(
+        areas,
+        areas[1:]
+    ):
 
-        valor = entrada.get(
-            "cambio_area_porcentaje"
-        )
+        if anterior > 0:
 
-        if valor is not None:
-
-            try:
-                cambios_area.append(
-                    float(valor)
+            cambios_area.append(
+                (
+                    actual - anterior
                 )
-            except Exception:
-                pass
+                /
+                anterior
+                *
+                100
+            )
 
     if cambios_area:
 
@@ -268,312 +332,673 @@ def predecir_nucleo(track):
 
         tendencia_area = None
 
-    # Probabilidad heurística de intensificación.
-    intensificacion = 50.0
+    intensidades = [
+        intensity_num(h)
+        for h in historial
+    ]
+
+    intensidades = [
+        x
+        for x in intensidades
+        if x is not None
+    ]
+
+    if len(intensidades) >= 2:
+
+        tendencia_intensidad = (
+            intensidades[-1]
+            -
+            intensidades[0]
+        )
+
+    else:
+
+        tendencia_intensidad = 0
+
+    score = 50.0
 
     if tendencia_area is not None:
 
-        intensificacion += max(
-            -25,
-            min(
-                25,
-                tendencia_area * 0.8
+        score += (
+            clamp(
+                tendencia_area,
+                -25,
+                25
             )
+            *
+            0.9
         )
 
-    if aceleracion is not None:
-
-        intensificacion += max(
-            -15,
-            min(
-                15,
-                aceleracion * 300
-            )
+    score += max(
+        -18,
+        min(
+            18,
+            tendencia_intensidad * 9
         )
+    )
 
     intensificacion = clamp(
-        intensificacion
+        score
     )
 
     debilitamiento = clamp(
         100 - intensificacion
     )
 
-    # Confianza del movimiento.
-    confianza_movimiento = float(
-        track.get(
-            "confianza_movimiento",
-            50
+    return (
+        intensificacion,
+        debilitamiento,
+        tendencia_area,
+        tendencia_intensidad
+    )
+
+
+def predict(
+    track,
+    current_timestamp
+):
+
+    historial = clean_history(
+        track
+    )
+
+    fecha_actual = dt(
+        current_timestamp
+    )
+
+    if fecha_actual:
+
+        historial = [
+            h
+            for h in historial
+            if dt(
+                h["timestamp"]
+            ) <= fecha_actual
+        ]
+
+    if not historial:
+        return None
+
+    movimientos = movements(
+        historial[-6:]
+    )
+
+    actual = historial[-1]
+
+    (
+        intensificacion,
+        debilitamiento,
+        tendencia_area,
+        tendencia_intensidad
+    ) = evolution(
+        historial[-6:]
+    )
+
+    resultado = {
+
+        "track_id":
+            track.get("id"),
+
+        "pronostico_disponible":
+            False,
+
+        "posicion_actual": {
+
+            "x":
+                round(
+                    float(actual["x"]),
+                    2
+                ),
+
+            "y":
+                round(
+                    float(actual["y"]),
+                    2
+                )
+        },
+
+        "frames_utilizados":
+            len(historial),
+
+        "intervalos_movimiento_validos":
+            len(movimientos),
+
+        "probabilidad_intensificacion":
+            round(
+                intensificacion,
+                1
+            ),
+
+        "probabilidad_debilitamiento":
+            round(
+                debilitamiento,
+                1
+            )
+    }
+
+    if not movimientos:
+
+        resultado["motivo"] = (
+            "SIN_MOVIMIENTO_VALIDO"
         )
-        or 50
+
+        return resultado
+
+    pesos = list(
+        range(
+            1,
+            len(movimientos) + 1
+        )
+    )
+
+    total_pesos = sum(
+        pesos
+    )
+
+    vx = sum(
+        m["vx"] * peso
+        for m, peso
+        in zip(
+            movimientos,
+            pesos
+        )
+    ) / total_pesos
+
+    vy = sum(
+        m["vy"] * peso
+        for m, peso
+        in zip(
+            movimientos,
+            pesos
+        )
+    ) / total_pesos
+
+    velocidad = math.hypot(
+        vx,
+        vy
+    )
+
+    rumbo_actual = bearing(
+        vx,
+        vy
     )
 
     cambios_rumbo = []
 
-    for indice in range(
+    for i in range(
         1,
         len(movimientos)
     ):
 
-        cambio = diferencia_angulos(
-            movimientos[indice]["rumbo"],
-            movimientos[indice - 1]["rumbo"],
+        cambio = angle_diff(
+            movimientos[i]["bearing"],
+            movimientos[i - 1]["bearing"]
         )
 
         if cambio is not None:
-            cambios_rumbo.append(cambio)
+            cambios_rumbo.append(
+                cambio
+            )
 
     if cambios_rumbo:
 
-        consistencia = clamp(
-            100
-            - (
-                mean(cambios_rumbo)
-                * 0.25
-            )
+        cambio_rumbo_medio = mean(
+            cambios_rumbo
         )
 
     else:
 
-        consistencia = 60.0
+        cambio_rumbo_medio = 0.0
 
-    confianza = clamp(
-        0.55 * confianza_movimiento
-        + 0.30 * consistencia
-        + 15
-        * min(len(movimientos), 3)
-        / 3
+    velocidades = [
+        m["speed"]
+        for m in movimientos
+    ]
+
+    if len(velocidades) > 1:
+
+        variacion_velocidad = pstdev(
+            velocidades
+        )
+
+    else:
+
+        variacion_velocidad = 0.0
+
+    consistencia = clamp(
+        100
+        -
+        cambio_rumbo_medio * 0.9
+        -
+        (
+            variacion_velocidad
+            /
+            max(
+                velocidad,
+                0.01
+            )
+        )
+        * 20
     )
 
-    # Posición actual.
-    x_actual = float(actual["x"])
-    y_actual = float(actual["y"])
+    confianza_movimiento = num(
+        track.get(
+            "confianza_movimiento"
+        )
+    )
+
+    if confianza_movimiento is None:
+        confianza_movimiento = 50.0
+
+    if len(movimientos) >= 3:
+
+        confianza_datos = 35.0
+
+    elif len(movimientos) == 2:
+
+        confianza_datos = 22.0
+
+    else:
+
+        confianza_datos = 8.0
+
+    confianza = clamp(
+        0.45 * confianza_movimiento
+        +
+        0.30 * consistencia
+        +
+        confianza_datos
+    )
+
+    aceleracion = None
+
+    if len(movimientos) >= 2:
+
+        aceleracion = (
+            movimientos[-1]["speed"]
+            -
+            movimientos[-2]["speed"]
+        ) / max(
+            movimientos[-1]["dt"],
+            1
+        )
+
+    elif num(
+        track.get(
+            "aceleracion_pixeles_min2"
+        )
+    ) is not None:
+
+        aceleracion = num(
+            track.get(
+                "aceleracion_pixeles_min2"
+            )
+        )
 
     pronosticos = []
 
-    for horizonte in HORIZONTES_MIN:
+    x0 = float(
+        actual["x"]
+    )
 
-        vx_futuro = vx
-        vy_futuro = vy
+    y0 = float(
+        actual["y"]
+    )
 
-        # Solo aplicamos aceleración pequeña
-        # y en la dirección actual.
+    for horizonte in HORIZONTES:
+
+        velocidad_x = vx
+        velocidad_y = vy
+
         if (
             aceleracion is not None
-            and abs(float(aceleracion)) < 0.15
-            and velocidad > 0.01
+            and
+            velocidad > 0.01
         ):
 
             ux = vx / velocidad
             uy = vy / velocidad
 
-            vx_futuro += (
-                ux
-                * float(aceleracion)
-                * horizonte
-            )
-
-            vy_futuro += (
-                uy
-                * float(aceleracion)
-                * horizonte
-            )
-
-        x_futuro = (
-            x_actual
-            + vx_futuro * horizonte
-        )
-
-        y_futuro = (
-            y_actual
-            + vy_futuro * horizonte
-        )
-
-        velocidad_futura = math.hypot(
-            vx_futuro,
-            vy_futuro
-        )
-
-        if velocidad_futura > 0.01:
-
-            rumbo_futuro = (
-                math.degrees(
-                    math.atan2(
-                        vx_futuro,
-                        -vy_futuro
-                    )
+            aceleracion_limitada = max(
+                -0.15,
+                min(
+                    0.15,
+                    aceleracion
                 )
-                % 360
             )
 
-        else:
+            velocidad_x = (
+                vx
+                +
+                ux
+                *
+                aceleracion_limitada
+                *
+                horizonte
+            )
 
-            rumbo_futuro = None
+            velocidad_y = (
+                vy
+                +
+                uy
+                *
+                aceleracion_limitada
+                *
+                horizonte
+            )
 
-        pronosticos.append(
-            {
-                "horizonte_minutos": horizonte,
-                "x_estimado": round(
-                    x_futuro,
+        x_estimado = (
+            x0
+            +
+            velocidad_x
+            *
+            horizonte
+        )
+
+        y_estimado = (
+            y0
+            +
+            velocidad_y
+            *
+            horizonte
+        )
+
+        velocidad_estimada = math.hypot(
+            velocidad_x,
+            velocidad_y
+        )
+
+        rumbo_estimado = bearing(
+            velocidad_x,
+            velocidad_y
+        )
+
+        incertidumbre = max(
+            2.0,
+            horizonte
+            *
+            max(
+                0.05,
+                velocidad * 0.35
+            )
+            +
+            horizonte
+            /
+            10
+            *
+            cambio_rumbo_medio
+            *
+            0.08
+        )
+
+        pronosticos.append({
+
+            "horizonte_minutos":
+                horizonte,
+
+            "x_estimado":
+                round(
+                    x_estimado,
                     2
                 ),
-                "y_estimado": round(
-                    y_futuro,
+
+            "y_estimado":
+                round(
+                    y_estimado,
                     2
                 ),
-                "velocidad_estimada_pixeles_min": round(
-                    velocidad_futura,
+
+            "velocidad_estimada_pixeles_min":
+                round(
+                    velocidad_estimada,
                     4
                 ),
-                "rumbo_estimado_grados": (
+
+            "rumbo_estimado_grados":
+                (
                     round(
-                        rumbo_futuro,
+                        rumbo_estimado,
                         1
                     )
-                    if rumbo_futuro is not None
+                    if rumbo_estimado is not None
                     else None
                 ),
-                "direccion_estimada": (
-                    sector_meteorologico(
-                        rumbo_futuro
-                    )
+
+            "direccion_estimada":
+                sector(
+                    rumbo_estimado
                 ),
-            }
-        )
 
-    return {
-        "track_id": track.get("id"),
-        "pronostico_disponible": True,
+            "incertidumbre_pixeles":
+                round(
+                    incertidumbre,
+                    1
+                )
+        })
 
-        "posicion_actual": {
-            "x": round(x_actual, 2),
-            "y": round(y_actual, 2),
-        },
+    disponible = (
+        len(movimientos) >= 2
+    )
 
-        "velocidad_actual_pixeles_min": round(
-            velocidad,
-            4
-        ),
+    resultado.update({
 
-        "rumbo_actual_grados": (
-            round(rumbo, 1)
-            if rumbo is not None
-            else None
-        ),
+        "pronostico_disponible":
+            disponible,
 
-        "direccion_actual": (
-            sector_meteorologico(rumbo)
-        ),
-
-        "aceleracion_pixeles_min2": (
+        "velocidad_actual_pixeles_min":
             round(
-                float(aceleracion),
-                5
-            )
-            if aceleracion is not None
-            else None
-        ),
+                velocidad,
+                4
+            ),
 
-        "tendencia_area_porcentaje": (
+        "rumbo_actual_grados":
+            (
+                round(
+                    rumbo_actual,
+                    1
+                )
+                if rumbo_actual is not None
+                else None
+            ),
+
+        "direccion_actual":
+            sector(
+                rumbo_actual
+            ),
+
+        "aceleracion_pixeles_min2":
+            (
+                round(
+                    aceleracion,
+                    5
+                )
+                if aceleracion is not None
+                else None
+            ),
+
+        "tendencia_area_porcentaje":
+            (
+                round(
+                    tendencia_area,
+                    2
+                )
+                if tendencia_area is not None
+                else None
+            ),
+
+        "tendencia_intensidad_niveles":
+            tendencia_intensidad,
+
+        "consistencia_movimiento":
             round(
-                tendencia_area,
-                2
+                consistencia,
+                1
+            ),
+
+        "confianza_prediccion":
+            round(
+                confianza if disponible
+                else min(
+                    confianza,
+                    49
+                ),
+                1
+            ),
+
+        "horizontes":
+            pronosticos if disponible else [],
+
+        "motivo":
+            (
+                None
+                if disponible
+                else
+                "SOLO_UN_INTERVALO_VALIDO"
             )
-            if tendencia_area is not None
-            else None
-        ),
+    })
 
-        "probabilidad_intensificacion": round(
-            intensificacion,
-            1
-        ),
-
-        "probabilidad_debilitamiento": round(
-            debilitamiento,
-            1
-        ),
-
-        "confianza_prediccion": round(
-            confianza,
-            1
-        ),
-
-        "horizontes": pronosticos,
-
-        "advertencia": (
-            "Velocidad y posición están "
-            "en píxeles. Falta "
-            "georreferenciación para "
-            "convertir a km/h y distancia real."
-        ),
-    }
+    return resultado
 
 
 def main():
 
     if not INPUT.exists():
         raise FileNotFoundError(
-            f"No existe {INPUT}"
+            INPUT
         )
 
-    datos = json.loads(
+    if not STATE.exists():
+        raise FileNotFoundError(
+            STATE
+        )
+
+    seguimiento = json.loads(
         INPUT.read_text(
             encoding="utf-8"
         )
     )
 
-    intervalo = float(
-        datos.get(
-            "intervalo_minutos",
-            0
+    estado = json.loads(
+        STATE.read_text(
+            encoding="utf-8"
         )
-        or 0
     )
+
+    radar_timestamp = (
+        estado.get(
+            "radar_timestamp"
+        )
+        or
+        seguimiento.get(
+            "radar_timestamp"
+        )
+    )
+
+    intervalo = num(
+        seguimiento.get(
+            "intervalo_minutos"
+        )
+    )
+
+    if intervalo is None:
+        intervalo = 0.0
+
+    intervalo_valido = (
+        MIN_DT
+        <= intervalo
+        <= MAX_DT
+    )
+
+    # SOLAMENTE los núcleos del último frame.
+    ids_actuales = set()
+
+    for nucleo in estado.get(
+        "nucleos",
+        []
+    ):
+
+        try:
+
+            ids_actuales.add(
+                int(
+                    nucleo["track_id"]
+                )
+            )
+
+        except Exception:
+            pass
+
+    tracks_por_id = {}
+
+    for track in estado.get(
+        "tracks",
+        []
+    ):
+
+        try:
+
+            tracks_por_id[
+                int(track["id"])
+            ] = track
+
+        except Exception:
+            pass
+
+    tracks_actuales = []
+
+    for track_id in sorted(
+        ids_actuales
+    ):
+
+        track = tracks_por_id.get(
+            track_id
+        )
+
+        if not track:
+            continue
+
+        if not track.get(
+            "activo",
+            False
+        ):
+            continue
+
+        tracks_actuales.append(
+            track
+        )
 
     resultado = {
 
-        "version": 1,
+        "version": 2,
 
         "radar_timestamp":
-            datos.get(
-                "radar_timestamp"
-            ),
+            radar_timestamp,
 
         "intervalo_minutos":
             intervalo,
 
         "tipo":
-            "PREDICCION_HEURISTICA",
+            "PREDICCION_HEURISTICA_MULTIFRAME",
 
         "prediccion_global_disponible":
-            2 <= intervalo <= 30,
+            intervalo_valido,
 
-        "nucleos": [],
+        "nucleos": []
     }
 
-    if not resultado[
-        "prediccion_global_disponible"
-    ]:
+    if not intervalo_valido:
 
         resultado["motivo"] = (
-            "Intervalo temporal no válido "
-            "para extrapolación."
+            "Intervalo temporal no válido para extrapolación."
         )
 
     else:
 
-        for track in datos.get(
-            "tracks",
-            []
-        ):
+        for track in tracks_actuales:
 
-            if not track.get(
-                "activo"
-            ):
-                continue
-
-            prediccion = (
-                predecir_nucleo(track)
+            prediccion = predict(
+                track,
+                radar_timestamp
             )
 
             if prediccion:
@@ -584,65 +1009,175 @@ def main():
                 )
 
         disponibles = [
-            nucleo
-            for nucleo
-            in resultado["nucleos"]
-            if nucleo.get(
+            p
+            for p in resultado["nucleos"]
+            if p.get(
                 "pronostico_disponible"
             )
         ]
 
         resultado["resumen"] = {
 
+            "nucleos_actuales":
+                len(tracks_actuales),
+
+            "nucleos_evaluados":
+                len(
+                    resultado["nucleos"]
+                ),
+
             "nucleos_con_prediccion":
                 len(disponibles),
 
             "nucleos_sin_prediccion":
-                len(resultado["nucleos"])
-                - len(disponibles),
+                (
+                    len(
+                        resultado["nucleos"]
+                    )
+                    -
+                    len(disponibles)
+                ),
 
             "promedio_intensificacion":
-                round(
-                    mean(
-                        nucleo[
-                            "probabilidad_intensificacion"
-                        ]
-                        for nucleo
-                        in disponibles
-                    ),
-                    1
-                )
-                if disponibles
-                else None,
+                (
+                    round(
+                        mean(
+                            p[
+                                "probabilidad_intensificacion"
+                            ]
+                            for p in disponibles
+                        ),
+                        1
+                    )
+                    if disponibles
+                    else None
+                ),
 
             "promedio_debilitamiento":
-                round(
-                    mean(
-                        nucleo[
-                            "probabilidad_debilitamiento"
-                        ]
-                        for nucleo
-                        in disponibles
-                    ),
-                    1
-                )
-                if disponibles
-                else None,
+                (
+                    round(
+                        mean(
+                            p[
+                                "probabilidad_debilitamiento"
+                            ]
+                            for p in disponibles
+                        ),
+                        1
+                    )
+                    if disponibles
+                    else None
+                ),
 
             "promedio_confianza":
-                round(
-                    mean(
-                        nucleo[
-                            "confianza_prediccion"
-                        ]
-                        for nucleo
-                        in disponibles
-                    ),
-                    1
+                (
+                    round(
+                        mean(
+                            p[
+                                "confianza_prediccion"
+                            ]
+                            for p in disponibles
+                        ),
+                        1
+                    )
+                    if disponibles
+                    else None
                 )
-                if disponibles
-                else None,
         }
+
+        # Movimiento global del sistema.
+        if disponibles:
+
+            vectores_x = []
+            vectores_y = []
+
+            for p in disponibles:
+
+                velocidad = (
+                    p.get(
+                        "velocidad_actual_pixeles_min"
+                    )
+                    or 0
+                )
+
+                grados = p.get(
+                    "rumbo_actual_grados"
+                )
+
+                if grados is None:
+                    continue
+
+                rad = math.radians(
+                    grados
+                )
+
+                vectores_x.append(
+                    velocidad
+                    *
+                    math.sin(rad)
+                )
+
+                vectores_y.append(
+                    -velocity
+                    *
+                    math.cos(rad)
+                )
+
+            if vectores_x:
+
+                vx = mean(
+                    vectores_x
+                )
+
+                vy = mean(
+                    vectores_y
+                )
+
+                velocidad_sistema = math.hypot(
+                    vx,
+                    vy
+                )
+
+                rumbo_sistema = bearing(
+                    vx,
+                    vy
+                )
+
+                resultado[
+                    "movimiento_sistema"
+                ] = {
+
+                    "velocidad_media_vectorial_pixeles_min":
+                        round(
+                            velocidad_sistema,
+                            4
+                        ),
+
+                    "rumbo_grados":
+                        (
+                            round(
+                                rumbo_sistema,
+                                1
+                            )
+                            if rumbo_sistema is not None
+                            else None
+                        ),
+
+                    "direccion":
+                        sector(
+                            rumbo_sistema
+                        ),
+
+                    "nucleos_utilizados":
+                        len(
+                            vectores_x
+                        )
+                }
+
+    resultado["limitacion"] = (
+        "Predicción heurística. "
+        "Velocidad y posición permanecen "
+        "en píxeles hasta georreferenciar RMA10."
+    )
 
     OUTPUT.parent.mkdir(
         parents=True,
@@ -660,6 +1195,11 @@ def main():
 
     print(
         f"OK: {OUTPUT}"
+    )
+
+    print(
+        "Núcleos actuales evaluados: "
+        f"{len(resultado['nucleos'])}"
     )
 
 
