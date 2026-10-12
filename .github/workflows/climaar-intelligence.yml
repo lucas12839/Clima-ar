@@ -37,6 +37,7 @@ jobs:
       - name: Crear directorios
         run: |
           mkdir -p data/radar/historico
+          mkdir -p data/radar/seguimiento
           mkdir -p data/ia
           mkdir -p logs
 
@@ -59,57 +60,49 @@ jobs:
           path = "data/radar/radar_features_rainviewer.csv"
           expected = 21
 
-          with open(
-              path,
-              encoding="utf-8",
-              newline=""
-          ) as f:
-
+          with open(path, encoding="utf-8", newline="") as f:
               reader = csv.reader(f)
 
               try:
                   header = next(reader)
               except StopIteration:
-                  raise SystemExit(
-                      "ERROR: CSV vacío"
-                  )
+                  raise SystemExit("ERROR: CSV vacío")
 
               if len(header) != expected:
                   raise SystemExit(
-                      f"ERROR: encabezado tiene "
-                      f"{len(header)} columnas; "
+                      f"ERROR: encabezado tiene {len(header)} columnas; "
                       f"esperadas {expected}"
                   )
 
               rows = 0
 
-              for line, row in enumerate(
-                  reader,
-                  start=2
-              ):
-
+              for line, row in enumerate(reader, start=2):
                   if not row:
                       continue
 
                   if len(row) != expected:
                       raise SystemExit(
-                          f"ERROR: línea {line} tiene "
-                          f"{len(row)} columnas; "
+                          f"ERROR: línea {line} tiene {len(row)} columnas; "
                           f"esperadas {expected}"
                       )
 
                   rows += 1
 
           if rows == 0:
-              raise SystemExit(
-                  "ERROR: CSV sin datos"
-              )
+              raise SystemExit("ERROR: CSV sin datos")
 
           print(
-              f"CSV OK: {rows} filas / "
-              f"{expected} columnas"
+              f"CSV OK: {rows} filas / {expected} columnas"
           )
           PY
+
+      - name: Procesador de radar ClimaAR
+        run: |
+          python procesador_radar.py
+
+      - name: Verificar procesamiento
+        run: |
+          test -s data/radar/resultado_procesamiento.json
 
       - name: Decodificador de radar
         run: |
@@ -135,29 +128,39 @@ jobs:
             echo "tormenta_intelligence.py no encontrado; se continúa."
           fi
 
+      - name: Seguimiento temporal de células
+        run: |
+          python seguimiento_temporal.py
+
+      - name: Verificar seguimiento temporal
+        run: |
+          test -s data/radar/seguimiento/seguimiento_temporal.json
+
+      - name: Predicción de evolución
+        run: |
+          python prediccion_evolucion.py
+
+      - name: Verificar predicción
+        run: |
+          test -s data/radar/seguimiento/prediccion_evolucion.json
+          test -s data/radar/seguimiento/predicciones_pendientes.json
+
       - name: Verificación final
         run: |
           python - <<'PY'
           import csv
           import os
 
-          path = "data/radar/radar_features_rainviewer.csv"
+          csv_path = "data/radar/radar_features_rainviewer.csv"
           expected = 21
 
-          with open(
-              path,
-              encoding="utf-8",
-              newline=""
-          ) as f:
-
+          with open(csv_path, encoding="utf-8", newline="") as f:
               reader = csv.reader(f)
 
               try:
                   header = next(reader)
               except StopIteration:
-                  raise SystemExit(
-                      "ERROR: CSV vacío"
-                  )
+                  raise SystemExit("ERROR FINAL: CSV vacío")
 
               if len(header) != expected:
                   raise SystemExit(
@@ -167,11 +170,7 @@ jobs:
 
               count = 0
 
-              for line, row in enumerate(
-                  reader,
-                  start=2
-              ):
-
+              for line, row in enumerate(reader, start=2):
                   if not row:
                       continue
 
@@ -184,43 +183,37 @@ jobs:
                   count += 1
 
           if count == 0:
-              raise SystemExit(
-                  "ERROR FINAL: CSV sin filas"
-              )
+              raise SystemExit("ERROR FINAL: CSV sin filas")
 
-          if not os.path.isfile(
-              "data/radar/actual.png"
-          ):
-              raise SystemExit(
-                  "ERROR FINAL: falta actual.png"
-              )
+          required_files = [
+              "data/radar/actual.png",
+              "data/radar/radar_nowcast.json",
+              "data/radar/status.json",
+              "data/radar/resultado_procesamiento.json",
+              "data/radar/seguimiento/seguimiento_temporal.json",
+              "data/radar/seguimiento/prediccion_evolucion.json",
+              "data/radar/seguimiento/predicciones_pendientes.json",
+          ]
 
-          if os.path.getsize(
-              "data/radar/actual.png"
-          ) == 0:
-              raise SystemExit(
-                  "ERROR FINAL: actual.png está vacío"
-              )
+          for path in required_files:
+              if not os.path.isfile(path):
+                  raise SystemExit(
+                      f"ERROR FINAL: falta {path}"
+                  )
 
-          if not os.path.isfile(
-              "data/radar/radar_nowcast.json"
-          ):
-              raise SystemExit(
-                  "ERROR FINAL: falta radar_nowcast.json"
-              )
-
-          if not os.path.isfile(
-              "data/radar/status.json"
-          ):
-              raise SystemExit(
-                  "ERROR FINAL: falta status.json"
-              )
+              if os.path.getsize(path) == 0:
+                  raise SystemExit(
+                      f"ERROR FINAL: archivo vacío: {path}"
+                  )
 
           print(
               f"VALIDACIÓN FINAL OK: "
-              f"{count} filas / "
-              f"{expected} columnas"
+              f"{count} filas / {expected} columnas"
           )
+
+          print("Archivos de inteligencia OK:")
+          for path in required_files:
+              print(f"  OK: {path}")
           PY
 
       - name: Preparar cambios
@@ -231,7 +224,7 @@ jobs:
           git add -A
 
           if ! git diff --cached --quiet; then
-            git commit -m "ClimaAR: actualización radar e inteligencia"
+            git commit -m "ClimaAR: seguimiento y prediccion de tormentas"
           else
             echo "No hay cambios para guardar."
           fi
@@ -239,7 +232,5 @@ jobs:
       - name: Sincronizar y publicar
         run: |
           git fetch origin main
-
           git rebase origin/main
-
           git push origin HEAD:main
