@@ -9,20 +9,32 @@ jobs:
 
     steps:
 
+      # =========================================================
+      # 1. DESCARGAR REPOSITORIO
+      # =========================================================
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
+      # =========================================================
+      # 2. CONFIGURAR PYTHON
+      # =========================================================
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      # =========================================================
+      # 3. INSTALAR DEPENDENCIAS
+      # =========================================================
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
+      # =========================================================
+      # 4. RECUPERAR MÁSCARA ESTÁTICA
+      # =========================================================
       - name: Recuperar mascara estatica
         id: mascara
         uses: actions/cache@v4
@@ -32,39 +44,92 @@ jobs:
             data/radar/mascara_ecos_estaticos.json
           key: climaar-rma10-mascara-estatica-v1
 
+      # =========================================================
+      # 5. RECUPERAR HISTORIAL TEMPORAL
+      #
+      # IMPORTANTE:
+      # Cada ejecución tiene una clave nueva.
+      # restore-keys permite recuperar la caché anterior.
+      # Al finalizar, GitHub guarda el nuevo estado.
+      # =========================================================
       - name: Recuperar historial temporal
         id: temporal
         uses: actions/cache@v4
         with:
           path: |
             data/radar/seguimiento
-          key: climaar-rma10-temporal-v2
+          key: climaar-rma10-temporal-${{ github.run_id }}
           restore-keys: |
-            climaar-rma10-temporal-v2
+            climaar-rma10-temporal-
 
+      # =========================================================
+      # 6. DESCARGAR RADAR RMA10
+      # =========================================================
       - name: Descargar radar RMA10
         env:
           CLIMAAR_CAPTURE_MODE: ${{ steps.mascara.outputs.cache-hit == 'true' && 'rapido' || 'inicial' }}
         run: |
           python scraper/capturar_radar_smn.py
 
+      # =========================================================
+      # 7. GENERAR MÁSCARA ESTÁTICA SI NO EXISTE
+      # =========================================================
       - name: Generar mascara estatica inicial
         if: steps.mascara.outputs.cache-hit != 'true'
         run: |
           python scripts/generar_mascara_estatica.py
 
+      # =========================================================
+      # 8. PROCESAR RADAR
+      # =========================================================
       - name: Procesar radar
         run: |
           python procesador_radar.py
 
+      # =========================================================
+      # 9. SEGUIMIENTO TEMPORAL
+      # =========================================================
       - name: Seguimiento temporal
         run: |
           python seguimiento_temporal.py
 
+      # =========================================================
+      # 10. PREDICCIÓN DE EVOLUCIÓN
+      # =========================================================
       - name: Prediccion de evolucion
         run: |
           python prediccion_evolucion.py
 
+      # =========================================================
+      # 11. MOSTRAR ESTADO TEMPORAL
+      # =========================================================
+      - name: Mostrar estado temporal
+        if: always()
+        run: |
+          echo "======================================"
+          echo "ESTADO TEMPORAL"
+          echo "======================================"
+
+          if [ -f data/radar/seguimiento/estado.json ]; then
+            cat data/radar/seguimiento/estado.json
+          else
+            echo "No existe estado.json"
+          fi
+
+          echo ""
+          echo "======================================"
+          echo "SEGUIMIENTO TEMPORAL"
+          echo "======================================"
+
+          if [ -f data/radar/seguimiento/seguimiento_temporal.json ]; then
+            cat data/radar/seguimiento/seguimiento_temporal.json
+          else
+            echo "No existe seguimiento_temporal.json"
+          fi
+
+      # =========================================================
+      # 12. SUBIR ARTEFACTOS
+      # =========================================================
       - name: Subir radar
         if: always()
         uses: actions/upload-artifact@v4
@@ -77,8 +142,12 @@ jobs:
             data/radar/mascara_ecos_estaticos.json
             data/radar/resultado_procesamiento.json
             data/radar/seguimiento/
+            data/radar/radar_timestamp.txt
           if-no-files-found: warn
 
+      # =========================================================
+      # 13. MOSTRAR ARCHIVOS GENERADOS
+      # =========================================================
       - name: Mostrar archivos generados
         if: always()
         run: |
