@@ -81,6 +81,7 @@ jobs:
 
           if [ "$TOTAL" -gt 0 ]; then
             echo "Últimos frames:"
+
             find data/radar/historico \
               -maxdepth 1 \
               -type f \
@@ -93,6 +94,7 @@ jobs:
           if [ -f ".climaar/estado_rma10.json" ]; then
             cp ".climaar/estado_rma10.json" \
                "data/radar/seguimiento/estado.json"
+
             echo "Estado persistente restaurado."
           else
             echo "No existe estado persistente previo."
@@ -101,7 +103,20 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install requests numpy scipy opencv-python-headless Pillow pandas joblib scikit-learn fastapi "uvicorn[standard]" playwright
+
+          pip install \
+            requests \
+            numpy \
+            scipy \
+            opencv-python-headless \
+            Pillow \
+            pandas \
+            joblib \
+            scikit-learn \
+            fastapi \
+            "uvicorn[standard]" \
+            playwright
+
           playwright install --with-deps chromium
 
       - name: Capturar radar RMA10
@@ -129,6 +144,7 @@ jobs:
           if [ -f "data/radar/seguimiento/estado.json" ]; then
             cp "data/radar/seguimiento/estado.json" \
                ".climaar/estado_rma10.json"
+
             echo "Estado persistente actualizado."
           else
             echo "ERROR: no se generó estado.json"
@@ -138,9 +154,11 @@ jobs:
       - name: Mostrar resultado
         run: |
           echo "===== TIMESTAMP RADAR ====="
+
           cat data/radar/radar_timestamp.txt 2>/dev/null || true
 
           echo "===== HISTÓRICO ====="
+
           find data/radar/historico \
             -maxdepth 1 \
             -type f \
@@ -148,6 +166,7 @@ jobs:
             -printf "%f\n" | sort | tail -15
 
           echo "===== ESTADO ====="
+
           python - <<'PY'
           import json
           from pathlib import Path
@@ -155,12 +174,15 @@ jobs:
           p = Path("data/radar/seguimiento/estado.json")
 
           if p.exists():
-              d = json.loads(p.read_text())
+              d = json.loads(p.read_text(encoding="utf-8"))
 
               print("schema_version:", d.get("schema_version"))
               print("tracks:", len(d.get("tracks", [])))
               print("tracks_activos:", len(d.get("tracks_activos", [])))
-              print("ultimo_radar_timestamp:", d.get("ultimo_radar_timestamp"))
+              print(
+                  "ultimo_radar_timestamp:",
+                  d.get("ultimo_radar_timestamp")
+              )
           else:
               print("estado.json no encontrado")
           PY
@@ -168,35 +190,85 @@ jobs:
           echo "===== PREDICCIÓN ====="
 
           if [ -f "data/radar/seguimiento/prediccion_evolucion.json" ]; then
+
             python - <<'PY'
           import json
-          from pathlib import Path
 
-          p = Path("data/radar/seguimiento/prediccion_evolucion.json")
-          d = json.loads(p.read_text())
+          p = "data/radar/seguimiento/prediccion_evolucion.json"
 
-          print("schema_version:", d.get("schema_version"))
-          print("timestamp_radar:", d.get("timestamp_radar"))
-          print("timestamp_generacion:", d.get("timestamp_generacion"))
+          with open(p, encoding="utf-8") as f:
+              d = json.load(f)
 
           resumen = d.get("resumen", {})
 
-          print("núcleos evaluados:", resumen.get("nucleos_evaluados"))
-          print("pronósticos generados:", resumen.get("pronosticos_generados"))
-          print("predicciones validadas:", resumen.get("predicciones_validadas"))
-          print("predicciones pendientes:", resumen.get("predicciones_pendientes"))
-          print("estimaciones de huecos:", resumen.get("huecos_estimados"))
+          print("schema_version:", d.get("schema_version"))
+          print("radar_timestamp:", d.get("radar_timestamp"))
+          print("intervalo_minutos:", d.get("intervalo_minutos"))
 
-          print("horizontes disponibles:")
+          print(
+              "prediccion_global_disponible:",
+              d.get("prediccion_global_disponible")
+          )
 
-          pronosticos = d.get("pronosticos", {})
+          nucleos_con = resumen.get(
+              "nucleos_con_prediccion",
+              0
+          )
 
-          if isinstance(pronosticos, dict):
-              for horizonte, cantidad in pronosticos.items():
-                  print(f"  {horizonte}: {cantidad}")
+          nucleos_sin = resumen.get(
+              "nucleos_sin_prediccion",
+              0
+          )
+
+          print(
+              "núcleos evaluados:",
+              nucleos_con + nucleos_sin
+          )
+
+          print(
+              "núcleos con predicción:",
+              nucleos_con
+          )
+
+          print(
+              "núcleos sin predicción:",
+              nucleos_sin
+          )
+
+          print(
+              "huecos estimados:",
+              resumen.get(
+                  "huecos_estimados",
+                  0
+              )
+          )
+
+          print(
+              "predicciones validadas:",
+              resumen.get(
+                  "predicciones_validadas_en_este_frame",
+                  0
+              )
+          )
+
+          print(
+              "confianza promedio:",
+              resumen.get(
+                  "promedio_confianza"
+              )
+          )
+
+          print(
+              "error medio validado (pixeles):",
+              resumen.get(
+                  "error_medio_pixeles_validado"
+              )
+          )
 
           print("================================")
+
           PY
+
           else
             echo "ERROR: no existe prediccion_evolucion.json"
             exit 1
@@ -208,9 +280,15 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -f .climaar/estado_rma10.json
-          git add -f data/radar/mascara_ecos_estaticos.png
-          git add -f data/radar/mascara_ecos_estaticos_confianza.png
-          git add -f data/radar/mascara_ecos_estaticos.json
+
+          git add -f \
+            data/radar/mascara_ecos_estaticos.png
+
+          git add -f \
+            data/radar/mascara_ecos_estaticos_confianza.png
+
+          git add -f \
+            data/radar/mascara_ecos_estaticos.json
 
           if git diff --cached --quiet; then
             echo "No hay cambios para guardar."
@@ -223,6 +301,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: radar-rma10
+
           path: |
             data/radar/historico/
             data/radar/resultado_procesamiento.json
@@ -231,5 +310,6 @@ jobs:
             data/radar/mascara_ecos_estaticos.json
             data/radar/seguimiento/
             data/radar/radar_timestamp.txt
+
           if-no-files-found: warn
           retention-days: 30
