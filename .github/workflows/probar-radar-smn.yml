@@ -25,9 +25,6 @@ jobs:
           mkdir -p .climaar
           echo "Directorio preparado."
 
-      # Recuperamos varios artefactos anteriores para reconstruir el histórico.
-      # Cada ejecución de GitHub puede conservar un frame distinto aunque
-      # SINARAME tarde en actualizarse.
       - name: Recuperar histórico desde artefactos anteriores
         env:
           GH_TOKEN: ${{ github.token }}
@@ -62,6 +59,7 @@ jobs:
               > "/tmp/radar_artifacts/${ID}.zip"; then
 
               mkdir -p "/tmp/radar_artifacts/${ID}"
+
               unzip -oq "/tmp/radar_artifacts/${ID}.zip" \
                 -d "/tmp/radar_artifacts/${ID}" || true
 
@@ -73,14 +71,20 @@ jobs:
             fi
           done
 
-          TOTAL=$(find data/radar/historico -maxdepth 1 -type f -name "*.png" | wc -l)
+          TOTAL=$(find data/radar/historico \
+            -maxdepth 1 \
+            -type f \
+            -name "*.png" | wc -l)
 
           echo "Artefactos revisados: $COUNT"
           echo "Frames históricos recuperados: $TOTAL"
 
           if [ "$TOTAL" -gt 0 ]; then
             echo "Últimos frames:"
-            find data/radar/historico -maxdepth 1 -type f -name "*.png" \
+            find data/radar/historico \
+              -maxdepth 1 \
+              -type f \
+              -name "*.png" \
               -printf "%f\n" | sort | tail -10
           fi
 
@@ -137,7 +141,10 @@ jobs:
           cat data/radar/radar_timestamp.txt 2>/dev/null || true
 
           echo "===== HISTÓRICO ====="
-          find data/radar/historico -maxdepth 1 -type f -name "*.png" \
+          find data/radar/historico \
+            -maxdepth 1 \
+            -type f \
+            -name "*.png" \
             -printf "%f\n" | sort | tail -15
 
           echo "===== ESTADO ====="
@@ -149,6 +156,7 @@ jobs:
 
           if p.exists():
               d = json.loads(p.read_text())
+
               print("schema_version:", d.get("schema_version"))
               print("tracks:", len(d.get("tracks", [])))
               print("tracks_activos:", len(d.get("tracks_activos", [])))
@@ -158,15 +166,40 @@ jobs:
           PY
 
           echo "===== PREDICCIÓN ====="
+
           if [ -f "data/radar/seguimiento/prediccion_evolucion.json" ]; then
             python - <<'PY'
           import json
-          p = "data/radar/seguimiento/prediccion_evolucion.json"
-          d = json.load(open(p))
+          from pathlib import Path
+
+          p = Path("data/radar/seguimiento/prediccion_evolucion.json")
+          d = json.loads(p.read_text())
+
           print("schema_version:", d.get("schema_version"))
-          print("nucleos_evaluados:", d.get("nucleos_evaluados"))
-          print("pronosticos_disponibles:", d.get("pronosticos_disponibles"))
+          print("timestamp_radar:", d.get("timestamp_radar"))
+          print("timestamp_generacion:", d.get("timestamp_generacion"))
+
+          resumen = d.get("resumen", {})
+
+          print("núcleos evaluados:", resumen.get("nucleos_evaluados"))
+          print("pronósticos generados:", resumen.get("pronosticos_generados"))
+          print("predicciones validadas:", resumen.get("predicciones_validadas"))
+          print("predicciones pendientes:", resumen.get("predicciones_pendientes"))
+          print("estimaciones de huecos:", resumen.get("huecos_estimados"))
+
+          print("horizontes disponibles:")
+
+          pronosticos = d.get("pronosticos", {})
+
+          if isinstance(pronosticos, dict):
+              for horizonte, cantidad in pronosticos.items():
+                  print(f"  {horizonte}: {cantidad}")
+
+          print("================================")
           PY
+          else
+            echo "ERROR: no existe prediccion_evolucion.json"
+            exit 1
           fi
 
       - name: Persistir estado y máscara
