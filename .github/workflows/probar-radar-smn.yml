@@ -24,6 +24,7 @@ jobs:
           mkdir -p data/radar/seguimiento
           mkdir -p data/radar
           mkdir -p .climaar
+
           echo "Directorio preparado."
 
       - name: Recuperar histórico desde artefactos anteriores
@@ -66,21 +67,39 @@ jobs:
                 "/tmp/radar_artifacts/${ID}.zip" \
                 -d "/tmp/radar_artifacts/${ID}" || true
 
+              # IMPORTANTE:
+              # Solo recuperar archivos históricos con formato:
+              # YYYYMMDDHHMMSS.png
+              #
+              # Se descartan archivos viejos del tipo:
+              # radar_1791390600.png
+
               find "/tmp/radar_artifacts/${ID}" \
                 -type f \
-                -name "*.png" \
                 -path "*/historico/*" \
+                -regextype posix-extended \
+                -regex ".*/[0-9]{14}\.png" \
                 -exec cp -n {} data/radar/historico/ \; || true
             fi
           done
 
+          # Limpiar cualquier archivo histórico viejo que haya quedado
+          # con el formato radar_XXXXXXXXXX.png
+          find data/radar/historico \
+            -maxdepth 1 \
+            -type f \
+            -name "radar_*.png" \
+            -delete || true
+
           TOTAL=$(find data/radar/historico \
             -maxdepth 1 \
             -type f \
-            -name "*.png" | wc -l)
+            -regextype posix-extended \
+            -regex ".*/[0-9]{14}\.png" \
+            | wc -l)
 
           echo "Artefactos revisados: $COUNT"
-          echo "Frames históricos recuperados: $TOTAL"
+          echo "Frames históricos válidos recuperados: $TOTAL"
 
       - name: Restaurar estado persistente
         run: |
@@ -377,7 +396,8 @@ jobs:
           find data/radar/historico \
             -maxdepth 1 \
             -type f \
-            -name "*.png" \
+            -regextype posix-extended \
+            -regex ".*/[0-9]{14}\.png" \
             -printf "%f\n" \
             | sort \
             | tail -15
@@ -417,14 +437,19 @@ jobs:
               )
           )
 
+          activos = d.get(
+              "tracks_activos",
+              []
+          )
+
+          if isinstance(activos, list):
+              activos_count = len(activos)
+          else:
+              activos_count = activos
+
           print(
               "tracks_activos:",
-              len(
-                  d.get(
-                      "tracks_activos",
-                      []
-                  )
-              )
+              activos_count
           )
 
           print(
