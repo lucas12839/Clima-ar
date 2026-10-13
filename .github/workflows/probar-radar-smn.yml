@@ -23,6 +23,7 @@ jobs:
           mkdir -p data/radar/seguimiento
           mkdir -p data/radar
           mkdir -p .climaar
+
           echo "Directorio preparado."
 
       - name: Recuperar histórico desde artefactos anteriores
@@ -51,6 +52,7 @@ jobs:
 
           for ID in $IDS; do
             COUNT=$((COUNT + 1))
+
             echo "Descargando artefacto $COUNT: $ID"
 
             if gh api \
@@ -60,7 +62,8 @@ jobs:
 
               mkdir -p "/tmp/radar_artifacts/${ID}"
 
-              unzip -oq "/tmp/radar_artifacts/${ID}.zip" \
+              unzip -oq \
+                "/tmp/radar_artifacts/${ID}.zip" \
                 -d "/tmp/radar_artifacts/${ID}" || true
 
               find "/tmp/radar_artifacts/${ID}" \
@@ -86,14 +89,17 @@ jobs:
               -maxdepth 1 \
               -type f \
               -name "*.png" \
-              -printf "%f\n" | sort | tail -10
+              -printf "%f\n" \
+              | sort \
+              | tail -10
           fi
 
       - name: Restaurar estado persistente
         run: |
           if [ -f ".climaar/estado_rma10.json" ]; then
-            cp ".climaar/estado_rma10.json" \
-               "data/radar/seguimiento/estado.json"
+            cp \
+              ".climaar/estado_rma10.json" \
+              "data/radar/seguimiento/estado.json"
 
             echo "Estado persistente restaurado."
           else
@@ -139,13 +145,201 @@ jobs:
         run: |
           python prediccion_evolucion.py
 
+      - name: Guardar predicciones normales como pendientes
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+
+          BASE = Path("data/radar/seguimiento")
+
+          PREDICCION = BASE / "prediccion_evolucion.json"
+          PENDIENTES = BASE / "predicciones_pendientes.json"
+
+          if not PREDICCION.exists():
+              raise SystemExit(
+                  "ERROR: no existe prediccion_evolucion.json"
+              )
+
+          data = json.loads(
+              PREDICCION.read_text(encoding="utf-8")
+          )
+
+          radar_ts = data.get("radar_timestamp")
+
+          if not radar_ts:
+              raise SystemExit(
+                  "ERROR: no existe radar_timestamp"
+              )
+
+          texto = radar_ts
+
+          if texto.endswith("Z"):
+              texto = texto[:-1] + "+00:00"
+
+          origen = datetime.fromisoformat(texto)
+
+          if origen.tzinfo is None:
+              origen = origen.replace(tzinfo=timezone.utc)
+
+          pendientes_data = {}
+
+          if PENDIENTES.exists():
+              try:
+                  pendientes_data = json.loads(
+                      PENDIENTES.read_text(
+                          encoding="utf-8"
+                      )
+                  )
+              except Exception:
+                  pendientes_data = {}
+
+          pendientes = pendientes_data.get(
+              "pendientes",
+              []
+          )
+
+          if not isinstance(pendientes, list):
+              pendientes = []
+
+          existentes = set()
+
+          for item in pendientes:
+              existentes.add(
+                  (
+                      str(item.get("track_id")),
+                      str(item.get("timestamp_objetivo"))
+                  )
+              )
+
+          agregadas = 0
+
+          nucleos = data.get("nucleos", [])
+
+          for nucleo in nucleos:
+
+              track_id = nucleo.get("track_id")
+
+              if track_id is None:
+                  continue
+
+              horizontes = nucleo.get(
+                  "horizontes",
+                  []
+              )
+
+              for pronostico in horizontes:
+
+                  horizonte = pronostico.get(
+                      "horizonte_minutos"
+                  )
+
+                  if horizonte is None:
+                      continue
+
+                  try:
+                      horizonte = float(horizonte)
+                  except (
+                      TypeError,
+                      ValueError
+                  ):
+                      continue
+
+                  objetivo = origen + timedelta(
+                      minutes=horizonte
+                  )
+
+                  objetivo_iso = (
+                      objetivo.astimezone(timezone.utc)
+                      .isoformat()
+                      .replace("+00:00", "Z")
+                  )
+
+                  clave = (
+                      str(track_id),
+                      objetivo_iso
+                  )
+
+                  if clave in existentes:
+                      continue
+
+                  pendiente = {
+                      "track_id": str(track_id),
+                      "timestamp_origen": radar_ts,
+                      "timestamp_objetivo": objetivo_iso,
+                      "horizonte_desde_origen_minutos": horizonte,
+                      "tipo": "PREDICCION_NORMAL",
+                      "x_estimado": pronostico.get(
+                          "x_estimado"
+                      ),
+                      "y_estimado": pronostico.get(
+                          "y_estimado"
+                      ),
+                      "velocidad_estimada_pixeles_min": pronostico.get(
+                          "velocidad_estimada_pixeles_min"
+                      ),
+                      "rumbo_estimado_grados": pronostico.get(
+                          "rumbo_estimado_grados"
+                      ),
+                      "direccion_estimada": pronostico.get(
+                          "direccion_estimada"
+                      ),
+                      "incertidumbre_pixeles": pronostico.get(
+                          "incertidumbre_pixeles"
+                      ),
+                      "confianza_prediccion": pronostico.get(
+                          "confianza_prediccion"
+                      )
+                  }
+
+                  pendientes.append(
+                      pendiente
+                  )
+
+                  existentes.add(
+                      clave
+                  )
+
+                  agregadas += 1
+
+          pendientes = pendientes[-500:]
+
+          salida = {
+              "schema_version": 3,
+              "actualizado": radar_ts,
+              "pendientes": pendientes
+          }
+
+          PENDIENTES.write_text(
+              json.dumps(
+                  salida,
+                  ensure_ascii=False,
+                  indent=2
+              ),
+              encoding="utf-8"
+          )
+
+          print(
+              f"Predicciones normales agregadas: {agregadas}"
+          )
+
+          print(
+              f"Predicciones pendientes totales: "
+              f"{len(pendientes)}"
+          )
+          PY
+
       - name: Guardar estado persistente
         run: |
           if [ -f "data/radar/seguimiento/estado.json" ]; then
-            cp "data/radar/seguimiento/estado.json" \
-               ".climaar/estado_rma10.json"
+
+            cp \
+              "data/radar/seguimiento/estado.json" \
+              ".climaar/estado_rma10.json"
 
             echo "Estado persistente actualizado."
+
           else
             echo "ERROR: no se generó estado.json"
             exit 1
@@ -155,7 +349,9 @@ jobs:
         run: |
           echo "===== TIMESTAMP RADAR ====="
 
-          cat data/radar/radar_timestamp.txt 2>/dev/null || true
+          cat \
+            data/radar/radar_timestamp.txt \
+            2>/dev/null || true
 
           echo "===== HISTÓRICO ====="
 
@@ -163,7 +359,9 @@ jobs:
             -maxdepth 1 \
             -type f \
             -name "*.png" \
-            -printf "%f\n" | sort | tail -15
+            -printf "%f\n" \
+            | sort \
+            | tail -15
 
           echo "===== ESTADO ====="
 
@@ -171,43 +369,101 @@ jobs:
           import json
           from pathlib import Path
 
-          p = Path("data/radar/seguimiento/estado.json")
+          p = Path(
+              "data/radar/seguimiento/estado.json"
+          )
 
           if p.exists():
-              d = json.loads(p.read_text(encoding="utf-8"))
 
-              print("schema_version:", d.get("schema_version"))
-              print("tracks:", len(d.get("tracks", [])))
-              print("tracks_activos:", len(d.get("tracks_activos", [])))
+              d = json.loads(
+                  p.read_text(
+                      encoding="utf-8"
+                  )
+              )
+
+              print(
+                  "schema_version:",
+                  d.get("schema_version")
+              )
+
+              print(
+                  "tracks:",
+                  len(
+                      d.get(
+                          "tracks",
+                          []
+                      )
+                  )
+              )
+
+              print(
+                  "tracks_activos:",
+                  len(
+                      d.get(
+                          "tracks_activos",
+                          []
+                      )
+                  )
+              )
+
               print(
                   "ultimo_radar_timestamp:",
-                  d.get("ultimo_radar_timestamp")
+                  d.get(
+                      "ultimo_radar_timestamp"
+                  )
               )
+
           else:
-              print("estado.json no encontrado")
+              print(
+                  "estado.json no encontrado"
+              )
           PY
 
           echo "===== PREDICCIÓN ====="
 
-          if [ -f "data/radar/seguimiento/prediccion_evolucion.json" ]; then
+          if [ -f \
+            "data/radar/seguimiento/prediccion_evolucion.json"
+          ]; then
 
             python - <<'PY'
           import json
 
-          p = "data/radar/seguimiento/prediccion_evolucion.json"
+          p = (
+              "data/radar/seguimiento/"
+              "prediccion_evolucion.json"
+          )
 
-          with open(p, encoding="utf-8") as f:
+          with open(
+              p,
+              encoding="utf-8"
+          ) as f:
               d = json.load(f)
 
-          resumen = d.get("resumen", {})
+          resumen = d.get(
+              "resumen",
+              {}
+          )
 
-          print("schema_version:", d.get("schema_version"))
-          print("radar_timestamp:", d.get("radar_timestamp"))
-          print("intervalo_minutos:", d.get("intervalo_minutos"))
+          print(
+              "schema_version:",
+              d.get("schema_version")
+          )
+
+          print(
+              "radar_timestamp:",
+              d.get("radar_timestamp")
+          )
+
+          print(
+              "intervalo_minutos:",
+              d.get("intervalo_minutos")
+          )
 
           print(
               "prediccion_global_disponible:",
-              d.get("prediccion_global_disponible")
+              d.get(
+                  "prediccion_global_disponible"
+              )
           )
 
           nucleos_con = resumen.get(
@@ -265,21 +521,72 @@ jobs:
               )
           )
 
-          print("================================")
+          print(
+              "================================"
+          )
 
           PY
 
           else
-            echo "ERROR: no existe prediccion_evolucion.json"
+
+            echo \
+              "ERROR: no existe prediccion_evolucion.json"
+
             exit 1
+
+          fi
+
+          echo "===== PREDICCIONES PENDIENTES ====="
+
+          if [ -f \
+            "data/radar/seguimiento/predicciones_pendientes.json"
+          ]; then
+
+            python - <<'PY'
+          import json
+
+          p = (
+              "data/radar/seguimiento/"
+              "predicciones_pendientes.json"
+          )
+
+          with open(
+              p,
+              encoding="utf-8"
+          ) as f:
+              d = json.load(f)
+
+          pendientes = d.get(
+              "pendientes",
+              []
+          )
+
+          print(
+              "pendientes:",
+              len(pendientes)
+          )
+
+          PY
+
+          else
+
+            echo \
+              "No existe archivo de pendientes."
+
           fi
 
       - name: Persistir estado y máscara
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config \
+            user.name \
+            "github-actions[bot]"
 
-          git add -f .climaar/estado_rma10.json
+          git config \
+            user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f \
+            .climaar/estado_rma10.json
 
           git add -f \
             data/radar/mascara_ecos_estaticos.png
@@ -291,14 +598,21 @@ jobs:
             data/radar/mascara_ecos_estaticos.json
 
           if git diff --cached --quiet; then
+
             echo "No hay cambios para guardar."
+
           else
-            git commit -m "Actualizar estado y mascara RMA10"
+
+            git commit \
+              -m "Actualizar estado y mascara RMA10"
+
             git push
+
           fi
 
       - name: Subir radar
         uses: actions/upload-artifact@v4
+
         with:
           name: radar-rma10
 
