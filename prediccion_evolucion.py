@@ -23,11 +23,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
 
+
 BASE = Path("data/radar/seguimiento")
 ESTADO = BASE / "estado.json"
 INPUT = BASE / "seguimiento_temporal.json"
 OUTPUT = BASE / "prediccion_evolucion.json"
 PENDING = BASE / "predicciones_pendientes.json"
+
+# Fuente real de frames radar.
+RADAR_HISTORY = Path("data/radar/historico")
 
 HORIZONTES_MIN = (5, 10, 20, 30)
 PASO_HUECO_MIN = 5
@@ -43,16 +47,31 @@ def load_json(path: Path, default):
         return default
 
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
+        return json.loads(
+            path.read_text(
+                encoding="utf-8"
+            )
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+        TypeError,
+    ):
         return default
 
 
 def save_json(path: Path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
+        json.dumps(
+            data,
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
@@ -70,16 +89,27 @@ def parse_ts(value):
         dt = datetime.fromisoformat(text)
 
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(
+                tzinfo=timezone.utc
+            )
 
-        return dt.astimezone(timezone.utc)
+        return dt.astimezone(
+            timezone.utc
+        )
 
-    except (TypeError, ValueError):
+    except (
+        TypeError,
+        ValueError,
+    ):
         return None
 
 
 def iso(dt):
-    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return (
+        dt.astimezone(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def canonical_ts(value):
@@ -87,16 +117,37 @@ def canonical_ts(value):
     return iso(dt) if dt else None
 
 
-def clamp(value, lo=0.0, hi=100.0):
+def clamp(
+    value,
+    lo=0.0,
+    hi=100.0,
+):
     try:
-        return max(lo, min(hi, float(value)))
-    except (TypeError, ValueError):
+        return max(
+            lo,
+            min(
+                hi,
+                float(value),
+            ),
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
         return lo
 
 
 def track_id(track):
-    value = track.get("track_id", track.get("id"))
-    return str(value) if value is not None else None
+    value = track.get(
+        "track_id",
+        track.get("id"),
+    )
+
+    return (
+        str(value)
+        if value is not None
+        else None
+    )
 
 
 def sector(degrees):
@@ -104,72 +155,155 @@ def sector(degrees):
         return None
 
     names = [
-        "N", "NNE", "NE", "ENE",
-        "E", "ESE", "SE", "SSE",
-        "S", "SSO", "SO", "OSO",
-        "O", "ONO", "NO", "NNO",
+        "N",
+        "NNE",
+        "NE",
+        "ENE",
+        "E",
+        "ESE",
+        "SE",
+        "SSE",
+        "S",
+        "SSO",
+        "SO",
+        "OSO",
+        "O",
+        "ONO",
+        "NO",
+        "NNO",
     ]
 
-    return names[int((degrees % 360) / 22.5 + 0.5) % 16]
+    return names[
+        int(
+            (degrees % 360)
+            / 22.5
+            + 0.5
+        )
+        % 16
+    ]
 
 
 def angle_diff(a, b):
     if a is None or b is None:
         return None
 
-    return abs((a - b + 180) % 360 - 180)
+    return abs(
+        (a - b + 180)
+        % 360
+        - 180
+    )
 
 
 def valid_history(track):
     history = []
 
-    for item in track.get("historial", []):
-        if not isinstance(item, dict):
+    for item in track.get(
+        "historial",
+        [],
+    ):
+        if not isinstance(
+            item,
+            dict,
+        ):
             continue
 
-        if item.get("x") is None or item.get("y") is None:
+        if (
+            item.get("x") is None
+            or item.get("y") is None
+        ):
             continue
 
-        ts = parse_ts(item.get("timestamp"))
+        ts = parse_ts(
+            item.get("timestamp")
+        )
 
         if ts is None:
             continue
 
-        history.append(dict(item))
+        history.append(
+            dict(item)
+        )
 
     history.sort(
-        key=lambda x: parse_ts(x["timestamp"])
+        key=lambda x: parse_ts(
+            x["timestamp"]
+        )
     )
 
     return history
 
 
-def recent_history(track, limit=8):
-    return valid_history(track)[-limit:]
+def recent_history(
+    track,
+    limit=8,
+):
+    return valid_history(track)[
+        -limit:
+    ]
 
 
-def previous_radar_timestamp(tracks, current_ts):
+def previous_radar_timestamp(
+    tracks,
+    current_ts,
+):
     """
-    Busca el último timestamp real observado antes del radar actual.
-    No utiliza intervalo_minutos de seguimiento_temporal.json.
+    Busca el timestamp del frame radar real
+    inmediatamente anterior al radar actual.
+
+    La fuente de verdad es:
+        data/radar/historico/
+
+    Los archivos válidos tienen formato:
+        YYYYMMDDHHMMSS.png
+
+    No utiliza:
+        seguimiento_temporal.json
+        intervalo_minutos
+        timestamps internos de los tracks
     """
 
-    current = parse_ts(current_ts)
+    current = parse_ts(
+        current_ts
+    )
 
     if current is None:
         return None
 
+    if not RADAR_HISTORY.exists():
+        return None
+
     timestamps = []
 
-    for track in tracks:
-        for item in valid_history(track):
-            ts = parse_ts(item.get("timestamp"))
+    for path in RADAR_HISTORY.glob(
+        "*.png"
+    ):
+        name = path.name
 
-            if ts is None:
-                continue
+        # YYYYMMDDHHMMSS.png
+        if (
+            len(name) != 18
+            or not name.endswith(".png")
+        ):
+            continue
 
-            if ts < current:
-                timestamps.append(ts)
+        stamp = name[:-4]
+
+        if not stamp.isdigit():
+            continue
+
+        try:
+            dt = datetime.strptime(
+                stamp,
+                "%Y%m%d%H%M%S",
+            ).replace(
+                tzinfo=timezone.utc
+            )
+
+        except ValueError:
+            continue
+
+        if dt < current:
+            timestamps.append(dt)
 
     if not timestamps:
         return None
@@ -177,13 +311,19 @@ def previous_radar_timestamp(tracks, current_ts):
     return max(timestamps)
 
 
-def real_radar_interval_minutes(tracks, current_ts):
+def real_radar_interval_minutes(
+    tracks,
+    current_ts,
+):
     """
-    Calcula el intervalo real entre el radar actual y el radar
-    observado inmediatamente anterior.
+    Calcula el intervalo real entre el frame
+    radar actual y el frame histórico inmediatamente
+    anterior.
     """
 
-    current = parse_ts(current_ts)
+    current = parse_ts(
+        current_ts
+    )
 
     if current is None:
         return 0.0
@@ -203,15 +343,29 @@ def real_radar_interval_minutes(tracks, current_ts):
     if minutes < 0:
         return 0.0
 
-    return round(minutes, 2)
+    return round(
+        minutes,
+        2,
+    )
 
 
-def movement_samples(history, max_interval=60.0):
+def movement_samples(
+    history,
+    max_interval=60.0,
+):
     result = []
 
-    for a, b in zip(history, history[1:]):
-        ta = parse_ts(a.get("timestamp"))
-        tb = parse_ts(b.get("timestamp"))
+    for a, b in zip(
+        history,
+        history[1:],
+    ):
+        ta = parse_ts(
+            a.get("timestamp")
+        )
+
+        tb = parse_ts(
+            b.get("timestamp")
+        )
 
         if not ta or not tb:
             continue
@@ -220,18 +374,35 @@ def movement_samples(history, max_interval=60.0):
             tb - ta
         ).total_seconds() / 60.0
 
-        if dt < 2 or dt > max_interval:
+        if (
+            dt < 2
+            or dt > max_interval
+        ):
             continue
 
-        dx = float(b["x"]) - float(a["x"])
-        dy = float(b["y"]) - float(a["y"])
+        dx = (
+            float(b["x"])
+            - float(a["x"])
+        )
 
-        speed = math.hypot(dx, dy) / dt
+        dy = (
+            float(b["y"])
+            - float(a["y"])
+        )
+
+        speed = (
+            math.hypot(dx, dy)
+            / dt
+        )
 
         bearing = (
             math.degrees(
-                math.atan2(dx, -dy)
-            ) % 360
+                math.atan2(
+                    dx,
+                    -dy,
+                )
+            )
+            % 360
             if speed > 0.001
             else None
         )
@@ -249,23 +420,36 @@ def movement_samples(history, max_interval=60.0):
     return result
 
 
-def estimate_motion(track, history=None):
+def estimate_motion(
+    track,
+    history=None,
+):
     history = (
         history
         if history is not None
         else recent_history(track)
     )
 
-    movements = movement_samples(history)
+    movements = movement_samples(
+        history
+    )
 
-    if not history or not movements:
+    if (
+        not history
+        or not movements
+    ):
         return None
 
     weights = list(
-        range(1, len(movements) + 1)
+        range(
+            1,
+            len(movements) + 1,
+        )
     )
 
-    total_weight = sum(weights)
+    total_weight = sum(
+        weights
+    )
 
     vx = sum(
         item["vx"] * weight
@@ -283,12 +467,19 @@ def estimate_motion(track, history=None):
         )
     ) / total_weight
 
-    speed = math.hypot(vx, vy)
+    speed = math.hypot(
+        vx,
+        vy,
+    )
 
     bearing = (
         math.degrees(
-            math.atan2(vx, -vy)
-        ) % 360
+            math.atan2(
+                vx,
+                -vy,
+            )
+        )
+        % 360
         if speed > 0.001
         else None
     )
@@ -305,20 +496,30 @@ def estimate_motion(track, history=None):
         b = movements[-1]
 
         avg_dt = max(
-            (a["dt"] + b["dt"]) / 2.0,
+            (
+                a["dt"]
+                + b["dt"]
+            )
+            / 2.0,
             1.0,
         )
 
         acceleration = (
-            b["speed"] - a["speed"]
+            b["speed"]
+            - a["speed"]
         ) / avg_dt
 
     turns = []
 
-    for i in range(1, len(movements)):
+    for i in range(
+        1,
+        len(movements),
+    ):
         value = angle_diff(
             movements[i]["bearing"],
-            movements[i - 1]["bearing"],
+            movements[
+                i - 1
+            ]["bearing"],
         )
 
         if value is not None:
@@ -337,7 +538,10 @@ def estimate_motion(track, history=None):
         "calidad_movimiento",
         track.get(
             "confianza_movimiento",
-            track.get("confianza", 50),
+            track.get(
+                "confianza",
+                50,
+            ),
         ),
     )
 
@@ -345,14 +549,22 @@ def estimate_motion(track, history=None):
         movement_confidence = float(
             movement_confidence
         )
-    except (TypeError, ValueError):
+    except (
+        TypeError,
+        ValueError,
+    ):
         movement_confidence = 50.0
 
     confidence = clamp(
-        0.60 * movement_confidence
-        + 0.25 * consistency
+        0.60
+        * movement_confidence
+        + 0.25
+        * consistency
         + 15.0
-        * min(len(movements), 3)
+        * min(
+            len(movements),
+            3,
+        )
         / 3.0
     )
 
@@ -368,11 +580,16 @@ def estimate_motion(track, history=None):
                 area_changes.append(
                     float(value)
                 )
-            except (TypeError, ValueError):
+            except (
+                TypeError,
+                ValueError,
+            ):
                 pass
 
     area_trend = (
-        mean(area_changes[-4:])
+        mean(
+            area_changes[-4:]
+        )
         if area_changes
         else None
     )
@@ -393,7 +610,8 @@ def estimate_motion(track, history=None):
             -15.0,
             min(
                 15.0,
-                float(acceleration) * 300.0,
+                float(acceleration)
+                * 300.0,
             ),
         )
 
@@ -411,23 +629,34 @@ def estimate_motion(track, history=None):
         "area_trend": area_trend,
         "intensification": intensification,
         "weakening": 100.0 - intensification,
-        "history_points": len(history),
+        "history_points": len(
+            history
+        ),
         "last": history[-1],
     }
 
 
-def project(motion, x0, y0, horizon):
+def project(
+    motion,
+    x0,
+    y0,
+    horizon,
+):
     vx = motion["vx"]
     vy = motion["vy"]
     speed = motion["speed"]
-    acceleration = motion["acceleration"]
+    acceleration = motion[
+        "acceleration"
+    ]
 
     vx_future = vx
     vy_future = vy
 
     if (
         acceleration is not None
-        and abs(float(acceleration)) < 0.15
+        and abs(
+            float(acceleration)
+        ) < 0.15
         and speed > 0.01
     ):
         ux = vx / speed
@@ -446,8 +675,13 @@ def project(motion, x0, y0, horizon):
             ),
         )
 
-        vx_future += ux * delta_v
-        vy_future += uy * delta_v
+        vx_future += (
+            ux * delta_v
+        )
+
+        vy_future += (
+            uy * delta_v
+        )
 
     x_future = (
         float(x0)
@@ -470,14 +704,18 @@ def project(motion, x0, y0, horizon):
                 vx_future,
                 -vy_future,
             )
-        ) % 360
+        )
+        % 360
         if future_speed > 0.001
         else None
     )
 
     base_error = max(
         2.0,
-        (100.0 - motion["confidence"])
+        (
+            100.0
+            - motion["confidence"]
+        )
         * 0.12,
     )
 
@@ -510,7 +748,8 @@ def project(motion, x0, y0, horizon):
                 future_bearing,
                 1,
             )
-            if future_bearing is not None
+            if future_bearing
+            is not None
             else None
         ),
         "direccion_estimada": sector(
@@ -531,14 +770,18 @@ def validate_point(
     dx = (
         float(actual["x"])
         - float(
-            prediction["x_estimado"]
+            prediction[
+                "x_estimado"
+            ]
         )
     )
 
     dy = (
         float(actual["y"])
         - float(
-            prediction["y_estimado"]
+            prediction[
+                "y_estimado"
+            ]
         )
     )
 
@@ -557,13 +800,22 @@ def validate_point(
             2,
         ),
         "track_id_real": (
-            str(actual.get("track_id"))
-            if actual.get("track_id")
+            str(
+                actual.get(
+                    "track_id"
+                )
+            )
+            if actual.get(
+                "track_id"
+            )
             is not None
             else None
         ),
         "error_pixeles": round(
-            math.hypot(dx, dy),
+            math.hypot(
+                dx,
+                dy,
+            ),
             2,
         ),
         "error_x_pixeles": round(
@@ -577,15 +829,21 @@ def validate_point(
     }
 
 
-def build_observation_index(tracks):
+def build_observation_index(
+    tracks,
+):
     observations = {}
 
     for track in tracks:
         tid = track_id(track)
 
-        for obs in valid_history(track):
+        for obs in valid_history(
+            track
+        ):
             ts = canonical_ts(
-                obs.get("timestamp")
+                obs.get(
+                    "timestamp"
+                )
             )
 
             if ts is None:
@@ -605,7 +863,10 @@ def all_observations_at(
     tracks,
     timestamp,
 ):
-    target = canonical_ts(timestamp)
+    target = canonical_ts(
+        timestamp
+    )
+
     result = []
 
     if target is None:
@@ -614,10 +875,14 @@ def all_observations_at(
     for track in tracks:
         tid = track_id(track)
 
-        for obs in valid_history(track):
+        for obs in valid_history(
+            track
+        ):
             if (
                 canonical_ts(
-                    obs.get("timestamp")
+                    obs.get(
+                        "timestamp"
+                    )
                 )
                 != target
             ):
@@ -639,11 +904,15 @@ def cross_track_match(
         return None
 
     px = float(
-        prediction["x_estimado"]
+        prediction[
+            "x_estimado"
+        ]
     )
 
     py = float(
-        prediction["y_estimado"]
+        prediction[
+            "y_estimado"
+        ]
     )
 
     uncertainty = float(
@@ -664,18 +933,27 @@ def cross_track_match(
     for obs in observations:
         try:
             distance = math.hypot(
-                float(obs["x"]) - px,
-                float(obs["y"]) - py,
+                float(obs["x"])
+                - px,
+                float(obs["y"])
+                - py,
             )
-        except (TypeError, ValueError):
+        except (
+            TypeError,
+            ValueError,
+        ):
             continue
 
-        if distance > max_distance:
+        if (
+            distance
+            > max_distance
+        ):
             continue
 
         if (
             best is None
-            or distance < best[0]
+            or distance
+            < best[0]
         ):
             best = (
                 distance,
@@ -693,10 +971,14 @@ def validate_pending(
     tracks,
     pending,
 ):
-    now = parse_ts(current_ts)
+    now = parse_ts(
+        current_ts
+    )
 
-    observations = build_observation_index(
-        tracks
+    observations = (
+        build_observation_index(
+            tracks
+        )
     )
 
     remaining = []
@@ -709,13 +991,18 @@ def validate_pending(
             )
         )
 
-        if not target or not now:
+        if (
+            not target
+            or not now
+        ):
             remaining.append(
                 prediction
             )
             continue
 
-        target_dt = parse_ts(target)
+        target_dt = parse_ts(
+            target
+        )
 
         if (
             target_dt is None
@@ -733,16 +1020,19 @@ def validate_pending(
         )
 
         actual = observations.get(
-            (tid, target)
+            (
+                tid,
+                target,
+            )
         )
 
         if actual is not None:
-            prediction["validacion"] = (
-                validate_point(
-                    prediction,
-                    actual,
-                    "MISMO_TRACK",
-                )
+            prediction[
+                "validacion"
+            ] = validate_point(
+                prediction,
+                actual,
+                "MISMO_TRACK",
             )
 
             validated.append(
@@ -764,12 +1054,12 @@ def validate_pending(
         )
 
         if actual is not None:
-            prediction["validacion"] = (
-                validate_point(
-                    prediction,
-                    actual,
-                    "TRACK_REASIGNADO_POR_PROXIMIDAD",
-                )
+            prediction[
+                "validacion"
+            ] = validate_point(
+                prediction,
+                actual,
+                "TRACK_REASIGNADO_POR_PROXIMIDAD",
             )
 
             validated.append(
@@ -782,7 +1072,10 @@ def validate_pending(
             prediction
         )
 
-    return remaining, validated
+    return (
+        remaining,
+        validated,
+    )
 
 
 def confidence_for_horizon(
@@ -808,8 +1101,13 @@ def make_gap_predictions(
     start_ts,
     end_ts,
 ):
-    start = parse_ts(start_ts)
-    end = parse_ts(end_ts)
+    start = parse_ts(
+        start_ts
+    )
+
+    end = parse_ts(
+        end_ts
+    )
 
     if not start or not end:
         return []
@@ -818,13 +1116,21 @@ def make_gap_predictions(
         end - start
     ).total_seconds() / 60.0
 
-    if gap <= TOLERANCIA_HUECO_MIN:
+    if (
+        gap
+        <= TOLERANCIA_HUECO_MIN
+    ):
         return []
 
     origin = motion["last"]
 
-    x0 = float(origin["x"])
-    y0 = float(origin["y"])
+    x0 = float(
+        origin["x"]
+    )
+
+    y0 = float(
+        origin["y"]
+    )
 
     tid = track_id(track)
 
@@ -866,7 +1172,9 @@ def make_gap_predictions(
             }
         )
 
-        horizon += PASO_HUECO_MIN
+        horizon += (
+            PASO_HUECO_MIN
+        )
 
     projection = project(
         motion,
@@ -885,7 +1193,10 @@ def make_gap_predictions(
                 end_ts
             ),
             "horizonte_desde_origen_minutos":
-                round(gap, 2),
+                round(
+                    gap,
+                    2,
+                ),
             "tipo":
                 "PREDICCION_CIERRE_HUECO",
             **projection,
@@ -972,7 +1283,10 @@ def predict_track(track):
             tb - ta
         ).total_seconds() / 60.0
 
-        if gap <= TOLERANCIA_HUECO_MIN:
+        if (
+            gap
+            <= TOLERANCIA_HUECO_MIN
+        ):
             continue
 
         history_before = [
@@ -1032,11 +1346,15 @@ def predict_track(track):
             "pronostico_disponible": True,
             "posicion_actual": {
                 "x": round(
-                    float(current["x"]),
+                    float(
+                        current["x"]
+                    ),
                     2,
                 ),
                 "y": round(
-                    float(current["y"]),
+                    float(
+                        current["y"]
+                    ),
                     2,
                 ),
             },
@@ -1061,7 +1379,9 @@ def predict_track(track):
             "aceleracion_pixeles_min2": (
                 round(
                     float(
-                        motion["acceleration"]
+                        motion[
+                            "acceleration"
+                        ]
                     ),
                     5,
                 )
@@ -1071,7 +1391,9 @@ def predict_track(track):
             ),
             "tendencia_area_porcentaje": (
                 round(
-                    motion["area_trend"],
+                    motion[
+                        "area_trend"
+                    ],
                     2,
                 )
                 if motion["area_trend"]
@@ -1087,19 +1409,28 @@ def predict_track(track):
                 ),
             "probabilidad_debilitamiento":
                 round(
-                    motion["weakening"],
+                    motion[
+                        "weakening"
+                    ],
                     1,
                 ),
             "confianza_prediccion":
                 round(
-                    motion["confidence"],
+                    motion[
+                        "confidence"
+                    ],
                     1,
                 ),
             "puntos_historial_utilizados":
-                motion["history_points"],
-            "horizontes": forecasts,
+                motion[
+                    "history_points"
+                ],
+            "horizontes":
+                forecasts,
             "huecos_detectados":
-                len(gap_predictions),
+                len(
+                    gap_predictions
+                ),
             "estimaciones_hueco":
                 gap_predictions,
         },
@@ -1113,7 +1444,7 @@ def get_tracks(
 ):
     tracks = estado.get(
         "tracks",
-        []
+        [],
     )
 
     if not isinstance(
@@ -1125,13 +1456,16 @@ def get_tracks(
     tracks = [
         dict(t)
         for t in tracks
-        if isinstance(t, dict)
+        if isinstance(
+            t,
+            dict,
+        )
     ]
 
     if not tracks:
         fallback = temporal.get(
             "tracks",
-            []
+            [],
         )
 
         if isinstance(
@@ -1141,7 +1475,10 @@ def get_tracks(
             tracks = [
                 dict(t)
                 for t in fallback
-                if isinstance(t, dict)
+                if isinstance(
+                    t,
+                    dict,
+                )
             ]
 
     return tracks
@@ -1174,12 +1511,19 @@ def main():
 
     # CORRECCIÓN:
     # El intervalo se calcula exclusivamente usando
-    # timestamps reales de radar presentes en estado.json.
-    # No se usa el intervalo_minutos de seguimiento_temporal.json,
-    # porque puede quedar arrastrado de un estado anterior.
-    intervalo = real_radar_interval_minutes(
-        tracks,
-        radar_ts,
+    # los archivos reales del histórico de radar:
+    #
+    # data/radar/historico/YYYYMMDDHHMMSS.png
+    #
+    # No se utiliza el intervalo guardado en
+    # seguimiento_temporal.json ni los timestamps
+    # internos de los tracks.
+
+    intervalo = (
+        real_radar_interval_minutes(
+            tracks,
+            radar_ts,
+        )
     )
 
     pending_data = load_json(
@@ -1205,12 +1549,13 @@ def main():
     ):
         pending = []
 
-    pending, validated_now = (
-        validate_pending(
-            radar_ts,
-            tracks,
-            pending,
-        )
+    (
+        pending,
+        validated_now,
+    ) = validate_pending(
+        radar_ts,
+        tracks,
+        pending,
     )
 
     predictions = []
@@ -1240,8 +1585,11 @@ def main():
         ) < 2:
             continue
 
-        prediction, gap_predictions = (
-            predict_track(track)
+        (
+            prediction,
+            gap_predictions,
+        ) = predict_track(
+            track
         )
 
         predictions.append(
@@ -1416,6 +1764,7 @@ def main():
 
     result = {
         "schema_version": 4,
+
         "radar_timestamp":
             radar_ts,
 
@@ -1461,8 +1810,10 @@ def main():
         PENDING,
         {
             "schema_version": 3,
-            "actualizado": radar_ts,
-            "pendientes": pending,
+            "actualizado":
+                radar_ts,
+            "pendientes":
+                pending,
         },
     )
 
@@ -1471,15 +1822,18 @@ def main():
     )
 
     print(
-        f"Tracks analizados: {len(tracks)}"
+        f"Tracks analizados: "
+        f"{len(tracks)}"
     )
 
     print(
-        f"Predicciones: {len(predictions)}"
+        f"Predicciones: "
+        f"{len(predictions)}"
     )
 
     print(
-        f"Huecos estimados: {gap_count}"
+        f"Huecos estimados: "
+        f"{gap_count}"
     )
 
     print(
@@ -1488,7 +1842,8 @@ def main():
     )
 
     print(
-        f"Pendientes: {len(pending)}"
+        f"Pendientes: "
+        f"{len(pending)}"
     )
 
 
