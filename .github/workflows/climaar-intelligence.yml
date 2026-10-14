@@ -68,11 +68,9 @@ jobs:
           echo "Contenido del artefacto:"
           find /tmp/radar-artifact -maxdepth 4 -type f | sort | head -80
 
-          # upload-artifact conserva data/radar como raíz común.
           if [ -d /tmp/radar-artifact/data/radar ]; then
             cp -a /tmp/radar-artifact/data/radar/. data/radar/
           else
-            # Compatibilidad si el empaquetado cambia la raíz.
             cp -a /tmp/radar-artifact/. data/radar/ 2>/dev/null || true
           fi
 
@@ -147,23 +145,55 @@ jobs:
           }
 
           out = Path("data/ia/resultado_final.json")
+
           out.write_text(
-              json.dumps(result, ensure_ascii=False, indent=2),
+              json.dumps(
+                  result,
+                  ensure_ascii=False,
+                  indent=2
+              ),
               encoding="utf-8",
           )
 
           print("RESULTADO FINAL GENERADO")
           print("Estado:", i.get("estado"))
           print("Severidad:", i.get("severidad"))
-          print("Prob. tormenta:", i.get("probabilidades", {}).get("tormenta"))
-          print("Prob. llegada:", i.get("probabilidades", {}).get("llegada_bahia"))
-          print("Prob. fortalecimiento:", i.get("probabilidades", {}).get("fortalecimiento"))
-          print("Prob. lluvia fuerte:", i.get("peligros", {}).get("lluvia_fuerte"))
-          print("Prob. viento fuerte:", i.get("peligros", {}).get("viento_fuerte"))
-          print("Prob. granizo:", i.get("peligros", {}).get("granizo"))
-          print("Prob. rayos:", i.get("peligros", {}).get("rayo"))
-          print("IA V8 disponible:", i.get("ia_v8", {}).get("disponible"))
-          print("Confianza:", i.get("confianza_modelo"))
+          print(
+              "Prob. tormenta:",
+              i.get("probabilidades", {}).get("tormenta")
+          )
+          print(
+              "Prob. llegada:",
+              i.get("probabilidades", {}).get("llegada_bahia")
+          )
+          print(
+              "Prob. fortalecimiento:",
+              i.get("probabilidades", {}).get("fortalecimiento")
+          )
+          print(
+              "Prob. lluvia fuerte:",
+              i.get("peligros", {}).get("lluvia_fuerte")
+          )
+          print(
+              "Prob. viento fuerte:",
+              i.get("peligros", {}).get("viento_fuerte")
+          )
+          print(
+              "Prob. granizo:",
+              i.get("peligros", {}).get("granizo")
+          )
+          print(
+              "Prob. rayos:",
+              i.get("peligros", {}).get("rayo")
+          )
+          print(
+              "IA V8 disponible:",
+              i.get("ia_v8", {}).get("disponible")
+          )
+          print(
+              "Confianza:",
+              i.get("confianza_modelo")
+          )
           print("Salida:", out)
           PY
 
@@ -171,6 +201,8 @@ jobs:
 
       - name: Persistir resultados
         run: |
+          set -e
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -187,8 +219,9 @@ jobs:
             echo "No hay cambios para guardar."
           else
             git commit -m "ClimaAR: integrar inteligencia operativa"
-            git fetch origin main
-            git rebase origin/main
+
+            git pull --rebase --autostash origin main
+
             git push origin HEAD:main
           fi
 
@@ -216,7 +249,11 @@ jobs:
           from pathlib import Path
 
           p = Path("data/ia/resultado_final.json")
-          d = json.loads(p.read_text(encoding="utf-8"))
+
+          d = json.loads(
+              p.read_text(encoding="utf-8")
+          )
+
           i = d.get("inteligencia", {})
           probs = i.get("probabilidades", {})
           hazards = i.get("peligros", {})
@@ -226,15 +263,45 @@ jobs:
           print("Estado:", i.get("estado"))
           print("Severidad:", i.get("severidad"))
           print("Tormenta:", probs.get("tormenta"))
-          print("Llegada Bahía Blanca:", probs.get("llegada_bahia"))
-          print("Fortalecimiento:", probs.get("fortalecimiento"))
-          print("Debilitamiento:", probs.get("debilitamiento"))
-          print("Lluvia fuerte:", hazards.get("lluvia_fuerte"))
-          print("Viento fuerte:", hazards.get("viento_fuerte"))
-          print("Granizo:", hazards.get("granizo"))
-          print("Rayos:", hazards.get("rayo"))
-          print("Índice severidad:", i.get("indice_hibrido_severidad"))
-          print("IA V8:", i.get("ia_v8", {}).get("disponible"))
-          print("Confianza:", i.get("confianza_modelo"))
+          print(
+              "Llegada Bahía Blanca:",
+              probs.get("llegada_bahia")
+          )
+          print(
+              "Fortalecimiento:",
+              probs.get("fortalecimiento")
+          )
+          print(
+              "Debilitamiento:",
+              probs.get("debilitamiento")
+          )
+          print(
+              "Lluvia fuerte:",
+              hazards.get("lluvia_fuerte")
+          )
+          print(
+              "Viento fuerte:",
+              hazards.get("viento_fuerte")
+          )
+          print(
+              "Granizo:",
+              hazards.get("granizo")
+          )
+          print(
+              "Rayos:",
+              hazards.get("rayo")
+          )
+          print(
+              "Índice severidad:",
+              i.get("indice_hibrido_severidad")
+          )
+          print(
+              "IA V8:",
+              i.get("ia_v8", {}).get("disponible")
+          )
+          print(
+              "Confianza:",
+              i.get("confianza_modelo")
+          )
           print("===================================")
           PY
