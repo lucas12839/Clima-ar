@@ -2,15 +2,12 @@
 """
 ClimaAR - Adaptador operativo RMA10 -> Storm Engine.
 
-Convierte la salida REAL del pipeline RMA10 al contrato que consumen
-meteorologia_fusion.py y tormenta_intelligence.py.
+Mantiene TODOS los nucleos detectados y asocia, cuando es posible,
+cada nucleo con su track temporal correspondiente.
 
-Importante:
-- NO convierte el nivel de intensidad 0-6 en dBZ.
-- NO inventa coordenadas geográficas.
-- El movimiento se calcula desde el historial real del track.
-- La distancia/ETA al centro del dominio son aproximadas y quedan
-  marcadas como tales hasta calibrar la geometría geográfica del RMA10.
+No reduce la situacion a un unico nucleo para el calculo de riesgo.
+Los campos historicos de nucleo_principal_id se conservan solamente
+por compatibilidad.
 """
 
 from __future__ import annotations
@@ -30,22 +27,15 @@ PREDICCION = BASE / "seguimiento" / "prediccion_evolucion.json"
 
 SALIDA = BASE / "radar_nowcast.json"
 
-
-# Aproximación provisional del diámetro del dominio RMA10.
-# Se utiliza únicamente para estimaciones internas de distancia/velocidad.
 RADAR_DIAMETRO_KM_APROX = 240.0
+MAX_TRACK_MATCH_DISTANCE_PX = 45.0
 
 
 def load_json(path: Path, default):
     if not path.exists():
         return default
-
     try:
-        return json.loads(
-            path.read_text(
-                encoding="utf-8"
-            )
-        )
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
 
@@ -53,46 +43,27 @@ def load_json(path: Path, default):
 def number(value, default=0.0):
     try:
         value = float(value)
-
-        if math.isfinite(value):
-            return value
-
-        return default
-
+        return value if math.isfinite(value) else default
     except Exception:
         return default
 
 
 def clamp(value, low=0.0, high=1.0):
     value = number(value, low)
-
-    return max(
-        low,
-        min(high, value)
-    )
+    return max(low, min(high, value))
 
 
 def timestamp_from_result(resultado):
-    name = str(
-        resultado.get(
-            "imagen_procesada",
-            ""
-        )
-    )
+    name = str(resultado.get("imagen_procesada", ""))
 
-    if (
-        len(name) >= 14
-        and name[:14].isdigit()
-    ):
+    if len(name) >= 14 and name[:14].isdigit():
         dt = datetime.strptime(
             name[:14],
             "%Y%m%d%H%M%S"
         )
 
         return (
-            dt.replace(
-                tzinfo=timezone.utc
-            )
+            dt.replace(tzinfo=timezone.utc)
             .isoformat()
             .replace("+00:00", "Z")
         )
@@ -105,35 +76,21 @@ def timestamp_from_result(resultado):
 
 
 def active_tracks(estado):
-    tracks = estado.get(
-        "tracks",
-        []
-    )
+    tracks = estado.get("tracks", [])
 
-    if not isinstance(
-        tracks,
-        list
-    ):
+    if not isinstance(tracks, list):
         return []
 
     result = []
 
     for track in tracks:
-
-        if not isinstance(
-            track,
-            dict
-        ):
+        if not isinstance(track, dict):
             continue
 
-        if track.get(
-            "activo"
-        ) is False:
+        if track.get("activo") is False:
             continue
 
-        if track.get(
-            "presente_en_ultimo_frame"
-        ) is False:
+        if track.get("presente_en_ultimo_frame") is False:
             continue
 
         result.append(track)
@@ -142,29 +99,13 @@ def active_tracks(estado):
 
 
 def track_motion(track):
-    """
-    Calcula el movimiento usando los dos últimos puntos reales
-    almacenados en el historial del track.
-
-    No depende de dx_pixeles/dy_pixeles porque esos campos no forman
-    parte del esquema actual de estado.json.
-    """
-
-    history = track.get(
-        "historial",
-        []
-    )
+    history = track.get("historial", [])
 
     if (
         not isinstance(history, list)
         or len(history) < 2
     ):
-        return (
-            0.0,
-            0.0,
-            0.0,
-            None
-        )
+        return 0.0, 0.0, 0.0, None
 
     previous = history[-2]
     current = history[-1]
@@ -173,12 +114,7 @@ def track_motion(track):
         not isinstance(previous, dict)
         or not isinstance(current, dict)
     ):
-        return (
-            0.0,
-            0.0,
-            0.0,
-            None
-        )
+        return 0.0, 0.0, 0.0, None
 
     dx = (
         number(current.get("x"))
@@ -197,24 +133,20 @@ def track_motion(track):
 
     dt_min = None
 
-    timestamp_previous = previous.get(
-        "timestamp"
-    )
-
-    timestamp_current = current.get(
-        "timestamp"
-    )
-
     try:
         dt_previous = datetime.fromisoformat(
-            str(timestamp_previous).replace(
+            str(
+                previous.get("timestamp")
+            ).replace(
                 "Z",
                 "+00:00"
             )
         )
 
         dt_current = datetime.fromisoformat(
-            str(timestamp_current).replace(
+            str(
+                current.get("timestamp")
+            ).replace(
                 "Z",
                 "+00:00"
             )
@@ -240,11 +172,6 @@ def track_motion(track):
         speed_px_min = 0.0
 
     if distance_px > 0:
-
-        # 0° = norte
-        # 90° = este
-        # 180° = sur
-        # 270° = oeste
         direction = (
             math.degrees(
                 math.atan2(
@@ -254,7 +181,6 @@ def track_motion(track):
             )
             + 360.0
         ) % 360.0
-
     else:
         direction = None
 
@@ -267,11 +193,6 @@ def track_motion(track):
 
 
 def area_trend(track):
-    """
-    Determina fortalecimiento/debilitamiento comparando el área
-    del track entre los dos últimos frames.
-    """
-
     history = track.get(
         "historial",
         []
@@ -332,7 +253,236 @@ def area_trend(track):
     )
 
 
-def choose_principal(tracks):
+def track_current_position(track):
+    history = track.get(
+        "historial",
+        []
+    )
+
+    if (
+        isinstance(history, list)
+        and history
+    ):
+        current = history[-1]
+
+        if isinstance(current, dict):
+            if (
+                current.get("x") is not None
+                and current.get("y") is not None
+            ):
+                return (
+                    number(current.get("x")),
+                    number(current.get("y"))
+                )
+
+    if (
+        track.get("x") is not None
+        and track.get("y") is not None
+    ):
+        return (
+            number(track.get("x")),
+            number(track.get("y"))
+        )
+
+    return None
+
+
+def associate_tracks(
+    nucleos,
+    tracks
+):
+    """
+    Asocia cada nucleo detectado con el track activo
+    mas cercano.
+
+    No fuerza una asociacion cuando ningun track
+    esta suficientemente cerca.
+    """
+
+    enriched = []
+    used_tracks = set()
+
+    for index, nucleo in enumerate(nucleos):
+
+        item = dict(nucleo)
+
+        if item.get("nucleo_id") is None:
+            item["nucleo_id"] = (
+                item.get("id")
+                if item.get("id") is not None
+                else index + 1
+            )
+
+        x = item.get("x")
+        y = item.get("y")
+
+        best = None
+        best_distance = None
+
+        if (
+            x is not None
+            and y is not None
+        ):
+
+            nx = number(x)
+            ny = number(y)
+
+            for (
+                track_index,
+                track
+            ) in enumerate(tracks):
+
+                if track_index in used_tracks:
+                    continue
+
+                position = track_current_position(
+                    track
+                )
+
+                if position is None:
+                    continue
+
+                tx, ty = position
+
+                distance = math.hypot(
+                    nx - tx,
+                    ny - ty
+                )
+
+                if (
+                    best_distance is None
+                    or distance < best_distance
+                ):
+                    best = (
+                        track_index,
+                        track
+                    )
+
+                    best_distance = distance
+
+        if (
+            best is not None
+            and best_distance <=
+            MAX_TRACK_MATCH_DISTANCE_PX
+        ):
+
+            (
+                track_index,
+                track
+            ) = best
+
+            used_tracks.add(
+                track_index
+            )
+
+            (
+                dx,
+                dy,
+                speed_px_min,
+                direction
+            ) = track_motion(
+                track
+            )
+
+            trend, change = area_trend(
+                track
+            )
+
+            item["track_id"] = track.get(
+                "track_id",
+                track.get("id")
+            )
+
+            item[
+                "track_match_distance_px"
+            ] = round(
+                best_distance,
+                2
+            )
+
+            item["movimiento"] = {
+                "dx_px": round(
+                    dx,
+                    4
+                ),
+
+                "dy_px": round(
+                    dy,
+                    4
+                ),
+
+                "velocidad_px_min": round(
+                    speed_px_min,
+                    5
+                ),
+
+                "direccion_grados": (
+                    round(
+                        direction,
+                        2
+                    )
+                    if direction is not None
+                    else None
+                ),
+
+                "tendencia": trend,
+
+                "cambio_area_pct": round(
+                    change,
+                    2
+                ),
+
+                "confianza_track": round(
+                    clamp(
+                        number(
+                            track.get(
+                                "confianza"
+                            ),
+                            0
+                        ),
+                        0,
+                        99
+                    ) / 99.0,
+                    3
+                ),
+            }
+
+        else:
+
+            item["track_id"] = None
+
+            item[
+                "track_match_distance_px"
+            ] = None
+
+            item["movimiento"] = {
+                "dx_px": 0.0,
+                "dy_px": 0.0,
+                "velocidad_px_min": 0.0,
+                "direccion_grados": None,
+                "tendencia": "sin_seguimiento",
+                "cambio_area_pct": 0.0,
+                "confianza_track": 0.0,
+            }
+
+        enriched.append(
+            item
+        )
+
+    return enriched
+
+
+def select_compatibility_track(
+    tracks
+):
+    """
+    Solo conserva el campo historico
+    nucleo_principal_id por compatibilidad.
+
+    NO se utiliza para decidir llegada
+    a Bahia Blanca.
+    """
+
     if not tracks:
         return None
 
@@ -351,7 +501,7 @@ def choose_principal(tracks):
             )
             *
             max(
-                1,
+                1.0,
                 number(
                     track.get(
                         "intensidad",
@@ -391,7 +541,7 @@ def main():
         dict
     ):
         raise SystemExit(
-            "ERROR: resultado_procesamiento.json inválido"
+            "ERROR: resultado_procesamiento.json invalido"
         )
 
     if not isinstance(
@@ -399,7 +549,7 @@ def main():
         dict
     ):
         raise SystemExit(
-            "ERROR: estado.json inválido"
+            "ERROR: estado.json invalido"
         )
 
     width = max(
@@ -421,11 +571,6 @@ def main():
             512
         )
     )
-
-    # Referencia geométrica del dominio.
-    # NO representa automáticamente Bahía Blanca.
-    center_x = width / 2.0
-    center_y = height / 2.0
 
     km_per_px = (
         RADAR_DIAMETRO_KM_APROX
@@ -468,12 +613,15 @@ def main():
         estado
     )
 
-    principal = choose_principal(
-        tracks
+    nucleos_con_track = (
+        associate_tracks(
+            precip,
+            tracks
+        )
     )
 
     actividad = bool(
-        precip
+        nucleos_con_track
     )
 
     area_px = sum(
@@ -486,7 +634,8 @@ def main():
                 0
             )
         )
-        for nucleo in precip
+        for nucleo
+        in nucleos_con_track
     )
 
     intensidad_max = max(
@@ -500,160 +649,133 @@ def main():
                     0
                 )
             )
-            for nucleo in precip
+            for nucleo
+            in nucleos_con_track
         ),
         default=0
     )
 
-    if principal:
-
-        (
-            dx,
-            dy,
-            speed_px_min,
-            direction
-        ) = track_motion(
-            principal
-        )
-
-    else:
-
-        dx = 0.0
-        dy = 0.0
-        speed_px_min = 0.0
-        direction = None
-
-    if principal:
-
-        x = number(
-            principal.get(
-                "x"
-            ),
-            center_x
-        )
-
-        y = number(
-            principal.get(
-                "y"
-            ),
-            center_y
-
-        )
-
-    else:
-
-        x = center_x
-        y = center_y
-
-    to_center_x = (
-        center_x - x
-    )
-
-    to_center_y = (
-        center_y - y
-    )
-
-    distance_to_center_px = math.hypot(
-        to_center_x,
-        to_center_y
-    )
-
-    toward_center = (
-        dx * to_center_x
-        +
-        dy * to_center_y
-        > 0
+    fortaleciendo = sum(
+        1
+        for nucleo
+        in nucleos_con_track
         if (
-            principal
-            and speed_px_min > 0
+            nucleo.get(
+                "movimiento",
+                {}
+            ).get(
+                "tendencia"
+            )
+            == "fortaleciendose"
         )
-        else False
     )
 
-    if speed_px_min > 0:
-
-        speed_kmh = round(
-            speed_px_min
-            * km_per_px
-            * 60.0,
-            1
+    debilitando = sum(
+        1
+        for nucleo
+        in nucleos_con_track
+        if (
+            nucleo.get(
+                "movimiento",
+                {}
+            ).get(
+                "tendencia"
+            )
+            == "debilitandose"
         )
+    )
 
-    else:
-
-        speed_kmh = None
-
-    if principal:
-
-        distance_km_aprox = round(
-            distance_to_center_px
-            * km_per_px,
-            1
+    cambios = [
+        number(
+            nucleo.get(
+                "movimiento",
+                {}
+            ).get(
+                "cambio_area_pct"
+            ),
+            0
         )
-
-    else:
-
-        distance_km_aprox = None
-
-    eta_minutos_aprox = None
-
-    if (
-        toward_center
-        and speed_kmh is not None
-        and speed_kmh > 5
-        and distance_km_aprox is not None
-    ):
-
-        eta_minutos_aprox = round(
-            distance_km_aprox
-            / speed_kmh
-            * 60.0,
-            1
+        for nucleo
+        in nucleos_con_track
+        if (
+            nucleo.get(
+                "movimiento",
+                {}
+            ).get(
+                "tendencia"
+            )
+            != "sin_seguimiento"
         )
+    ]
 
-    if principal:
+    cambio_area_pct = (
+        sum(cambios) / len(cambios)
+        if cambios
+        else 0.0
+    )
+
+    compat_track = (
+        select_compatibility_track(
+            tracks
+        )
+    )
+
+    if compat_track:
 
         (
-            tendencia,
-            cambio_area_pct
-        ) = area_trend(
-            principal
+            _,
+            _,
+            compat_speed_px_min,
+            compat_direction
+        ) = track_motion(
+            compat_track
         )
 
-    else:
+        compat_speed_kmh = (
+            compat_speed_px_min
+            * km_per_px
+            * 60.0
+            if compat_speed_px_min > 0
+            else None
+        )
 
-        tendencia = "estable"
-        cambio_area_pct = 0.0
+        compat_trend, _ = (
+            area_trend(
+                compat_track
+            )
+        )
 
-    if principal:
-
-        confianza = (
+        compat_confidence = (
             clamp(
                 number(
-                    principal.get(
-                        "confianza",
-                        0
+                    compat_track.get(
+                        "confianza"
                     ),
                     0
                 ),
                 0,
                 99
-            )
-            / 99.0
+            ) / 99.0
         )
 
     else:
 
-        confianza = 0.0
+        compat_speed_kmh = None
+        compat_speed_px_min = 0.0
+        compat_direction = None
+        compat_trend = "estable"
+        compat_confidence = 0.0
 
-    radar_ts = timestamp_from_result(
-        resultado
+    radar_ts = (
+        timestamp_from_result(
+            resultado
+        )
     )
 
     salida = {
 
         "version":
-            "RMA10-operativo-1.1",
+            "RMA10-operativo-2.0",
 
         "fuente":
             "SMN RMA10",
@@ -684,8 +806,6 @@ def main():
                     2
                 ),
 
-            # RMA10 actualmente entrega niveles 0-6.
-            # NO se convierten artificialmente a dBZ.
             "intensidad_nivel_max":
                 intensidad_max,
 
@@ -699,13 +819,13 @@ def main():
                 None,
 
             "distancia_km":
-                distance_km_aprox,
+                None,
 
             "distancia_tipo":
-                "centro_dominio_aproximada",
+                "pendiente_georreferenciacion_por_nucleo",
 
             "fortalecimiento":
-                tendencia,
+                compat_trend,
 
             "cambio_area_pct":
                 round(
@@ -714,37 +834,51 @@ def main():
                 ),
 
             "velocidad_kmh":
-                speed_kmh,
+                (
+                    round(
+                        compat_speed_kmh,
+                        1
+                    )
+                    if compat_speed_kmh
+                    is not None
+                    else None
+                ),
 
             "velocidad_pixeles_min":
                 round(
-                    speed_px_min,
-                    4
+                    compat_speed_px_min,
+                    5
                 ),
 
             "direccion":
-                direction,
+                compat_direction,
 
             "direccion_grados":
-                direction,
+                (
+                    round(
+                        compat_direction,
+                        2
+                    )
+                    if compat_direction
+                    is not None
+                    else None
+                ),
 
-            # Hasta calibrar la georreferenciación
-            # NO se afirma que sea movimiento hacia Bahía Blanca.
             "movimiento_hacia_bahia":
                 False,
 
             "movimiento_hacia_centro_dominio":
-                toward_center,
+                False,
 
             "eta_minutos":
                 None,
 
             "eta_minutos_aproximada_centro_dominio":
-                eta_minutos_aprox,
+                None,
 
             "confianza_movimiento":
                 round(
-                    confianza,
+                    compat_confidence,
                     3
                 ),
 
@@ -757,16 +891,56 @@ def main():
                 ),
 
             "nucleos":
-                precip,
+                nucleos_con_track,
+
+            "nucleos_analizados":
+                nucleos_con_track,
 
             "nucleo_principal_id":
                 (
-                    principal.get(
-                        "track_id"
+                    compat_track.get(
+                        "track_id",
+                        compat_track.get(
+                            "id"
+                        )
                     )
-                    if principal
+                    if compat_track
                     else None
                 ),
+
+            "resumen_nucleos": {
+
+                "total_detectados":
+                    len(
+                        nucleos_con_track
+                    ),
+
+                "con_track":
+                    sum(
+                        1
+                        for nucleo
+                        in nucleos_con_track
+                        if nucleo.get(
+                            "track_id"
+                        ) is not None
+                    ),
+
+                "sin_track":
+                    sum(
+                        1
+                        for nucleo
+                        in nucleos_con_track
+                        if nucleo.get(
+                            "track_id"
+                        ) is None
+                    ),
+
+                "fortaleciendose":
+                    fortaleciendo,
+
+                "debilitandose":
+                    debilitando,
+            },
 
             "proyecciones":
                 {},
@@ -792,12 +966,20 @@ def main():
                 ),
 
             "nucleos_precipitacion":
-                len(precip),
+                len(
+                    nucleos_con_track
+                ),
 
             "nucleos_total":
                 len(nucleos),
 
+            "tracks_activos":
+                len(tracks),
+
             "georreferenciacion_exacta":
+                False,
+
+            "georreferenciacion_operativa":
                 False,
 
             "dBZ_disponible":
@@ -805,10 +987,10 @@ def main():
 
             "nota":
                 (
-                    "La distancia y ETA son referencias "
-                    "aproximadas al centro del dominio. "
-                    "No representan todavía distancia/ETA "
-                    "exacta a Bahía Blanca."
+                    "Todos los nucleos se mantienen "
+                    "individualmente. La georreferenciacion "
+                    "y trayectoria hacia Bahia se calculan "
+                    "por nucleo en la etapa siguiente."
                 ),
         },
 
@@ -819,10 +1001,13 @@ def main():
 
             "track_principal":
                 (
-                    principal.get(
-                        "track_id"
+                    compat_track.get(
+                        "track_id",
+                        compat_track.get(
+                            "id"
+                        )
                     )
-                    if principal
+                    if compat_track
                     else None
                 ),
 
@@ -835,9 +1020,7 @@ def main():
         "prediccion": {
 
             "disponible":
-                bool(
-                    prediccion
-                ),
+                bool(prediccion),
 
             "radar_timestamp":
                 (
@@ -922,8 +1105,19 @@ def main():
     )
 
     print(
-        "Núcleos precipitación:",
-        len(precip)
+        "Nucleos detectados:",
+        len(nucleos_con_track)
+    )
+
+    print(
+        "Nucleos con track:",
+        salida[
+            "nowcast"
+        ][
+            "resumen_nucleos"
+        ][
+            "con_track"
+        ]
     )
 
     print(
@@ -932,28 +1126,18 @@ def main():
     )
 
     print(
+        "Fortaleciendose:",
+        fortaleciendo
+    )
+
+    print(
+        "Debilitandose:",
+        debilitando
+    )
+
+    print(
         "Intensidad RMA10 0-6:",
         intensidad_max
-    )
-
-    print(
-        "Velocidad estimada km/h:",
-        speed_kmh
-    )
-
-    print(
-        "Dirección grados:",
-        direction
-    )
-
-    print(
-        "Hacia centro del dominio:",
-        toward_center
-    )
-
-    print(
-        "ETA aproximada al centro min:",
-        eta_minutos_aprox
     )
 
     print(
