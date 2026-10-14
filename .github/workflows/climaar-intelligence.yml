@@ -19,6 +19,7 @@ jobs:
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
+
     runs-on: ubuntu-latest
     timeout-minutes: 12
 
@@ -75,6 +76,7 @@ jobs:
           test -s data/radar/seguimiento/estado.json
           test -s data/radar/seguimiento/seguimiento_temporal.json
           test -s data/radar/seguimiento/prediccion_evolucion.json
+          test -s data/radar/radar_timestamp.txt
 
       - name: Actualizar observación SAZB
         continue-on-error: true
@@ -91,6 +93,11 @@ jobs:
         run: |
           python scripts/adaptar_rma10_intelligence.py
           test -s data/radar/radar_nowcast.json
+
+      - name: Acumular dataset RMA10
+        run: |
+          python scripts/acumular_features_rma10.py
+          test -s data/radar/radar_features_rma10.csv
 
       - name: Georreferenciar RMA10
         run: |
@@ -122,6 +129,7 @@ jobs:
 
           git add -f \
             data/radar/radar_nowcast.json \
+            data/radar/radar_features_rma10.csv \
             data/ia/estado_meteorologico.json \
             data/ia/inteligencia_tormenta.json \
             data/ia/historial_inteligencia_tormenta.csv \
@@ -134,7 +142,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No hay cambios para guardar."
           else
-            git commit -m "ClimaAR: integrar motor de decision"
+            git commit -m "ClimaAR: acumular dataset RMA10"
             git pull --rebase --autostash origin main
             git push origin HEAD:main
           fi
@@ -145,6 +153,7 @@ jobs:
           name: climaar-resultado-final
           path: |
             data/radar/radar_nowcast.json
+            data/radar/radar_features_rma10.csv
             data/radar/seguimiento/prediccion_evolucion.json
             data/radar/seguimiento/calibracion_prediccion.json
             data/ia/estado_meteorologico.json
@@ -173,9 +182,18 @@ jobs:
           print("Estado:", m.get("estado"))
           print("Score integrado:", m.get("score_integrado"))
           print("Actividad radar:", m.get("actividad_radar"))
-          print("Intensidad radar:", m.get("componentes", {}).get("radar_intensidad"))
-          print("Confianza movimiento:", m.get("componentes", {}).get("radar_movimiento"))
-          print("IA:", m.get("componentes", {}).get("ia"))
+          print(
+              "Intensidad radar:",
+              m.get("componentes", {}).get("radar_intensidad")
+          )
+          print(
+              "Confianza movimiento:",
+              m.get("componentes", {}).get("radar_movimiento")
+          )
+          print(
+              "IA:",
+              m.get("componentes", {}).get("ia")
+          )
           print("ETA:", r.get("eta_minutos"))
           print("Distancia:", r.get("distancia_km"))
           PY
