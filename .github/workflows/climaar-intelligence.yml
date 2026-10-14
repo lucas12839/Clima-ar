@@ -97,7 +97,7 @@ jobs:
 
       - name: Georreferenciar RMA10
         run: |
-          python scripts/georreferenciar_rma10.py
+          python scripts/scripts/georreferenciar_rma10.py
           test -s data/radar/radar_nowcast.json
 
       - name: Fusionar meteorología
@@ -216,7 +216,7 @@ jobs:
             data/ia/resultado_final.json \
             data/meteorologia/ambiente_futuro.json \
             data/sazb/status.json \
-            scripts/georreferenciar_rma10.py
+            scripts/scripts/georreferenciar_rma10.py
 
           if git diff --cached --quiet; then
             echo "No hay cambios para guardar."
