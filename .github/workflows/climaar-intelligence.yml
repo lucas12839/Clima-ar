@@ -1,12 +1,13 @@
 name: ClimaAR Intelligence Central
 
 on:
+  workflow_run:
+    workflows: ["Probar Radar SMN"]
+    types: [completed]
   workflow_dispatch:
 
-  schedule:
-    - cron: "*/10 * * * *"
-
 permissions:
+  actions: read
   contents: write
 
 concurrency:
@@ -15,222 +16,225 @@ concurrency:
 
 jobs:
   intelligence:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 12
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Configurar Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Instalar dependencias
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Crear directorios
+      - name: Preparar directorios
         run: |
           mkdir -p data/radar/historico
           mkdir -p data/radar/seguimiento
           mkdir -p data/ia
+          mkdir -p data/meteorologia
           mkdir -p logs
+          mkdir -p /tmp/radar-artifact
 
-      - name: Actualizar radar RainViewer
+      - name: Obtener artefacto del radar
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python scripts/radar_rainviewer.py
+          set -e
 
-      - name: Verificar radar
-        run: |
-          test -s data/radar/actual.png
-          test -s data/radar/radar_nowcast.json
-          test -s data/radar/status.json
-          test -s data/radar/radar_features_rainviewer.csv
+          RUN_ID="${{ github.event.workflow_run.id }}"
 
-      - name: Verificar estructura CSV
-        run: |
-          python - <<'PY'
-          import csv
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID="$(gh run list \
+              --workflow probar-radar-smn.yml \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')"
+          fi
 
-          path = "data/radar/radar_features_rainviewer.csv"
-          expected = 21
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "ERROR: no se encontró una ejecución exitosa de Probar Radar SMN."
+            exit 1
+          fi
 
-          with open(path, encoding="utf-8", newline="") as f:
-              reader = csv.reader(f)
+          echo "Run radar utilizado: $RUN_ID"
 
-              try:
-                  header = next(reader)
-              except StopIteration:
-                  raise SystemExit("ERROR: CSV vacío")
+          gh run download "$RUN_ID" \
+            --name radar-rma10 \
+            --dir /tmp/radar-artifact
 
-              if len(header) != expected:
-                  raise SystemExit(
-                      f"ERROR: encabezado tiene {len(header)} columnas; "
-                      f"esperadas {expected}"
-                  )
+          echo "Contenido del artefacto:"
+          find /tmp/radar-artifact -maxdepth 4 -type f | sort | head -80
 
-              rows = 0
+          # upload-artifact conserva data/radar como raíz común.
+          if [ -d /tmp/radar-artifact/data/radar ]; then
+            cp -a /tmp/radar-artifact/data/radar/. data/radar/
+          else
+            # Compatibilidad si el empaquetado cambia la raíz.
+            cp -a /tmp/radar-artifact/. data/radar/ 2>/dev/null || true
+          fi
 
-              for line, row in enumerate(reader, start=2):
-                  if not row:
-                      continue
-
-                  if len(row) != expected:
-                      raise SystemExit(
-                          f"ERROR: línea {line} tiene {len(row)} columnas; "
-                          f"esperadas {expected}"
-                      )
-
-                  rows += 1
-
-          if rows == 0:
-              raise SystemExit("ERROR: CSV sin datos")
-
-          print(
-              f"CSV OK: {rows} filas / {expected} columnas"
-          )
-          PY
-
-      - name: Procesador de radar ClimaAR
-        run: |
-          python procesador_radar.py
-
-      - name: Verificar procesamiento
-        run: |
           test -s data/radar/resultado_procesamiento.json
-
-      - name: Decodificador de radar
-        run: |
-          if [ -f scripts/radar_repair_decoder.py ]; then
-            python scripts/radar_repair_decoder.py
-          else
-            echo "Decoder no encontrado; se continúa."
-          fi
-
-      - name: Fusión meteorológica
-        run: |
-          if [ -f scripts/meteorologia_fusion.py ]; then
-            python scripts/meteorologia_fusion.py
-          else
-            echo "meteorologia_fusion.py no encontrado; se continúa."
-          fi
-
-      - name: Inteligencia de tormentas
-        run: |
-          if [ -f scripts/tormenta_intelligence.py ]; then
-            python scripts/tormenta_intelligence.py
-          else
-            echo "tormenta_intelligence.py no encontrado; se continúa."
-          fi
-
-      - name: Seguimiento temporal de células
-        run: |
-          python seguimiento_temporal.py
-
-      - name: Verificar seguimiento temporal
-        run: |
+          test -s data/radar/seguimiento/estado.json
           test -s data/radar/seguimiento/seguimiento_temporal.json
-
-      - name: Predicción de evolución
-        run: |
-          python prediccion_evolucion.py
-
-      - name: Verificar predicción
-        run: |
           test -s data/radar/seguimiento/prediccion_evolucion.json
-          test -s data/radar/seguimiento/predicciones_pendientes.json
 
-      - name: Verificación final
+      - name: Actualizar observación SAZB
+        continue-on-error: true
+        run: |
+          python -m pip install requests
+          python scripts/smn_observaciones.py || true
+
+      - name: Dependencias de inteligencia
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Conectar RMA10 con Storm Engine
+        run: |
+          python scripts/adaptar_rma10_intelligence.py
+
+          test -s data/radar/radar_nowcast.json
+
+      - name: Fusionar meteorología
+        run: |
+          python scripts/meteorologia_fusion.py
+
+          test -s data/ia/estado_meteorologico.json
+
+      - name: Ejecutar Storm Engine
+        run: |
+          python scripts/tormenta_intelligence.py
+
+          test -s data/ia/inteligencia_tormenta.json
+          test -s data/ia/historial_inteligencia_tormenta.csv
+
+      - name: Generar resultado final unificado
         run: |
           python - <<'PY'
-          import csv
-          import os
+          import json
+          from pathlib import Path
 
-          csv_path = "data/radar/radar_features_rainviewer.csv"
-          expected = 21
+          radar = Path("data/radar/radar_nowcast.json")
+          pred = Path("data/radar/seguimiento/prediccion_evolucion.json")
+          intel = Path("data/ia/inteligencia_tormenta.json")
+          fusion = Path("data/ia/estado_meteorologico.json")
 
-          with open(csv_path, encoding="utf-8", newline="") as f:
-              reader = csv.reader(f)
+          def read(path):
+              return json.loads(path.read_text(encoding="utf-8"))
 
-              try:
-                  header = next(reader)
-              except StopIteration:
-                  raise SystemExit("ERROR FINAL: CSV vacío")
+          r = read(radar)
+          p = read(pred)
+          i = read(intel)
+          f = read(fusion)
 
-              if len(header) != expected:
-                  raise SystemExit(
-                      f"ERROR FINAL: encabezado tiene "
-                      f"{len(header)} columnas"
-                  )
+          result = {
+              "version": "ClimaAR-final-1.0",
+              "actualizado_utc": i.get("actualizado_utc"),
+              "fuente_radar": "SMN RMA10",
+              "radar": r,
+              "prediccion": {
+                  "schema_version": p.get("schema_version"),
+                  "radar_timestamp": p.get("radar_timestamp"),
+                  "intervalo_minutos": p.get("intervalo_minutos"),
+                  "resumen": p.get("resumen", {}),
+                  "calibracion": p.get("calibracion", {}),
+              },
+              "inteligencia": i,
+              "meteorologia": f,
+          }
 
-              count = 0
-
-              for line, row in enumerate(reader, start=2):
-                  if not row:
-                      continue
-
-                  if len(row) != expected:
-                      raise SystemExit(
-                          f"ERROR FINAL: línea {line} tiene "
-                          f"{len(row)} columnas"
-                      )
-
-                  count += 1
-
-          if count == 0:
-              raise SystemExit("ERROR FINAL: CSV sin filas")
-
-          required_files = [
-              "data/radar/actual.png",
-              "data/radar/radar_nowcast.json",
-              "data/radar/status.json",
-              "data/radar/resultado_procesamiento.json",
-              "data/radar/seguimiento/seguimiento_temporal.json",
-              "data/radar/seguimiento/prediccion_evolucion.json",
-              "data/radar/seguimiento/predicciones_pendientes.json",
-          ]
-
-          for path in required_files:
-              if not os.path.isfile(path):
-                  raise SystemExit(
-                      f"ERROR FINAL: falta {path}"
-                  )
-
-              if os.path.getsize(path) == 0:
-                  raise SystemExit(
-                      f"ERROR FINAL: archivo vacío: {path}"
-                  )
-
-          print(
-              f"VALIDACIÓN FINAL OK: "
-              f"{count} filas / {expected} columnas"
+          out = Path("data/ia/resultado_final.json")
+          out.write_text(
+              json.dumps(result, ensure_ascii=False, indent=2),
+              encoding="utf-8",
           )
 
-          print("Archivos de inteligencia OK:")
-          for path in required_files:
-              print(f"  OK: {path}")
+          print("RESULTADO FINAL GENERADO")
+          print("Estado:", i.get("estado"))
+          print("Severidad:", i.get("severidad"))
+          print("Prob. tormenta:", i.get("probabilidades", {}).get("tormenta"))
+          print("Prob. llegada:", i.get("probabilidades", {}).get("llegada_bahia"))
+          print("Prob. fortalecimiento:", i.get("probabilidades", {}).get("fortalecimiento"))
+          print("Prob. lluvia fuerte:", i.get("peligros", {}).get("lluvia_fuerte"))
+          print("Prob. viento fuerte:", i.get("peligros", {}).get("viento_fuerte"))
+          print("Prob. granizo:", i.get("peligros", {}).get("granizo"))
+          print("Prob. rayos:", i.get("peligros", {}).get("rayo"))
+          print("IA V8 disponible:", i.get("ia_v8", {}).get("disponible"))
+          print("Confianza:", i.get("confianza_modelo"))
+          print("Salida:", out)
           PY
 
-      - name: Preparar cambios
+          test -s data/ia/resultado_final.json
+
+      - name: Persistir resultados
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -A
+          git add -f \
+            data/radar/radar_nowcast.json \
+            data/ia/estado_meteorologico.json \
+            data/ia/inteligencia_tormenta.json \
+            data/ia/historial_inteligencia_tormenta.csv \
+            data/ia/resultado_final.json \
+            data/meteorologia/ambiente_futuro.json \
+            data/sazb/status.json
 
-          if ! git diff --cached --quiet; then
-            git commit -m "ClimaAR: seguimiento y prediccion de tormentas"
-          else
+          if git diff --cached --quiet; then
             echo "No hay cambios para guardar."
+          else
+            git commit -m "ClimaAR: integrar inteligencia operativa"
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
           fi
 
-      - name: Sincronizar y publicar
+      - name: Publicar artefacto de resultado
+        uses: actions/upload-artifact@v4
+        with:
+          name: climaar-resultado-final
+          path: |
+            data/radar/radar_nowcast.json
+            data/radar/seguimiento/prediccion_evolucion.json
+            data/radar/seguimiento/calibracion_prediccion.json
+            data/ia/estado_meteorologico.json
+            data/ia/inteligencia_tormenta.json
+            data/ia/historial_inteligencia_tormenta.csv
+            data/ia/resultado_final.json
+            data/meteorologia/ambiente_futuro.json
+            data/sazb/status.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Mostrar resultado final
         run: |
-          git fetch origin main
-          git rebase origin/main
-          git push origin HEAD:main
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path("data/ia/resultado_final.json")
+          d = json.loads(p.read_text(encoding="utf-8"))
+          i = d.get("inteligencia", {})
+          probs = i.get("probabilidades", {})
+          hazards = i.get("peligros", {})
+
+          print("===== CLIMAAR RESULTADO FINAL =====")
+          print("Actualizado:", d.get("actualizado_utc"))
+          print("Estado:", i.get("estado"))
+          print("Severidad:", i.get("severidad"))
+          print("Tormenta:", probs.get("tormenta"))
+          print("Llegada Bahía Blanca:", probs.get("llegada_bahia"))
+          print("Fortalecimiento:", probs.get("fortalecimiento"))
+          print("Debilitamiento:", probs.get("debilitamiento"))
+          print("Lluvia fuerte:", hazards.get("lluvia_fuerte"))
+          print("Viento fuerte:", hazards.get("viento_fuerte"))
+          print("Granizo:", hazards.get("granizo"))
+          print("Rayos:", hazards.get("rayo"))
+          print("Índice severidad:", i.get("indice_hibrido_severidad"))
+          print("IA V8:", i.get("ia_v8", {}).get("disponible"))
+          print("Confianza:", i.get("confianza_modelo"))
+          print("===================================")
+          PY
