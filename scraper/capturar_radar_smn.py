@@ -29,6 +29,7 @@ MIGRATION_MARKER = OUT / ".timestamp_rma10_utc_v2"
 
 MAX_RETRIES = 5
 MAX_RADAR_AGE_MINUTES = 30
+MAX_FUTURE_SKEW_MINUTES = 2
 
 ARGENTINA_TZ = ZoneInfo(
     "America/Argentina/Buenos_Aires"
@@ -740,23 +741,85 @@ def main():
                         f"{len(candidatos)}"
                     )
 
+                    ahora = datetime.now(
+                        ARGENTINA_TZ
+                    )
+
+                    candidatos_validos = []
+
+                    for (
+                        timestamp,
+                        url,
+                        response
+                    ) in candidatos:
+
+                        fecha_candidato = (
+                            timestamp_source_to_datetime(
+                                timestamp
+                            )
+                        )
+
+                        diferencia_minutos = (
+                            fecha_candidato - ahora
+                        ).total_seconds() / 60.0
+
+                        if (
+                            diferencia_minutos
+                            > MAX_FUTURE_SKEW_MINUTES
+                        ):
+
+                            print(
+                                "DESCARTADO: "
+                                "frame futuro: "
+                                f"{timestamp} "
+                                f"(+{diferencia_minutos:.1f} "
+                                "min)"
+                            )
+
+                            continue
+
+                        candidatos_validos.append(
+                            (
+                                timestamp,
+                                url,
+                                response
+                            )
+                        )
+
+                    if not candidatos_validos:
+                        raise RuntimeError(
+                            "SINARAME solo entrego "
+                            "frames futuros "
+                            "o invalidos."
+                        )
+
                     for (
                         timestamp,
                         url,
                         _
-                    ) in candidatos[:10]:
+                    ) in candidatos_validos[:10]:
+
+                        fecha_candidato = (
+                            timestamp_source_to_datetime(
+                                timestamp
+                            )
+                        )
+
+                        edad_candidato = (
+                            ahora - fecha_candidato
+                        ).total_seconds() / 60.0
 
                         print(
-                            f"RMA10 candidato: "
+                            f"RMA10 candidato valido: "
                             f"{timestamp} | "
                             f"edad "
-                            f"{edad_minutos(timestamp):.1f} "
+                            f"{edad_candidato:.1f} "
                             f"min | {url}"
                         )
 
                     seleccionado = (
                         seleccionar_mas_reciente(
-                            candidatos
+                            candidatos_validos
                         )
                     )
 
@@ -764,9 +827,12 @@ def main():
                         seleccionado
                     )
 
-                    edad = edad_minutos(
-                        timestamp
-                    )
+                    edad = (
+                        ahora
+                        - timestamp_source_to_datetime(
+                            timestamp
+                        )
+                    ).total_seconds() / 60.0
 
                     print(
                         f"Hora fuente RMA10: "
@@ -779,7 +845,7 @@ def main():
                         f"{edad:.1f} minutos"
                     )
 
-                    if edad < -5:
+                    if edad < -MAX_FUTURE_SKEW_MINUTES:
                         raise RuntimeError(
                             "Timestamp RMA10 "
                             "futuro o invalido: "
@@ -795,7 +861,7 @@ def main():
                             "SINARAME NO TIENE "
                             "UN RMA10 ACTUALIZADO: "
                             f"el frame mas reciente "
-                            f"encontrado es de "
+                            f"valido encontrado es de "
                             f"{edad:.1f} minutos. "
                             f"URL: {image_url}"
                         )
