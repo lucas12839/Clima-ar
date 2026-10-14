@@ -1628,6 +1628,7 @@ def main():
     }
 
     gap_count = 0
+    gap_validated_now = []
 
     for track in tracks:
         if len(valid_history(track)) < 2:
@@ -1652,6 +1653,7 @@ def main():
             )
 
             if validation.get("estado") == "VALIDADA":
+                gap_validated_now.append(point)
                 continue
 
             key = (
@@ -1753,9 +1755,14 @@ def main():
         if item.get("pronostico_disponible")
     ]
 
+    validation_records = (
+        list(validated_now)
+        + list(gap_validated_now)
+    )
+
     errors = []
 
-    for item in validated_now:
+    for item in validation_records:
         value = (
             item.get(
                 "validacion",
@@ -1768,28 +1775,14 @@ def main():
         if value is not None:
             errors.append(number(value))
 
-    for prediction in predictions:
-        for point in prediction.get(
-            "estimaciones_hueco",
-            [],
-        ):
-            value = (
-                point.get(
-                    "validacion",
-                    {},
-                ).get(
-                    "error_pixeles"
-                )
-            )
+    # Métricas por horizonte. Se mantienen los cuatro horizontes
+    # principales aunque todavía no tengan muestras.
+    by_horizon = {
+        int(horizon): []
+        for horizon in HORIZONTES_MIN
+    }
 
-            if value is not None:
-                errors.append(number(value))
-
-    # Métricas por horizonte para que la calidad no quede escondida
-    # dentro de un único promedio.
-    by_horizon = {}
-
-    for item in validated_now:
+    for item in validation_records:
         horizon = number(
             item.get(
                 "horizonte_desde_origen_minutos",
@@ -1807,19 +1800,35 @@ def main():
         if error is None:
             continue
 
-        key = str(int(horizon)) if horizon.is_integer() else str(horizon)
+        nearest = min(
+            HORIZONTES_MIN,
+            key=lambda value: abs(value - horizon),
+        )
 
-        by_horizon.setdefault(
-            key,
-            [],
-        ).append(
+        if abs(nearest - horizon) > 1.0:
+            continue
+
+        by_horizon[int(nearest)].append(
             number(error)
         )
 
     horizon_metrics = {}
 
-    for key, values in by_horizon.items():
-        horizon_metrics[key] = {
+    for horizon in HORIZONTES_MIN:
+        values = by_horizon[int(horizon)]
+
+        if not values:
+            horizon_metrics[str(horizon)] = {
+                "muestras": 0,
+                "error_medio_pixeles": None,
+                "error_mediano_pixeles": None,
+                "dentro_5_pixeles": None,
+                "dentro_10_pixeles": None,
+                "dentro_15_pixeles": None,
+            }
+            continue
+
+        horizon_metrics[str(horizon)] = {
             "muestras": len(values),
             "error_medio_pixeles": round(
                 mean(values),
@@ -1897,7 +1906,13 @@ def main():
         ),
         "huecos_estimados": gap_count,
         "predicciones_validadas_en_este_frame": len(
+            validation_records
+        ),
+        "predicciones_validadas_normales": len(
             validated_now
+        ),
+        "predicciones_validadas_huecos": len(
+            gap_validated_now
         ),
         "error_medio_pixeles_validado": (
             round(
@@ -1958,6 +1973,22 @@ def main():
         "Pendientes:",
         len(pending),
     )
+
+    print(
+        "===== MÉTRICAS POR HORIZONTE ====="
+    )
+
+    for horizon in HORIZONTES_MIN:
+        metrics = horizon_metrics[str(horizon)]
+
+        print(
+            f"{horizon} min | "
+            f"muestras={metrics['muestras']} | "
+            f"error_medio={metrics['error_medio_pixeles']} px | "
+            f"<=5px={metrics['dentro_5_pixeles']}% | "
+            f"<=10px={metrics['dentro_10_pixeles']}% | "
+            f"<=15px={metrics['dentro_15_pixeles']}%"
+        )
 
     if errors:
         print(
