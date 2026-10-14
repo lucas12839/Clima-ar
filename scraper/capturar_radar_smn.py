@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import io
+import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
@@ -17,6 +18,14 @@ OUT = Path("data/radar")
 HIST = OUT / "historico"
 ACTUAL = OUT / "actual.png"
 TSFILE = OUT / "radar_timestamp.txt"
+
+PERSISTENT_STATE = Path(".climaar/estado_rma10.json")
+STATE = OUT / "seguimiento" / "estado.json"
+SEGUIMIENTO = OUT / "seguimiento" / "seguimiento_temporal.json"
+PREDICCION = OUT / "seguimiento" / "prediccion_evolucion.json"
+PENDIENTES = OUT / "seguimiento" / "predicciones_pendientes.json"
+
+MIGRATION_MARKER = OUT / ".timestamp_rma10_utc_v2"
 
 MAX_RETRIES = 5
 MAX_RADAR_AGE_MINUTES = 30
@@ -37,16 +46,14 @@ def validar_png(data):
 
         if im.width < 100 or im.height < 100:
             return False, (
-                f"resolucion "
-                f"{im.width}x{im.height}"
+                f"resolucion {im.width}x{im.height}"
             )
 
         alpha = im.getchannel("A")
 
         if alpha.getextrema()[1] < 3:
             return False, (
-                "imagen completamente "
-                "transparente"
+                "imagen completamente transparente"
             )
 
         visible = sum(
@@ -56,13 +63,11 @@ def validar_png(data):
         )
 
         if (
-            visible /
-            (im.width * im.height)
+            visible / (im.width * im.height)
             < 0.01
         ):
             return False, (
-                "menos de 1% de pixeles "
-                "visibles"
+                "menos de 1% de pixeles visibles"
             )
 
         return True, (
@@ -71,9 +76,7 @@ def validar_png(data):
         )
 
     except Exception as exc:
-        return False, (
-            f"PNG invalido: {exc}"
-        )
+        return False, f"PNG invalido: {exc}"
 
 
 def timestamp_from_url(url):
@@ -91,7 +94,7 @@ def timestamp_from_url(url):
     return match.group(1)
 
 
-def timestamp_to_datetime(timestamp):
+def timestamp_source_to_datetime(timestamp):
     return datetime.strptime(
         timestamp,
         "%Y%m%d%H%M%S"
@@ -100,12 +103,22 @@ def timestamp_to_datetime(timestamp):
     )
 
 
+def source_timestamp_to_utc_timestamp(timestamp):
+    return timestamp_source_to_datetime(
+        timestamp
+    ).astimezone(
+        timezone.utc
+    ).strftime(
+        "%Y%m%d%H%M%S"
+    )
+
+
 def edad_minutos(timestamp):
     ahora = datetime.now(
         ARGENTINA_TZ
     )
 
-    fecha = timestamp_to_datetime(
+    fecha = timestamp_source_to_datetime(
         timestamp
     )
 
@@ -182,10 +195,8 @@ def extraer_urls_rma10(page):
                     coincidencia
                 )
 
-                timestamp = (
-                    timestamp_from_url(
-                        url
-                    )
+                timestamp = timestamp_from_url(
+                    url
                 )
 
                 if url and timestamp:
@@ -242,9 +253,7 @@ def extraer_urls_rma10(page):
     )
 
 
-def seleccionar_mas_reciente(
-    candidatos
-):
+def seleccionar_mas_reciente(candidatos):
     if not candidatos:
         return None
 
@@ -254,10 +263,7 @@ def seleccionar_mas_reciente(
     )
 
 
-def descargar_imagen(
-    page,
-    url
-):
+def descargar_imagen(page, url):
     response = page.request.get(
         url,
         timeout=30000
@@ -283,6 +289,203 @@ def descargar_imagen(
     return data, detail
 
 
+def migrar_iso_legacy(value):
+    if not isinstance(value, str):
+        return value
+
+    texto = value.strip()
+
+    if not texto:
+        return value
+
+    try:
+        if texto.endswith("Z"):
+            texto_parse = texto[:-1] + "+00:00"
+        else:
+            texto_parse = texto
+
+        dt = datetime.fromisoformat(
+            texto_parse
+        )
+
+        if dt.tzinfo is None:
+            dt = dt.replace(
+                tzinfo=timezone.utc
+            )
+        else:
+            dt = dt.astimezone(
+                timezone.utc
+            )
+
+        dt += timedelta(
+            hours=3
+        )
+
+        return (
+            dt.astimezone(timezone.utc)
+            .isoformat()
+            .replace(
+                "+00:00",
+                "Z"
+            )
+        )
+
+    except Exception:
+        return value
+
+
+def migrar_objeto_timestamps(obj):
+    claves_radar = {
+        "ultimo_radar_timestamp",
+        "primer_frame",
+        "ultimo_frame",
+        "timestamp",
+        "timestamp_origen",
+        "timestamp_objetivo",
+        "radar_timestamp",
+    }
+
+    if isinstance(obj, dict):
+        for key, value in list(obj.items()):
+
+            if key in claves_radar:
+                if isinstance(value, str):
+                    obj[key] = migrar_iso_legacy(
+                        value
+                    )
+                elif isinstance(value, list):
+                    obj[key] = [
+                        migrar_iso_legacy(item)
+                        if isinstance(item, str)
+                        else item
+                        for item in value
+                    ]
+
+            else:
+                migrar_objeto_timestamps(
+                    value
+                )
+
+    elif isinstance(obj, list):
+        for item in obj:
+            migrar_objeto_timestamps(
+                item
+            )
+
+
+def migrar_json_legacy(path):
+    if not path.exists():
+        return False
+
+    try:
+        data = json.loads(
+            path.read_text(
+                encoding="utf-8"
+            )
+        )
+
+        migrar_objeto_timestamps(
+            data
+        )
+
+        path.write_text(
+            json.dumps(
+                data,
+                ensure_ascii=False,
+                indent=2
+            ),
+            encoding="utf-8"
+        )
+
+        return True
+
+    except Exception as exc:
+        print(
+            f"AVISO: no se pudo migrar "
+            f"{path}: {exc}"
+        )
+        return False
+
+
+def migrar_historico_legacy():
+    if MIGRATION_MARKER.exists():
+        return
+
+    print(
+        "Migrando timestamps historicos "
+        "RMA10 de hora Argentina a UTC..."
+    )
+
+    HIST.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    renombrados = 0
+
+    for archivo in list(
+        HIST.glob("*.png")
+    ):
+
+        if not re.fullmatch(
+            r"\d{14}\.png",
+            archivo.name
+        ):
+            continue
+
+        source_timestamp = (
+            archivo.stem
+        )
+
+        utc_timestamp = (
+            source_timestamp_to_utc_timestamp(
+                source_timestamp
+            )
+        )
+
+        destino = (
+            HIST
+            / f"{utc_timestamp}.png"
+        )
+
+        if destino == archivo:
+            continue
+
+        if destino.exists():
+            archivo.unlink()
+        else:
+            archivo.rename(
+                destino
+            )
+
+        renombrados += 1
+
+    archivos_json = [
+        PERSISTENT_STATE,
+        STATE,
+        SEGUIMIENTO,
+        PREDICCION,
+        PENDIENTES,
+    ]
+
+    migrados = 0
+
+    for path in archivos_json:
+        if migrar_json_legacy(path):
+            migrados += 1
+
+    MIGRATION_MARKER.write_text(
+        "RMA10 timestamps internos en UTC\n",
+        encoding="utf-8"
+    )
+
+    print(
+        "Migracion completada. "
+        f"Frames renombrados: {renombrados}. "
+        f"JSON migrados: {migrados}."
+    )
+
+
 def main():
 
     OUT.mkdir(
@@ -294,6 +497,8 @@ def main():
         parents=True,
         exist_ok=True
     )
+
+    migrar_historico_legacy()
 
     with sync_playwright() as playwright:
 
@@ -381,10 +586,8 @@ def main():
                         selects.count()
                     ):
 
-                        select = (
-                            selects.nth(
-                                index
-                            )
+                        select = selects.nth(
+                            index
                         )
 
                         try:
@@ -428,10 +631,8 @@ def main():
                         opciones.count()
                     ):
 
-                        option = (
-                            opciones.nth(
-                                index
-                            )
+                        option = opciones.nth(
+                            index
                         )
 
                         texto = (
@@ -568,7 +769,7 @@ def main():
                     )
 
                     print(
-                        f"Hora local RMA10: "
+                        f"Hora fuente RMA10: "
                         f"{timestamp} "
                         f"(Argentina)"
                     )
@@ -626,6 +827,17 @@ def main():
                             )
                         )
 
+                    utc_timestamp = (
+                        source_timestamp_to_utc_timestamp(
+                            timestamp
+                        )
+                    )
+
+                    print(
+                        "Timestamp interno UTC:",
+                        utc_timestamp
+                    )
+
                     print(
                         "Imagen seleccionada:",
                         image_url
@@ -637,7 +849,7 @@ def main():
                     )
 
                     name = (
-                        f"{timestamp}.png"
+                        f"{utc_timestamp}.png"
                     )
 
                     ACTUAL.write_bytes(
@@ -651,12 +863,12 @@ def main():
                     )
 
                     iso = (
-                        f"{timestamp[:4]}-"
-                        f"{timestamp[4:6]}-"
-                        f"{timestamp[6:8]}T"
-                        f"{timestamp[8:10]}:"
-                        f"{timestamp[10:12]}:"
-                        f"{timestamp[12:14]}-03:00"
+                        f"{utc_timestamp[:4]}-"
+                        f"{utc_timestamp[4:6]}-"
+                        f"{utc_timestamp[6:8]}T"
+                        f"{utc_timestamp[8:10]}:"
+                        f"{utc_timestamp[10:12]}:"
+                        f"{utc_timestamp[12:14]}Z"
                     )
 
                     TSFILE.write_text(
@@ -668,7 +880,10 @@ def main():
                         f"OK RMA10 "
                         f"{name} -> "
                         f"{iso} "
-                        f"({edad:.1f} min)"
+                        f"(fuente "
+                        f"{timestamp} "
+                        f"Argentina, "
+                        f"{edad:.1f} min)"
                     )
 
                     return
