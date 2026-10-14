@@ -3,11 +3,13 @@ from pathlib import Path
 import io
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
 
 from PIL import Image
 from playwright.sync_api import sync_playwright
+
 
 URL = "https://radares.hidricosargentina.gob.ar/"
 
@@ -17,7 +19,11 @@ ACTUAL = OUT / "actual.png"
 TSFILE = OUT / "radar_timestamp.txt"
 
 MAX_RETRIES = 5
-MAX_RADAR_AGE_MINUTES = 20
+MAX_RADAR_AGE_MINUTES = 30
+
+ARGENTINA_TZ = ZoneInfo(
+    "America/Argentina/Buenos_Aires"
+)
 
 
 def validar_png(data):
@@ -25,32 +31,59 @@ def validar_png(data):
         return False, "archivo vacio/pequeno"
 
     try:
-        im = Image.open(io.BytesIO(data)).convert("RGBA")
+        im = Image.open(
+            io.BytesIO(data)
+        ).convert("RGBA")
 
         if im.width < 100 or im.height < 100:
-            return False, f"resolucion {im.width}x{im.height}"
+            return False, (
+                f"resolucion "
+                f"{im.width}x{im.height}"
+            )
 
         alpha = im.getchannel("A")
 
         if alpha.getextrema()[1] < 3:
-            return False, "imagen completamente transparente"
+            return False, (
+                "imagen completamente "
+                "transparente"
+            )
 
-        visible = sum(1 for a in alpha.getdata() if a > 2)
+        visible = sum(
+            1
+            for a in alpha.getdata()
+            if a > 2
+        )
 
-        if visible / (im.width * im.height) < 0.01:
-            return False, "menos de 1% de pixeles visibles"
+        if (
+            visible /
+            (im.width * im.height)
+            < 0.01
+        ):
+            return False, (
+                "menos de 1% de pixeles "
+                "visibles"
+            )
 
-        return True, f"{im.width}x{im.height}, {len(data)} bytes"
+        return True, (
+            f"{im.width}x{im.height}, "
+            f"{len(data)} bytes"
+        )
 
     except Exception as exc:
-        return False, f"PNG invalido: {exc}"
+        return False, (
+            f"PNG invalido: {exc}"
+        )
 
 
 def timestamp_from_url(url):
     if not url:
         return None
 
-    match = re.search(r"(\d{14})\.png(?:\?.*)?$", url)
+    match = re.search(
+        r"(\d{14})\.png(?:\?.*)?$",
+        url
+    )
 
     if not match:
         return None
@@ -61,15 +94,24 @@ def timestamp_from_url(url):
 def timestamp_to_datetime(timestamp):
     return datetime.strptime(
         timestamp,
-        "%Y%m%d%H%M%S",
-    ).replace(tzinfo=timezone.utc)
+        "%Y%m%d%H%M%S"
+    ).replace(
+        tzinfo=ARGENTINA_TZ
+    )
 
 
 def edad_minutos(timestamp):
-    ahora = datetime.now(timezone.utc)
-    fecha = timestamp_to_datetime(timestamp)
+    ahora = datetime.now(
+        ARGENTINA_TZ
+    )
 
-    return (ahora - fecha).total_seconds() / 60.0
+    fecha = timestamp_to_datetime(
+        timestamp
+    )
+
+    return (
+        ahora - fecha
+    ).total_seconds() / 60.0
 
 
 def normalizar_url(url):
@@ -82,9 +124,16 @@ def normalizar_url(url):
         return "https:" + url
 
     if url.startswith("/"):
-        return urljoin(URL, url)
+        return urljoin(
+            URL,
+            url
+        )
 
-    if url.startswith("http://") or url.startswith("https://"):
+    if (
+        url.startswith("http://")
+        or
+        url.startswith("https://")
+    ):
         return url
 
     return None
@@ -98,9 +147,29 @@ def extraer_urls_rma10(page):
             return
 
         patrones = [
-            r"https?://[^\"'<>\\s]+/cache/RMA10/[^\"'<>\\s]+?\.png(?:\?[^\"'<>\\s]*)?",
-            r"//[^\"'<>\\s]+/cache/RMA10/[^\"'<>\\s]+?\.png(?:\?[^\"'<>\\s]*)?",
-            r"/cache/RMA10/[^\"'<>\\s]+?\.png(?:\?[^\"'<>\\s]*)?",
+            (
+                r"https?://[^\"'<>"
+                r"\s]+/cache/RMA10/"
+                r"[^\"'<>"
+                r"\s]+?\.png"
+                r"(?:\?[^\"'<>"
+                r"\s]*)?"
+            ),
+            (
+                r"//[^\"'<>"
+                r"\s]+/cache/RMA10/"
+                r"[^\"'<>"
+                r"\s]+?\.png"
+                r"(?:\?[^\"'<>"
+                r"\s]*)?"
+            ),
+            (
+                r"/cache/RMA10/"
+                r"[^\"'<>"
+                r"\s]+?\.png"
+                r"(?:\?[^\"'<>"
+                r"\s]*)?"
+            ),
         ]
 
         for patron in patrones:
@@ -109,26 +178,47 @@ def extraer_urls_rma10(page):
                 texto,
                 re.I
             ):
-                url = normalizar_url(coincidencia)
-                timestamp = timestamp_from_url(url)
+                url = normalizar_url(
+                    coincidencia
+                )
+
+                timestamp = (
+                    timestamp_from_url(
+                        url
+                    )
+                )
 
                 if url and timestamp:
                     encontrados.append(
-                        (timestamp, url)
+                        (
+                            timestamp,
+                            url
+                        )
                     )
 
-    urls_img = page.locator("img").evaluate_all(
-        "els => els.map(e => e.src || e.getAttribute('src') || '')"
+    urls_img = page.locator(
+        "img"
+    ).evaluate_all(
+        "els => els.map("
+        "e => e.src || "
+        "e.getAttribute('src') || ''"
+        ")"
     )
 
     for url in urls_img:
         agregar(url)
 
-    agregar(page.content())
+    agregar(
+        page.content()
+    )
 
     try:
-        scripts = page.locator("script").evaluate_all(
-            "els => els.map(e => e.textContent || '')"
+        scripts = page.locator(
+            "script"
+        ).evaluate_all(
+            "els => els.map("
+            "e => e.textContent || ''"
+            ")"
         )
 
         for script in scripts:
@@ -140,15 +230,21 @@ def extraer_urls_rma10(page):
     unicos = {}
 
     for timestamp, url in encontrados:
-        unicos[(timestamp, url)] = (
+        unicos[
+            (timestamp, url)
+        ] = (
             timestamp,
             url
         )
 
-    return list(unicos.values())
+    return list(
+        unicos.values()
+    )
 
 
-def seleccionar_mas_reciente(candidatos):
+def seleccionar_mas_reciente(
+    candidatos
+):
     if not candidatos:
         return None
 
@@ -158,7 +254,10 @@ def seleccionar_mas_reciente(candidatos):
     )
 
 
-def descargar_imagen(page, url):
+def descargar_imagen(
+    page,
+    url
+):
     response = page.request.get(
         url,
         timeout=30000
@@ -166,15 +265,20 @@ def descargar_imagen(page, url):
 
     if not response.ok:
         raise RuntimeError(
-            f"HTTP {response.status} al descargar {url}"
+            f"HTTP {response.status} "
+            f"al descargar {url}"
         )
 
     data = response.body()
 
-    ok, detail = validar_png(data)
+    ok, detail = validar_png(
+        data
+    )
 
     if not ok:
-        raise RuntimeError(detail)
+        raise RuntimeError(
+            detail
+        )
 
     return data, detail
 
@@ -222,12 +326,17 @@ def main():
 
                     respuestas_radar = []
 
-                    def capturar_respuesta(response):
+                    def capturar_respuesta(
+                        response
+                    ):
                         url = response.url
 
                         if (
-                            "/cache/RMA10/" in url
-                            and ".png" in url.lower()
+                            "/cache/RMA10/"
+                            in url
+                            and
+                            ".png"
+                            in url.lower()
                         ):
 
                             timestamp = (
@@ -252,7 +361,9 @@ def main():
 
                     page.goto(
                         URL,
-                        wait_until="domcontentloaded",
+                        wait_until=(
+                            "domcontentloaded"
+                        ),
                         timeout=60000
                     )
 
@@ -270,8 +381,10 @@ def main():
                         selects.count()
                     ):
 
-                        select = selects.nth(
-                            index
+                        select = (
+                            selects.nth(
+                                index
+                            )
                         )
 
                         try:
@@ -283,11 +396,14 @@ def main():
                             continue
 
                         if (
-                            "Bahía Blanca" in texto
+                            "Bahía Blanca"
+                            in texto
                             or
-                            "Bahia Blanca" in texto
+                            "Bahia Blanca"
+                            in texto
                             or
-                            "RMA10" in texto
+                            "RMA10"
+                            in texto
                         ):
 
                             selector = select
@@ -300,8 +416,10 @@ def main():
                             "en SINARAME"
                         )
 
-                    opciones = selector.locator(
-                        "option"
+                    opciones = (
+                        selector.locator(
+                            "option"
+                        )
                     )
 
                     value = None
@@ -310,8 +428,10 @@ def main():
                         opciones.count()
                     ):
 
-                        option = opciones.nth(
-                            index
+                        option = (
+                            opciones.nth(
+                                index
+                            )
                         )
 
                         texto = (
@@ -326,11 +446,14 @@ def main():
                         )
 
                         if (
-                            "Bahía Blanca" in texto
+                            "Bahía Blanca"
+                            in texto
                             or
-                            "Bahia Blanca" in texto
+                            "Bahia Blanca"
+                            in texto
                             or
-                            "RMA10" in texto
+                            "RMA10"
+                            in texto
                         ):
 
                             value = valor
@@ -444,6 +567,17 @@ def main():
                         timestamp
                     )
 
+                    print(
+                        f"Hora local RMA10: "
+                        f"{timestamp} "
+                        f"(Argentina)"
+                    )
+
+                    print(
+                        f"Edad real del frame: "
+                        f"{edad:.1f} minutos"
+                    )
+
                     if edad < -5:
                         raise RuntimeError(
                             "Timestamp RMA10 "
@@ -470,7 +604,9 @@ def main():
                         data = response.body()
 
                         ok, detail = (
-                            validar_png(data)
+                            validar_png(
+                                data
+                            )
                         )
 
                         if not ok:
@@ -500,13 +636,6 @@ def main():
                         detail
                     )
 
-                    print(
-                        f"Timestamp RMA10: "
-                        f"{timestamp} | "
-                        f"edad: "
-                        f"{edad:.1f} min"
-                    )
-
                     name = (
                         f"{timestamp}.png"
                     )
@@ -527,7 +656,7 @@ def main():
                         f"{timestamp[6:8]}T"
                         f"{timestamp[8:10]}:"
                         f"{timestamp[10:12]}:"
-                        f"{timestamp[12:14]}Z"
+                        f"{timestamp[12:14]}-03:00"
                     )
 
                     TSFILE.write_text(
