@@ -93,19 +93,21 @@ jobs:
       - name: Conectar RMA10 con Storm Engine
         run: |
           python scripts/adaptar_rma10_intelligence.py
+          test -s data/radar/radar_nowcast.json
 
+      - name: Georreferenciar RMA10
+        run: |
+          python scripts/georreferenciar_rma10.py
           test -s data/radar/radar_nowcast.json
 
       - name: Fusionar meteorología
         run: |
           python scripts/meteorologia_fusion.py
-
           test -s data/ia/estado_meteorologico.json
 
       - name: Ejecutar Storm Engine
         run: |
           python scripts/tormenta_intelligence.py
-
           test -s data/ia/inteligencia_tormenta.json
           test -s data/ia/historial_inteligencia_tormenta.csv
 
@@ -213,15 +215,14 @@ jobs:
             data/ia/historial_inteligencia_tormenta.csv \
             data/ia/resultado_final.json \
             data/meteorologia/ambiente_futuro.json \
-            data/sazb/status.json
+            data/sazb/status.json \
+            scripts/georreferenciar_rma10.py
 
           if git diff --cached --quiet; then
             echo "No hay cambios para guardar."
           else
-            git commit -m "ClimaAR: integrar inteligencia operativa"
-
+            git commit -m "ClimaAR: georreferenciar RMA10"
             git pull --rebase --autostash origin main
-
             git push origin HEAD:main
           fi
 
@@ -257,6 +258,8 @@ jobs:
           i = d.get("inteligencia", {})
           probs = i.get("probabilidades", {})
           hazards = i.get("peligros", {})
+          radar = d.get("radar", {}).get("nowcast", {})
+          bahia = radar.get("bahia_blanca", {})
 
           print("===== CLIMAAR RESULTADO FINAL =====")
           print("Actualizado:", d.get("actualizado_utc"))
@@ -302,6 +305,35 @@ jobs:
           print(
               "Confianza:",
               i.get("confianza_modelo")
+          )
+          print("----- GEOREFERENCIACIÓN RMA10 -----")
+          print(
+              "Georreferenciación:",
+              radar.get("georreferenciacion", {}).get("disponible")
+          )
+          print(
+              "Movimiento hacia Bahía:",
+              radar.get("movimiento_hacia_bahia")
+          )
+          print(
+              "Distancia a Bahía km:",
+              radar.get("distancia_km")
+          )
+          print(
+              "Rumbo a Bahía:",
+              radar.get("rumbo_bahia_grados")
+          )
+          print(
+              "Error de rumbo:",
+              radar.get("error_rumbo_bahia_grados")
+          )
+          print(
+              "ETA minutos:",
+              radar.get("eta_minutos")
+          )
+          print(
+              "Bahía Blanca:",
+              bahia
           )
           print("===================================")
           PY
