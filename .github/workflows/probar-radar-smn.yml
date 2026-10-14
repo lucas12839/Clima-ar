@@ -1,7 +1,13 @@
 name: Probar Radar SMN
 
 on:
+  schedule:
+    - cron: "*/10 * * * *"
   workflow_dispatch:
+
+concurrency:
+  group: radar-rma10
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -10,6 +16,7 @@ permissions:
 jobs:
   radar:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
 
@@ -67,26 +74,12 @@ jobs:
                 "/tmp/radar_artifacts/${ID}.zip" \
                 -d "/tmp/radar_artifacts/${ID}" || true
 
-              # Recuperar únicamente frames históricos válidos.
-              #
-              # Formato:
-              # YYYYMMDDHHMMSS.png
-              #
-              # Se descartan archivos viejos del tipo:
-              # radar_1791390600.png
-
               find "/tmp/radar_artifacts/${ID}" \
                 -type f \
                 -path "*/historico/*" \
                 -regextype posix-extended \
                 -regex ".*/[0-9]{14}\.png" \
                 -exec cp -n {} data/radar/historico/ \; || true
-
-              # Recuperar las predicciones pendientes.
-              #
-              # Esto permite que las predicciones generadas
-              # en un frame anterior puedan validarse
-              # cuando llegue el frame real correspondiente.
 
               find "/tmp/radar_artifacts/${ID}" \
                 -type f \
@@ -95,9 +88,6 @@ jobs:
 
             fi
           done
-
-          # Limpiar cualquier archivo histórico viejo
-          # con formato radar_XXXXXXXXXX.png
 
           find data/radar/historico \
             -maxdepth 1 \
