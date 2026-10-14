@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""
-ClimaAR - Georreferenciacion operativa RMA10.
-
-Convierte coordenadas de pixel del RMA10 a lat/lon usando:
-- antena RMA10: -38.7342, -62.1654
-- alcance nominal: 240 km de radio
-- Bahia Blanca: -38.7196, -62.2724
-
-La imagen se trata como un dominio centrado en la antena.
-La transformacion es una aproximacion cartografica local y queda
-marcada en el JSON para poder calibrarla posteriormente contra
-una capa geografica oficial.
-"""
 
 from __future__ import annotations
 
@@ -50,15 +37,11 @@ def clamp(value, low, high):
 
 
 def load_json(path):
-    return json.loads(
-        path.read_text(encoding="utf-8")
-    )
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def save_json(path, data):
-    temp = path.with_suffix(
-        path.suffix + ".tmp"
-    )
+    temp = path.with_suffix(path.suffix + ".tmp")
 
     temp.write_text(
         json.dumps(
@@ -122,35 +105,12 @@ def bearing_deg(lat1, lon1, lat2, lon2):
     ) % 360.0
 
 
-def pixel_to_latlon(
-    x,
-    y,
-    width,
-    height,
-):
-    """
-    x positivo hacia este.
-    y positivo hacia abajo.
+def pixel_to_latlon(x, y, width, height):
+    center_x = width / 2.0
+    center_y = height / 2.0
 
-    El alcance nominal de 240 km se toma como radio.
-    Por eso el ancho completo representa aproximadamente 480 km.
-    """
-
-    center_x = (
-        width / 2.0
-    )
-
-    center_y = (
-        height / 2.0
-    )
-
-    radius_px_x = (
-        width / 2.0
-    )
-
-    radius_px_y = (
-        height / 2.0
-    )
+    radius_px_x = width / 2.0
+    radius_px_y = height / 2.0
 
     east_km = (
         (x - center_x)
@@ -172,9 +132,7 @@ def pixel_to_latlon(
     lon_scale = (
         111.32
         * math.cos(
-            math.radians(
-                RADAR_LAT
-            )
+            math.radians(RADAR_LAT)
         )
     )
 
@@ -189,96 +147,7 @@ def pixel_to_latlon(
     )
 
 
-def vector_to_bahia():
-    """
-    Vector local desde la antena RMA10 hacia Bahia Blanca.
-
-    Devuelve:
-    este_km, norte_km, distancia_km, bearing_deg
-    """
-
-    mean_lat = math.radians(
-        (
-            RADAR_LAT
-            + BAHIA_LAT
-        ) / 2.0
-    )
-
-    east_km = (
-        (
-            BAHIA_LON
-            - RADAR_LON
-        )
-        * 111.32
-        * math.cos(mean_lat)
-    )
-
-    north_km = (
-        (
-            BAHIA_LAT
-            - RADAR_LAT
-        )
-        * 111.32
-    )
-
-    distance = math.hypot(
-        east_km,
-        north_km
-    )
-
-    bearing = bearing_deg(
-        RADAR_LAT,
-        RADAR_LON,
-        BAHIA_LAT,
-        BAHIA_LON,
-    )
-
-    return (
-        east_km,
-        north_km,
-        distance,
-        bearing,
-    )
-
-
-def motion_vector_from_direction(
-    speed_kmh,
-    direction_deg,
-):
-    if (
-        speed_kmh is None
-        or direction_deg is None
-        or speed_kmh <= 0
-    ):
-        return (
-            0.0,
-            0.0,
-        )
-
-    direction = math.radians(
-        direction_deg
-    )
-
-    east_kmh = (
-        speed_kmh
-        * math.sin(direction)
-    )
-
-    north_kmh = (
-        speed_kmh
-        * math.cos(direction)
-    )
-
-    return (
-        east_kmh,
-        north_kmh,
-    )
-
-
-def angle_difference_deg(
-    a,
-    b,
-):
+def angle_difference_deg(a, b):
     if a is None or b is None:
         return None
 
@@ -291,10 +160,69 @@ def angle_difference_deg(
         - 180.0
     )
 
-    return round(
-        value,
-        1
-    )
+    return round(value, 1)
+
+
+def find_principal_item(
+    georeferenced,
+    principal_id,
+    nowcast,
+):
+    if principal_id is None:
+        return None
+
+    principal_text = str(principal_id)
+
+    # 1. track_id
+    for item in georeferenced:
+        if str(item.get("track_id")) == principal_text:
+            return item
+
+    # 2. id
+    for item in georeferenced:
+        if str(item.get("id")) == principal_text:
+            return item
+
+    # 3. nucleo_id
+    for item in georeferenced:
+        if str(item.get("nucleo_id")) == principal_text:
+            return item
+
+    # 4. Si el ID pertenece al track pero no coincide
+    # con el núcleo, buscar coordenadas del track principal.
+    principal_track = nowcast.get("nucleo_principal")
+
+    if isinstance(principal_track, dict):
+        px = principal_track.get("x")
+        py = principal_track.get("y")
+
+        if px is not None and py is not None:
+            px = finite(px)
+            py = finite(py)
+
+            candidates = []
+
+            for item in georeferenced:
+                ix = finite(item.get("x"))
+                iy = finite(item.get("y"))
+
+                distance = math.hypot(
+                    ix - px,
+                    iy - py,
+                )
+
+                candidates.append(
+                    (distance, item)
+                )
+
+            if candidates:
+                candidates.sort(
+                    key=lambda value: value[0]
+                )
+
+                return candidates[0][1]
+
+    return None
 
 
 def main():
@@ -308,39 +236,37 @@ def main():
             "ERROR: no existe data/radar/actual.png"
         )
 
-    data = load_json(
-        RADAR_FILE
-    )
+    data = load_json(RADAR_FILE)
 
-    nowcast = data.get(
-        "nowcast"
-    )
+    nowcast = data.get("nowcast")
 
-    if not isinstance(
-        nowcast,
-        dict
-    ):
+    if not isinstance(nowcast, dict):
         raise SystemExit(
             "ERROR: radar_nowcast.json "
             "no contiene nowcast valido"
         )
 
-    with Image.open(
-        IMAGE_FILE
-    ) as image:
+    with Image.open(IMAGE_FILE) as image:
         width, height = image.size
 
     center_x = width / 2.0
     center_y = height / 2.0
 
-    (
-        bahia_east_km,
-        bahia_north_km,
-        bahia_distance_km,
-        bahia_bearing_deg,
-    ) = vector_to_bahia()
+    radar_bahia_distance = haversine_km(
+        RADAR_LAT,
+        RADAR_LON,
+        BAHIA_LAT,
+        BAHIA_LON,
+    )
 
-    principal = nowcast.get(
+    radar_bahia_bearing = bearing_deg(
+        RADAR_LAT,
+        RADAR_LON,
+        BAHIA_LAT,
+        BAHIA_LON,
+    )
+
+    principal_id = nowcast.get(
         "nucleo_principal_id"
     )
 
@@ -349,41 +275,23 @@ def main():
         []
     )
 
-    if not isinstance(
-        nucleos,
-        list
-    ):
+    if not isinstance(nucleos, list):
         nucleos = []
 
     georeferenced = []
 
     for nucleo in nucleos:
-        if not isinstance(
-            nucleo,
-            dict
-        ):
+        if not isinstance(nucleo, dict):
             continue
 
-        x = nucleo.get(
-            "x"
-        )
-
-        y = nucleo.get(
-            "y"
-        )
+        x = nucleo.get("x")
+        y = nucleo.get("y")
 
         if x is None or y is None:
             continue
 
-        x = finite(
-            x,
-            center_x
-        )
-
-        y = finite(
-            y,
-            center_y
-        )
+        x = finite(x, center_x)
+        y = finite(y, center_y)
 
         lat, lon = pixel_to_latlon(
             x,
@@ -392,50 +300,40 @@ def main():
             height,
         )
 
-        distance_bahia = (
-            haversine_km(
-                lat,
-                lon,
-                BAHIA_LAT,
-                BAHIA_LON,
-            )
+        distance_bahia = haversine_km(
+            lat,
+            lon,
+            BAHIA_LAT,
+            BAHIA_LON,
         )
 
-        bearing_bahia = (
-            bearing_deg(
-                lat,
-                lon,
-                BAHIA_LAT,
-                BAHIA_LON,
-            )
+        bearing_bahia = bearing_deg(
+            lat,
+            lon,
+            BAHIA_LAT,
+            BAHIA_LON,
         )
 
-        item = dict(
-            nucleo
-        )
+        item = dict(nucleo)
 
-        item["georeferencia"] = {
+        item["georreferencia"] = {
             "latitud": lat,
             "longitud": lon,
             "distancia_bahia_km": round(
                 distance_bahia,
-                2
+                2,
             ),
             "rumbo_bahia_grados": round(
                 bearing_bahia,
-                1
+                1,
             ),
         }
 
-        georeferenced.append(
-            item
-        )
+        georeferenced.append(item)
 
     nowcast["georreferenciacion"] = {
         "disponible": True,
-        "metodo": (
-            "RMA10_centrado_240km_radio"
-        ),
+        "metodo": "RMA10_centrado_240km_radio",
         "radar_latitud": RADAR_LAT,
         "radar_longitud": RADAR_LON,
         "bahia_blanca_latitud": BAHIA_LAT,
@@ -445,9 +343,7 @@ def main():
         "centro_radar_x_px": center_x,
         "centro_radar_y_px": center_y,
         "alcance_radio_km": RADAR_RANGE_KM,
-        "alcance_diametro_km": (
-            RADAR_RANGE_KM * 2.0
-        ),
+        "alcance_diametro_km": RADAR_RANGE_KM * 2.0,
         "calibracion_geografica": (
             "operativa_no_validada_con_capa_cartografica"
         ),
@@ -457,142 +353,129 @@ def main():
         georeferenced
     )
 
-    if principal is not None:
-        principal_item = None
+    principal_item = find_principal_item(
+        georeferenced,
+        principal_id,
+        nowcast,
+    )
 
-        for item in georeferenced:
-            if (
-                item.get(
-                    "track_id"
-                )
-                == principal
-            ):
-                principal_item = item
-                break
+    if principal_item is not None:
+        geo = principal_item["georeferencia"]
 
-        if principal_item is None:
-            for item in georeferenced:
-                if (
-                    item.get("id")
-                    == principal
-                ):
-                    principal_item = item
-                    break
+        distance_bahia = finite(
+            geo.get("distancia_bahia_km"),
+            radar_bahia_distance,
+        )
 
-        if principal_item is not None:
-            geo = principal_item[
-                "georeferencia"
-            ]
+        bearing_from_cell = finite(
+            geo.get("rumbo_bahia_grados"),
+            radar_bahia_bearing,
+        )
 
-            distance_bahia = finite(
-                geo.get(
-                    "distancia_bahia_km"
-                ),
-                bahia_distance_km,
+        direction = nowcast.get(
+            "direccion_grados"
+        )
+
+        speed_kmh = nowcast.get(
+            "velocidad_kmh"
+        )
+
+        direction_error = angle_difference_deg(
+            direction,
+            bearing_from_cell,
+        )
+
+        toward_bahia = (
+            direction_error is not None
+            and direction_error <= 45.0
+            and finite(speed_kmh, 0.0) > 5.0
+        )
+
+        eta = None
+
+        if toward_bahia:
+            eta = round(
+                distance_bahia
+                / float(speed_kmh)
+                * 60.0,
+                1,
             )
 
-            bearing_from_cell = finite(
-                geo.get(
-                    "rumbo_bahia_grados"
-                ),
-                bahia_bearing_deg,
-            )
+        nowcast["distancia_km"] = round(
+            distance_bahia,
+            2,
+        )
 
-            direction = nowcast.get(
-                "direccion_grados"
-            )
+        nowcast["distancia_tipo"] = (
+            "georreferenciada_a_Bahia_Blanca"
+        )
 
-            speed_kmh = nowcast.get(
-                "velocidad_kmh"
-            )
+        nowcast["movimiento_hacia_bahia"] = (
+            bool(toward_bahia)
+        )
 
-            direction_error = (
-                angle_difference_deg(
-                    direction,
-                    bearing_from_cell,
-                )
-            )
+        nowcast["rumbo_bahia_grados"] = round(
+            bearing_from_cell,
+            1,
+        )
 
-            toward_bahia = (
-                direction_error is not None
-                and direction_error <= 45.0
-                and finite(
-                    speed_kmh,
-                    0.0
-                ) > 5.0
-            )
+        nowcast["error_rumbo_bahia_grados"] = (
+            direction_error
+        )
 
-            eta = None
+        nowcast["eta_minutos"] = eta
 
-            if toward_bahia:
-                eta = round(
-                    distance_bahia
-                    / float(speed_kmh)
-                    * 60.0,
-                    1,
-                )
-
-            nowcast[
-                "distancia_km"
-            ] = round(
+        nowcast["bahia_blanca"] = {
+            "latitud": BAHIA_LAT,
+            "longitud": BAHIA_LON,
+            "distancia_principal_km": round(
                 distance_bahia,
-                2
-            )
-
-            nowcast[
-                "distancia_tipo"
-            ] = (
-                "georreferenciada_a_Bahia_Blanca"
-            )
-
-            nowcast[
-                "movimiento_hacia_bahia"
-            ] = bool(
-                toward_bahia
-            )
-
-            nowcast[
-                "rumbo_bahia_grados"
-            ] = round(
+                2,
+            ),
+            "rumbo_desde_principal_grados": round(
                 bearing_from_cell,
-                1
-            )
+                1,
+            ),
+            "movimiento_hacia_bahia": (
+                bool(toward_bahia)
+            ),
+            "eta_minutos": eta,
+        }
 
-            nowcast[
-                "error_rumbo_bahia_grados"
-            ] = direction_error
+    else:
+        # No inventar dirección ni ETA.
+        nowcast["distancia_km"] = round(
+            radar_bahia_distance,
+            2,
+        )
 
-            nowcast[
-                "eta_minutos"
-            ] = eta
+        nowcast["distancia_tipo"] = (
+            "radar_a_Bahia_Blanca"
+        )
 
-            nowcast[
-                "bahia_blanca"
-            ] = {
-                "latitud": BAHIA_LAT,
-                "longitud": BAHIA_LON,
-                "distancia_principal_km": round(
-                    distance_bahia,
-                    2
-                ),
-                "rumbo_desde_principal_grados": round(
-                    bearing_from_cell,
-                    1
-                ),
-                "movimiento_hacia_bahia": bool(
-                    toward_bahia
-                ),
-                "eta_minutos": eta,
-            }
+        nowcast["movimiento_hacia_bahia"] = False
+
+        nowcast["rumbo_bahia_grados"] = None
+
+        nowcast["error_rumbo_bahia_grados"] = None
+
+        nowcast["eta_minutos"] = None
+
+        nowcast["bahia_blanca"] = {
+            "latitud": BAHIA_LAT,
+            "longitud": BAHIA_LON,
+            "distancia_principal_km": None,
+            "rumbo_desde_principal_grados": None,
+            "movimiento_hacia_bahia": False,
+            "eta_minutos": None,
+            "nucleo_principal_encontrado": False,
+        }
 
     diagnostico = data.get(
         "diagnostico"
     )
 
-    if not isinstance(
-        diagnostico,
-        dict
-    ):
+    if not isinstance(diagnostico, dict):
         diagnostico = {}
 
     diagnostico[
@@ -620,6 +503,14 @@ def main():
     ] = BAHIA_LON
 
     diagnostico[
+        "nucleo_principal_id"
+    ] = principal_id
+
+    diagnostico[
+        "nucleo_principal_encontrado"
+    ] = principal_item is not None
+
+    diagnostico[
         "nota_georreferenciacion"
     ] = (
         "Transformacion pixel->lat/lon basada "
@@ -633,67 +524,101 @@ def main():
 
     save_json(
         RADAR_FILE,
-        data
+        data,
     )
 
     print(
         "===== GEORREFERENCIACION RMA10 ====="
     )
+
     print(
         "Imagen:",
-        f"{width}x{height}"
+        f"{width}x{height}",
     )
+
     print(
         "Radar:",
         RADAR_LAT,
-        RADAR_LON
+        RADAR_LON,
     )
+
     print(
         "Bahia Blanca:",
         BAHIA_LAT,
-        BAHIA_LON
+        BAHIA_LON,
     )
+
     print(
         "Distancia radar-Bahia:",
         round(
-            bahia_distance_km,
-            2
+            radar_bahia_distance,
+            2,
         ),
-        "km"
+        "km",
     )
+
     print(
         "Rumbo radar-Bahia:",
         round(
-            bahia_bearing_deg,
-            1
+            radar_bahia_bearing,
+            1,
         ),
-        "grados"
+        "grados",
     )
+
+    print(
+        "ID nucleo principal:",
+        principal_id,
+    )
+
+    print(
+        "Nucleo principal encontrado:",
+        principal_item is not None,
+    )
+
     print(
         "Nucleos georreferenciados:",
-        len(georeferenced)
+        len(georeferenced),
     )
+
     print(
         "Movimiento hacia Bahia:",
         nowcast.get(
             "movimiento_hacia_bahia"
-        )
+        ),
     )
+
     print(
         "Distancia principal:",
         nowcast.get(
             "distancia_km"
-        )
+        ),
     )
+
+    print(
+        "Rumbo a Bahia:",
+        nowcast.get(
+            "rumbo_bahia_grados"
+        ),
+    )
+
+    print(
+        "Error de rumbo:",
+        nowcast.get(
+            "error_rumbo_bahia_grados"
+        ),
+    )
+
     print(
         "ETA:",
         nowcast.get(
             "eta_minutos"
-        )
+        ),
     )
+
     print(
         "Salida:",
-        RADAR_FILE
+        RADAR_FILE,
     )
 
 
