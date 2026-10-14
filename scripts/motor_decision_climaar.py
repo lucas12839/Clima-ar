@@ -358,15 +358,11 @@ def main():
         },
 
         "radar": {
-            "timestamp": first_number(
-                radar.get("radar_timestamp"),
-                nowcast.get("frame_actual_utc"),
-            ) if not isinstance(
-                radar.get("radar_timestamp"),
-                str
-            ) else (
+            "timestamp": (
                 radar.get("radar_timestamp")
-                or nowcast.get("frame_actual_utc")
+                if isinstance(radar.get("radar_timestamp"), str)
+                and radar.get("radar_timestamp").strip()
+                else nowcast.get("frame_actual_utc")
             ),
             "nowcast": nowcast,
             "intensidad": intensity,
