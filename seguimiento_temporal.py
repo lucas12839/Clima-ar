@@ -13,8 +13,12 @@ SCHEMA_VERSION = 6
 
 MIN_INTERVALO = 2.0
 MAX_INTERVALO = 30.0
-MAX_DISTANCIA = 45.0
-MAX_DISTANCIA_SIN_OVERLAP = 25.0
+
+# Matching adaptativo para radar RMA10.
+# El valor anterior de 45 px era demasiado restrictivo para frames
+# separados ~10 minutos.
+MAX_DISTANCIA_BASE = 70.0
+MAX_DISTANCIA_SIN_OVERLAP = 85.0
 MAX_MISSED_FRAMES = 2
 MAX_HISTORIAL = 20
 
@@ -183,7 +187,42 @@ def similitud_forma(a, b):
     ) / 2
 
 
-def compatibilidad(anterior, actual):
+def posicion_predicha(track, intervalo):
+    x = numero(track.get("x"))
+    y = numero(track.get("y"))
+    vx = numero(track.get("velocidad_x_pixeles_min"), 0.0)
+    vy = numero(track.get("velocidad_y_pixeles_min"), 0.0)
+
+    return (
+        x + vx * intervalo,
+        y + vy * intervalo,
+    )
+
+
+def distancia_predicha(track, actual, intervalo):
+    px, py = posicion_predicha(track, intervalo)
+    return math.hypot(actual["x"] - px, actual["y"] - py)
+
+
+def distancia_maxima(intervalo, track=None):
+    # Permite más desplazamiento cuanto mayor sea el intervalo.
+    # Si el track ya tiene velocidad, adapta el radio a su movimiento.
+    base = max(
+        MAX_DISTANCIA_BASE,
+        7.0 * max(intervalo, 1.0),
+    )
+
+    if track is not None:
+        velocidad = math.hypot(
+            numero(track.get("velocidad_x_pixeles_min"), 0.0),
+            numero(track.get("velocidad_y_pixeles_min"), 0.0),
+        )
+        base = max(base, velocidad * intervalo * 2.5 + 25.0)
+
+    return min(base, 180.0)
+
+
+def compatibilidad(anterior, actual, intervalo, track=None):
     d = distancia(anterior, actual)
     overlap = iou(anterior, actual)
 
@@ -192,34 +231,63 @@ def compatibilidad(anterior, actual):
     area_min = min(area_a / area_b, area_b / area_a)
 
     forma = similitud_forma(anterior, actual)
+    limite = distancia_maxima(intervalo, track)
 
-    if d > MAX_DISTANCIA:
+    if d > limite:
         return None
 
+    d_pred = None
+    if track is not None:
+        d_pred = distancia_predicha(track, actual, intervalo)
+
+    # Quando existe movimento conhecido, a posição prevista ganha
+    # prioridade para não perder o mesmo núcleo quando atravessa pixels.
+    if d_pred is not None:
+        limite_pred = min(180.0, max(60.0, limite * 1.25))
+        if d_pred > limite_pred and overlap < 0.02:
+            return None
+
     if overlap < 0.02:
-        if d > MAX_DISTANCIA_SIN_OVERLAP:
+        if d > MAX_DISTANCIA_SIN_OVERLAP and d_pred is None:
             return None
-        if area_min < 0.65:
-            return None
-        if forma < 0.55:
-            return None
-    else:
-        if area_min < 0.40:
+        if area_min < 0.45:
             return None
         if forma < 0.35:
             return None
+    else:
+        if area_min < 0.25:
+            return None
+        if forma < 0.25:
+            return None
 
-    proximidad = max(0.0, 1.0 - d / MAX_DISTANCIA)
+    proximidad = max(0.0, 1.0 - d / max(limite, 1.0))
+    forma_score = forma * 10.0
+    area_score = area_min * 15.0
+    overlap_score = overlap * 30.0
+
+    if d_pred is None:
+        pred_score = 0.0
+    else:
+        pred_limite = max(60.0, limite * 1.25)
+        pred_score = max(
+            0.0,
+            1.0 - d_pred / pred_limite
+        ) * 35.0
+
     score = (
-        proximidad * 40
-        + overlap * 35
-        + area_min * 15
-        + forma * 10
+        proximidad * 25.0
+        + overlap_score
+        + area_score
+        + forma_score
+        + pred_score
     )
 
     return {
         "score": round(score, 2),
         "distancia": round(d, 3),
+        "distancia_predicha": (
+            round(d_pred, 3) if d_pred is not None else None
+        ),
         "iou": round(overlap, 4),
         "similitud_area": round(area_min, 4),
         "similitud_forma": round(forma, 4),
@@ -287,11 +355,23 @@ def normalizar_estado(estado):
             else []
         )
 
+        # Migración transparente: tracks anteriores no tenían vx/vy.
+        if "velocidad_x_pixeles_min" not in track:
+            track["velocidad_x_pixeles_min"] = 0.0
+        if "velocidad_y_pixeles_min" not in track:
+            track["velocidad_y_pixeles_min"] = 0.0
+
         nuevo["tracks"].append(track)
         max_id = max(max_id, tid)
 
-    siguiente = entero(estado.get("siguiente_track_id"), max_id + 1)
-    nuevo["siguiente_track_id"] = max(siguiente, max_id + 1)
+    siguiente = entero(
+        estado.get("siguiente_track_id"),
+        max_id + 1
+    )
+    nuevo["siguiente_track_id"] = max(
+        siguiente,
+        max_id + 1
+    )
 
     return nuevo
 
@@ -317,12 +397,15 @@ def crear_track(track_id, nucleo, radar_ts):
         "dy_pixeles": 0.0,
         "desplazamiento_pixeles": 0.0,
         "velocidad_pixeles_min": 0.0,
+        "velocidad_x_pixeles_min": 0.0,
+        "velocidad_y_pixeles_min": 0.0,
         "rumbo_grados": None,
         "direccion": None,
         "aceleracion_pixeles_min2": 0.0,
         "cambio_rumbo_grados": 0.0,
         "calidad_movimiento": "PRIMER_FRAME",
         "cambio_area_porcentaje": 0.0,
+        "tendencia_area": "ESTABLE",
         "tendencia_velocidad": "ESTABLE",
         "confianza_movimiento": 0.0,
         "historial": [{
@@ -351,9 +434,15 @@ def actualizar_track(track, nucleo, radar_ts, intervalo, calidad):
 
     if MIN_INTERVALO <= intervalo <= MAX_INTERVALO:
         velocidad = desplazamiento / intervalo
-        aceleracion = (velocidad - anterior_velocidad) / intervalo
+        velocidad_x = dx / intervalo
+        velocidad_y = dy / intervalo
+        aceleracion = (
+            velocidad - anterior_velocidad
+        ) / intervalo
     else:
         velocidad = 0.0
+        velocidad_x = 0.0
+        velocidad_y = 0.0
         aceleracion = 0.0
 
     grados, direccion = rumbo(dx, dy)
@@ -364,7 +453,10 @@ def actualizar_track(track, nucleo, radar_ts, intervalo, calidad):
             (grados - numero(anterior_rumbo) + 180) % 360 - 180
         )
 
-    anterior_area = max(numero(track.get("pixeles"), 1), 1)
+    anterior_area = max(
+        numero(track.get("pixeles"), 1),
+        1
+    )
     cambio_area = (
         (nucleo["pixeles"] - anterior_area)
         / anterior_area
@@ -390,13 +482,13 @@ def actualizar_track(track, nucleo, radar_ts, intervalo, calidad):
     elif intervalo < MIN_INTERVALO or intervalo > MAX_INTERVALO:
         confianza_movimiento = 0.25
     else:
+        estabilidad = max(
+            0.0,
+            1.0 - min(cambio_rumbo, 180) / 180
+        )
         confianza_movimiento = min(
             1.0,
-            max(
-                0.0,
-                0.45
-                + (1.0 - min(cambio_rumbo, 180) / 180) * 0.30
-            ),
+            0.50 + estabilidad * 0.35
         )
 
     historial = track.get("historial")
@@ -434,6 +526,8 @@ def actualizar_track(track, nucleo, radar_ts, intervalo, calidad):
         "dy_pixeles": dy,
         "desplazamiento_pixeles": desplazamiento,
         "velocidad_pixeles_min": velocidad,
+        "velocidad_x_pixeles_min": velocidad_x,
+        "velocidad_y_pixeles_min": velocidad_y,
         "rumbo_grados": grados,
         "direccion": direccion,
         "aceleracion_pixeles_min2": aceleracion,
@@ -458,7 +552,11 @@ def nueva_base_desde_frame(estado, nucleos, radar_ts):
         tid = estado["siguiente_track_id"]
         estado["siguiente_track_id"] += 1
 
-        track = crear_track(tid, nucleo, radar_ts)
+        track = crear_track(
+            tid,
+            nucleo,
+            radar_ts
+        )
         estado["tracks"].append(track)
         actuales.append(track)
 
@@ -493,6 +591,12 @@ def nucleo_salida(track):
         "velocidad_pixeles_min": track.get(
             "velocidad_pixeles_min", 0
         ),
+        "velocidad_x_pixeles_min": track.get(
+            "velocidad_x_pixeles_min", 0
+        ),
+        "velocidad_y_pixeles_min": track.get(
+            "velocidad_y_pixeles_min", 0
+        ),
         "rumbo_grados": track.get("rumbo_grados"),
         "direccion": track.get("direccion"),
         "aceleracion_pixeles_min2": track.get(
@@ -502,7 +606,8 @@ def nucleo_salida(track):
             "cambio_rumbo_grados", 0
         ),
         "calidad_movimiento": track.get(
-            "calidad_movimiento", "SIN_MOVIMIENTO"
+            "calidad_movimiento",
+            "SIN_MOVIMIENTO"
         ),
         "cambio_area_porcentaje": track.get(
             "cambio_area_porcentaje", 0
@@ -526,7 +631,9 @@ def salida_sin_nucleos(radar_ts, intervalo, calidad, motivo=None):
         "radar_timestamp": radar_ts,
         "frame_anterior_disponible": intervalo is not None,
         "intervalo_minutos": (
-            round(intervalo, 2) if intervalo is not None else None
+            round(intervalo, 2)
+            if intervalo is not None
+            else None
         ),
         "calidad_intervalo": calidad,
         "nucleos_actuales": 0,
@@ -606,7 +713,6 @@ def procesar():
 
         guardar_json(ESTADO, estado)
         guardar_json(SALIDA, salida)
-
         return salida
 
     intervalo = (
@@ -671,7 +777,6 @@ def procesar():
 
         guardar_json(ESTADO, estado)
         guardar_json(SALIDA, salida)
-
         return salida
 
     if intervalo > MAX_INTERVALO:
@@ -709,7 +814,6 @@ def procesar():
 
         guardar_json(ESTADO, estado)
         guardar_json(SALIDA, salida)
-
         return salida
 
     activos_previos = [
@@ -734,7 +838,9 @@ def procesar():
         for indice, actual in enumerate(nucleos):
             comp = compatibilidad(
                 anterior,
-                actual
+                actual,
+                intervalo,
+                track
             )
 
             if comp is None:
@@ -761,7 +867,6 @@ def procesar():
 
         if tid in asignados_tracks:
             continue
-
         if indice in asignados_nucleos:
             continue
 
@@ -770,23 +875,22 @@ def procesar():
         asociaciones.append(candidato)
 
     salida_nucleos = []
-
     creciendo = 0
     debilitandose = 0
     movimiento = 0
     estables = 0
     nuevos = 0
 
+    if intervalo < 5:
+        calidad = "BUENA"
+    elif intervalo <= 15:
+        calidad = "ACEPTABLE"
+    else:
+        calidad = "BAJA"
+
     for asociacion in asociaciones:
         track = asociacion["track"]
         nucleo = nucleos[asociacion["indice"]]
-
-        if intervalo < 5:
-            calidad = "BUENA"
-        elif intervalo <= 15:
-            calidad = "ACEPTABLE"
-        else:
-            calidad = "BAJA"
 
         actualizar_track(
             track,
@@ -847,11 +951,7 @@ def procesar():
         )
 
         estado["tracks"].append(track)
-
-        salida_nucleos.append(
-            nucleo_salida(track)
-        )
-
+        salida_nucleos.append(nucleo_salida(track))
         nuevos += 1
 
     tracks_activos = [
@@ -891,6 +991,7 @@ def procesar():
                 "indice_nucleo": a["indice"],
                 "score": a["score"],
                 "distancia": a["distancia"],
+                "distancia_predicha": a.get("distancia_predicha"),
                 "iou": a["iou"],
                 "similitud_area": a["similitud_area"],
                 "similitud_forma": a["similitud_forma"],
