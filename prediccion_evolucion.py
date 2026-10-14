@@ -42,6 +42,7 @@ ESTADO = BASE / "estado.json"
 INPUT = BASE / "seguimiento_temporal.json"
 OUTPUT = BASE / "prediccion_evolucion.json"
 PENDING = BASE / "predicciones_pendientes.json"
+CALIBRATION = BASE / "calibracion_prediccion.json"
 
 RADAR_HISTORY = Path("data/radar/historico")
 
@@ -56,6 +57,7 @@ PASO_HUECO_MIN = 5
 TOLERANCIA_HUECO_MIN = 12
 
 MAX_PENDIENTES = 500
+MAX_CALIBRATION = 1000
 MAX_HISTORY = 10
 
 MIN_MATCH_PIXELS = 10.0
@@ -1150,6 +1152,204 @@ def cross_track_match(prediction, observations):
     return best_obs
 
 
+def load_calibration():
+    data = load_json(
+        CALIBRATION,
+        {},
+    )
+
+    if not isinstance(data, dict):
+        data = {}
+
+    records = data.get("registros", [])
+
+    if not isinstance(records, list):
+        records = []
+
+    clean = []
+
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+
+        try:
+            horizon = float(item.get("horizonte_minutos"))
+            error_x = float(item.get("error_x_pixeles"))
+            error_y = float(item.get("error_y_pixeles"))
+            error = float(item.get("error_pixeles"))
+        except (TypeError, ValueError):
+            continue
+
+        if horizon <= 0 or error < 0:
+            continue
+
+        clean.append({
+            "track_id": str(item.get("track_id")),
+            "timestamp_objetivo": canonical_ts(
+                item.get("timestamp_objetivo")
+            ),
+            "horizonte_minutos": horizon,
+            "error_x_pixeles": error_x,
+            "error_y_pixeles": error_y,
+            "error_pixeles": error,
+        })
+
+    return clean[-MAX_CALIBRATION:]
+
+
+def update_calibration(records, validated):
+    existing = {
+        (
+            item.get("track_id"),
+            item.get("timestamp_objetivo"),
+        )
+        for item in records
+    }
+
+    for prediction in validated:
+        validation = prediction.get("validacion", {})
+
+        if validation.get("estado") != "VALIDADA":
+            continue
+
+        target = canonical_ts(
+            prediction.get("timestamp_objetivo")
+        )
+
+        if target is None:
+            continue
+
+        horizon = number(
+            prediction.get(
+                "horizonte_desde_origen_minutos",
+                0,
+            )
+        )
+
+        if horizon <= 0:
+            continue
+
+        key = (
+            str(prediction.get("track_id")),
+            target,
+        )
+
+        if key in existing:
+            continue
+
+        records.append({
+            "track_id": str(prediction.get("track_id")),
+            "timestamp_objetivo": target,
+            "horizonte_minutos": horizon,
+            "error_x_pixeles": number(
+                validation.get("error_x_pixeles")
+            ),
+            "error_y_pixeles": number(
+                validation.get("error_y_pixeles")
+            ),
+            "error_pixeles": number(
+                validation.get("error_pixeles")
+            ),
+        })
+
+        existing.add(key)
+
+    return records[-MAX_CALIBRATION:]
+
+
+def calibration_for_horizon(records, horizon):
+    values = []
+
+    nearest = min(
+        HORIZONTES_MIN,
+        key=lambda value: abs(value - horizon),
+    )
+
+    for item in records:
+        item_horizon = number(
+            item.get("horizonte_minutos"),
+            -1,
+        )
+
+        if abs(item_horizon - nearest) > 1.0:
+            continue
+
+        values.append(item)
+
+    # No corregimos con muestras escasas.
+    if len(values) < 8:
+        return {
+            "muestras": len(values),
+            "bias_x": 0.0,
+            "bias_y": 0.0,
+        }
+
+    return {
+        "muestras": len(values),
+        "bias_x": round(
+            median(
+                number(item.get("error_x_pixeles"))
+                for item in values
+            ),
+            2,
+        ),
+        "bias_y": round(
+            median(
+                number(item.get("error_y_pixeles"))
+                for item in values
+            ),
+            2,
+        ),
+    }
+
+
+def apply_calibration(projection, calibration):
+    if not calibration:
+        return projection
+
+    corrected = dict(projection)
+
+    corrected["x_estimado"] = round(
+        number(projection.get("x_estimado"))
+        + number(calibration.get("bias_x")),
+        2,
+    )
+
+    corrected["y_estimado"] = round(
+        number(projection.get("y_estimado"))
+        + number(calibration.get("bias_y")),
+        2,
+    )
+
+    corrected["calibracion_muestras"] = int(
+        number(calibration.get("muestras"))
+    )
+    corrected["correccion_bias_x_pixeles"] = round(
+        number(calibration.get("bias_x")),
+        2,
+    )
+    corrected["correccion_bias_y_pixeles"] = round(
+        number(calibration.get("bias_y")),
+        2,
+    )
+
+    return corrected
+
+
+def calibration_summary(records):
+    result = {}
+
+    for horizon in HORIZONTES_MIN:
+        calibration = calibration_for_horizon(
+            records,
+            horizon,
+        )
+
+        result[str(horizon)] = calibration
+
+    return result
+
+
 def validate_pending(current_ts, tracks, pending):
     now = parse_ts(current_ts)
 
@@ -1305,7 +1505,7 @@ def make_gap_predictions(track, motion, start_ts, end_ts):
 # PREDICCIÓN DE CADA TRACK
 # ============================================================
 
-def predict_track(track):
+def predict_track(track, calibration_records=None):
     tid = track_id(track)
 
     history = recent_history(
@@ -1332,16 +1532,31 @@ def predict_track(track):
 
     forecasts = []
 
+    if calibration_records is None:
+        calibration_records = []
+
     for horizon in HORIZONTES_MIN:
+        projection = project(
+            motion,
+            current["x"],
+            current["y"],
+            horizon,
+        )
+
+        calibration = calibration_for_horizon(
+            calibration_records,
+            horizon,
+        )
+
+        projection = apply_calibration(
+            projection,
+            calibration,
+        )
+
         forecasts.append(
             {
                 "horizonte_minutos": horizon,
-                **project(
-                    motion,
-                    current["x"],
-                    current["y"],
-                    horizon,
-                ),
+                **projection,
                 "confianza_prediccion": confidence_for_horizon(
                     motion,
                     horizon,
@@ -1603,10 +1818,20 @@ def main():
     if not isinstance(pending, list):
         pending = []
 
+    calibration_records = load_calibration()
+
     pending, validated_now = validate_pending(
         radar_ts,
         tracks,
         pending,
+    )
+
+    # Aprendemos únicamente de predicciones ya verificadas antes
+    # de generar las nuevas. Así evitamos contaminar la predicción
+    # actual con datos que todavía no fueron observados.
+    calibration_records = update_calibration(
+        calibration_records,
+        validated_now,
     )
 
     # --------------------------------------------------------
@@ -1635,7 +1860,8 @@ def main():
             continue
 
         prediction, gap_predictions = predict_track(
-            track
+            track,
+            calibration_records,
         )
 
         predictions.append(prediction)
@@ -1758,6 +1984,11 @@ def main():
     validation_records = (
         list(validated_now)
         + list(gap_validated_now)
+    )
+
+    calibration_records = update_calibration(
+        calibration_records,
+        gap_validated_now,
     )
 
     errors = []
@@ -1936,6 +2167,9 @@ def main():
         ),
         "nucleos": predictions,
         "resumen": summary,
+        "calibracion": calibration_summary(
+            calibration_records
+        ),
         "validaciones": validated_now[-100:],
         "nota": (
             "Predicción híbrida calibrada con "
@@ -1958,6 +2192,18 @@ def main():
             "schema_version": 3,
             "actualizado": radar_ts,
             "pendientes": pending,
+        },
+    )
+
+    save_json(
+        CALIBRATION,
+        {
+            "schema_version": 1,
+            "actualizado": radar_ts,
+            "registros": calibration_records[-MAX_CALIBRATION:],
+            "resumen": calibration_summary(
+                calibration_records
+            ),
         },
     )
 
@@ -1994,6 +2240,21 @@ def main():
         print(
             "Error medio validado:",
             round(mean(errors), 2),
+        )
+
+    print("===== CALIBRACIÓN =====")
+
+    for horizon in HORIZONTES_MIN:
+        metrics = calibration_for_horizon(
+            calibration_records,
+            horizon,
+        )
+
+        print(
+            f"{horizon} min | "
+            f"muestras={metrics['muestras']} | "
+            f"bias_x={metrics['bias_x']} px | "
+            f"bias_y={metrics['bias_y']} px"
         )
 
 
