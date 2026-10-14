@@ -67,8 +67,9 @@ jobs:
                 "/tmp/radar_artifacts/${ID}.zip" \
                 -d "/tmp/radar_artifacts/${ID}" || true
 
-              # IMPORTANTE:
-              # Solo recuperar archivos históricos con formato:
+              # Recuperar únicamente frames históricos válidos.
+              #
+              # Formato:
               # YYYYMMDDHHMMSS.png
               #
               # Se descartan archivos viejos del tipo:
@@ -80,11 +81,24 @@ jobs:
                 -regextype posix-extended \
                 -regex ".*/[0-9]{14}\.png" \
                 -exec cp -n {} data/radar/historico/ \; || true
+
+              # Recuperar las predicciones pendientes.
+              #
+              # Esto permite que las predicciones generadas
+              # en un frame anterior puedan validarse
+              # cuando llegue el frame real correspondiente.
+
+              find "/tmp/radar_artifacts/${ID}" \
+                -type f \
+                -path "*/seguimiento/predicciones_pendientes.json" \
+                -exec cp -n {} data/radar/seguimiento/predicciones_pendientes.json \; || true
+
             fi
           done
 
-          # Limpiar cualquier archivo histórico viejo que haya quedado
-          # con el formato radar_XXXXXXXXXX.png
+          # Limpiar cualquier archivo histórico viejo
+          # con formato radar_XXXXXXXXXX.png
+
           find data/radar/historico \
             -maxdepth 1 \
             -type f \
@@ -100,6 +114,12 @@ jobs:
 
           echo "Artefactos revisados: $COUNT"
           echo "Frames históricos válidos recuperados: $TOTAL"
+
+          if [ -f "data/radar/seguimiento/predicciones_pendientes.json" ]; then
+            echo "Predicciones pendientes anteriores recuperadas."
+          else
+            echo "No había predicciones pendientes anteriores."
+          fi
 
       - name: Restaurar estado persistente
         run: |
