@@ -94,7 +94,29 @@ def radar_intensity(nowcast):
     score = 0.0
     reasons = []
 
-    if top is not None:
+    # RMA10 usa una escala discreta 0-6. Si existe nivel_intensidad
+    # en los nucleos, esa escala tiene prioridad sobre umbrales dBZ.
+    niveles = []
+    for n in nuclei:
+        if isinstance(n, dict):
+            nivel = first_number(n.get("intensidad"))
+            if nivel is not None:
+                niveles.append(nivel)
+
+    nivel_max = max(niveles) if niveles else None
+
+    if nivel_max is not None:
+        score += min(nivel_max / 6.0, 1.0) * 0.75
+        if nivel_max >= 6:
+            reasons.append("RMA10 nivel severo")
+        elif nivel_max >= 5:
+            reasons.append("RMA10 nivel muy fuerte")
+        elif nivel_max >= 4:
+            reasons.append("RMA10 nivel fuerte")
+        elif nivel_max >= 3:
+            reasons.append("RMA10 nivel moderado")
+
+    elif top is not None:
         if top >= 60:
             score += 0.55
             reasons.append("reflectividad radar muy alta")
@@ -213,9 +235,16 @@ def main():
     )
 
     radar_activity = bool(nowcast.get("actividad"))
-    movement = clamp(
+    raw_movement = clamp(
         nowcast.get("confianza_movimiento", 0.0)
     )
+    speed = finite(nowcast.get("velocidad_kmh"))
+    direction = finite(nowcast.get("direccion_grados"))
+    moving_to_bahia = bool(nowcast.get("movimiento_hacia_bahia"))
+    if speed is None or speed <= 5 or direction is None:
+        movement = 0.0
+    else:
+        movement = raw_movement if moving_to_bahia else min(raw_movement, 0.5)
 
     probs = intel.get("probabilidades", {})
     hazards = intel.get("peligros", {})
@@ -329,8 +358,15 @@ def main():
         },
 
         "radar": {
-            "timestamp": radar.get(
-                "radar_timestamp"
+            "timestamp": first_number(
+                radar.get("radar_timestamp"),
+                nowcast.get("frame_actual_utc"),
+            ) if not isinstance(
+                radar.get("radar_timestamp"),
+                str
+            ) else (
+                radar.get("radar_timestamp")
+                or nowcast.get("frame_actual_utc")
             ),
             "nowcast": nowcast,
             "intensidad": intensity,
