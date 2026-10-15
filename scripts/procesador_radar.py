@@ -16,6 +16,28 @@ PENDING_PATH = RADAR_DIR / "seguimiento" / "predicciones_pendientes.json"
 TIMESTAMP_RE = re.compile(r"^(\d{14})\.png$")
 MAX_FUTURE_SKEW_MINUTES = 2.0
 
+# ============================================================
+# CONFIGURACIÓN DE MÁSCARA DINÁMICA
+# ============================================================
+
+MAX_HISTORICOS_COMPARAR = 5
+MAX_ANTIGUEDAD_HISTORICO_MIN = 60
+
+# Para considerar un píxel como eco estático:
+# debe existir en al menos 3 frames anteriores y
+# mantenerse prácticamente igual.
+MIN_FRAMES_COMPARABLES = 3
+MIN_FRAMES_ESTABLES = 3
+TOLERANCIA_INTENSIDAD_ESTATICA = 1
+
+# Si el píxel actual cambia claramente respecto del histórico,
+# se recupera como posible precipitación.
+MIN_CAMBIOS_DINAMICOS = 1
+
+# ============================================================
+# NIVELES
+# ============================================================
+
 NIVELES = {
     0: "FONDO",
     1: "MUY_DEBIL",
@@ -27,6 +49,10 @@ NIVELES = {
 }
 
 
+# ============================================================
+# CLASIFICACIÓN DE COLORES
+# ============================================================
+
 def clasificar_color(r, g, b):
     if max(r, g, b) < 25:
         return "FONDO", 0
@@ -37,199 +63,75 @@ def clasificar_color(r, g, b):
     if g > r * 1.35 and g >= b * 0.95:
         return "VERDE", 2
 
-    if r > 100 and g > 100 and b < 100 and abs(r - g) < 100:
+    if (
+        r > 100
+        and g > 100
+        and b < 100
+        and abs(r - g) < 100
+    ):
         return "AMARILLO", 3
 
-    if r > 130 and 60 < g < 180 and b < 90 and r > g * 1.15:
+    if (
+        r > 130
+        and 60 < g < 180
+        and b < 90
+        and r > g * 1.15
+    ):
         return "NARANJA", 4
 
-    if r > 130 and r > g * 1.35 and r > b * 1.35:
+    if (
+        r > 130
+        and r > g * 1.35
+        and r > b * 1.35
+    ):
         return "ROJO", 5
 
-    if r > 100 and b > 100 and r > g * 1.3:
+    if (
+        r > 100
+        and b > 100
+        and r > g * 1.3
+    ):
         return "VIOLETA_MAGENTA", 6
 
     return "OTRO", 0
 
 
-def detectar_nucleos(imagen):
+# ============================================================
+# CONVERTIR IMAGEN A MATRIZ DE INTENSIDADES
+# ============================================================
+
+def imagen_a_matriz_intensidad(imagen):
     ancho, alto = imagen.size
     pix = imagen.load()
 
-    clasificacion = [[0] * ancho for _ in range(alto)]
-    colores = [[None] * ancho for _ in range(alto)]
+    matriz = [
+        [0] * ancho
+        for _ in range(alto)
+    ]
 
     for y in range(alto):
         for x in range(ancho):
-            r, g, b, *resto = pix[x, y]
+            valor = pix[x, y]
 
-            color, intensidad = clasificar_color(r, g, b)
+            if len(valor) >= 3:
+                r, g, b = valor[:3]
+            else:
+                r = g = b = valor[0]
 
-            clasificacion[y][x] = intensidad
-            colores[y][x] = color
-
-    visitado = [[False] * ancho for _ in range(alto)]
-    nucleos = []
-
-    vecinos = [
-        (-1, -1), (0, -1), (1, -1),
-        (-1, 0), (1, 0),
-        (-1, 1), (0, 1), (1, 1),
-    ]
-
-    for y0 in range(alto):
-        for x0 in range(ancho):
-
-            if visitado[y0][x0]:
-                continue
-
-            if clasificacion[y0][x0] <= 0:
-                visitado[y0][x0] = True
-                continue
-
-            cola = deque([(x0, y0)])
-            visitado[y0][x0] = True
-            puntos = []
-
-            while cola:
-                x, y = cola.popleft()
-                puntos.append((x, y))
-
-                for dx, dy in vecinos:
-                    nx = x + dx
-                    ny = y + dy
-
-                    if nx < 0 or nx >= ancho:
-                        continue
-
-                    if ny < 0 or ny >= alto:
-                        continue
-
-                    if visitado[ny][nx]:
-                        continue
-
-                    if clasificacion[ny][nx] <= 0:
-                        continue
-
-                    visitado[ny][nx] = True
-                    cola.append((nx, ny))
-
-            if len(puntos) < 10:
-                continue
-
-            xs = [p[0] for p in puntos]
-            ys = [p[1] for p in puntos]
-
-            min_x = min(xs)
-            max_x = max(xs)
-            min_y = min(ys)
-            max_y = max(ys)
-
-            centro_x = sum(xs) / len(xs)
-            centro_y = sum(ys) / len(ys)
-
-            max_intensidad = max(
-                clasificacion[y][x]
-                for x, y in puntos
+            _, intensidad = clasificar_color(
+                r,
+                g,
+                b
             )
 
-            colores_presentes = sorted(
-                set(
-                    colores[y][x]
-                    for x, y in puntos
-                ) - {None, "OTRO"}
-            )
+            matriz[y][x] = intensidad
 
-            nucleos.append({
-                "x": round(centro_x, 2),
-                "y": round(centro_y, 2),
-                "pixeles": len(puntos),
-                "ancho": max_x - min_x + 1,
-                "alto": max_y - min_y + 1,
-                "intensidad": max_intensidad,
-                "nivel_intensidad": NIVELES.get(
-                    max_intensidad,
-                    "OTRO"
-                ),
-                "colores": colores_presentes,
-            })
-
-    return nucleos
+    return matriz
 
 
-def cargar_mascara():
-    if not MASK_PATH.exists():
-        return None
-
-    try:
-        return Image.open(MASK_PATH).convert("L")
-    except Exception:
-        return None
-
-
-def analizar_mascara(nucleo, mascara):
-    if mascara is None:
-        return "SIN_MASCARA", 65
-
-    mw, mh = mascara.size
-
-    x = int(round(nucleo["x"]))
-    y = int(round(nucleo["y"]))
-
-    if not (0 <= x < mw and 0 <= y < mh):
-        return "PRECIPITACION", 75
-
-    mitad_x = max(1, nucleo["ancho"] // 2)
-    mitad_y = max(1, nucleo["alto"] // 2)
-
-    x1 = max(0, x - mitad_x)
-    x2 = min(mw - 1, x + mitad_x)
-
-    y1 = max(0, y - mitad_y)
-    y2 = min(mh - 1, y + mitad_y)
-
-    total = 0
-    marcados = 0
-
-    for yy in range(y1, y2 + 1):
-        for xx in range(x1, x2 + 1):
-
-            total += 1
-
-            if mascara.getpixel((xx, yy)) > 0:
-                marcados += 1
-
-    if total == 0:
-        return "PRECIPITACION", 75
-
-    proporcion = marcados / total
-
-    if proporcion >= 0.80:
-        return "ECO_ESTATICO", 92
-
-    if proporcion >= 0.30:
-        return "CAMBIO", 70
-
-    return "PRECIPITACION", 85
-
-
-def calcular_confianza(nucleo, estado, base):
-    confianza = float(base)
-
-    intensidad = nucleo["intensidad"]
-
-    confianza += intensidad * 2
-
-    if intensidad >= 5:
-        confianza += 2
-
-    confianza = max(1, min(99, confianza))
-
-    if estado == "ECO_ESTATICO":
-        confianza = min(confianza, 15)
-
-    return round(confianza, 1)
-
+# ============================================================
+# TIMESTAMP
+# ============================================================
 
 def parse_timestamp_file():
     if not TIMESTAMP_FILE.exists():
@@ -247,16 +149,23 @@ def parse_timestamp_file():
         )
 
     try:
-        texto = value.replace("Z", "+00:00")
+        texto = value.replace(
+            "Z",
+            "+00:00"
+        )
 
-        dt = datetime.fromisoformat(texto)
+        dt = datetime.fromisoformat(
+            texto
+        )
 
         if dt.tzinfo is None:
             dt = dt.replace(
                 tzinfo=timezone.utc
             )
 
-        return dt.astimezone(timezone.utc)
+        return dt.astimezone(
+            timezone.utc
+        )
 
     except Exception as exc:
         raise RuntimeError(
@@ -265,14 +174,106 @@ def parse_timestamp_file():
 
 
 def timestamp_compacto(dt):
-    return dt.strftime("%Y%m%d%H%M%S")
+    return dt.strftime(
+        "%Y%m%d%H%M%S"
+    )
 
+
+# ============================================================
+# HISTÓRICO RMA10
+# ============================================================
+
+def obtener_historicos_validos(radar_dt):
+    candidatos = []
+
+    if not HISTORICO_DIR.exists():
+        return []
+
+    limite_inferior = (
+        radar_dt
+        - timedelta(
+            minutes=MAX_ANTIGUEDAD_HISTORICO_MIN
+        )
+    )
+
+    for archivo in HISTORICO_DIR.glob("*.png"):
+        match = TIMESTAMP_RE.match(
+            archivo.name
+        )
+
+        if not match:
+            continue
+
+        try:
+            dt = datetime.strptime(
+                match.group(1),
+                "%Y%m%d%H%M%S"
+            ).replace(
+                tzinfo=timezone.utc
+            )
+        except Exception:
+            continue
+
+        # Nunca usar un frame futuro.
+        if dt >= radar_dt:
+            continue
+
+        # Evitar frames demasiado antiguos.
+        if dt < limite_inferior:
+            continue
+
+        candidatos.append(
+            (dt, archivo)
+        )
+
+    candidatos.sort(
+        key=lambda item: item[0],
+        reverse=True
+    )
+
+    seleccionados = []
+
+    for dt, archivo in candidatos:
+        if len(seleccionados) >= MAX_HISTORICOS_COMPARAR:
+            break
+
+        try:
+            imagen = Image.open(
+                archivo
+            ).convert("RGBA")
+
+            seleccionados.append(
+                (
+                    dt,
+                    imagen
+                )
+            )
+
+        except Exception as exc:
+            print(
+                f"No se pudo leer historico "
+                f"{archivo.name}: {exc}"
+            )
+
+    seleccionados.sort(
+        key=lambda item: item[0]
+    )
+
+    return seleccionados
+
+
+# ============================================================
+# LIMPIEZA DE FRAMES FUTUROS
+# ============================================================
 
 def limpiar_frames_futuros(radar_dt):
     eliminados = 0
 
-    limite = radar_dt + timedelta(
-        minutes=MAX_FUTURE_SKEW_MINUTES
+    limite = (
+        radar_dt
+        + timedelta(
+            minutes=MAX_FUTURE_SKEW_MINUTES
+        )
     )
 
     for archivo in HISTORICO_DIR.glob("*.png"):
@@ -304,6 +305,10 @@ def limpiar_frames_futuros(radar_dt):
 
     return eliminados
 
+
+# ============================================================
+# REPARAR ESTADO FUTURO
+# ============================================================
 
 def reparar_estado_futuro(radar_dt):
     if not STATE_PATH.exists():
@@ -351,8 +356,11 @@ def reparar_estado_futuro(radar_dt):
     except Exception:
         return False
 
-    if ultimo <= radar_dt + timedelta(
-        minutes=MAX_FUTURE_SKEW_MINUTES
+    if ultimo <= (
+        radar_dt
+        + timedelta(
+            minutes=MAX_FUTURE_SKEW_MINUTES
+        )
     ):
         return False
 
@@ -365,7 +373,10 @@ def reparar_estado_futuro(radar_dt):
     data["reparacion_timestamp"] = (
         datetime.now(timezone.utc)
         .isoformat()
-        .replace("+00:00", "Z")
+        .replace(
+            "+00:00",
+            "Z"
+        )
     )
 
     data["motivo_reparacion"] = (
@@ -386,6 +397,10 @@ def reparar_estado_futuro(radar_dt):
 
     return True
 
+
+# ============================================================
+# LIMPIAR PREDICCIONES FUTURAS
+# ============================================================
 
 def limpiar_predicciones_futuras(radar_dt):
     if not PENDING_PATH.exists():
@@ -449,7 +464,8 @@ def limpiar_predicciones_futuras(radar_dt):
 
                 futuro = (
                     origen
-                    > radar_dt + timedelta(
+                    > radar_dt
+                    + timedelta(
                         minutes=MAX_FUTURE_SKEW_MINUTES
                     )
                 )
@@ -467,7 +483,10 @@ def limpiar_predicciones_futuras(radar_dt):
     data["actualizado"] = (
         radar_dt
         .isoformat()
-        .replace("+00:00", "Z")
+        .replace(
+            "+00:00",
+            "Z"
+        )
     )
 
     PENDING_PATH.write_text(
@@ -482,6 +501,481 @@ def limpiar_predicciones_futuras(radar_dt):
     return eliminados
 
 
+# ============================================================
+# MÁSCARA ESTÁTICA
+# ============================================================
+
+def cargar_mascara():
+    if not MASK_PATH.exists():
+        return None
+
+    try:
+        return Image.open(
+            MASK_PATH
+        ).convert("L")
+
+    except Exception:
+        return None
+
+
+# ============================================================
+# FILTRO DINÁMICO POR PÍXEL
+#
+# NO elimina un núcleo completo.
+#
+# Solamente elimina píxeles que:
+# - están dentro de la máscara estática
+# - aparecen en suficientes frames anteriores
+# - mantienen la misma intensidad
+#
+# Si cambian, se recuperan como dinámicos.
+# ============================================================
+
+def construir_mascara_dinamica(
+    imagen_actual,
+    mascara_estatica,
+    historicos
+):
+    ancho, alto = imagen_actual.size
+
+    intensidad_actual = (
+        imagen_a_matriz_intensidad(
+            imagen_actual
+        )
+    )
+
+    historicos_matrices = []
+
+    for dt, imagen in historicos:
+
+        if imagen.size != imagen_actual.size:
+            print(
+                "Historico ignorado por "
+                "resolucion diferente: "
+                f"{imagen.size}"
+            )
+            continue
+
+        historicos_matrices.append(
+            (
+                dt,
+                imagen_a_matriz_intensidad(
+                    imagen
+                )
+            )
+        )
+
+    comparables = len(
+        historicos_matrices
+    )
+
+    # Si no tenemos suficientes frames,
+    # NO eliminamos píxeles.
+    if (
+        mascara_estatica is None
+        or comparables < MIN_FRAMES_COMPARABLES
+    ):
+        return (
+            intensidad_actual,
+            0,
+            0,
+            comparables
+        )
+
+    if mascara_estatica.size != (
+        ancho,
+        alto
+    ):
+        print(
+            "Mascara estatica con "
+            "resolucion diferente. "
+            "Se ignora en este frame."
+        )
+
+        return (
+            intensidad_actual,
+            0,
+            0,
+            comparables
+        )
+
+    mascara_resultado = [
+        fila[:]
+        for fila in intensidad_actual
+    ]
+
+    pixeles_estaticos = 0
+    pixeles_dinamicos = 0
+
+    for y in range(alto):
+        for x in range(ancho):
+
+            if (
+                mascara_estatica.getpixel(
+                    (x, y)
+                ) <= 0
+            ):
+                continue
+
+            actual = intensidad_actual[y][x]
+
+            # Fondo actual no necesita filtrarse.
+            if actual <= 0:
+                continue
+
+            valores = []
+
+            for _, matriz in historicos_matrices:
+                valores.append(
+                    matriz[y][x]
+                )
+
+            presentes = [
+                valor
+                for valor in valores
+                if valor > 0
+            ]
+
+            if len(presentes) < MIN_FRAMES_COMPARABLES:
+                continue
+
+            estables = 0
+            cambios = 0
+
+            for anterior in presentes:
+
+                diferencia = abs(
+                    actual - anterior
+                )
+
+                if (
+                    diferencia
+                    <= TOLERANCIA_INTENSIDAD_ESTATICA
+                ):
+                    estables += 1
+                else:
+                    cambios += 1
+
+            # Eco persistente:
+            # mismo píxel, misma zona,
+            # intensidad estable.
+            if (
+                estables
+                >= MIN_FRAMES_ESTABLES
+                and cambios
+                < MIN_CAMBIOS_DINAMICOS
+            ):
+                mascara_resultado[y][x] = 0
+                pixeles_estaticos += 1
+
+            # Cambio respecto del histórico:
+            # conservar el píxel.
+            elif cambios >= MIN_CAMBIOS_DINAMICOS:
+                pixeles_dinamicos += 1
+
+    return (
+        mascara_resultado,
+        pixeles_estaticos,
+        pixeles_dinamicos,
+        comparables
+    )
+
+
+# ============================================================
+# DETECTAR NÚCLEOS
+# ============================================================
+
+def detectar_nucleos_desde_matriz(
+    matriz,
+    imagen_original
+):
+    alto = len(matriz)
+
+    if alto == 0:
+        return []
+
+    ancho = len(matriz[0])
+
+    pix = imagen_original.load()
+
+    colores = [
+        [None] * ancho
+        for _ in range(alto)
+    ]
+
+    for y in range(alto):
+        for x in range(ancho):
+
+            if matriz[y][x] <= 0:
+                continue
+
+            valor = pix[x, y]
+
+            if len(valor) >= 3:
+                r, g, b = valor[:3]
+            else:
+                r = g = b = valor[0]
+
+            color, _ = clasificar_color(
+                r,
+                g,
+                b
+            )
+
+            colores[y][x] = color
+
+    visitado = [
+        [False] * ancho
+        for _ in range(alto)
+    ]
+
+    nucleos = []
+
+    vecinos = [
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+        (-1, 0),
+        (1, 0),
+        (-1, 1),
+        (0, 1),
+        (1, 1),
+    ]
+
+    for y0 in range(alto):
+        for x0 in range(ancho):
+
+            if visitado[y0][x0]:
+                continue
+
+            if matriz[y0][x0] <= 0:
+                visitado[y0][x0] = True
+                continue
+
+            cola = deque(
+                [(x0, y0)]
+            )
+
+            visitado[y0][x0] = True
+
+            puntos = []
+
+            while cola:
+
+                x, y = cola.popleft()
+
+                puntos.append(
+                    (x, y)
+                )
+
+                for dx, dy in vecinos:
+
+                    nx = x + dx
+                    ny = y + dy
+
+                    if nx < 0 or nx >= ancho:
+                        continue
+
+                    if ny < 0 or ny >= alto:
+                        continue
+
+                    if visitado[ny][nx]:
+                        continue
+
+                    if matriz[ny][nx] <= 0:
+                        continue
+
+                    visitado[ny][nx] = True
+
+                    cola.append(
+                        (nx, ny)
+                    )
+
+            if len(puntos) < 10:
+                continue
+
+            xs = [
+                p[0]
+                for p in puntos
+            ]
+
+            ys = [
+                p[1]
+                for p in puntos
+            ]
+
+            min_x = min(xs)
+            max_x = max(xs)
+            min_y = min(ys)
+            max_y = max(ys)
+
+            centro_x = (
+                sum(xs)
+                / len(xs)
+            )
+
+            centro_y = (
+                sum(ys)
+                / len(ys)
+            )
+
+            max_intensidad = max(
+                matriz[y][x]
+                for x, y in puntos
+            )
+
+            colores_presentes = sorted(
+                set(
+                    colores[y][x]
+                    for x, y in puntos
+                )
+                - {
+                    None,
+                    "OTRO"
+                }
+            )
+
+            nucleos.append({
+                "x": round(
+                    centro_x,
+                    2
+                ),
+                "y": round(
+                    centro_y,
+                    2
+                ),
+                "pixeles": len(puntos),
+                "ancho": (
+                    max_x
+                    - min_x
+                    + 1
+                ),
+                "alto": (
+                    max_y
+                    - min_y
+                    + 1
+                ),
+                "intensidad": max_intensidad,
+                "nivel_intensidad": (
+                    NIVELES.get(
+                        max_intensidad,
+                        "OTRO"
+                    )
+                ),
+                "colores": (
+                    colores_presentes
+                ),
+            })
+
+    return nucleos
+
+
+# ============================================================
+# COMPATIBILIDAD
+# ============================================================
+
+def detectar_nucleos(imagen):
+    matriz = (
+        imagen_a_matriz_intensidad(
+            imagen
+        )
+    )
+
+    return detectar_nucleos_desde_matriz(
+        matriz,
+        imagen
+    )
+
+
+# ============================================================
+# CONFIANZA
+# ============================================================
+
+def calcular_confianza(
+    nucleo,
+    estado,
+    base
+):
+    confianza = float(base)
+
+    intensidad = nucleo[
+        "intensidad"
+    ]
+
+    confianza += intensidad * 2
+
+    if intensidad >= 5:
+        confianza += 2
+
+    confianza = max(
+        1,
+        min(
+            99,
+            confianza
+        )
+    )
+
+    if estado == "ECO_ESTATICO":
+        confianza = min(
+            confianza,
+            15
+        )
+
+    return round(
+        confianza,
+        1
+    )
+
+
+# ============================================================
+# ESTADO DEL NÚCLEO
+# ============================================================
+
+def clasificar_estado_dinamico(
+    nucleo,
+    pixeles_estaticos,
+    pixeles_dinamicos
+):
+    total = max(
+        1,
+        nucleo["pixeles"]
+    )
+
+    proporcion_estatica = (
+        pixeles_estaticos
+        / total
+    )
+
+    proporcion_dinamica = (
+        pixeles_dinamicos
+        / total
+    )
+
+    if (
+        proporcion_estatica >= 0.90
+        and proporcion_dinamica < 0.10
+    ):
+        return (
+            "ECO_ESTATICO",
+            15
+        )
+
+    if proporcion_dinamica >= 0.10:
+        return (
+            "CAMBIO",
+            70
+        )
+
+    return (
+        "PRECIPITACION",
+        85
+    )
+
+
+# ============================================================
+# PROCESAMIENTO PRINCIPAL
+# ============================================================
+
 def main():
 
     HISTORICO_DIR.mkdir(
@@ -489,32 +983,51 @@ def main():
         exist_ok=True
     )
 
+    STATE_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
     radar_dt = parse_timestamp_file()
 
-    ahora = datetime.now(timezone.utc)
+    ahora = datetime.now(
+        timezone.utc
+    )
 
-    if radar_dt > ahora + timedelta(
-        minutes=MAX_FUTURE_SKEW_MINUTES
+    if radar_dt > (
+        ahora
+        + timedelta(
+            minutes=MAX_FUTURE_SKEW_MINUTES
+        )
     ):
         raise RuntimeError(
-            "El radar_timestamp.txt es futuro "
-            "respecto al reloj del runner: "
+            "El radar_timestamp.txt "
+            "es futuro respecto al reloj "
+            "del runner: "
             f"{radar_dt.isoformat()}"
         )
 
-    actual_path = RADAR_DIR / "actual.png"
+    actual_path = (
+        RADAR_DIR
+        / "actual.png"
+    )
 
     if not actual_path.exists():
         raise RuntimeError(
-            "No existe data/radar/actual.png"
+            "No existe "
+            "data/radar/actual.png"
         )
 
-    eliminados = limpiar_frames_futuros(
-        radar_dt
+    eliminados = (
+        limpiar_frames_futuros(
+            radar_dt
+        )
     )
 
-    estado_reparado = reparar_estado_futuro(
-        radar_dt
+    estado_reparado = (
+        reparar_estado_futuro(
+            radar_dt
+        )
     )
 
     pendientes_eliminados = (
@@ -544,9 +1057,7 @@ def main():
 
     print(
         "Procesando SIEMPRE "
-        "data/radar/actual.png; "
-        "no se selecciona el historico "
-        "por nombre."
+        "data/radar/actual.png"
     )
 
     print(
@@ -563,19 +1074,78 @@ def main():
         f"{imagen.width}x{imagen.height}"
     )
 
-    nucleos = detectar_nucleos(
-        imagen
-    )
-
     mascara = cargar_mascara()
 
+    if mascara is not None:
+        print(
+            "Mascara estatica encontrada: "
+            f"{MASK_PATH}"
+        )
+    else:
+        print(
+            "No hay mascara estatica."
+        )
+
+    historicos = (
+        obtener_historicos_validos(
+            radar_dt
+        )
+    )
+
     print(
-        f"Nucleos detectados: "
+        "Frames historicos disponibles "
+        "para comparación: "
+        f"{len(historicos)}"
+    )
+
+    for dt, _ in historicos:
+        print(
+            "  - "
+            f"{dt.isoformat()}"
+        )
+
+    (
+        matriz_filtrada,
+        pixeles_estaticos,
+        pixeles_dinamicos,
+        frames_comparados
+    ) = construir_mascara_dinamica(
+        imagen,
+        mascara,
+        historicos
+    )
+
+    print(
+        "Frames comparados: "
+        f"{frames_comparados}"
+    )
+
+    print(
+        "Pixeles eliminados como "
+        "eco estático: "
+        f"{pixeles_estaticos}"
+    )
+
+    print(
+        "Pixeles recuperados como "
+        "dinámicos: "
+        f"{pixeles_dinamicos}"
+    )
+
+    nucleos = (
+        detectar_nucleos_desde_matriz(
+            matriz_filtrada,
+            imagen
+        )
+    )
+
+    print(
+        "Nucleos detectados después "
+        "del filtro dinámico: "
         f"{len(nucleos)}"
     )
 
     resultado = []
-
     ecos_estaticos = []
 
     suma_peso = 0.0
@@ -590,12 +1160,31 @@ def main():
 
     for nucleo in nucleos:
 
-        estado, confianza_base = (
-            analizar_mascara(
-                nucleo,
-                mascara
-            )
-        )
+        # ====================================================
+        # ESTADO DINÁMICO
+        #
+        # IMPORTANTE:
+        # no usamos bounding box de la máscara.
+        # El filtrado ya ocurrió píxel por píxel.
+        # ====================================================
+
+        pixeles_nucleo = nucleo[
+            "pixeles"
+        ]
+
+        # Como el núcleo fue construido después
+        # de eliminar los píxeles estáticos,
+        # el núcleo restante se considera dinámico.
+        #
+        # Esto evita eliminar una tormenta completa
+        # simplemente porque atraviesa una zona de montaña.
+
+        estado = "PRECIPITACION"
+        confianza_base = 85
+
+        if pixeles_dinamicos > 0:
+            estado = "CAMBIO"
+            confianza_base = 70
 
         confianza = calcular_confianza(
             nucleo,
@@ -603,157 +1192,164 @@ def main():
             confianza_base
         )
 
-        if estado == "ECO_ESTATICO":
-
-            cantidad_estaticos += 1
-
-            nucleo_id_estatico += 1
-
-            estatico = dict(nucleo)
-
-            estatico["nucleo_id"] = (
-                nucleo_id_estatico
-            )
-
-            estatico["estado"] = (
-                "ECO_ESTATICO"
-            )
-
-            estatico["confianza"] = (
-                confianza
-            )
-
-            ecos_estaticos.append(
-                estatico
-            )
-
-            print(
-                "Eco estatico excluido "
-                "del seguimiento: "
-                f"x={nucleo['x']} "
-                f"y={nucleo['y']} "
-                f"pixeles={nucleo['pixeles']}"
-            )
-
-            continue
-
-        if estado == "PRECIPITACION":
-            cantidad_precipitacion += 1
-
-        elif estado == "CAMBIO":
-            cantidad_cambios += 1
-
         nucleo_id += 1
 
-        peso = (
-            nucleo["pixeles"]
-            * max(
-                1,
-                nucleo["intensidad"]
-            )
+        registro = {
+            "id": nucleo_id,
+            "x": nucleo["x"],
+            "y": nucleo["y"],
+            "pixeles": nucleo["pixeles"],
+            "ancho": nucleo["ancho"],
+            "alto": nucleo["alto"],
+            "intensidad": nucleo["intensidad"],
+            "nivel_intensidad": (
+                nucleo["nivel_intensidad"]
+            ),
+            "colores": nucleo["colores"],
+            "estado": estado,
+            "confianza": confianza,
+            "es_trackeable": True,
+            "filtro_estatico": (
+                "pixelwise_temporal"
+            ),
+        }
+
+        resultado.append(
+            registro
         )
 
-        suma_peso += peso
-
-        suma_confianza += (
-            peso * confianza
+        suma_peso += float(
+            nucleo["intensidad"]
         )
 
-        item = dict(nucleo)
+        suma_confianza += confianza
 
-        item["nucleo_id"] = nucleo_id
-        item["estado"] = estado
-        item["confianza"] = confianza
+        if estado == "CAMBIO":
+            cantidad_cambios += 1
+        else:
+            cantidad_precipitacion += 1
 
-        resultado.append(item)
+    # ========================================================
+    # RESUMEN
+    # ========================================================
 
-    if suma_peso > 0:
+    cantidad_nucleos = len(
+        resultado
+    )
 
-        probabilidad_global = (
+    if cantidad_nucleos:
+        confianza_promedio = (
             suma_confianza
-            / suma_peso
+            / cantidad_nucleos
         )
-
     else:
-        probabilidad_global = 0
+        confianza_promedio = 0.0
 
-    probabilidad_global = round(
-        max(
-            0,
-            min(
-                99,
-                probabilidad_global
-            )
-        ),
-        1
-    )
-
-    radar_iso = (
-        radar_dt
-        .isoformat()
-        .replace(
-            "+00:00",
-            "Z"
-        )
-    )
-
-    compacto = timestamp_compacto(
-        radar_dt
-    )
+    # ========================================================
+    # GUARDAR RESULTADO
+    # ========================================================
 
     salida = {
-        "version": 4,
-
-        "imagen_procesada":
-            f"{compacto}.png",
-
-        "radar_timestamp":
-            radar_iso,
-
-        "fuente_imagen":
-            "data/radar/actual.png",
-
-        "ancho_imagen":
-            imagen.width,
-
-        "alto_imagen":
-            imagen.height,
-
-        "nucleos_detectados":
-            len(resultado),
-
-        "nucleos":
-            resultado,
-
-        "ecos_estaticos":
-            ecos_estaticos,
-
-        "nucleos_estaticos_excluidos":
-            len(ecos_estaticos),
-
+        "version": 5,
+        "timestamp": (
+            radar_dt
+            .isoformat()
+            .replace(
+                "+00:00",
+                "Z"
+            )
+        ),
+        "timestamp_compacto": (
+            timestamp_compacto(
+                radar_dt
+            )
+        ),
+        "imagen": (
+            "data/radar/actual.png"
+        ),
+        "resolucion": {
+            "ancho": imagen.width,
+            "alto": imagen.height,
+        },
+        "mascara_estatica": (
+            MASK_PATH.exists()
+        ),
+        "metodo_filtro_estatico": (
+            "pixelwise_temporal"
+        ),
+        "parametros_filtro": {
+            "max_historicos": (
+                MAX_HISTORICOS_COMPARAR
+            ),
+            "antiguedad_max_min": (
+                MAX_ANTIGUEDAD_HISTORICO_MIN
+            ),
+            "min_frames_comparables": (
+                MIN_FRAMES_COMPARABLES
+            ),
+            "min_frames_estables": (
+                MIN_FRAMES_ESTABLES
+            ),
+            "tolerancia_intensidad": (
+                TOLERANCIA_INTENSIDAD_ESTATICA
+            ),
+        },
+        "frames_historicos_comparados": (
+            frames_comparados
+        ),
+        "nucleos_detectados": (
+            cantidad_nucleos
+        ),
+        "nucleos_trackeables": (
+            cantidad_nucleos
+        ),
+        "nucleos_estaticos_excluidos": (
+            0
+        ),
+        "ecos_estaticos": (
+            ecos_estaticos
+        ),
+        "nucleos": resultado,
         "resumen": {
-
-            "ecos_estaticos":
-                cantidad_estaticos,
-
-            "precipitacion":
-                cantidad_precipitacion,
-
-            "cambios":
-                cantidad_cambios,
-
-            "nucleos_trackeables":
-                len(resultado),
-
-            "probabilidad_global":
-                probabilidad_global,
+            "nucleos": (
+                cantidad_nucleos
+            ),
+            "precipitacion": (
+                cantidad_precipitacion
+            ),
+            "cambios": (
+                cantidad_cambios
+            ),
+            "ecos_estaticos": (
+                cantidad_estaticos
+            ),
+            "pixeles_ecos_estaticos_excluidos": (
+                pixeles_estaticos
+            ),
+            "pixeles_dinamicos_recuperados": (
+                pixeles_dinamicos
+            ),
+            "confianza_promedio": round(
+                confianza_promedio,
+                1
+            ),
+            "peso_total": round(
+                suma_peso,
+                2
+            ),
+        },
+        "limpieza": {
+            "frames_futuros_eliminados": (
+                eliminados
+            ),
+            "estado_reparado": (
+                estado_reparado
+            ),
+            "predicciones_futuras_eliminadas": (
+                pendientes_eliminados
+            ),
         },
     }
-
-    OUTPUT_PATH.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
 
     OUTPUT_PATH.write_text(
         json.dumps(
@@ -770,28 +1366,8 @@ def main():
     )
 
     print(
-        "Nucleos trackeables: "
-        f"{len(resultado)}"
-    )
-
-    print(
-        "Ecos estaticos excluidos: "
-        f"{len(ecos_estaticos)}"
-    )
-
-    print(
-        "Precipitacion: "
-        f"{cantidad_precipitacion}"
-    )
-
-    print(
-        "Cambios: "
-        f"{cantidad_cambios}"
-    )
-
-    print(
-        "Probabilidad global: "
-        f"{probabilidad_global}%"
+        "Procesamiento RMA10 "
+        "finalizado correctamente."
     )
 
 
