@@ -1,0 +1,172 @@
+name: Construir Dataset RMA10 Historico
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: rma10-dataset-historico
+  cancel-in-progress: false
+
+jobs:
+  construir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Preparar directorios
+        run: |
+          set -e
+          mkdir -p data/radar/historico
+          mkdir -p /tmp/radar-artifact
+
+      - name: Obtener ultimo artefacto RMA10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          RUN_ID="$(gh run list \
+            --workflow probar-radar-smn.yml \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "ERROR: no se encontro una ejecucion exitosa de Probar Radar SMN."
+            exit 1
+          fi
+
+          echo "Run RMA10 utilizado: $RUN_ID"
+
+          gh run download "$RUN_ID" \
+            --name radar-rma10 \
+            --dir /tmp/radar-artifact
+
+          if [ -d /tmp/radar-artifact/historico ]; then
+            cp -a /tmp/radar-artifact/historico/. data/radar/historico/
+          elif [ -d /tmp/radar-artifact/data/radar/historico ]; then
+            cp -a /tmp/radar-artifact/data/radar/historico/. data/radar/historico/
+          else
+            echo "ERROR: el artefacto no contiene historico RMA10."
+            exit 1
+          fi
+
+          echo "PNG historicos disponibles:"
+          find data/radar/historico -maxdepth 1 -type f -name '*.png' | wc -l
+
+      - name: Instalar dependencias
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          pip install pillow
+
+      - name: Procesar y etiquetar RMA10
+        run: |
+          set -e
+          python scripts/construir_dataset_rma10_historico.py
+          test -s data/radar/rma10_dataset_historico.csv
+          test -s data/radar/rma10_dataset_resumen.json
+
+      - name: Verificar dataset
+        run: |
+          set -e
+          python - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          csv_path = Path("data/radar/rma10_dataset_historico.csv")
+          json_path = Path("data/radar/rma10_dataset_resumen.json")
+
+          with csv_path.open("r", encoding="utf-8", newline="") as f:
+              rows = list(csv.DictReader(f))
+
+          if not rows:
+              raise SystemExit("ERROR: dataset RMA10 vacio.")
+
+          required = {
+              "frame_utc",
+              "track_id",
+              "horizonte_min",
+              "intensity",
+              "future_intensity",
+              "intensity_delta",
+              "strengthened",
+              "weakened",
+              "speed_px_min",
+              "motion_bearing_deg",
+              "toward_bahia",
+              "label_valid",
+          }
+
+          missing = required - set(rows[0])
+          if missing:
+              raise SystemExit(
+                  f"ERROR: faltan columnas: {sorted(missing)}"
+              )
+
+          summary = json.loads(
+              json_path.read_text(encoding="utf-8")
+          )
+
+          print("===== DATASET RMA10 VERIFICADO =====")
+          print("Frames validos:", summary["frames_validos"])
+          print("Tracks:", summary["tracks_reconstruidos"])
+          print("Registros etiquetados:", summary["registros_entrenamiento"])
+          print("Fortalecimiento:", summary["registros_fortalecimiento"])
+          print("Debilitamiento:", summary["registros_debilitamiento"])
+          print("Hacia Bahia:", summary["registros_hacia_bahia"])
+          print("====================================")
+          PY
+
+      - name: Persistir dataset
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f \
+            data/radar/rma10_dataset_historico.csv \
+            data/radar/rma10_dataset_resumen.json
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios para guardar."
+            exit 0
+          fi
+
+          git commit -m "ClimaAR: generar dataset historico RMA10"
+
+          for intento in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Dataset RMA10 guardado."
+              exit 0
+            fi
+
+            if [ "$intento" -lt 3 ]; then
+              git pull --rebase --autostash origin main
+            fi
+          done
+
+          echo "ERROR: no se pudo guardar el dataset."
+          exit 1
+
+      - name: Publicar dataset
+        uses: actions/upload-artifact@v4
+        with:
+          name: rma10-dataset-historico
+          path: |
+            data/radar/rma10_dataset_historico.csv
+            data/radar/rma10_dataset_resumen.json
+          if-no-files-found: error
+          retention-days: 30
