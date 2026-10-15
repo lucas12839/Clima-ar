@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - name: Sincronizar con main antes de restaurar estado
+      - name: Sincronizar main antes de restaurar estado
         run: |
           set -e
 
@@ -38,7 +38,6 @@ jobs:
           echo "Commit utilizado:"
           git rev-parse HEAD
 
-          echo "Estado persistente disponible:"
           if [ -f .climaar/estado_rma10.json ]; then
             python - <<'PY'
           import json
@@ -160,7 +159,13 @@ jobs:
 
       - name: Aprender ecos estáticos
         run: |
+          set -e
+
           python scripts/generar_mascara_estatica.py
+
+          test -f data/radar/mascara_ecos_estaticos.png
+          test -f data/radar/mascara_ecos_estaticos.json
+          test -f data/radar/mascara_ecos_estaticos_confianza.png
 
       - name: Procesar radar
         run: |
@@ -182,7 +187,7 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          from datetime import datetime, timezone
+          from datetime import datetime
 
           estado = Path(
               "data/radar/seguimiento/estado.json"
@@ -357,76 +362,65 @@ jobs:
           test -s \
             data/radar/seguimiento/prediccion_evolucion.json
 
-      - name: Preparar persistencia
+      - name: Preparar archivos generados
         run: |
           set -e
 
-          test -f \
-            data/radar/seguimiento/estado.json
+          mkdir -p /tmp/climaar_radar_generado
 
           cp \
             data/radar/seguimiento/estado.json \
-            .climaar/estado_rma10.json
+            /tmp/climaar_radar_generado/estado_rma10.json
 
-          echo "Estado preparado para persistencia."
+          cp \
+            data/radar/mascara_ecos_estaticos.json \
+            /tmp/climaar_radar_generado/mascara_ecos_estaticos.json
 
-          python - <<'PY'
-          import json
-          from pathlib import Path
+          cp \
+            data/radar/mascara_ecos_estaticos.png \
+            /tmp/climaar_radar_generado/mascara_ecos_estaticos.png
 
-          p = Path(
-              ".climaar/estado_rma10.json"
-          )
+          cp \
+            data/radar/mascara_ecos_estaticos_confianza.png \
+            /tmp/climaar_radar_generado/mascara_ecos_estaticos_confianza.png
 
-          d = json.loads(
-              p.read_text(
-                  encoding="utf-8"
-              )
-          )
+          cp \
+            data/radar/radar_timestamp.txt \
+            /tmp/climaar_radar_generado/radar_timestamp.txt
 
-          print(
-              "timestamp:",
-              d.get(
-                  "ultimo_radar_timestamp"
-              )
-          )
-
-          print(
-              "tracks:",
-              len(
-                  d.get(
-                      "tracks",
-                      []
-                  )
-              )
-          )
-
-          print(
-              "siguiente_track_id:",
-              d.get(
-                  "siguiente_track_id"
-              )
-          )
-          PY
+          echo "Archivos generados protegidos."
 
       - name: Sincronizar main antes de guardar
         run: |
           set -e
 
           git fetch origin main
-
           git reset --hard origin/main
 
-          if [ ! -f .climaar/estado_rma10.json ]; then
-            echo "El estado no existe después de sincronizar main."
-            exit 1
-          fi
+          mkdir -p .climaar
+          mkdir -p data/radar
 
           cp \
-            data/radar/seguimiento/estado.json \
+            /tmp/climaar_radar_generado/estado_rma10.json \
             .climaar/estado_rma10.json
 
-          echo "Estado local reaplicado después de sincronizar main."
+          cp \
+            /tmp/climaar_radar_generado/mascara_ecos_estaticos.json \
+            data/radar/mascara_ecos_estaticos.json
+
+          cp \
+            /tmp/climaar_radar_generado/mascara_ecos_estaticos.png \
+            data/radar/mascara_ecos_estaticos.png
+
+          cp \
+            /tmp/climaar_radar_generado/mascara_ecos_estaticos_confianza.png \
+            data/radar/mascara_ecos_estaticos_confianza.png
+
+          cp \
+            /tmp/climaar_radar_generado/radar_timestamp.txt \
+            data/radar/radar_timestamp.txt
+
+          echo "Archivos generados restaurados sobre main actualizado."
 
       - name: Guardar estado persistente
         run: |
@@ -440,8 +434,9 @@ jobs:
 
           git add \
             .climaar/estado_rma10.json \
-            data/radar/seguimiento/mascara_estatica.json \
-            data/radar/seguimiento/mascara_estatica.png \
+            data/radar/mascara_ecos_estaticos.json \
+            data/radar/mascara_ecos_estaticos.png \
+            data/radar/mascara_ecos_estaticos_confianza.png \
             data/radar/radar_timestamp.txt
 
           if git diff --cached --quiet; then
@@ -452,24 +447,53 @@ jobs:
           fi
 
           for intento in 1 2 3; do
-            echo "Intento de sincronización $intento/3"
+            echo "Intento de push $intento/3"
+
+            if git push origin HEAD:main; then
+              echo "Estado RMA10 guardado correctamente."
+              exit 0
+            fi
+
+            echo "Push rechazado. Sincronizando nuevamente..."
 
             git fetch origin main
 
-            if git rebase origin/main; then
-              if git push origin HEAD:main; then
-                echo "Estado RMA10 guardado correctamente."
-                exit 0
-              fi
-            else
-              echo "Rebase fallido."
-              git rebase --abort || true
-            fi
+            git reset --hard origin/main
 
-            sleep 3
+            cp \
+              /tmp/climaar_radar_generado/estado_rma10.json \
+              .climaar/estado_rma10.json
+
+            cp \
+              /tmp/climaar_radar_generado/mascara_ecos_estaticos.json \
+              data/radar/mascara_ecos_estaticos.json
+
+            cp \
+              /tmp/climaar_radar_generado/mascara_ecos_estaticos.png \
+              data/radar/mascara_ecos_estaticos.png
+
+            cp \
+              /tmp/climaar_radar_generado/mascara_ecos_estaticos_confianza.png \
+              data/radar/mascara_ecos_estaticos_confianza.png
+
+            cp \
+              /tmp/climaar_radar_generado/radar_timestamp.txt \
+              data/radar/radar_timestamp.txt
+
+            git add \
+              .climaar/estado_rma10.json \
+              data/radar/mascara_ecos_estaticos.json \
+              data/radar/mascara_ecos_estaticos.png \
+              data/radar/mascara_ecos_estaticos_confianza.png \
+              data/radar/radar_timestamp.txt
+
+            git commit \
+              -m "Actualizar estado RMA10"
+
+            sleep 2
           done
 
-          echo "No se pudo guardar el estado después de 3 intentos."
+          echo "No se pudo guardar el estado."
           exit 1
 
       - name: Verificar estado final
@@ -494,6 +518,7 @@ jobs:
           )
 
           print("=== ESTADO FINAL ===")
+
           print(
               "timestamp:",
               d.get(
@@ -528,6 +553,9 @@ jobs:
             data/radar/latest.png
             data/radar/radar_timestamp.txt
             data/radar/resultado_procesamiento.json
+            data/radar/mascara_ecos_estaticos.json
+            data/radar/mascara_ecos_estaticos.png
+            data/radar/mascara_ecos_estaticos_confianza.png
             data/radar/historico/*.png
             data/radar/seguimiento/**
             data/radar/procesado/**
