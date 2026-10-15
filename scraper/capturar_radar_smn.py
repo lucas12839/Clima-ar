@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 from pathlib import Path
 import io
 import json
@@ -31,9 +32,7 @@ MAX_RETRIES = 5
 MAX_RADAR_AGE_MINUTES = 30
 MAX_FUTURE_SKEW_MINUTES = 2
 
-ARGENTINA_TZ = ZoneInfo(
-    "America/Argentina/Buenos_Aires"
-)
+ARGENTINA_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 
 
 def validar_png(data):
@@ -41,21 +40,15 @@ def validar_png(data):
         return False, "archivo vacio/pequeno"
 
     try:
-        im = Image.open(
-            io.BytesIO(data)
-        ).convert("RGBA")
+        im = Image.open(io.BytesIO(data)).convert("RGBA")
 
         if im.width < 100 or im.height < 100:
-            return False, (
-                f"resolucion {im.width}x{im.height}"
-            )
+            return False, f"resolucion {im.width}x{im.height}"
 
         alpha = im.getchannel("A")
 
         if alpha.getextrema()[1] < 3:
-            return False, (
-                "imagen completamente transparente"
-            )
+            return False, "imagen completamente transparente"
 
         visible = sum(
             1
@@ -63,18 +56,10 @@ def validar_png(data):
             if a > 2
         )
 
-        if (
-            visible / (im.width * im.height)
-            < 0.01
-        ):
-            return False, (
-                "menos de 1% de pixeles visibles"
-            )
+        if visible / (im.width * im.height) < 0.01:
+            return False, "menos de 1% de pixeles visibles"
 
-        return True, (
-            f"{im.width}x{im.height}, "
-            f"{len(data)} bytes"
-        )
+        return True, f"{im.width}x{im.height}, {len(data)} bytes"
 
     except Exception as exc:
         return False, f"PNG invalido: {exc}"
@@ -114,20 +99,6 @@ def source_timestamp_to_utc_timestamp(timestamp):
     )
 
 
-def edad_minutos(timestamp):
-    ahora = datetime.now(
-        ARGENTINA_TZ
-    )
-
-    fecha = timestamp_source_to_datetime(
-        timestamp
-    )
-
-    return (
-        ahora - fecha
-    ).total_seconds() / 60.0
-
-
 def normalizar_url(url):
     if not url:
         return None
@@ -138,16 +109,9 @@ def normalizar_url(url):
         return "https:" + url
 
     if url.startswith("/"):
-        return urljoin(
-            URL,
-            url
-        )
+        return urljoin(URL, url)
 
-    if (
-        url.startswith("http://")
-        or
-        url.startswith("https://")
-    ):
+    if url.startswith("http://") or url.startswith("https://"):
         return url
 
     return None
@@ -192,25 +156,15 @@ def extraer_urls_rma10(page):
                 texto,
                 re.I
             ):
-                url = normalizar_url(
-                    coincidencia
-                )
-
-                timestamp = timestamp_from_url(
-                    url
-                )
+                url = normalizar_url(coincidencia)
+                timestamp = timestamp_from_url(url)
 
                 if url and timestamp:
                     encontrados.append(
-                        (
-                            timestamp,
-                            url
-                        )
+                        (timestamp, url)
                     )
 
-    urls_img = page.locator(
-        "img"
-    ).evaluate_all(
+    urls_img = page.locator("img").evaluate_all(
         "els => els.map("
         "e => e.src || "
         "e.getAttribute('src') || ''"
@@ -220,14 +174,10 @@ def extraer_urls_rma10(page):
     for url in urls_img:
         agregar(url)
 
-    agregar(
-        page.content()
-    )
+    agregar(page.content())
 
     try:
-        scripts = page.locator(
-            "script"
-        ).evaluate_all(
+        scripts = page.locator("script").evaluate_all(
             "els => els.map("
             "e => e.textContent || ''"
             ")"
@@ -242,21 +192,153 @@ def extraer_urls_rma10(page):
     unicos = {}
 
     for timestamp, url in encontrados:
-        unicos[
-            (timestamp, url)
-        ] = (
+        unicos[(timestamp, url)] = (
             timestamp,
             url
         )
 
-    return list(
-        unicos.values()
-    )
+    return list(unicos.values())
+
+
+def timestamp_persistido():
+    """
+    Devuelve el ultimo timestamp RMA10 aceptado,
+    siempre expresado en UTC.
+    """
+
+    candidatos = []
+
+    for path in (
+        PERSISTENT_STATE,
+        STATE,
+    ):
+        if not path.exists():
+            continue
+
+        try:
+            data = json.loads(
+                path.read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            value = data.get(
+                "ultimo_radar_timestamp"
+            )
+
+            if value:
+                texto = str(value).replace(
+                    "Z",
+                    "+00:00"
+                )
+
+                dt = datetime.fromisoformat(
+                    texto
+                )
+
+                if dt.tzinfo is None:
+                    dt = dt.replace(
+                        tzinfo=timezone.utc
+                    )
+
+                candidatos.append(
+                    dt.astimezone(
+                        timezone.utc
+                    )
+                )
+
+        except Exception:
+            pass
+
+    if TSFILE.exists():
+        try:
+            texto = TSFILE.read_text(
+                encoding="utf-8"
+            ).strip()
+
+            texto = texto.replace(
+                "Z",
+                "+00:00"
+            )
+
+            dt = datetime.fromisoformat(
+                texto
+            )
+
+            if dt.tzinfo is None:
+                dt = dt.replace(
+                    tzinfo=timezone.utc
+                )
+
+            candidatos.append(
+                dt.astimezone(
+                    timezone.utc
+                )
+            )
+
+        except Exception:
+            pass
+
+    for archivo in HIST.glob(
+        "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].png"
+    ):
+        try:
+            dt = datetime.strptime(
+                archivo.stem,
+                "%Y%m%d%H%M%S"
+            ).replace(
+                tzinfo=timezone.utc
+            )
+
+            candidatos.append(dt)
+
+        except Exception:
+            pass
+
+    if not candidatos:
+        return None
+
+    return max(candidatos)
 
 
 def seleccionar_mas_reciente(candidatos):
+    """
+    Selecciona solamente un frame RMA10 realmente
+    posterior al ultimo frame aceptado.
+    """
+
     if not candidatos:
         return None
+
+    ultimo = timestamp_persistido()
+
+    if ultimo is not None:
+        nuevos = []
+
+        for item in candidatos:
+            timestamp = item[0]
+
+            fecha = (
+                timestamp_source_to_datetime(
+                    timestamp
+                )
+                .astimezone(
+                    timezone.utc
+                )
+            )
+
+            if fecha > ultimo:
+                nuevos.append(item)
+
+        if not nuevos:
+            raise RuntimeError(
+                "SINARAME no entrego un frame RMA10 nuevo. "
+                f"Ultimo frame aceptado: "
+                f"{ultimo.isoformat()}. "
+                "Se rechazan frames repetidos o atrasados."
+            )
+
+        candidatos = nuevos
 
     return max(
         candidatos,
@@ -272,20 +354,15 @@ def descargar_imagen(page, url):
 
     if not response.ok:
         raise RuntimeError(
-            f"HTTP {response.status} "
-            f"al descargar {url}"
+            f"HTTP {response.status} al descargar {url}"
         )
 
     data = response.body()
 
-    ok, detail = validar_png(
-        data
-    )
+    ok, detail = validar_png(data)
 
     if not ok:
-        raise RuntimeError(
-            detail
-        )
+        raise RuntimeError(detail)
 
     return data, detail
 
@@ -318,17 +395,12 @@ def migrar_iso_legacy(value):
                 timezone.utc
             )
 
-        dt += timedelta(
-            hours=3
-        )
+        dt += timedelta(hours=3)
 
         return (
             dt.astimezone(timezone.utc)
             .isoformat()
-            .replace(
-                "+00:00",
-                "Z"
-            )
+            .replace("+00:00", "Z")
         )
 
     except Exception:
@@ -351,9 +423,8 @@ def migrar_objeto_timestamps(obj):
 
             if key in claves_radar:
                 if isinstance(value, str):
-                    obj[key] = migrar_iso_legacy(
-                        value
-                    )
+                    obj[key] = migrar_iso_legacy(value)
+
                 elif isinstance(value, list):
                     obj[key] = [
                         migrar_iso_legacy(item)
@@ -363,15 +434,11 @@ def migrar_objeto_timestamps(obj):
                     ]
 
             else:
-                migrar_objeto_timestamps(
-                    value
-                )
+                migrar_objeto_timestamps(value)
 
     elif isinstance(obj, list):
         for item in obj:
-            migrar_objeto_timestamps(
-                item
-            )
+            migrar_objeto_timestamps(item)
 
 
 def migrar_json_legacy(path):
@@ -385,9 +452,7 @@ def migrar_json_legacy(path):
             )
         )
 
-        migrar_objeto_timestamps(
-            data
-        )
+        migrar_objeto_timestamps(data)
 
         path.write_text(
             json.dumps(
@@ -405,6 +470,7 @@ def migrar_json_legacy(path):
             f"AVISO: no se pudo migrar "
             f"{path}: {exc}"
         )
+
         return False
 
 
@@ -434,9 +500,7 @@ def migrar_historico_legacy():
         ):
             continue
 
-        source_timestamp = (
-            archivo.stem
-        )
+        source_timestamp = archivo.stem
 
         utc_timestamp = (
             source_timestamp_to_utc_timestamp(
@@ -445,8 +509,8 @@ def migrar_historico_legacy():
         )
 
         destino = (
-            HIST
-            / f"{utc_timestamp}.png"
+            HIST /
+            f"{utc_timestamp}.png"
         )
 
         if destino == archivo:
@@ -455,9 +519,7 @@ def migrar_historico_legacy():
         if destino.exists():
             archivo.unlink()
         else:
-            archivo.rename(
-                destino
-            )
+            archivo.rename(destino)
 
         renombrados += 1
 
@@ -532,23 +594,16 @@ def main():
 
                     respuestas_radar = []
 
-                    def capturar_respuesta(
-                        response
-                    ):
+                    def capturar_respuesta(response):
                         url = response.url
 
                         if (
-                            "/cache/RMA10/"
-                            in url
-                            and
-                            ".png"
-                            in url.lower()
+                            "/cache/RMA10/" in url
+                            and ".png" in url.lower()
                         ):
 
                             timestamp = (
-                                timestamp_from_url(
-                                    url
-                                )
+                                timestamp_from_url(url)
                             )
 
                             if timestamp:
@@ -567,9 +622,7 @@ def main():
 
                     page.goto(
                         URL,
-                        wait_until=(
-                            "domcontentloaded"
-                        ),
+                        wait_until="domcontentloaded",
                         timeout=60000
                     )
 
@@ -587,43 +640,31 @@ def main():
                         selects.count()
                     ):
 
-                        select = selects.nth(
-                            index
-                        )
+                        select = selects.nth(index)
 
                         try:
-                            texto = (
-                                select.inner_text()
-                            )
-
+                            texto = select.inner_text()
                         except Exception:
                             continue
 
                         if (
-                            "Bahía Blanca"
-                            in texto
+                            "Bahía Blanca" in texto
                             or
-                            "Bahia Blanca"
-                            in texto
+                            "Bahia Blanca" in texto
                             or
-                            "RMA10"
-                            in texto
+                            "RMA10" in texto
                         ):
-
                             selector = select
                             break
 
                     if selector is None:
                         raise RuntimeError(
-                            "No se encontro "
-                            "selector RMA10 "
-                            "en SINARAME"
+                            "No se encontro selector "
+                            "RMA10 en SINARAME"
                         )
 
-                    opciones = (
-                        selector.locator(
-                            "option"
-                        )
+                    opciones = selector.locator(
+                        "option"
                     )
 
                     value = None
@@ -632,40 +673,31 @@ def main():
                         opciones.count()
                     ):
 
-                        option = opciones.nth(
-                            index
-                        )
+                        option = opciones.nth(index)
 
                         texto = (
                             option.inner_text()
                             .strip()
                         )
 
-                        valor = (
-                            option.get_attribute(
-                                "value"
-                            )
+                        valor = option.get_attribute(
+                            "value"
                         )
 
                         if (
-                            "Bahía Blanca"
-                            in texto
+                            "Bahía Blanca" in texto
                             or
-                            "Bahia Blanca"
-                            in texto
+                            "Bahia Blanca" in texto
                             or
-                            "RMA10"
-                            in texto
+                            "RMA10" in texto
                         ):
-
                             value = valor
                             break
 
                     if value is None:
                         raise RuntimeError(
-                            "No se encontro "
-                            "Bahía Blanca RMA10 "
-                            "en SINARAME"
+                            "No se encontro Bahia Blanca "
+                            "RMA10 en SINARAME"
                         )
 
                     selector.select_option(
@@ -695,9 +727,7 @@ def main():
                     for (
                         timestamp,
                         url
-                    ) in extraer_urls_rma10(
-                        page
-                    ):
+                    ) in extraer_urls_rma10(page):
 
                         candidatos.append(
                             (
@@ -710,17 +740,14 @@ def main():
                     if not candidatos:
                         raise RuntimeError(
                             "SINARAME no expuso "
-                            "ninguna URL "
-                            "RMA10 PNG"
+                            "ninguna URL RMA10 PNG"
                         )
 
                     unicos = {}
 
                     for item in candidatos:
 
-                        timestamp, url, response = (
-                            item
-                        )
+                        timestamp, url, response = item
 
                         unicos[
                             (timestamp, url)
@@ -772,8 +799,7 @@ def main():
                                 "DESCARTADO: "
                                 "frame futuro: "
                                 f"{timestamp} "
-                                f"(+{diferencia_minutos:.1f} "
-                                "min)"
+                                f"(+{diferencia_minutos:.1f} min)"
                             )
 
                             continue
@@ -789,8 +815,7 @@ def main():
                     if not candidatos_validos:
                         raise RuntimeError(
                             "SINARAME solo entrego "
-                            "frames futuros "
-                            "o invalidos."
+                            "frames futuros o invalidos."
                         )
 
                     for (
@@ -813,8 +838,8 @@ def main():
                             f"RMA10 candidato valido: "
                             f"{timestamp} | "
                             f"edad "
-                            f"{edad_candidato:.1f} "
-                            f"min | {url}"
+                            f"{edad_candidato:.1f} min | "
+                            f"{url}"
                         )
 
                     seleccionado = (
@@ -852,11 +877,7 @@ def main():
                             f"{timestamp}"
                         )
 
-                    if (
-                        edad
-                        > MAX_RADAR_AGE_MINUTES
-                    ):
-
+                    if edad > MAX_RADAR_AGE_MINUTES:
                         raise RuntimeError(
                             "SINARAME NO TIENE "
                             "UN RMA10 ACTUALIZADO: "
@@ -870,11 +891,7 @@ def main():
 
                         data = response.body()
 
-                        ok, detail = (
-                            validar_png(
-                                data
-                            )
-                        )
+                        ok, detail = validar_png(data)
 
                         if not ok:
                             data, detail = (
@@ -962,16 +979,12 @@ def main():
                         f"Fallo: {exc}"
                     )
 
-                    if (
-                        intento
-                        < MAX_RETRIES
-                    ):
+                    if intento < MAX_RETRIES:
                         time.sleep(4)
 
             page.screenshot(
                 path=str(
-                    OUT /
-                    "error_rma10.png"
+                    OUT / "error_rma10.png"
                 ),
                 full_page=True
             )
