@@ -120,6 +120,15 @@ jobs:
           python scripts/motor_decision_climaar.py
           test -s data/ia/resultado_final.json
 
+      - name: Sincronizar repositorio antes de persistir
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git pull --rebase --autostash origin main
+
       - name: Persistir resultados
         run: |
           set -e
@@ -141,11 +150,27 @@ jobs:
 
           if git diff --cached --quiet; then
             echo "No hay cambios para guardar."
-          else
-            git commit -m "ClimaAR: acumular dataset RMA10"
-            git pull --rebase --autostash origin main
-            git push origin HEAD:main
+            exit 0
           fi
+
+          git commit -m "ClimaAR: acumular dataset RMA10"
+
+          for intento in 1 2 3; do
+            echo "Intento de push: $intento"
+
+            if git push origin HEAD:main; then
+              echo "Push realizado correctamente."
+              exit 0
+            fi
+
+            if [ "$intento" -lt 3 ]; then
+              echo "Push rechazado. Sincronizando nuevamente..."
+              git pull --rebase --autostash origin main
+            fi
+          done
+
+          echo "ERROR: no se pudo realizar el push después de 3 intentos."
+          exit 1
 
       - name: Publicar artefacto de resultado
         uses: actions/upload-artifact@v4
