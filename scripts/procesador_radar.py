@@ -30,18 +30,25 @@ NIVELES = {
 def clasificar_color(r, g, b):
     if max(r, g, b) < 25:
         return "FONDO", 0
+
     if b > g and g > r * 1.5:
         return "AZUL_CYAN", 1
+
     if g > r * 1.35 and g >= b * 0.95:
         return "VERDE", 2
+
     if r > 100 and g > 100 and b < 100 and abs(r - g) < 100:
         return "AMARILLO", 3
+
     if r > 130 and 60 < g < 180 and b < 90 and r > g * 1.15:
         return "NARANJA", 4
+
     if r > 130 and r > g * 1.35 and r > b * 1.35:
         return "ROJO", 5
+
     if r > 100 and b > 100 and r > g * 1.3:
         return "VIOLETA_MAGENTA", 6
+
     return "OTRO", 0
 
 
@@ -55,7 +62,9 @@ def detectar_nucleos(imagen):
     for y in range(alto):
         for x in range(ancho):
             r, g, b, *resto = pix[x, y]
+
             color, intensidad = clasificar_color(r, g, b)
+
             clasificacion[y][x] = intensidad
             colores[y][x] = color
 
@@ -70,6 +79,7 @@ def detectar_nucleos(imagen):
 
     for y0 in range(alto):
         for x0 in range(ancho):
+
             if visitado[y0][x0]:
                 continue
 
@@ -86,11 +96,21 @@ def detectar_nucleos(imagen):
                 puntos.append((x, y))
 
                 for dx, dy in vecinos:
-                    nx, ny = x + dx, y + dy
-                    if nx < 0 or nx >= ancho or ny < 0 or ny >= alto:
+                    nx = x + dx
+                    ny = y + dy
+
+                    if nx < 0 or nx >= ancho:
                         continue
-                    if visitado[ny][nx] or clasificacion[ny][nx] <= 0:
+
+                    if ny < 0 or ny >= alto:
                         continue
+
+                    if visitado[ny][nx]:
+                        continue
+
+                    if clasificacion[ny][nx] <= 0:
+                        continue
+
                     visitado[ny][nx] = True
                     cola.append((nx, ny))
 
@@ -100,19 +120,24 @@ def detectar_nucleos(imagen):
             xs = [p[0] for p in puntos]
             ys = [p[1] for p in puntos]
 
-            min_x, max_x = min(xs), max(xs)
-            min_y, max_y = min(ys), max(ys)
+            min_x = min(xs)
+            max_x = max(xs)
+            min_y = min(ys)
+            max_y = max(ys)
 
             centro_x = sum(xs) / len(xs)
             centro_y = sum(ys) / len(ys)
 
             max_intensidad = max(
-                clasificacion[y][x] for x, y in puntos
+                clasificacion[y][x]
+                for x, y in puntos
             )
 
             colores_presentes = sorted(
-                set(colores[y][x] for x, y in puntos)
-                - {None, "OTRO"}
+                set(
+                    colores[y][x]
+                    for x, y in puntos
+                ) - {None, "OTRO"}
             )
 
             nucleos.append({
@@ -122,7 +147,10 @@ def detectar_nucleos(imagen):
                 "ancho": max_x - min_x + 1,
                 "alto": max_y - min_y + 1,
                 "intensidad": max_intensidad,
-                "nivel_intensidad": NIVELES.get(max_intensidad, "OTRO"),
+                "nivel_intensidad": NIVELES.get(
+                    max_intensidad,
+                    "OTRO"
+                ),
                 "colores": colores_presentes,
             })
 
@@ -132,6 +160,7 @@ def detectar_nucleos(imagen):
 def cargar_mascara():
     if not MASK_PATH.exists():
         return None
+
     try:
         return Image.open(MASK_PATH).convert("L")
     except Exception:
@@ -143,6 +172,7 @@ def analizar_mascara(nucleo, mascara):
         return "SIN_MASCARA", 65
 
     mw, mh = mascara.size
+
     x = int(round(nucleo["x"]))
     y = int(round(nucleo["y"]))
 
@@ -154,6 +184,7 @@ def analizar_mascara(nucleo, mascara):
 
     x1 = max(0, x - mitad_x)
     x2 = min(mw - 1, x + mitad_x)
+
     y1 = max(0, y - mitad_y)
     y2 = min(mh - 1, y + mitad_y)
 
@@ -162,7 +193,9 @@ def analizar_mascara(nucleo, mascara):
 
     for yy in range(y1, y2 + 1):
         for xx in range(x1, x2 + 1):
+
             total += 1
+
             if mascara.getpixel((xx, yy)) > 0:
                 marcados += 1
 
@@ -173,20 +206,28 @@ def analizar_mascara(nucleo, mascara):
 
     if proporcion >= 0.80:
         return "ECO_ESTATICO", 92
+
     if proporcion >= 0.30:
         return "CAMBIO", 70
+
     return "PRECIPITACION", 85
 
 
 def calcular_confianza(nucleo, estado, base):
     confianza = float(base)
+
     intensidad = nucleo["intensidad"]
+
     confianza += intensidad * 2
+
     if intensidad >= 5:
         confianza += 2
+
     confianza = max(1, min(99, confianza))
+
     if estado == "ECO_ESTATICO":
         confianza = min(confianza, 15)
+
     return round(confianza, 1)
 
 
@@ -196,16 +237,27 @@ def parse_timestamp_file():
             "No existe data/radar/radar_timestamp.txt"
         )
 
-    value = TIMESTAMP_FILE.read_text(encoding="utf-8").strip()
+    value = TIMESTAMP_FILE.read_text(
+        encoding="utf-8"
+    ).strip()
+
     if not value:
-        raise RuntimeError("radar_timestamp.txt esta vacio")
+        raise RuntimeError(
+            "radar_timestamp.txt esta vacio"
+        )
 
     try:
         texto = value.replace("Z", "+00:00")
+
         dt = datetime.fromisoformat(texto)
+
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(
+                tzinfo=timezone.utc
+            )
+
         return dt.astimezone(timezone.utc)
+
     except Exception as exc:
         raise RuntimeError(
             f"Timestamp radar invalido: {value}"
@@ -218,10 +270,17 @@ def timestamp_compacto(dt):
 
 def limpiar_frames_futuros(radar_dt):
     eliminados = 0
-    limite = radar_dt + timedelta(minutes=MAX_FUTURE_SKEW_MINUTES)
+
+    limite = radar_dt + timedelta(
+        minutes=MAX_FUTURE_SKEW_MINUTES
+    )
 
     for archivo in HISTORICO_DIR.glob("*.png"):
-        match = TIMESTAMP_RE.match(archivo.name)
+
+        match = TIMESTAMP_RE.match(
+            archivo.name
+        )
+
         if not match:
             continue
 
@@ -229,12 +288,18 @@ def limpiar_frames_futuros(radar_dt):
             dt = datetime.strptime(
                 match.group(1),
                 "%Y%m%d%H%M%S"
-            ).replace(tzinfo=timezone.utc)
+            ).replace(
+                tzinfo=timezone.utc
+            )
+
         except Exception:
             continue
 
         if dt > limite:
-            archivo.unlink(missing_ok=True)
+            archivo.unlink(
+                missing_ok=True
+            )
+
             eliminados += 1
 
     return eliminados
@@ -245,27 +310,50 @@ def reparar_estado_futuro(radar_dt):
         return False
 
     try:
-        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        data = json.loads(
+            STATE_PATH.read_text(
+                encoding="utf-8"
+            )
+        )
+
     except Exception:
         return False
 
     if not isinstance(data, dict):
         return False
 
-    value = data.get("ultimo_radar_timestamp")
+    value = data.get(
+        "ultimo_radar_timestamp"
+    )
+
     if not value:
         return False
 
     try:
-        texto = str(value).replace("Z", "+00:00")
-        ultimo = datetime.fromisoformat(texto)
+        texto = str(value).replace(
+            "Z",
+            "+00:00"
+        )
+
+        ultimo = datetime.fromisoformat(
+            texto
+        )
+
         if ultimo.tzinfo is None:
-            ultimo = ultimo.replace(tzinfo=timezone.utc)
-        ultimo = ultimo.astimezone(timezone.utc)
+            ultimo = ultimo.replace(
+                tzinfo=timezone.utc
+            )
+
+        ultimo = ultimo.astimezone(
+            timezone.utc
+        )
+
     except Exception:
         return False
 
-    if ultimo <= radar_dt + timedelta(minutes=MAX_FUTURE_SKEW_MINUTES):
+    if ultimo <= radar_dt + timedelta(
+        minutes=MAX_FUTURE_SKEW_MINUTES
+    ):
         return False
 
     data["ultimo_radar_timestamp"] = None
@@ -273,13 +361,29 @@ def reparar_estado_futuro(radar_dt):
     data["tracks_activos"] = []
     data["ultimo_frame_nucleos"] = []
     data["siguiente_track_id"] = 1
-    data["reparacion_timestamp"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    data["motivo_reparacion"] = "Estado anterior tenia un radar futuro invalido. Se reinicio el seguimiento para evitar contaminar la prediccion."
+
+    data["reparacion_timestamp"] = (
+        datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+    data["motivo_reparacion"] = (
+        "Estado anterior tenia un radar "
+        "futuro invalido. Se reinicio el "
+        "seguimiento para evitar contaminar "
+        "la prediccion."
+    )
 
     STATE_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
+        json.dumps(
+            data,
+            ensure_ascii=False,
+            indent=2
+        ),
         encoding="utf-8"
     )
+
     return True
 
 
@@ -288,14 +392,23 @@ def limpiar_predicciones_futuras(radar_dt):
         return 0
 
     try:
-        data = json.loads(PENDING_PATH.read_text(encoding="utf-8"))
+        data = json.loads(
+            PENDING_PATH.read_text(
+                encoding="utf-8"
+            )
+        )
+
     except Exception:
         return 0
 
     if not isinstance(data, dict):
         return 0
 
-    pendientes = data.get("pendientes", [])
+    pendientes = data.get(
+        "pendientes",
+        []
+    )
+
     if not isinstance(pendientes, list):
         return 0
 
@@ -303,20 +416,44 @@ def limpiar_predicciones_futuras(radar_dt):
     eliminados = 0
 
     for item in pendientes:
+
         if not isinstance(item, dict):
             continue
 
-        value = item.get("timestamp_origen")
+        value = item.get(
+            "timestamp_origen"
+        )
+
         futuro = False
 
         if value:
+
             try:
-                texto = str(value).replace("Z", "+00:00")
-                origen = datetime.fromisoformat(texto)
+                texto = str(value).replace(
+                    "Z",
+                    "+00:00"
+                )
+
+                origen = datetime.fromisoformat(
+                    texto
+                )
+
                 if origen.tzinfo is None:
-                    origen = origen.replace(tzinfo=timezone.utc)
-                origen = origen.astimezone(timezone.utc)
-                futuro = origen > radar_dt + timedelta(minutes=MAX_FUTURE_SKEW_MINUTES)
+                    origen = origen.replace(
+                        tzinfo=timezone.utc
+                    )
+
+                origen = origen.astimezone(
+                    timezone.utc
+                )
+
+                futuro = (
+                    origen
+                    > radar_dt + timedelta(
+                        minutes=MAX_FUTURE_SKEW_MINUTES
+                    )
+                )
+
             except Exception:
                 pass
 
@@ -326,10 +463,19 @@ def limpiar_predicciones_futuras(radar_dt):
             validos.append(item)
 
     data["pendientes"] = validos[-500:]
-    data["actualizado"] = radar_dt.isoformat().replace("+00:00", "Z")
+
+    data["actualizado"] = (
+        radar_dt
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
     PENDING_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
+        json.dumps(
+            data,
+            ensure_ascii=False,
+            indent=2
+        ),
         encoding="utf-8"
     )
 
@@ -337,64 +483,120 @@ def limpiar_predicciones_futuras(radar_dt):
 
 
 def main():
-    HISTORICO_DIR.mkdir(parents=True, exist_ok=True)
+
+    HISTORICO_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
     radar_dt = parse_timestamp_file()
+
     ahora = datetime.now(timezone.utc)
 
-    if radar_dt > ahora + timedelta(minutes=MAX_FUTURE_SKEW_MINUTES):
+    if radar_dt > ahora + timedelta(
+        minutes=MAX_FUTURE_SKEW_MINUTES
+    ):
         raise RuntimeError(
-            "El radar_timestamp.txt es futuro respecto al reloj del runner: "
+            "El radar_timestamp.txt es futuro "
+            "respecto al reloj del runner: "
             f"{radar_dt.isoformat()}"
         )
 
     actual_path = RADAR_DIR / "actual.png"
+
     if not actual_path.exists():
         raise RuntimeError(
             "No existe data/radar/actual.png"
         )
 
-    eliminados = limpiar_frames_futuros(radar_dt)
-    estado_reparado = reparar_estado_futuro(radar_dt)
-    pendientes_eliminados = limpiar_predicciones_futuras(radar_dt)
+    eliminados = limpiar_frames_futuros(
+        radar_dt
+    )
+
+    estado_reparado = reparar_estado_futuro(
+        radar_dt
+    )
+
+    pendientes_eliminados = (
+        limpiar_predicciones_futuras(
+            radar_dt
+        )
+    )
 
     if eliminados:
-        print(f"Frames historicos futuros eliminados: {eliminados}")
-    if estado_reparado:
-        print("Estado persistente futuro reparado y reiniciado.")
-    if pendientes_eliminados:
         print(
-            "Predicciones pendientes invalidas eliminadas:",
-            pendientes_eliminados
+            "Frames historicos futuros "
+            f"eliminados: {eliminados}"
         )
 
-    imagen_path = actual_path
+    if estado_reparado:
+        print(
+            "Estado persistente futuro "
+            "reparado y reiniciado."
+        )
+
+    if pendientes_eliminados:
+        print(
+            "Predicciones pendientes "
+            f"invalidas eliminadas: "
+            f"{pendientes_eliminados}"
+        )
+
     print(
-        "Procesando SIEMPRE data/radar/actual.png; "
-        "no se selecciona el historico por nombre."
+        "Procesando SIEMPRE "
+        "data/radar/actual.png; "
+        "no se selecciona el historico "
+        "por nombre."
     )
+
     print(
-        f"Frame RMA10 valido: {timestamp_compacto(radar_dt)}"
+        "Frame RMA10 valido: "
+        f"{timestamp_compacto(radar_dt)}"
     )
 
-    imagen = Image.open(imagen_path).convert("RGBA")
+    imagen = Image.open(
+        actual_path
+    ).convert("RGBA")
 
-    print(f"Resolucion: {imagen.width}x{imagen.height}")
+    print(
+        f"Resolucion: "
+        f"{imagen.width}x{imagen.height}"
+    )
 
-    nucleos = detectar_nucleos(imagen)
+    nucleos = detectar_nucleos(
+        imagen
+    )
+
     mascara = cargar_mascara()
 
-    print(f"Nucleos detectados: {len(nucleos)}")
+    print(
+        f"Nucleos detectados: "
+        f"{len(nucleos)}"
+    )
 
     resultado = []
+
+    ecos_estaticos = []
+
     suma_peso = 0.0
     suma_confianza = 0.0
+
     cantidad_estaticos = 0
     cantidad_precipitacion = 0
     cantidad_cambios = 0
 
-    for i, nucleo in enumerate(nucleos, start=1):
-        estado, confianza_base = analizar_mascara(nucleo, mascara)
+    nucleo_id = 0
+    nucleo_id_estatico = 0
+
+    for nucleo in nucleos:
+
+        estado, confianza_base = (
+            analizar_mascara(
+                nucleo,
+                mascara
+            )
+        )
+
         confianza = calcular_confianza(
             nucleo,
             estado,
@@ -402,74 +604,195 @@ def main():
         )
 
         if estado == "ECO_ESTATICO":
+
             cantidad_estaticos += 1
-        elif estado == "PRECIPITACION":
+
+            nucleo_id_estatico += 1
+
+            estatico = dict(nucleo)
+
+            estatico["nucleo_id"] = (
+                nucleo_id_estatico
+            )
+
+            estatico["estado"] = (
+                "ECO_ESTATICO"
+            )
+
+            estatico["confianza"] = (
+                confianza
+            )
+
+            ecos_estaticos.append(
+                estatico
+            )
+
+            print(
+                "Eco estatico excluido "
+                "del seguimiento: "
+                f"x={nucleo['x']} "
+                f"y={nucleo['y']} "
+                f"pixeles={nucleo['pixeles']}"
+            )
+
+            continue
+
+        if estado == "PRECIPITACION":
             cantidad_precipitacion += 1
+
         elif estado == "CAMBIO":
             cantidad_cambios += 1
 
-        peso = nucleo["pixeles"] * max(1, nucleo["intensidad"])
-        if estado == "ECO_ESTATICO":
-            peso *= 0.05
+        nucleo_id += 1
+
+        peso = (
+            nucleo["pixeles"]
+            * max(
+                1,
+                nucleo["intensidad"]
+            )
+        )
 
         suma_peso += peso
-        suma_confianza += peso * confianza
+
+        suma_confianza += (
+            peso * confianza
+        )
 
         item = dict(nucleo)
-        item["nucleo_id"] = i
+
+        item["nucleo_id"] = nucleo_id
         item["estado"] = estado
         item["confianza"] = confianza
+
         resultado.append(item)
 
     if suma_peso > 0:
-        probabilidad_global = suma_confianza / suma_peso
+
+        probabilidad_global = (
+            suma_confianza
+            / suma_peso
+        )
+
     else:
         probabilidad_global = 0
 
     probabilidad_global = round(
-        max(0, min(99, probabilidad_global)),
+        max(
+            0,
+            min(
+                99,
+                probabilidad_global
+            )
+        ),
         1
     )
 
-    radar_iso = radar_dt.isoformat().replace("+00:00", "Z")
-    compacto = timestamp_compacto(radar_dt)
+    radar_iso = (
+        radar_dt
+        .isoformat()
+        .replace(
+            "+00:00",
+            "Z"
+        )
+    )
+
+    compacto = timestamp_compacto(
+        radar_dt
+    )
 
     salida = {
-        "version": 3,
-        "imagen_procesada": f"{compacto}.png",
-        "radar_timestamp": radar_iso,
-        "fuente_imagen": "data/radar/actual.png",
-        "ancho_imagen": imagen.width,
-        "alto_imagen": imagen.height,
-        "nucleos_detectados": len(resultado),
-        "nucleos": resultado,
+        "version": 4,
+
+        "imagen_procesada":
+            f"{compacto}.png",
+
+        "radar_timestamp":
+            radar_iso,
+
+        "fuente_imagen":
+            "data/radar/actual.png",
+
+        "ancho_imagen":
+            imagen.width,
+
+        "alto_imagen":
+            imagen.height,
+
+        "nucleos_detectados":
+            len(resultado),
+
+        "nucleos":
+            resultado,
+
+        "ecos_estaticos":
+            ecos_estaticos,
+
+        "nucleos_estaticos_excluidos":
+            len(ecos_estaticos),
+
         "resumen": {
-            "ecos_estaticos": cantidad_estaticos,
-            "precipitacion": cantidad_precipitacion,
-            "cambios": cantidad_cambios,
-            "probabilidad_global": probabilidad_global,
+
+            "ecos_estaticos":
+                cantidad_estaticos,
+
+            "precipitacion":
+                cantidad_precipitacion,
+
+            "cambios":
+                cantidad_cambios,
+
+            "nucleos_trackeables":
+                len(resultado),
+
+            "probabilidad_global":
+                probabilidad_global,
         },
     }
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
     OUTPUT_PATH.write_text(
         json.dumps(
             salida,
             ensure_ascii=False,
-            indent=2,
-            allow_nan=False,
+            indent=2
         ),
         encoding="utf-8"
     )
 
-    print("===== PROCESAMIENTO =====")
-    print(f"Radar timestamp UTC: {radar_iso}")
-    print(f"Nucleos: {len(resultado)}")
-    print(f"Estaticos: {cantidad_estaticos}")
-    print(f"Precipitacion: {cantidad_precipitacion}")
-    print(f"Cambios: {cantidad_cambios}")
-    print(f"Probabilidad global: {probabilidad_global}%")
-    print(f"Salida: {OUTPUT_PATH}")
+    print(
+        "Resultado guardado en: "
+        f"{OUTPUT_PATH}"
+    )
+
+    print(
+        "Nucleos trackeables: "
+        f"{len(resultado)}"
+    )
+
+    print(
+        "Ecos estaticos excluidos: "
+        f"{len(ecos_estaticos)}"
+    )
+
+    print(
+        "Precipitacion: "
+        f"{cantidad_precipitacion}"
+    )
+
+    print(
+        "Cambios: "
+        f"{cantidad_cambios}"
+    )
+
+    print(
+        "Probabilidad global: "
+        f"{probabilidad_global}%"
+    )
 
 
 if __name__ == "__main__":
