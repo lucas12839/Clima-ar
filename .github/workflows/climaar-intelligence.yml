@@ -91,50 +91,216 @@ jobs:
 
       - name: Conectar RMA10 con Storm Engine
         run: |
-          python scripts/adaptar_rma10_intelligence.py
-          test -s data/radar/radar_nowcast.json
+          set -e
 
-      - name: Acumular dataset RMA10
-        run: |
-          python scripts/acumular_features_rma10.py
-          test -s data/radar/radar_features_rma10.csv
+          python scripts/adaptar_rma10_intelligence.py
+
+          test -s data/radar/radar_nowcast.json
 
       - name: Georreferenciar RMA10
         run: |
+          set -e
+
           python scripts/scripts/georreferenciar_rma10.py
+
           test -s data/radar/radar_nowcast.json
+
+          echo "Georreferenciación RMA10 completada."
+
+      - name: Acumular dataset RMA10
+        run: |
+          set -e
+
+          python scripts/acumular_features_rma10.py
+
+          test -s data/radar/radar_features_rma10.csv
+
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+          from collections import Counter
+
+          p = Path("data/radar/radar_features_rma10.csv")
+
+          with p.open(
+              "r",
+              encoding="utf-8",
+              newline=""
+          ) as f:
+              rows = list(csv.DictReader(f))
+
+          if not rows:
+              raise SystemExit(
+                  "ERROR: dataset RMA10 vacío."
+              )
+
+          timestamps = [
+              r.get("frame_time", "").strip()
+              for r in rows
+          ]
+
+          timestamps_validos = [
+              x for x in timestamps
+              if x
+          ]
+
+          duplicados = [
+              x
+              for x, n in Counter(
+                  timestamps_validos
+              ).items()
+              if n > 1
+          ]
+
+          if duplicados:
+              raise SystemExit(
+                  "ERROR: existen timestamps duplicados en dataset RMA10."
+              )
+
+          print(
+              "Registros dataset RMA10:",
+              len(rows)
+          )
+
+          print(
+              "Último frame:",
+              timestamps_validos[-1]
+              if timestamps_validos
+              else "sin timestamp"
+          )
+
+          print(
+              "Dataset RMA10 correcto."
+          )
+          PY
 
       - name: Fusionar meteorología
         run: |
+          set -e
+
           python scripts/meteorologia_fusion.py
+
           test -s data/ia/estado_meteorologico.json
 
       - name: Ejecutar Storm Engine
         run: |
+          set -e
+
           python scripts/tormenta_intelligence.py
+
           test -s data/ia/inteligencia_tormenta.json
           test -s data/ia/historial_inteligencia_tormenta.csv
 
       - name: Ejecutar motor de decisión integrado
         run: |
+          set -e
+
           python scripts/motor_decision_climaar.py
+
           test -s data/ia/resultado_final.json
+
+      - name: Verificar sincronización final
+        run: |
+          set -e
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          radar_ts = Path(
+              "data/radar/radar_timestamp.txt"
+          ).read_text(
+              encoding="utf-8"
+          ).strip()
+
+          nowcast = json.loads(
+              Path(
+                  "data/radar/radar_nowcast.json"
+              ).read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          resultado = json.loads(
+              Path(
+                  "data/ia/resultado_final.json"
+              ).read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          nowcast_ts = (
+              nowcast.get("frame_time")
+              or nowcast.get("timestamp")
+              or nowcast.get("frame_utc")
+          )
+
+          print("===== SINCRONIZACIÓN CLIMAAR =====")
+          print("Radar:", radar_ts)
+          print("Nowcast:", nowcast_ts)
+
+          if nowcast_ts:
+              radar_normalizado = radar_ts.replace(
+                  "Z",
+                  "+00:00"
+              )
+
+              nowcast_normalizado = str(
+                  nowcast_ts
+              ).replace(
+                  "Z",
+                  "+00:00"
+              )
+
+              if radar_normalizado != nowcast_normalizado:
+                  print(
+                      "AVISO: timestamp radar/nowcast diferente."
+                  )
+
+          motor = resultado.get(
+              "motor_decision",
+              {}
+          )
+
+          print(
+              "Estado final:",
+              motor.get("estado")
+          )
+
+          print(
+              "Score integrado:",
+              motor.get("score_integrado")
+          )
+
+          print(
+              "Sincronización final verificada."
+          )
+          PY
 
       - name: Sincronizar repositorio antes de persistir
         run: |
           set -e
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name \
+            "github-actions[bot]"
 
-          git pull --rebase --autostash origin main
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git pull \
+            --rebase \
+            --autostash \
+            origin main
 
       - name: Persistir resultados
         run: |
           set -e
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name \
+            "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -f \
             data/radar/radar_nowcast.json \
@@ -153,10 +319,11 @@ jobs:
             exit 0
           fi
 
-          git commit -m "ClimaAR: acumular dataset RMA10"
+          git commit \
+            -m "ClimaAR: actualizar inteligencia RMA10"
 
           for intento in 1 2 3; do
-            echo "Intento de push: $intento"
+            echo "Intento de push: $intento/3"
 
             if git push origin HEAD:main; then
               echo "Push realizado correctamente."
@@ -165,11 +332,15 @@ jobs:
 
             if [ "$intento" -lt 3 ]; then
               echo "Push rechazado. Sincronizando nuevamente..."
-              git pull --rebase --autostash origin main
+
+              git pull \
+                --rebase \
+                --autostash \
+                origin main
             fi
           done
 
-          echo "ERROR: no se pudo realizar el push después de 3 intentos."
+          echo "ERROR: no se pudo realizar el push."
           exit 1
 
       - name: Publicar artefacto de resultado
@@ -192,33 +363,97 @@ jobs:
 
       - name: Verificar resultado final
         run: |
+          set -e
+
           python - <<'PY'
           import json
           from pathlib import Path
 
-          p = Path("data/ia/resultado_final.json")
-          d = json.loads(p.read_text(encoding="utf-8"))
+          p = Path(
+              "data/ia/resultado_final.json"
+          )
 
-          m = d.get("motor_decision", {})
-          r = d.get("resumen_operativo", {})
+          d = json.loads(
+              p.read_text(
+                  encoding="utf-8"
+              )
+          )
 
-          print("===== CLIMAAR RESULTADO FINAL =====")
-          print("Version:", d.get("version"))
-          print("Estado:", m.get("estado"))
-          print("Score integrado:", m.get("score_integrado"))
-          print("Actividad radar:", m.get("actividad_radar"))
+          m = d.get(
+              "motor_decision",
+              {}
+          )
+
+          r = d.get(
+              "resumen_operativo",
+              {}
+          )
+
+          print(
+              "===== CLIMAAR RESULTADO FINAL ====="
+          )
+
+          print(
+              "Version:",
+              d.get("version")
+          )
+
+          print(
+              "Estado:",
+              m.get("estado")
+          )
+
+          print(
+              "Score integrado:",
+              m.get("score_integrado")
+          )
+
+          print(
+              "Actividad radar:",
+              m.get("actividad_radar")
+          )
+
           print(
               "Intensidad radar:",
-              m.get("componentes", {}).get("radar_intensidad")
+              m.get(
+                  "componentes",
+                  {}
+              ).get(
+                  "radar_intensidad"
+              )
           )
+
           print(
               "Confianza movimiento:",
-              m.get("componentes", {}).get("radar_movimiento")
+              m.get(
+                  "componentes",
+                  {}
+              ).get(
+                  "radar_movimiento"
+              )
           )
+
           print(
               "IA:",
-              m.get("componentes", {}).get("ia")
+              m.get(
+                  "componentes",
+                  {}
+              ).get(
+                  "ia"
+              )
           )
-          print("ETA:", r.get("eta_minutos"))
-          print("Distancia:", r.get("distancia_km"))
+
+          print(
+              "ETA:",
+              r.get("eta_minutos")
+          )
+
+          print(
+              "Distancia:",
+              r.get("distancia_km")
+          )
+
+          print(
+              "===================================="
+          )
           PY
