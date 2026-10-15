@@ -2,7 +2,7 @@ name: Probar Radar SMN
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -19,7 +19,6 @@ jobs:
     timeout-minutes: 10
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -29,10 +28,18 @@ jobs:
         run: |
           mkdir -p data/radar/historico
           mkdir -p data/radar/seguimiento
-          mkdir -p data/radar
+          mkdir -p data/radar/procesado
+          mkdir -p data/radar/prediccion
           mkdir -p .climaar
 
-          echo "Directorio preparado."
+      - name: Restaurar estado persistente
+        run: |
+          if [ -f .climaar/estado_rma10.json ]; then
+            cp .climaar/estado_rma10.json data/radar/seguimiento/estado.json
+            echo "Estado persistente restaurado."
+          else
+            echo "No existe estado persistente previo. Se inicia estado nuevo."
+          fi
 
       - name: Recuperar histórico desde artefactos anteriores
         env:
@@ -40,107 +47,49 @@ jobs:
         run: |
           set -e
 
-          echo "Buscando artefactos radar-rma10 anteriores..."
-
+          rm -rf /tmp/radar_artifacts
           mkdir -p /tmp/radar_artifacts
 
-          gh api \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
-            > /tmp/artifacts.json
+          gh run list \
+            --workflow probar-radar-smn.yml \
+            --limit 20 \
+            --json databaseId,status,conclusion \
+            --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId' \
+            > /tmp/radar_runs.txt || true
 
-          IDS=$(jq -r '
-            .artifacts[]
-            | select(.name == "radar-rma10")
-            | select(.expired == false)
-            | .id
-          ' /tmp/artifacts.json | head -20)
+          while read -r run_id; do
+            [ -z "$run_id" ] && continue
 
-          COUNT=0
+            gh run download "$run_id" \
+              -n radar-rma10 \
+              -D "/tmp/radar_artifacts/$run_id" \
+              2>/dev/null || true
 
-          for ID in $IDS; do
-            COUNT=$((COUNT + 1))
+          done < /tmp/radar_runs.txt
 
-            echo "Descargando artefacto $COUNT: $ID"
+          find /tmp/radar_artifacts \
+            -type f \
+            -path '*/historico/*.png' \
+            -exec cp -n {} data/radar/historico/ \; \
+            2>/dev/null || true
 
-            if gh api \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ID}/zip" \
-              > "/tmp/radar_artifacts/${ID}.zip"; then
+          find /tmp/radar_artifacts \
+            -type f \
+            -name 'predicciones_pendientes.json' \
+            -exec cp -n {} data/radar/seguimiento/ \; \
+            2>/dev/null || true
 
-              mkdir -p "/tmp/radar_artifacts/${ID}"
-
-              unzip -oq \
-                "/tmp/radar_artifacts/${ID}.zip" \
-                -d "/tmp/radar_artifacts/${ID}" || true
-
-              find "/tmp/radar_artifacts/${ID}" \
-                -type f \
-                -path "*/historico/*" \
-                -regextype posix-extended \
-                -regex ".*/[0-9]{14}\.png" \
-                -exec cp -n {} data/radar/historico/ \; || true
-
-              find "/tmp/radar_artifacts/${ID}" \
-                -type f \
-                -path "*/seguimiento/predicciones_pendientes.json" \
-                -exec cp -n {} data/radar/seguimiento/predicciones_pendientes.json \; || true
-
-            fi
-          done
-
+          echo "Histórico disponible:"
           find data/radar/historico \
             -maxdepth 1 \
             -type f \
-            -name "radar_*.png" \
-            -delete || true
-
-          TOTAL=$(find data/radar/historico \
-            -maxdepth 1 \
-            -type f \
-            -regextype posix-extended \
-            -regex ".*/[0-9]{14}\.png" \
-            | wc -l)
-
-          echo "Artefactos revisados: $COUNT"
-          echo "Frames históricos válidos recuperados: $TOTAL"
-
-          if [ -f "data/radar/seguimiento/predicciones_pendientes.json" ]; then
-            echo "Predicciones pendientes anteriores recuperadas."
-          else
-            echo "No había predicciones pendientes anteriores."
-          fi
-
-      - name: Restaurar estado persistente
-        run: |
-          if [ -f ".climaar/estado_rma10.json" ]; then
-            cp \
-              ".climaar/estado_rma10.json" \
-              "data/radar/seguimiento/estado.json"
-
-            echo "Estado persistente restaurado."
-          else
-            echo "No existe estado persistente previo."
-          fi
+            -name '*.png' | wc -l
 
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-
-          pip install \
-            requests \
-            numpy \
-            scipy \
-            opencv-python-headless \
-            Pillow \
-            pandas \
-            joblib \
-            scikit-learn \
-            fastapi \
-            "uvicorn[standard]" \
-            playwright
-
-          playwright install --with-deps chromium
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
 
       - name: Capturar radar RMA10
         run: |
@@ -152,7 +101,7 @@ jobs:
 
       - name: Procesar radar
         run: |
-          python scripts/procesador_radar.py
+          python scripts/procesar_radar.py
 
       - name: Seguimiento temporal
         run: |
@@ -164,503 +113,92 @@ jobs:
 
       - name: Guardar predicciones normales como pendientes
         run: |
-          python - <<'PY'
-          import json
-          from datetime import datetime, timedelta, timezone
-          from pathlib import Path
-
-          BASE = Path("data/radar/seguimiento")
-
-          PREDICCION = BASE / "prediccion_evolucion.json"
-          PENDIENTES = BASE / "predicciones_pendientes.json"
-
-          if not PREDICCION.exists():
-              raise SystemExit(
-                  "ERROR: no existe prediccion_evolucion.json"
-              )
-
-          data = json.loads(
-              PREDICCION.read_text(
-                  encoding="utf-8"
-              )
-          )
-
-          radar_ts = data.get("radar_timestamp")
-
-          if not radar_ts:
-              raise SystemExit(
-                  "ERROR: no existe radar_timestamp"
-              )
-
-          texto = radar_ts
-
-          if texto.endswith("Z"):
-              texto = texto[:-1] + "+00:00"
-
-          origen = datetime.fromisoformat(texto)
-
-          if origen.tzinfo is None:
-              origen = origen.replace(
-                  tzinfo=timezone.utc
-              )
-
-          pendientes_data = {}
-
-          if PENDIENTES.exists():
-              try:
-                  pendientes_data = json.loads(
-                      PENDIENTES.read_text(
-                          encoding="utf-8"
-                      )
-                  )
-              except Exception:
-                  pendientes_data = {}
-
-          pendientes = pendientes_data.get(
-              "pendientes",
-              []
-          )
-
-          if not isinstance(pendientes, list):
-              pendientes = []
-
-          existentes = set()
-
-          for item in pendientes:
-              existentes.add(
-                  (
-                      str(item.get("track_id")),
-                      str(
-                          item.get(
-                              "timestamp_objetivo"
-                          )
-                      )
-                  )
-              )
-
-          agregadas = 0
-
-          nucleos = data.get(
-              "nucleos",
-              []
-          )
-
-          for nucleo in nucleos:
-
-              track_id = nucleo.get(
-                  "track_id"
-              )
-
-              if track_id is None:
-                  continue
-
-              horizontes = nucleo.get(
-                  "horizontes",
-                  []
-              )
-
-              if not isinstance(
-                  horizontes,
-                  list
-              ):
-                  continue
-
-              for pronostico in horizontes:
-
-                  horizonte = pronostico.get(
-                      "horizonte_minutos"
-                  )
-
-                  if horizonte is None:
-                      continue
-
-                  try:
-                      horizonte = float(
-                          horizonte
-                      )
-                  except (
-                      TypeError,
-                      ValueError
-                  ):
-                      continue
-
-                  objetivo = (
-                      origen
-                      + timedelta(
-                          minutes=horizonte
-                      )
-                  )
-
-                  objetivo_iso = (
-                      objetivo
-                      .astimezone(
-                          timezone.utc
-                      )
-                      .isoformat()
-                      .replace(
-                          "+00:00",
-                          "Z"
-                      )
-                  )
-
-                  clave = (
-                      str(track_id),
-                      objetivo_iso
-                  )
-
-                  if clave in existentes:
-                      continue
-
-                  pendiente = {
-                      "track_id": str(
-                          track_id
-                      ),
-                      "timestamp_origen": radar_ts,
-                      "timestamp_objetivo": objetivo_iso,
-                      "horizonte_desde_origen_minutos": horizonte,
-                      "tipo": "PREDICCION_NORMAL",
-                      "x_estimado": pronostico.get(
-                          "x_estimado"
-                      ),
-                      "y_estimado": pronostico.get(
-                          "y_estimado"
-                      ),
-                      "velocidad_estimada_pixeles_min": pronostico.get(
-                          "velocidad_estimada_pixeles_min"
-                      ),
-                      "rumbo_estimado_grados": pronostico.get(
-                          "rumbo_estimado_grados"
-                      ),
-                      "direccion_estimada": pronostico.get(
-                          "direccion_estimada"
-                      ),
-                      "incertidumbre_pixeles": pronostico.get(
-                          "incertidumbre_pixeles"
-                      ),
-                      "confianza_prediccion": pronostico.get(
-                          "confianza_prediccion"
-                      )
-                  }
-
-                  pendientes.append(
-                      pendiente
-                  )
-
-                  existentes.add(
-                      clave
-                  )
-
-                  agregadas += 1
-
-          pendientes = pendientes[-500:]
-
-          salida = {
-              "schema_version": 3,
-              "actualizado": radar_ts,
-              "pendientes": pendientes
-          }
-
-          PENDIENTES.write_text(
-              json.dumps(
-                  salida,
-                  ensure_ascii=False,
-                  indent=2
-              ),
-              encoding="utf-8"
-          )
-
-          print(
-              "Predicciones normales agregadas:",
-              agregadas
-          )
-
-          print(
-              "Predicciones pendientes totales:",
-              len(pendientes)
-          )
-          PY
+          python guardar_predicciones_pendientes.py
 
       - name: Guardar estado persistente
         run: |
-          if [ -f "data/radar/seguimiento/estado.json" ]; then
-            cp \
-              "data/radar/seguimiento/estado.json" \
-              ".climaar/estado_rma10.json"
+          set -e
 
-            echo "Estado persistente actualizado."
+          test -f data/radar/seguimiento/estado.json
+
+          cp \
+            data/radar/seguimiento/estado.json \
+            .climaar/estado_rma10.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add .climaar/estado_rma10.json
+
+          if git diff --cached --quiet; then
+            echo "Estado sin cambios para guardar."
           else
-            echo "ERROR: no se generó estado.json"
-            exit 1
+            git commit -m "Actualizar estado RMA10"
+            git push
           fi
 
       - name: Mostrar resultado
         run: |
-          echo "===== TIMESTAMP RADAR ====="
+          echo "=== TIMESTAMP RADAR ==="
+          cat data/radar/radar_timestamp.txt || true
 
-          cat \
-            data/radar/radar_timestamp.txt \
-            2>/dev/null || true
-
-          echo "===== HISTÓRICO ====="
-
-          find data/radar/historico \
-            -maxdepth 1 \
-            -type f \
-            -regextype posix-extended \
-            -regex ".*/[0-9]{14}\.png" \
-            -printf "%f\n" \
-            | sort \
-            | tail -15
-
-          echo "===== ESTADO ====="
+          echo "=== SEGUIMIENTO ==="
 
           python - <<'PY'
           import json
           from pathlib import Path
 
-          p = Path(
-              "data/radar/seguimiento/estado.json"
-          )
+          p = Path("data/radar/seguimiento/estado.json")
 
-          if not p.exists():
-              print("ERROR: estado.json no encontrado")
-              raise SystemExit(1)
+          if p.exists():
+              d = json.loads(p.read_text())
 
-          d = json.loads(
-              p.read_text(
-                  encoding="utf-8"
-              )
-          )
+              tracks = d.get("tracks", [])
+              activos = [
+                  t for t in tracks
+                  if t.get("activo")
+              ]
 
-          print(
-              "schema_version:",
-              d.get("schema_version")
-          )
+              mov = [
+                  t for t in activos
+                  if t.get("velocidad_pixeles_min", 0) > 0
+              ]
 
-          print(
-              "tracks:",
-              len(
-                  d.get(
-                      "tracks",
-                      []
-                  )
-              )
-          )
-
-          activos = d.get(
-              "tracks_activos",
-              []
-          )
-
-          if isinstance(activos, list):
-              activos_count = len(activos)
-          else:
-              activos_count = activos
-
-          print(
-              "tracks_activos:",
-              activos_count
-          )
-
-          print(
-              "ultimo_radar_timestamp:",
-              d.get(
-                  "ultimo_radar_timestamp"
-              )
-          )
-          PY
-
-          echo "===== PREDICCIÓN ====="
-
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          p = Path(
-              "data/radar/seguimiento/"
-              "prediccion_evolucion.json"
-          )
-
-          if not p.exists():
-              print(
-                  "ERROR: no existe "
-                  "prediccion_evolucion.json"
-              )
-              raise SystemExit(1)
-
-          d = json.loads(
-              p.read_text(
-                  encoding="utf-8"
-              )
-          )
-
-          resumen = d.get(
-              "resumen",
-              {}
-          )
-
-          print(
-              "schema_version:",
-              d.get(
-                  "schema_version"
-              )
-          )
-
-          print(
-              "radar_timestamp:",
-              d.get(
-                  "radar_timestamp"
-              )
-          )
-
-          print(
-              "intervalo_minutos:",
-              d.get(
-                  "intervalo_minutos"
-              )
-          )
-
-          print(
-              "prediccion_global_disponible:",
-              d.get(
-                  "prediccion_global_disponible"
-              )
-          )
-
-          nucleos_con = resumen.get(
-              "nucleos_con_prediccion",
-              0
-          )
-
-          nucleos_sin = resumen.get(
-              "nucleos_sin_prediccion",
-              0
-          )
-
-          print(
-              "núcleos evaluados:",
-              nucleos_con + nucleos_sin
-          )
-
-          print(
-              "núcleos con predicción:",
-              nucleos_con
-          )
-
-          print(
-              "núcleos sin predicción:",
-              nucleos_sin
-          )
-
-          print(
-              "huecos estimados:",
-              resumen.get(
-                  "huecos_estimados",
-                  0
-              )
-          )
-
-          print(
-              "predicciones validadas:",
-              resumen.get(
-                  "predicciones_validadas_en_este_frame",
-                  0
-              )
-          )
-
-          print(
-              "confianza promedio:",
-              resumen.get(
-                  "promedio_confianza"
-              )
-          )
-
-          print(
-              "error medio validado (pixeles):",
-              resumen.get(
-                  "error_medio_pixeles_validado"
-              )
-          )
-          PY
-
-          echo "===== PREDICCIONES PENDIENTES ====="
-
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          p = Path(
-              "data/radar/seguimiento/"
-              "predicciones_pendientes.json"
-          )
-
-          if not p.exists():
-              print(
-                  "predicciones_pendientes.json "
-                  "no existe"
-              )
-          else:
-              d = json.loads(
-                  p.read_text(
-                      encoding="utf-8"
-                  )
-              )
-
-              pendientes = d.get(
-                  "pendientes",
-                  []
-              )
-
-              print(
-                  "predicciones pendientes:",
-                  len(pendientes)
-              )
-          PY
+              print("timestamp:", d.get("ultimo_radar_timestamp"))
+              print("tracks:", len(tracks))
+              print("activos:", len(activos))
+              print("con movimiento:", len(mov))
 
       - name: Persistir estado y máscara
         run: |
-          git config \
-            user.name \
-            "github-actions[bot]"
+          set -e
 
-          git config \
-            user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -f \
-            .climaar/estado_rma10.json
-
-          git add -f \
-            data/radar/mascara_ecos_estaticos.png
-
-          git add -f \
-            data/radar/mascara_ecos_estaticos_confianza.png
-
-          git add -f \
-            data/radar/mascara_ecos_estaticos.json
+          git add \
+            .climaar/estado_rma10.json \
+            data/radar/seguimiento/mascara_estatica.json \
+            data/radar/seguimiento/mascara_estatica.png \
+            data/radar/radar_timestamp.txt \
+            2>/dev/null || true
 
           if git diff --cached --quiet; then
-            echo "No hay cambios para guardar."
+            echo "Sin cambios adicionales para persistir."
           else
-            git commit \
-              -m "Actualizar estado y mascara RMA10"
-
+            git commit -m "Actualizar estado y mascara RMA10"
             git push
           fi
 
-      - name: Subir radar
+      - name: Subir artefacto radar-rma10
         uses: actions/upload-artifact@v4
         with:
           name: radar-rma10
-
           path: |
-            data/radar/historico/
-            data/radar/resultado_procesamiento.json
-            data/radar/mascara_ecos_estaticos.png
-            data/radar/mascara_ecos_estaticos_confianza.png
-            data/radar/mascara_ecos_estaticos.json
-            data/radar/seguimiento/
+            data/radar/actual.png
             data/radar/radar_timestamp.txt
-
-          if-no-files-found: warn
-          retention-days: 30
+            data/radar/historico/*.png
+            data/radar/seguimiento/**
+            data/radar/procesado/**
+            data/radar/prediccion/**
+          retention-days: 7
