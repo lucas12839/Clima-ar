@@ -8,19 +8,26 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
-from PIL import Image
+
 
 ROOT = Path(".")
+
 MODEL_PATH = ROOT / "data/models/rma10_model.joblib"
 STATE_PATH = ROOT / "data/radar/seguimiento/estado.json"
-IMAGE_PATH = ROOT / "data/radar/actual.png"
-OUTPUT_PATH = ROOT / "data/radar/seguimiento/prediccion_ml_rma10.json"
+RESULTADO_PATH = ROOT / "data/radar/resultado_procesamiento.json"
+
+OUTPUT_PATH = (
+    ROOT
+    / "data/radar/seguimiento/prediccion_ml_rma10.json"
+)
+
+RADAR_DIAMETRO_KM = 240.0
 
 RADAR_LAT = -38.7342
 RADAR_LON = -62.1654
+
 BAHIA_LAT = -38.7196
 BAHIA_LON = -62.2724
-RANGE_KM = 240.0
 
 FEATURES = [
     "intensity",
@@ -37,6 +44,7 @@ FEATURES = [
 ]
 
 HORIZONS = (5, 10, 20, 30)
+
 TARGETS = (
     "strengthened",
     "weakened",
@@ -45,19 +53,70 @@ TARGETS = (
 
 
 def load_json(path):
-    return json.loads(
-        path.read_text(encoding="utf-8")
+    if not path.exists():
+        raise SystemExit(
+            f"No existe: {path}"
+        )
+
+    try:
+        return json.loads(
+            path.read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception as exc:
+        raise SystemExit(
+            f"JSON inválido: {path}: {exc}"
+        )
+
+
+def number(value, default=0.0):
+    try:
+        value = float(value)
+
+        if math.isfinite(value):
+            return value
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        pass
+
+    return default
+
+
+def clamp(value, low, high):
+    return max(
+        low,
+        min(
+            high,
+            number(
+                value,
+                low
+            )
+        )
     )
 
 
-def distance_km(lat1, lon1, lat2, lon2):
+def distance_km(
+    lat1,
+    lon1,
+    lat2,
+    lon2,
+):
     radius = 6371.0
 
     p1 = math.radians(lat1)
     p2 = math.radians(lat2)
 
-    dp = math.radians(lat2 - lat1)
-    dl = math.radians(lon2 - lon1)
+    dp = math.radians(
+        lat2 - lat1
+    )
+
+    dl = math.radians(
+        lon2 - lon1
+    )
 
     a = (
         math.sin(dp / 2) ** 2
@@ -70,20 +129,35 @@ def distance_km(lat1, lon1, lat2, lon2):
         2
         * radius
         * math.asin(
-            min(1.0, math.sqrt(a))
+            min(
+                1.0,
+                math.sqrt(a)
+            )
         )
     )
 
 
-def bearing(lat1, lon1, lat2, lon2):
+def bearing(
+    lat1,
+    lon1,
+    lat2,
+    lon2,
+):
     p1 = math.radians(lat1)
     p2 = math.radians(lat2)
-    dl = math.radians(lon2 - lon1)
 
-    y = math.sin(dl) * math.cos(p2)
+    dl = math.radians(
+        lon2 - lon1
+    )
+
+    y = (
+        math.sin(dl)
+        * math.cos(p2)
+    )
 
     x = (
-        math.cos(p1) * math.sin(p2)
+        math.cos(p1)
+        * math.sin(p2)
         - math.sin(p1)
         * math.cos(p2)
         * math.cos(dl)
@@ -91,7 +165,10 @@ def bearing(lat1, lon1, lat2, lon2):
 
     return (
         math.degrees(
-            math.atan2(y, x)
+            math.atan2(
+                y,
+                x
+            )
         )
         + 360.0
     ) % 360.0
@@ -107,15 +184,21 @@ def xy_to_geo(
     cy = height / 2.0
 
     dx = (
-        (x - cx)
-        / max(width / 2.0, 1.0)
-        * RANGE_KM
+        x - cx
+    ) / max(
+        width / 2.0,
+        1.0
+    ) * (
+        RADAR_DIAMETRO_KM / 2.0
     )
 
     dy = (
-        (cy - y)
-        / max(height / 2.0, 1.0)
-        * RANGE_KM
+        cy - y
+    ) / max(
+        height / 2.0,
+        1.0
+    ) * (
+        RADAR_DIAMETRO_KM / 2.0
     )
 
     km_lat = 110.574
@@ -123,7 +206,9 @@ def xy_to_geo(
     km_lon = (
         111.320
         * math.cos(
-            math.radians(RADAR_LAT)
+            math.radians(
+                RADAR_LAT
+            )
         )
     )
 
@@ -133,388 +218,563 @@ def xy_to_geo(
     )
 
 
-def last_motion(track):
-    history = track.get(
-        "historial",
-        [],
+def get_dimensions(resultado):
+    width = number(
+        resultado.get(
+            "ancho_imagen"
+        ),
+        0
     )
 
-    if len(history) < 2:
-        return 0.0, 0.0, None
+    height = number(
+        resultado.get(
+            "alto_imagen"
+        ),
+        0
+    )
 
-    a = history[-2]
-    b = history[-1]
-
-    try:
-        x1 = float(a["x"])
-        y1 = float(a["y"])
-
-        x2 = float(b["x"])
-        y2 = float(b["y"])
-    except (
-        KeyError,
-        TypeError,
-        ValueError,
-    ):
-        return 0.0, 0.0, None
-
-    try:
-        ta = datetime.fromisoformat(
-            str(
-                a["timestamp"]
-            ).replace(
-                "Z",
-                "+00:00",
-            )
+    if width <= 0:
+        width = number(
+            resultado.get(
+                "width"
+            ),
+            0
         )
 
-        tb = datetime.fromisoformat(
-            str(
-                b["timestamp"]
-            ).replace(
-                "Z",
-                "+00:00",
-            )
+    if height <= 0:
+        height = number(
+            resultado.get(
+                "height"
+            ),
+            0
         )
 
-        dt = (
-            tb - ta
-        ).total_seconds() / 60.0
+    if width <= 0:
+        width = 512.0
 
-    except (
-        KeyError,
-        TypeError,
-        ValueError,
+    if height <= 0:
+        height = 512.0
+
+    return width, height
+
+
+def get_current_position(
+    track
+):
+    history = track.get(
+        "historial",
+        []
+    )
+
+    if (
+        isinstance(
+            history,
+            list
+        )
+        and history
     ):
-        dt = 0.0
+        current = history[-1]
 
-    if dt <= 0:
-        return 0.0, 0.0, None
+        if isinstance(
+            current,
+            dict
+        ):
+            if (
+                current.get("x")
+                is not None
+                and current.get("y")
+                is not None
+            ):
+                return (
+                    number(
+                        current.get(
+                            "x"
+                        )
+                    ),
+                    number(
+                        current.get(
+                            "y"
+                        )
+                    ),
+                )
+
+    if (
+        track.get("x")
+        is not None
+        and track.get("y")
+        is not None
+    ):
+        return (
+            number(
+                track.get("x")
+            ),
+            number(
+                track.get("y")
+            ),
+        )
+
+    return None
+
+
+def get_motion(track):
+    history = track.get(
+        "historial",
+        []
+    )
+
+    if (
+        not isinstance(
+            history,
+            list
+        )
+        or len(history) < 2
+    ):
+        return (
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+
+    previous = history[-2]
+    current = history[-1]
+
+    if not isinstance(
+        previous,
+        dict
+    ) or not isinstance(
+        current,
+        dict
+    ):
+        return (
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+
+    x1 = number(
+        previous.get("x")
+    )
+
+    y1 = number(
+        previous.get("y")
+    )
+
+    x2 = number(
+        current.get("x")
+    )
+
+    y2 = number(
+        current.get("y")
+    )
 
     dx = x2 - x1
     dy = y2 - y1
 
     displacement = math.hypot(
         dx,
-        dy,
+        dy
     )
 
-    speed = displacement / dt
+    dt_minutes = 0.0
 
-    motion_bearing = None
+    try:
+        t1 = datetime.fromisoformat(
+            str(
+                previous.get(
+                    "timestamp"
+                )
+            ).replace(
+                "Z",
+                "+00:00"
+            )
+        )
 
-    if displacement > 0.001:
-        motion_bearing = (
+        t2 = datetime.fromisoformat(
+            str(
+                current.get(
+                    "timestamp"
+                )
+            ).replace(
+                "Z",
+                "+00:00"
+            )
+        )
+
+        dt_minutes = (
+            t2 - t1
+        ).total_seconds() / 60.0
+
+    except Exception:
+        pass
+
+    if dt_minutes > 0:
+        speed = (
+            displacement
+            / dt_minutes
+        )
+    else:
+        speed = 0.0
+
+    if displacement > 0:
+        direction = (
             math.degrees(
                 math.atan2(
                     dx,
-                    -dy,
+                    -dy
                 )
             )
             + 360.0
         ) % 360.0
+    else:
+        direction = 0.0
 
     return (
+        dx,
+        dy,
         displacement,
         speed,
-        motion_bearing,
+        direction,
     )
 
 
-def probability(model, row):
-    values = model.predict_proba(
-        row
-    )[0]
+def get_probability(
+    model,
+    row,
+):
+    probabilities = (
+        model.predict_proba(
+            row
+        )[0]
+    )
 
     classes = list(
         model.classes_
     )
 
-    if 1 in classes:
-        return float(
-            values[
-                classes.index(1)
-            ]
-        )
+    if 1 not in classes:
+        return 0.0
 
-    return 0.0
+    index = classes.index(1)
+
+    return float(
+        probabilities[index]
+    )
 
 
 def main():
 
     if not MODEL_PATH.exists():
         raise SystemExit(
-            f"No existe el modelo: {MODEL_PATH}"
+            f"No existe el modelo: "
+            f"{MODEL_PATH}"
         )
-
-    if not STATE_PATH.exists():
-        raise SystemExit(
-            f"No existe el estado: {STATE_PATH}"
-        )
-
-    if not IMAGE_PATH.exists():
-        raise SystemExit(
-            f"No existe el radar actual: {IMAGE_PATH}"
-        )
-
-    bundle = joblib.load(
-        MODEL_PATH
-    )
 
     state = load_json(
         STATE_PATH
     )
 
-    with Image.open(
-        IMAGE_PATH
-    ) as image:
-        width, height = image.size
+    resultado = load_json(
+        RESULTADO_PATH
+    )
 
-    models = bundle["models"]
+    bundle = joblib.load(
+        MODEL_PATH
+    )
+
+    models = bundle.get(
+        "models",
+        {}
+    )
+
+    if not models:
+        raise SystemExit(
+            "El modelo no contiene modelos entrenados."
+        )
+
+    width, height = (
+        get_dimensions(
+            resultado
+        )
+    )
 
     tracks = state.get(
         "tracks",
-        [],
+        []
     )
 
-    timestamp = state.get(
-        "ultimo_radar_timestamp"
-    )
+    if not isinstance(
+        tracks,
+        list
+    ):
+        tracks = []
 
     predictions = []
 
     for track in tracks:
 
-        if not track.get(
-            "activo",
-            False,
+        if not isinstance(
+            track,
+            dict
         ):
             continue
 
-        if not track.get(
-            "presente_en_ultimo_frame",
-            False,
-        ):
+        if track.get(
+            "activo"
+        ) is False:
             continue
 
-        try:
-            x = float(
-                track["x"]
-            )
-
-            y = float(
-                track["y"]
-            )
-
-            area = float(
-                track.get(
-                    "pixeles",
-                    0,
-                )
-            )
-
-            track_width = float(
-                track.get(
-                    "ancho",
-                    0,
-                )
-            )
-
-            track_height = float(
-                track.get(
-                    "alto",
-                    0,
-                )
-            )
-
-            intensity = float(
-                track.get(
-                    "intensidad",
-                    0,
-                )
-            )
-
-        except (
-            KeyError,
-            TypeError,
-            ValueError,
-        ):
+        if track.get(
+            "presente_en_ultimo_frame"
+        ) is False:
             continue
+
+        position = (
+            get_current_position(
+                track
+            )
+        )
+
+        if position is None:
+            continue
+
+        x, y = position
+
+        (
+            dx,
+            dy,
+            displacement,
+            speed,
+            motion_direction,
+        ) = get_motion(
+            track
+        )
 
         lat, lon = xy_to_geo(
             x,
             y,
             width,
-            height,
+            height
         )
 
-        dist = distance_km(
+        distance = distance_km(
             lat,
             lon,
             BAHIA_LAT,
-            BAHIA_LON,
+            BAHIA_LON
         )
 
         target_bearing = bearing(
             lat,
             lon,
             BAHIA_LAT,
-            BAHIA_LON,
+            BAHIA_LON
         )
 
-        (
-            displacement,
-            speed,
-            motion_bearing,
-        ) = last_motion(
-            track
+        intensity = number(
+            track.get(
+                "intensidad",
+                track.get(
+                    "intensity",
+                    0
+                )
+            )
         )
 
-        motion_bearing_value = (
-            motion_bearing
-            if motion_bearing is not None
-            else 0.0
+        area = number(
+            track.get(
+                "pixeles",
+                track.get(
+                    "area_px",
+                    0
+                )
+            )
+        )
+
+        track_width = number(
+            track.get(
+                "ancho",
+                track.get(
+                    "width_px",
+                    0
+                )
+            )
+        )
+
+        track_height = number(
+            track.get(
+                "alto",
+                track.get(
+                    "height_px",
+                    0
+                )
+            )
         )
 
         row = pd.DataFrame(
             [
                 {
-                    "intensity": intensity,
-                    "area_px": area,
-                    "width_px": track_width,
-                    "height_px": track_height,
-                    "lat": lat,
-                    "lon": lon,
-                    "distance_km": dist,
+                    "intensity":
+                        intensity,
+
+                    "area_px":
+                        area,
+
+                    "width_px":
+                        track_width,
+
+                    "height_px":
+                        track_height,
+
+                    "lat":
+                        lat,
+
+                    "lon":
+                        lon,
+
+                    "distance_km":
+                        distance,
+
                     "bearing_to_bahia_deg":
                         target_bearing,
+
                     "displacement_px":
                         displacement,
+
                     "speed_px_min":
                         speed,
+
                     "motion_bearing_deg":
-                        motion_bearing_value,
+                        motion_direction,
                 }
             ],
-            columns=FEATURES,
+            columns=FEATURES
         )
 
-        horizon_predictions = {}
+        horizons = {}
 
         for horizon in HORIZONS:
 
-            target_predictions = {}
+            targets = {}
 
             for target in TARGETS:
 
                 key = (
-                    f"{horizon}m_{target}"
+                    f"{horizon}m_"
+                    f"{target}"
                 )
 
-                model = models[key]
-
-                p = probability(
-                    model,
-                    row,
+                model = models.get(
+                    key
                 )
 
-                target_predictions[
+                if model is None:
+                    targets[
+                        target
+                    ] = None
+                    continue
+
+                probability = (
+                    get_probability(
+                        model,
+                        row
+                    )
+                )
+
+                targets[
                     target
                 ] = round(
-                    p * 100.0,
-                    1,
+                    probability
+                    * 100.0,
+                    1
                 )
 
-            horizon_predictions[
+            horizons[
                 str(horizon)
-            ] = target_predictions
+            ] = targets
 
         predictions.append(
             {
                 "track_id":
                     track.get(
-                        "track_id"
+                        "track_id",
+                        track.get(
+                            "id"
+                        )
                     ),
 
-                "x": round(
-                    x,
-                    2,
-                ),
+                "lat":
+                    round(
+                        lat,
+                        6
+                    ),
 
-                "y": round(
-                    y,
-                    2,
-                ),
-
-                "lat": round(
-                    lat,
-                    6,
-                ),
-
-                "lon": round(
-                    lon,
-                    6,
-                ),
+                "lon":
+                    round(
+                        lon,
+                        6
+                    ),
 
                 "distance_km":
                     round(
-                        dist,
-                        2,
+                        distance,
+                        2
                     ),
 
                 "bearing_to_bahia_deg":
                     round(
                         target_bearing,
-                        1,
+                        1
                     ),
 
                 "displacement_px":
                     round(
                         displacement,
-                        2,
+                        2
                     ),
 
                 "speed_px_min":
                     round(
                         speed,
-                        3,
+                        4
                     ),
 
                 "motion_bearing_deg":
-                    (
-                        round(
-                            motion_bearing,
-                            1,
-                        )
-                        if motion_bearing
-                        is not None
-                        else None
+                    round(
+                        motion_direction,
+                        1
                     ),
 
                 "horizontes":
-                    horizon_predictions,
+                    horizons,
             }
         )
 
+    timestamp = (
+        resultado.get(
+            "imagen_procesada"
+        )
+    )
+
     output = {
+        "ok": True,
+
         "modelo":
             bundle.get(
                 "model_version",
-                "rma10-v1",
+                "rma10-v1"
             ),
-
-        "fuente":
-            "SINARAME RMA10",
 
         "generado_utc":
             datetime.now(
                 timezone.utc
             ).isoformat().replace(
                 "+00:00",
-                "Z",
+                "Z"
             ),
 
-        "frame_radar_utc":
+        "frame_radar":
             timestamp,
 
         "tracks_analizados":
@@ -529,16 +789,16 @@ def main():
 
     OUTPUT_PATH.parent.mkdir(
         parents=True,
-        exist_ok=True,
+        exist_ok=True
     )
 
     OUTPUT_PATH.write_text(
         json.dumps(
             output,
             ensure_ascii=False,
-            indent=2,
+            indent=2
         ),
-        encoding="utf-8",
+        encoding="utf-8"
     )
 
     print(
@@ -548,10 +808,12 @@ def main():
                 "tracks_analizados":
                     len(predictions),
                 "output":
-                    str(OUTPUT_PATH),
+                    str(
+                        OUTPUT_PATH
+                    ),
             },
             ensure_ascii=False,
-            indent=2,
+            indent=2
         )
     )
 
