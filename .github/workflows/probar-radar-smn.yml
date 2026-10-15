@@ -23,6 +23,37 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
+
+      - name: Sincronizar con main antes de restaurar estado
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+          git reset --hard origin/main
+
+          echo "Commit utilizado:"
+          git rev-parse HEAD
+
+          echo "Estado persistente disponible:"
+          if [ -f .climaar/estado_rma10.json ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path(".climaar/estado_rma10.json")
+          d = json.loads(p.read_text(encoding="utf-8"))
+
+          print("timestamp:", d.get("ultimo_radar_timestamp"))
+          print("tracks:", len(d.get("tracks", [])))
+          print("siguiente_track_id:", d.get("siguiente_track_id"))
+          PY
+          else
+            echo "No existe estado persistente previo."
+          fi
 
       - name: Preparar directorios
         run: |
@@ -34,9 +65,26 @@ jobs:
 
       - name: Restaurar estado persistente
         run: |
+          set -e
+
           if [ -f .climaar/estado_rma10.json ]; then
-            cp .climaar/estado_rma10.json data/radar/seguimiento/estado.json
+            cp \
+              .climaar/estado_rma10.json \
+              data/radar/seguimiento/estado.json
+
             echo "Estado persistente restaurado."
+
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path("data/radar/seguimiento/estado.json")
+          d = json.loads(p.read_text(encoding="utf-8"))
+
+          print("timestamp restaurado:", d.get("ultimo_radar_timestamp"))
+          print("tracks restaurados:", len(d.get("tracks", [])))
+          print("siguiente_track_id:", d.get("siguiente_track_id"))
+          PY
           else
             echo "No existe estado persistente previo. Se inicia estado nuevo."
           fi
@@ -92,14 +140,23 @@ jobs:
 
       - name: Capturar radar RMA10
         run: |
+          set -e
+
           python scraper/capturar_radar_smn.py
 
           test -f data/radar/actual.png
-          cp data/radar/actual.png data/radar/latest.png
+
+          cp \
+            data/radar/actual.png \
+            data/radar/latest.png
 
           echo "Radar capturado correctamente."
+
           ls -lh data/radar/actual.png
           ls -lh data/radar/latest.png
+
+          echo "Timestamp capturado:"
+          cat data/radar/radar_timestamp.txt
 
       - name: Aprender ecos estáticos
         run: |
@@ -107,99 +164,360 @@ jobs:
 
       - name: Procesar radar
         run: |
+          set -e
+
           python scripts/procesador_radar.py
 
           test -s data/radar/resultado_procesamiento.json
 
           echo "Resultado de procesamiento generado correctamente."
-          ls -lh data/radar/resultado_procesamiento.json
 
-      - name: Seguimiento temporal
-        run: |
-          python seguimiento_temporal.py
+          ls -lh \
+            data/radar/resultado_procesamiento.json
 
-      - name: Predicción de evolución
-        run: |
-          python prediccion_evolucion.py
-
-      - name: Guardar estado persistente
+      - name: Verificar continuidad antes del seguimiento
         run: |
           set -e
 
-          test -f data/radar/seguimiento/estado.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from datetime import datetime, timezone
+
+          estado = Path(
+              "data/radar/seguimiento/estado.json"
+          )
+
+          timestamp = Path(
+              "data/radar/radar_timestamp.txt"
+          )
+
+          if not estado.exists():
+              print("No existe estado previo.")
+              raise SystemExit(0)
+
+          if not timestamp.exists():
+              print("No existe timestamp del radar.")
+              raise SystemExit(1)
+
+          d = json.loads(
+              estado.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          anterior = d.get(
+              "ultimo_radar_timestamp"
+          )
+
+          actual = timestamp.read_text(
+              encoding="utf-8"
+          ).strip()
+
+          print(
+              "Timestamp estado:",
+              anterior
+          )
+
+          print(
+              "Timestamp radar:",
+              actual
+          )
+
+          if anterior:
+              dt_anterior = datetime.fromisoformat(
+                  anterior.replace(
+                      "Z",
+                      "+00:00"
+                  )
+              )
+
+              dt_actual = datetime.fromisoformat(
+                  actual.replace(
+                      "Z",
+                      "+00:00"
+                  )
+              )
+
+              intervalo = (
+                  dt_actual - dt_anterior
+              ).total_seconds() / 60
+
+              print(
+                  "Intervalo:",
+                  round(intervalo, 2),
+                  "minutos"
+              )
+
+              if intervalo < 0:
+                  raise SystemExit(
+                      "ERROR: el radar está atrasado respecto al estado."
+                  )
+
+              if intervalo > 30:
+                  print(
+                      "AVISO: intervalo mayor a 30 minutos."
+                  )
+
+          print(
+              "Tracks antes del seguimiento:",
+              len(d.get("tracks", []))
+          )
+
+          print(
+              "Siguiente ID:",
+              d.get("siguiente_track_id")
+          )
+          PY
+
+      - name: Seguimiento temporal
+        run: |
+          set -e
+
+          python seguimiento_temporal.py
+
+          test -s \
+            data/radar/seguimiento/estado.json
+
+          test -s \
+            data/radar/seguimiento/seguimiento_temporal.json
+
+      - name: Mostrar resultado del seguimiento
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path(
+              "data/radar/seguimiento/estado.json"
+          )
+
+          d = json.loads(
+              p.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          tracks = d.get(
+              "tracks",
+              []
+          )
+
+          activos = [
+              t
+              for t in tracks
+              if t.get("activo")
+          ]
+
+          mov = [
+              t
+              for t in activos
+              if t.get(
+                  "velocidad_pixeles_min",
+                  0
+              ) > 0
+          ]
+
+          print(
+              "timestamp:",
+              d.get(
+                  "ultimo_radar_timestamp"
+              )
+          )
+
+          print(
+              "tracks:",
+              len(tracks)
+          )
+
+          print(
+              "activos:",
+              len(activos)
+          )
+
+          print(
+              "con movimiento:",
+              len(mov)
+          )
+
+          print(
+              "siguiente_track_id:",
+              d.get(
+                  "siguiente_track_id"
+              )
+          )
+          PY
+
+      - name: Predicción de evolución
+        run: |
+          set -e
+
+          python prediccion_evolucion.py
+
+          test -s \
+            data/radar/seguimiento/prediccion_evolucion.json
+
+      - name: Preparar persistencia
+        run: |
+          set -e
+
+          test -f \
+            data/radar/seguimiento/estado.json
 
           cp \
             data/radar/seguimiento/estado.json \
             .climaar/estado_rma10.json
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add .climaar/estado_rma10.json
-
-          if git diff --cached --quiet; then
-            echo "Estado sin cambios para guardar."
-          else
-            git commit -m "Actualizar estado RMA10"
-            git push
-          fi
-
-      - name: Mostrar resultado
-        run: |
-          echo "=== TIMESTAMP RADAR ==="
-          cat data/radar/radar_timestamp.txt || true
-
-          echo "=== SEGUIMIENTO ==="
+          echo "Estado preparado para persistencia."
 
           python - <<'PY'
           import json
           from pathlib import Path
 
-          p = Path("data/radar/seguimiento/estado.json")
+          p = Path(
+              ".climaar/estado_rma10.json"
+          )
 
-          if p.exists():
-              d = json.loads(p.read_text())
+          d = json.loads(
+              p.read_text(
+                  encoding="utf-8"
+              )
+          )
 
-              tracks = d.get("tracks", [])
+          print(
+              "timestamp:",
+              d.get(
+                  "ultimo_radar_timestamp"
+              )
+          )
 
-              activos = [
-                  t
-                  for t in tracks
-                  if t.get("activo")
-              ]
+          print(
+              "tracks:",
+              len(
+                  d.get(
+                      "tracks",
+                      []
+                  )
+              )
+          )
 
-              mov = [
-                  t
-                  for t in activos
-                  if t.get("velocidad_pixeles_min", 0) > 0
-              ]
-
-              print("timestamp:", d.get("ultimo_radar_timestamp"))
-              print("tracks:", len(tracks))
-              print("activos:", len(activos))
-              print("con movimiento:", len(mov))
+          print(
+              "siguiente_track_id:",
+              d.get(
+                  "siguiente_track_id"
+              )
+          )
           PY
 
-      - name: Persistir estado y máscara
+      - name: Sincronizar main antes de guardar
         run: |
           set -e
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+
+          git reset --hard origin/main
+
+          if [ ! -f .climaar/estado_rma10.json ]; then
+            echo "El estado no existe después de sincronizar main."
+            exit 1
+          fi
+
+          cp \
+            data/radar/seguimiento/estado.json \
+            .climaar/estado_rma10.json
+
+          echo "Estado local reaplicado después de sincronizar main."
+
+      - name: Guardar estado persistente
+        run: |
+          set -e
+
+          git config user.name \
+            "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
             .climaar/estado_rma10.json \
             data/radar/seguimiento/mascara_estatica.json \
             data/radar/seguimiento/mascara_estatica.png \
-            data/radar/radar_timestamp.txt \
-            2>/dev/null || true
+            data/radar/radar_timestamp.txt
 
           if git diff --cached --quiet; then
-            echo "Sin cambios adicionales para persistir."
+            echo "Sin cambios para guardar."
           else
-            git commit -m "Actualizar estado y mascara RMA10"
-            git push
+            git commit \
+              -m "Actualizar estado RMA10"
           fi
+
+          for intento in 1 2 3; do
+            echo "Intento de sincronización $intento/3"
+
+            git fetch origin main
+
+            if git rebase origin/main; then
+              if git push origin HEAD:main; then
+                echo "Estado RMA10 guardado correctamente."
+                exit 0
+              fi
+            else
+              echo "Rebase fallido."
+              git rebase --abort || true
+            fi
+
+            sleep 3
+          done
+
+          echo "No se pudo guardar el estado después de 3 intentos."
+          exit 1
+
+      - name: Verificar estado final
+        run: |
+          set -e
+
+          test -s \
+            .climaar/estado_rma10.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path(
+              ".climaar/estado_rma10.json"
+          )
+
+          d = json.loads(
+              p.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          print("=== ESTADO FINAL ===")
+          print(
+              "timestamp:",
+              d.get(
+                  "ultimo_radar_timestamp"
+              )
+          )
+
+          print(
+              "tracks:",
+              len(
+                  d.get(
+                      "tracks",
+                      []
+                  )
+              )
+          )
+
+          print(
+              "siguiente_track_id:",
+              d.get(
+                  "siguiente_track_id"
+              )
+          )
+          PY
 
       - name: Subir artefacto radar-rma10
         uses: actions/upload-artifact@v4
