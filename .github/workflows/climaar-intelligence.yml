@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 12
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -86,6 +87,8 @@ jobs:
 
       - name: Dependencias de inteligencia
         run: |
+          set -e
+
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
@@ -174,6 +177,91 @@ jobs:
           )
           PY
 
+      - name: Ejecutar predicción ML RMA10
+        run: |
+          set -e
+
+          python scripts/prediccion_rma10_ml.py
+
+          test -s data/radar/seguimiento/prediccion_ml_rma10.json
+
+          echo "Predicción ML RMA10 generada correctamente."
+
+      - name: Verificar predicción ML RMA10
+        run: |
+          set -e
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path(
+              "data/radar/seguimiento/prediccion_ml_rma10.json"
+          )
+
+          data = json.loads(
+              p.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          if data.get("ok") is not True:
+              raise SystemExit(
+                  "ERROR: predicción ML RMA10 no válida."
+              )
+
+          tracks = data.get(
+              "tracks_analizados",
+              0
+          )
+
+          predicciones = data.get(
+              "predicciones",
+              []
+          )
+
+          if not isinstance(
+              predicciones,
+              list
+          ):
+              raise SystemExit(
+                  "ERROR: formato de predicciones ML inválido."
+              )
+
+          if tracks != len(predicciones):
+              raise SystemExit(
+                  "ERROR: cantidad de tracks y predicciones no coincide."
+              )
+
+          print(
+              "===== ML RMA10 ====="
+          )
+
+          print(
+              "Modelo:",
+              data.get("modelo")
+          )
+
+          print(
+              "Frame:",
+              data.get("frame_radar")
+          )
+
+          print(
+              "Tracks analizados:",
+              tracks
+          )
+
+          print(
+              "Horizontes:",
+              data.get("horizontes_min")
+          )
+
+          print(
+              "Predicción ML RMA10 correcta."
+          )
+          PY
+
       - name: Fusionar meteorología
         run: |
           set -e
@@ -229,15 +317,38 @@ jobs:
               )
           )
 
+          ml = json.loads(
+              Path(
+                  "data/radar/seguimiento/prediccion_ml_rma10.json"
+              ).read_text(
+                  encoding="utf-8"
+              )
+          )
+
           nowcast_ts = (
               nowcast.get("frame_time")
               or nowcast.get("timestamp")
               or nowcast.get("frame_utc")
           )
 
-          print("===== SINCRONIZACIÓN CLIMAAR =====")
-          print("Radar:", radar_ts)
-          print("Nowcast:", nowcast_ts)
+          print(
+              "===== SINCRONIZACIÓN CLIMAAR ====="
+          )
+
+          print(
+              "Radar:",
+              radar_ts
+          )
+
+          print(
+              "Nowcast:",
+              nowcast_ts
+          )
+
+          print(
+              "ML RMA10:",
+              ml.get("frame_radar")
+          )
 
           if nowcast_ts:
               radar_normalizado = radar_ts.replace(
@@ -273,6 +384,11 @@ jobs:
           )
 
           print(
+              "Tracks ML:",
+              ml.get("tracks_analizados")
+          )
+
+          print(
               "Sincronización final verificada."
           )
           PY
@@ -305,6 +421,7 @@ jobs:
           git add -f \
             data/radar/radar_nowcast.json \
             data/radar/radar_features_rma10.csv \
+            data/radar/seguimiento/prediccion_ml_rma10.json \
             data/ia/estado_meteorologico.json \
             data/ia/inteligencia_tormenta.json \
             data/ia/historial_inteligencia_tormenta.csv \
@@ -320,7 +437,7 @@ jobs:
           fi
 
           git commit \
-            -m "ClimaAR: actualizar inteligencia RMA10"
+            -m "ClimaAR: integrar prediccion ML RMA10"
 
           for intento in 1 2 3; do
             echo "Intento de push: $intento/3"
@@ -351,6 +468,7 @@ jobs:
             data/radar/radar_nowcast.json
             data/radar/radar_features_rma10.csv
             data/radar/seguimiento/prediccion_evolucion.json
+            data/radar/seguimiento/prediccion_ml_rma10.json
             data/radar/seguimiento/calibracion_prediccion.json
             data/ia/estado_meteorologico.json
             data/ia/inteligencia_tormenta.json
@@ -375,6 +493,14 @@ jobs:
 
           d = json.loads(
               p.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          ml = json.loads(
+              Path(
+                  "data/radar/seguimiento/prediccion_ml_rma10.json"
+              ).read_text(
                   encoding="utf-8"
               )
           )
@@ -451,6 +577,16 @@ jobs:
           print(
               "Distancia:",
               r.get("distancia_km")
+          )
+
+          print(
+              "ML modelo:",
+              ml.get("modelo")
+          )
+
+          print(
+              "ML tracks:",
+              ml.get("tracks_analizados")
           )
 
           print(
