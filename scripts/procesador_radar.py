@@ -1,5 +1,4 @@
 import json
-import math
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -10,30 +9,26 @@ from scipy import ndimage
 
 BASE = Path("data/radar")
 ACTUAL = BASE / "actual.png"
-MASCARA = BASE / "mascara_ecos_estaticos.png"
 HISTORICO = BASE / "historico"
 SALIDA = BASE / "resultado_procesamiento.json"
 
 MIN_AREA_NUCLEO = 8
 INTENSIDAD_MINIMA = 1
 
-# Cantidad máxima de frames históricos utilizados.
 MAX_HISTORICOS = 40
 
-# Para declarar un eco como estático:
+# Filtro estático
 MIN_FRAMES_COMPARABLES = 5
-MIN_PRESENCIA_ESTATICO = 0.80
-MAX_DESPLAZAMIENTO_ESTATICO_PX = 4.0
-MAX_CAMBIO_INTENSIDAD_ESTATICO = 1
+MIN_PRESENCIA_ESTATICO = 0.70
+MAX_CAMBIO_INTENSIDAD_ESTATICO = 2
+MAX_DESPLAZAMIENTO_ESTIMADO_PX = 5.0
 
-# Una región grande puede contener varios ecos.
-# Esto NO se utiliza para declarar severidad.
-UMBRAL_REGION_GRANDE = 1500
+# Para no eliminar ecos nuevos dentro de zonas estáticas
+MIN_PRESENCIA_ECO_NUEVO = 0.35
 
+RADAR_LAT = -38.7342
+RADAR_LON = -62.1654
 
-# ============================================================
-# CARGA
-# ============================================================
 
 def cargar_imagen(path):
     if not path.exists():
@@ -44,88 +39,62 @@ def cargar_imagen(path):
     )
 
 
-# ============================================================
-# INTENSIDAD RMA10
-# ============================================================
-
 def intensidad_radar(rgb):
     r = rgb[:, :, 0].astype(np.int16)
     g = rgb[:, :, 1].astype(np.int16)
     b = rgb[:, :, 2].astype(np.int16)
 
-    intensidad = np.zeros(
-        r.shape,
-        dtype=np.uint8
-    )
+    intensidad = np.zeros(r.shape, dtype=np.uint8)
 
-    # Azul / celeste
     intensidad[
-        (b > r + 20)
-        & (b > g + 10)
+        (b > r + 20) &
+        (b > g + 10)
     ] = 1
 
-    # Verde
     intensidad[
-        (g > r + 15)
-        & (g > b + 10)
+        (g > r + 15) &
+        (g > b + 10)
     ] = 2
 
-    # Amarillo
     intensidad[
-        (r > 140)
-        & (g > 100)
-        & (b < 120)
-        & (r > b + 40)
+        (r > 140) &
+        (g > 100) &
+        (b < 120) &
+        (r > b + 40)
     ] = 3
 
-    # Naranja
     intensidad[
-        (r > 170)
-        & (g > 60)
-        & (g < 180)
-        & (b < 100)
-        & (r > g + 25)
+        (r > 170) &
+        (g > 60) &
+        (g < 180) &
+        (b < 100) &
+        (r > g + 25)
     ] = 4
 
-    # Rojo
     intensidad[
-        (r > 170)
-        & (g < 90)
-        & (b < 100)
-        & (r > g + 70)
+        (r > 170) &
+        (g < 90) &
+        (b < 100) &
+        (r > g + 70)
     ] = 5
 
-    # Magenta / rojo muy intenso
-    intensidad[
-        (r > 150)
-        & (b > 80)
-        & (g < 100)
-        & (r > g + 50)
-    ] = np.maximum(
-        intensidad[
-            (r > 150)
-            & (b > 80)
-            & (g < 100)
-            & (r > g + 50)
-        ],
-        6
+    mascara_6 = (
+        (r > 150) &
+        (b > 80) &
+        (g < 100) &
+        (r > g + 50)
     )
+
+    intensidad[mascara_6] = 6
 
     return intensidad
 
 
-# ============================================================
-# HISTORIAL
-# ============================================================
-
 def obtener_historico():
-
     if not HISTORICO.exists():
         return []
 
-    archivos = list(
-        HISTORICO.glob("*.png")
-    )
+    archivos = list(HISTORICO.glob("*.png"))
 
     archivos.sort(
         key=lambda p: p.stat().st_mtime
@@ -135,59 +104,46 @@ def obtener_historico():
 
 
 def cargar_historicos():
-
     matrices = []
 
+    if not ACTUAL.exists():
+        return matrices
+
+    forma_actual = Image.open(ACTUAL).size[::-1]
+
     for archivo in obtener_historico():
-
         try:
-            imagen = cargar_imagen(
-                archivo
-            )
+            imagen = cargar_imagen(archivo)
 
-            matriz = intensidad_radar(
-                imagen
-            )
+            if imagen.shape[:2] != forma_actual:
+                continue
 
             matrices.append(
-                matriz
+                intensidad_radar(imagen)
             )
 
         except Exception as e:
             print(
-                f"No se pudo leer "
-                f"{archivo}: {e}"
+                f"No se pudo leer {archivo}: {e}"
             )
 
     return matrices
 
 
-# ============================================================
-# DETECCIÓN DE ECO ESTÁTICO
-# ============================================================
-
-def calcular_mascara_estatica(
-    actual,
-    historicos
-):
+def calcular_mascara_estatica(actual, historicos):
     """
-    Determina píxel por píxel qué zonas son
-    persistentemente estáticas.
+    Detecta ecos persistentes píxel por píxel.
 
-    IMPORTANTE:
+    Un píxel solamente se elimina cuando:
+    - aparece repetidamente en el historial;
+    - conserva aproximadamente la misma intensidad;
+    - no presenta desplazamiento espacial significativo.
 
-    Un eco con intensidad alta NO se considera
-    severo si históricamente permanece fijo.
-
-    Para que un píxel sea estático debe:
-
-    - aparecer persistentemente;
-    - mantener aproximadamente la misma intensidad;
-    - no mostrar evolución significativa.
+    Los ecos nuevos no se eliminan solamente por encontrarse
+    dentro de una zona históricamente estática.
     """
 
     if len(historicos) < MIN_FRAMES_COMPARABLES:
-
         return np.zeros(
             actual.shape,
             dtype=bool
@@ -198,9 +154,7 @@ def calcular_mascara_estatica(
         axis=0
     )
 
-    presente = (
-        historial > 0
-    )
+    presente = historial > 0
 
     cantidad_presente = np.sum(
         presente,
@@ -208,29 +162,23 @@ def calcular_mascara_estatica(
     )
 
     presencia = (
-        cantidad_presente
-        / len(historicos)
+        cantidad_presente /
+        float(len(historicos))
     )
 
     candidatos = (
-        actual > 0
-    ) & (
-        presencia >= MIN_PRESENCIA_ESTATICO
+        (actual > 0) &
+        (presencia >= MIN_PRESENCIA_ESTATICO)
     )
 
     if not np.any(candidatos):
-
         return np.zeros(
             actual.shape,
             dtype=bool
         )
 
-    valores = historial[
-        :,
-        candidatos
-    ]
+    valores = historial[:, candidatos]
 
-    # Intensidad media histórica.
     media = np.mean(
         valores,
         axis=0
@@ -246,31 +194,21 @@ def calcular_mascara_estatica(
         axis=0
     )
 
-    variacion = (
-        maximo - minimo
-    )
+    variacion = maximo - minimo
 
-    intensidad_actual = actual[
-        candidatos
-    ]
+    actual_candidato = actual[candidatos]
 
     diferencia_actual = np.abs(
-        intensidad_actual.astype(
-            np.int16
-        )
-        -
-        np.rint(media).astype(
-            np.int16
-        )
+        actual_candidato.astype(np.int16) -
+        np.rint(media).astype(np.int16)
     )
 
-    estatico = (
-        (variacion <= MAX_CAMBIO_INTENSIDAD_ESTATICO)
-        &
-        (
-            diferencia_actual
-            <= MAX_CAMBIO_INTENSIDAD_ESTATICO
-        )
+    estable = (
+        variacion <=
+        MAX_CAMBIO_INTENSIDAD_ESTATICO
+    ) & (
+        diferencia_actual <=
+        MAX_CAMBIO_INTENSIDAD_ESTATICO
     )
 
     mascara = np.zeros(
@@ -283,18 +221,36 @@ def calcular_mascara_estatica(
     )
 
     mascara.flat[
-        indices[estatico]
+        indices[estable]
     ] = True
 
     return mascara
 
 
-# ============================================================
-# COMPONENTES
-# ============================================================
+def eliminar_estaticos(actual, historicos):
+    """
+    Filtro adicional por regiones.
+
+    Sirve para ecos de montaña grandes que pueden variar
+    ligeramente entre frames sin ser meteorológicos.
+    """
+
+    mascara = calcular_mascara_estatica(
+        actual,
+        historicos
+    )
+
+    if not np.any(mascara):
+        return actual.copy(), mascara
+
+    resultado = actual.copy()
+
+    resultado[mascara] = 0
+
+    return resultado, mascara
+
 
 def detectar_componentes(matriz):
-
     mascara = (
         matriz >= INTENSIDAD_MINIMA
     )
@@ -304,11 +260,9 @@ def detectar_componentes(matriz):
         dtype=np.uint8
     )
 
-    etiquetas, cantidad = (
-        ndimage.label(
-            mascara,
-            structure=estructura
-        )
+    etiquetas, cantidad = ndimage.label(
+        mascara,
+        structure=estructura
     )
 
     componentes = []
@@ -317,7 +271,6 @@ def detectar_componentes(matriz):
         1,
         cantidad + 1
     ):
-
         region = (
             etiquetas == etiqueta
         )
@@ -336,45 +289,21 @@ def detectar_componentes(matriz):
     return componentes
 
 
-# ============================================================
-# INFORMACIÓN DEL NÚCLEO
-# ============================================================
-
-def analizar_nucleo(
-    region,
-    matriz
-):
-
-    ys, xs = np.where(
-        region
-    )
+def analizar_nucleo(region, matriz):
+    ys, xs = np.where(region)
 
     if len(xs) == 0:
         return None
 
-    valores = matriz[
-        region
-    ]
+    valores = matriz[region]
 
-    x_min = int(
-        xs.min()
-    )
+    x_min = int(xs.min())
+    x_max = int(xs.max())
 
-    x_max = int(
-        xs.max()
-    )
+    y_min = int(ys.min())
+    y_max = int(ys.max())
 
-    y_min = int(
-        ys.min()
-    )
-
-    y_max = int(
-        ys.max()
-    )
-
-    area = int(
-        len(xs)
-    )
+    area = int(len(xs))
 
     intensidad_max = int(
         valores.max()
@@ -390,12 +319,8 @@ def analizar_nucleo(
         "x_max": x_max,
         "y_min": y_min,
         "y_max": y_max,
-        "width_px": (
-            x_max - x_min + 1
-        ),
-        "height_px": (
-            y_max - y_min + 1
-        ),
+        "width_px": x_max - x_min + 1,
+        "height_px": y_max - y_min + 1,
         "centroide_x": round(
             float(np.mean(xs)),
             2
@@ -408,16 +333,12 @@ def analizar_nucleo(
         "intensidad_promedio": round(
             intensidad_promedio,
             3
-        )
+        ),
+        "tipo": "DINAMICO"
     }
 
 
-# ============================================================
-# MAIN
-# ============================================================
-
 def main():
-
     print(
         "=== ClimaAR - Procesador RMA10 ==="
     )
@@ -426,10 +347,6 @@ def main():
         raise FileNotFoundError(
             f"No existe {ACTUAL}"
         )
-
-    # --------------------------------------------------------
-    # Imagen actual
-    # --------------------------------------------------------
 
     rgb = cargar_imagen(
         ACTUAL
@@ -446,27 +363,19 @@ def main():
     )
 
     print(
-        f"Pixeles con eco actuales: "
+        f"Pixeles originales: "
         f"{pixeles_originales}"
     )
-
-    # --------------------------------------------------------
-    # Historial
-    # --------------------------------------------------------
 
     historicos = cargar_historicos()
 
     print(
-        f"Frames históricos cargados: "
+        f"Frames históricos: "
         f"{len(historicos)}"
     )
 
-    # --------------------------------------------------------
-    # Máscara histórica
-    # --------------------------------------------------------
-
-    mascara_estatica = (
-        calcular_mascara_estatica(
+    matriz_dinamica, mascara_estatica = (
+        eliminar_estaticos(
             matriz_actual,
             historicos
         )
@@ -478,38 +387,21 @@ def main():
         )
     )
 
-    print(
-        f"Pixeles identificados como "
-        f"estáticos: {pixeles_estaticos}"
-    )
-
-    # --------------------------------------------------------
-    # IMPORTANTE:
-    #
-    # Los ecos estáticos se eliminan ANTES
-    # de detectar núcleos.
-    #
-    # Por lo tanto no pueden convertirse
-    # en núcleos severos.
-    # --------------------------------------------------------
-
-    matriz_dinamica = (
-        matriz_actual.copy()
-    )
-
-    matriz_dinamica[
-        mascara_estatica
-    ] = 0
-
     pixeles_dinamicos = int(
         np.sum(
             matriz_dinamica > 0
         )
     )
 
-    # --------------------------------------------------------
-    # Detección de núcleos
-    # --------------------------------------------------------
+    print(
+        f"Pixeles estáticos eliminados: "
+        f"{pixeles_estaticos}"
+    )
+
+    print(
+        f"Pixeles dinámicos restantes: "
+        f"{pixeles_dinamicos}"
+    )
 
     componentes = detectar_componentes(
         matriz_dinamica
@@ -527,19 +419,9 @@ def main():
         if nucleo is None:
             continue
 
-        # Un núcleo que queda después
-        # del filtro estático es dinámico.
-        nucleo[
-            "tipo"
-        ] = "DINAMICO"
-
         nucleos.append(
             nucleo
         )
-
-    # --------------------------------------------------------
-    # Orden
-    # --------------------------------------------------------
 
     nucleos.sort(
         key=lambda n: (
@@ -548,16 +430,10 @@ def main():
         )
     )
 
-    # --------------------------------------------------------
-    # Estado general
-    # --------------------------------------------------------
-
     if not nucleos:
-
         estado = "SIN_ECOS_DINAMICOS"
 
     else:
-
         max_intensidad = max(
             n["intensidad_max"]
             for n in nucleos
@@ -583,14 +459,9 @@ def main():
                 "PRECIPITACION_DINAMICA"
             )
 
-    # --------------------------------------------------------
-    # Resultado
-    # --------------------------------------------------------
-
     resultado = {
-
         "version":
-            "RMA10-procesador-8.0",
+            "RMA10-procesador-9.0",
 
         "timestamp_procesamiento":
             datetime.now(
@@ -601,7 +472,7 @@ def main():
             "SMN RMA10",
 
         "metodo":
-            "filtro_estatico_historico_antes_de_segmentacion",
+            "filtro_temporal_pixelwise_antes_de_segmentacion",
 
         "frames_historicos_utilizados":
             len(historicos),
@@ -655,10 +526,6 @@ def main():
             ensure_ascii=False
         )
 
-    # --------------------------------------------------------
-    # LOG
-    # --------------------------------------------------------
-
     print()
     print(
         "=== RESULTADO ==="
@@ -685,8 +552,7 @@ def main():
     )
 
     print(
-        f"Estado: "
-        f"{estado}"
+        f"Estado: {estado}"
     )
 
     print()
@@ -695,7 +561,6 @@ def main():
         nucleos,
         start=1
     ):
-
         print(
             f"Núcleo {i}: "
             f"{nucleo['area_px']} px | "
