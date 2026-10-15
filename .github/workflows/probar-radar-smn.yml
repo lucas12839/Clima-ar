@@ -94,6 +94,13 @@ jobs:
         run: |
           python scraper/capturar_radar_smn.py
 
+          test -f data/radar/actual.png
+          cp data/radar/actual.png data/radar/latest.png
+
+          echo "Radar capturado correctamente."
+          ls -lh data/radar/actual.png
+          ls -lh data/radar/latest.png
+
       - name: Aprender ecos estáticos
         run: |
           python scripts/generar_mascara_estatica.py
@@ -197,6 +204,7 @@ jobs:
           name: radar-rma10
           path: |
             data/radar/actual.png
+            data/radar/latest.png
             data/radar/radar_timestamp.txt
             data/radar/historico/*.png
             data/radar/seguimiento/**
