@@ -1,7 +1,8 @@
 import json
 import math
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from PIL import Image
 
 BASE = Path("data/radar")
 RESULTADO = BASE / "resultado_procesamiento.json"
@@ -21,6 +22,7 @@ MAX_DISTANCIA_BASE = 70.0
 MAX_DISTANCIA_SIN_OVERLAP = 85.0
 MAX_MISSED_FRAMES = 2
 MAX_HISTORIAL = 20
+MAX_REPLAY_FRAMES = 6
 
 
 def cargar_json(path, default=None):
@@ -654,97 +656,66 @@ def salida_sin_nucleos(radar_ts, intervalo, calidad, motivo=None):
     return salida
 
 
-def procesar():
-    nucleos = obtener_nucleos()
-    radar_dt = timestamp_radar()
-    radar_ts = iso(radar_dt)
+def frames_historicos_validos(radar_dt):
+    candidatos = []
 
-    estado = normalizar_estado(
-        cargar_json(ESTADO, {})
-    )
+    for archivo in BASE.glob("historico/*.png"):
+        if not archivo.stem.isdigit() or len(archivo.stem) != 14:
+            continue
 
-    anterior_ts = estado.get("ultimo_radar_timestamp")
-    anterior_dt = parse_iso(anterior_ts)
+        try:
+            dt = datetime.strptime(
+                archivo.stem,
+                "%Y%m%d%H%M%S"
+            ).replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
 
-    if anterior_dt is None:
-        if not nucleos:
-            salida = salida_sin_nucleos(
-                radar_ts,
-                None,
-                "PRIMER_FRAME_SIN_NUCLEOS",
-                "El procesador no detectó núcleos en este frame.",
-            )
+        if dt > radar_dt + timedelta(minutes=2):
+            continue
 
-            estado["ultimo_radar_timestamp"] = radar_ts
-            estado["tracks_activos"] = []
-            estado["ultimo_frame_nucleos"] = []
+        candidatos.append((dt, archivo))
 
-            guardar_json(ESTADO, estado)
-            guardar_json(SALIDA, salida)
+    candidatos.sort(key=lambda item: item[0])
 
-            return salida
+    if not candidatos:
+        return []
 
-        actuales = nueva_base_desde_frame(
-            estado,
-            nucleos,
-            radar_ts
+    return candidatos[-MAX_REPLAY_FRAMES:]
+
+
+def nucleos_desde_imagen(path, mascara, detectar_func, analizar_func, confianza_func):
+    imagen = Image.open(path).convert("RGBA")
+    detectados = detectar_func(imagen)
+
+    salida = []
+
+    for indice, nucleo in enumerate(detectados):
+        estado_nucleo, confianza_base = analizar_func(
+            nucleo,
+            mascara
         )
 
-        salida = {
-            "schema_version": SCHEMA_VERSION,
-            "radar_timestamp": radar_ts,
-            "frame_anterior_disponible": False,
-            "intervalo_minutos": None,
-            "calidad_intervalo": "PRIMER_FRAME",
-            "nucleos_actuales": len(actuales),
-            "nucleos_nuevos": len(actuales),
-            "nucleos_seguimiento": 0,
-            "nucleos_creciendo": 0,
-            "nucleos_debilitandose": 0,
-            "nucleos_movimiento": 0,
-            "nucleos_estables": 0,
-            "nucleos_desaparecidos": 0,
-            "asociaciones": [],
-            "nucleos": [
-                nucleo_salida(t)
-                for t in actuales
-            ],
-        }
+        confianza = confianza_func(
+            nucleo,
+            estado_nucleo,
+            confianza_base
+        )
 
-        guardar_json(ESTADO, estado)
-        guardar_json(SALIDA, salida)
-        return salida
+        item = dict(nucleo)
+        item["indice"] = indice
+        item["estado"] = estado_nucleo
+        item["confianza"] = confianza
+        salida.append(normalizar_nucleo(item, indice))
 
-    intervalo = (
-        radar_dt - anterior_dt
-    ).total_seconds() / 60.0
+    # Los ecos estáticos no entran al seguimiento temporal.
+    return [
+        n for n in salida
+        if n.get("estado") != "ECO_ESTATICO"
+    ]
 
-    if intervalo <= 0:
-        salida = {
-            "schema_version": SCHEMA_VERSION,
-            "radar_timestamp": radar_ts,
-            "frame_anterior_disponible": True,
-            "intervalo_minutos": round(intervalo, 2),
-            "calidad_intervalo": "FRAME_REPETIDO_O_ATRASADO",
-            "nucleos_actuales": len(nucleos),
-            "nucleos_nuevos": 0,
-            "nucleos_seguimiento": 0,
-            "nucleos_creciendo": 0,
-            "nucleos_debilitandose": 0,
-            "nucleos_movimiento": 0,
-            "nucleos_estables": 0,
-            "nucleos_desaparecidos": 0,
-            "asociaciones": [],
-            "nucleos": [],
-            "motivo": (
-                "El frame actual no es posterior "
-                "al último estado procesado."
-            ),
-        }
 
-        guardar_json(SALIDA, salida)
-        return salida
-
+def procesar_frame_secuencia(estado, nucleos, radar_ts, anterior_ts):
     if not nucleos:
         activos = []
 
@@ -767,31 +738,26 @@ def procesar():
         estado["ultimo_frame_nucleos"] = []
         estado["ultimo_radar_timestamp"] = radar_ts
 
-        salida = salida_sin_nucleos(
+        return salida_sin_nucleos(
             radar_ts,
-            intervalo,
+            None if anterior_ts is None else 0,
             "FRAME_SIN_NUCLEOS",
-            "El procesador no detectó núcleos en este frame; "
-            "se conserva el historial sin inventar movimiento.",
+            "No se detectaron núcleos no-estáticos en este frame."
         )
 
-        guardar_json(ESTADO, estado)
-        guardar_json(SALIDA, salida)
-        return salida
-
-    if intervalo > MAX_INTERVALO:
+    if anterior_ts is None:
         actuales = nueva_base_desde_frame(
             estado,
             nucleos,
             radar_ts
         )
 
-        salida = {
+        return {
             "schema_version": SCHEMA_VERSION,
             "radar_timestamp": radar_ts,
-            "frame_anterior_disponible": True,
-            "intervalo_minutos": round(intervalo, 2),
-            "calidad_intervalo": "GAP_MAYOR_30_MIN",
+            "frame_anterior_disponible": False,
+            "intervalo_minutos": None,
+            "calidad_intervalo": "PRIMER_FRAME",
             "nucleos_actuales": len(actuales),
             "nucleos_nuevos": len(actuales),
             "nucleos_seguimiento": 0,
@@ -801,20 +767,61 @@ def procesar():
             "nucleos_estables": 0,
             "nucleos_desaparecidos": 0,
             "asociaciones": [],
-            "nucleos": [
-                nucleo_salida(t)
-                for t in actuales
-            ],
-            "motivo": (
-                "El intervalo supera 30 minutos. "
-                "Se creó una nueva base sin inventar "
-                "movimiento entre frames."
-            ),
+            "nucleos": [nucleo_salida(t) for t in actuales],
         }
 
-        guardar_json(ESTADO, estado)
-        guardar_json(SALIDA, salida)
-        return salida
+    anterior_dt = parse_iso(anterior_ts)
+    actual_dt = parse_iso(radar_ts)
+
+    if anterior_dt is None or actual_dt is None:
+        actuales = nueva_base_desde_frame(
+            estado,
+            nucleos,
+            radar_ts
+        )
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "radar_timestamp": radar_ts,
+            "frame_anterior_disponible": False,
+            "intervalo_minutos": None,
+            "calidad_intervalo": "REINICIO_TIMESTAMP_INVALIDO",
+            "nucleos_actuales": len(actuales),
+            "nucleos_nuevos": len(actuales),
+            "nucleos_seguimiento": 0,
+            "nucleos_movimiento": 0,
+            "nucleos": [nucleo_salida(t) for t in actuales],
+        }
+
+    intervalo = (actual_dt - anterior_dt).total_seconds() / 60.0
+
+    if intervalo <= 0 or intervalo > MAX_INTERVALO:
+        actuales = nueva_base_desde_frame(
+            estado,
+            nucleos,
+            radar_ts
+        )
+        calidad = (
+            "FRAME_REPETIDO_O_ATRASADO"
+            if intervalo <= 0
+            else "GAP_MAYOR_30_MIN"
+        )
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "radar_timestamp": radar_ts,
+            "frame_anterior_disponible": intervalo > 0,
+            "intervalo_minutos": round(intervalo, 2),
+            "calidad_intervalo": calidad,
+            "nucleos_actuales": len(actuales),
+            "nucleos_nuevos": len(actuales),
+            "nucleos_seguimiento": 0,
+            "nucleos_creciendo": 0,
+            "nucleos_debilitandose": 0,
+            "nucleos_movimiento": 0,
+            "nucleos_estables": 0,
+            "nucleos_desaparecidos": 0,
+            "asociaciones": [],
+            "nucleos": [nucleo_salida(t) for t in actuales],
+        }
 
     activos_previos = [
         track for track in estado["tracks"]
@@ -842,7 +849,6 @@ def procesar():
                 intervalo,
                 track
             )
-
             if comp is None:
                 continue
 
@@ -865,9 +871,7 @@ def procesar():
         tid = candidato["track"]["track_id"]
         indice = candidato["indice"]
 
-        if tid in asignados_tracks:
-            continue
-        if indice in asignados_nucleos:
+        if tid in asignados_tracks or indice in asignados_nucleos:
             continue
 
         asignados_tracks.add(tid)
@@ -881,12 +885,7 @@ def procesar():
     estables = 0
     nuevos = 0
 
-    if intervalo < 5:
-        calidad = "BUENA"
-    elif intervalo <= 15:
-        calidad = "ACEPTABLE"
-    else:
-        calidad = "BAJA"
+    calidad = "BUENA" if intervalo < 5 else "ACEPTABLE" if intervalo <= 15 else "BAJA"
 
     for asociacion in asociaciones:
         track = asociacion["track"]
@@ -900,9 +899,7 @@ def procesar():
             calidad
         )
 
-        cambio = numero(
-            track.get("cambio_area_porcentaje", 0)
-        )
+        cambio = numero(track.get("cambio_area_porcentaje", 0))
 
         if cambio >= 15:
             creciendo += 1
@@ -914,22 +911,17 @@ def procesar():
         if track.get("desplazamiento_pixeles", 0) >= 1:
             movimiento += 1
 
-        salida_nucleos.append(
-            nucleo_salida(track)
-        )
+        salida_nucleos.append(nucleo_salida(track))
 
     desaparecidos = 0
 
     for track in activos_previos:
         tid = track["track_id"]
-
         if tid in asignados_tracks:
             continue
 
         track["presente_en_ultimo_frame"] = False
-        track["missed_frames"] = (
-            entero(track.get("missed_frames", 0)) + 1
-        )
+        track["missed_frames"] = entero(track.get("missed_frames", 0)) + 1
 
         if track["missed_frames"] > MAX_MISSED_FRAMES:
             track["activo"] = False
@@ -944,12 +936,7 @@ def procesar():
         tid = estado["siguiente_track_id"]
         estado["siguiente_track_id"] += 1
 
-        track = crear_track(
-            tid,
-            nucleo,
-            radar_ts
-        )
-
+        track = crear_track(tid, nucleo, radar_ts)
         estado["tracks"].append(track)
         salida_nucleos.append(nucleo_salida(track))
         nuevos += 1
@@ -967,16 +954,12 @@ def procesar():
     estado["ultimo_frame_nucleos"] = salida_nucleos
     estado["ultimo_radar_timestamp"] = radar_ts
 
-    salida = {
+    return {
         "schema_version": SCHEMA_VERSION,
         "radar_timestamp": radar_ts,
         "frame_anterior_disponible": True,
         "intervalo_minutos": round(intervalo, 2),
-        "calidad_intervalo": (
-            "BUENA"
-            if intervalo <= 10
-            else "ACEPTABLE"
-        ),
+        "calidad_intervalo": calidad,
         "nucleos_actuales": len(nucleos),
         "nucleos_nuevos": nuevos,
         "nucleos_seguimiento": len(asociaciones),
@@ -1001,10 +984,92 @@ def procesar():
         "nucleos": salida_nucleos,
     }
 
-    guardar_json(ESTADO, estado)
-    guardar_json(SALIDA, salida)
 
-    return salida
+def procesar():
+    radar_dt = parse_iso(
+        cargar_json(Path("data/radar/radar_timestamp.txt"), None)
+    )
+
+    timestamp_path = BASE / "radar_timestamp.txt"
+    if timestamp_path.exists():
+        radar_dt = parse_iso(timestamp_path.read_text(encoding="utf-8").strip())
+
+    if radar_dt is None:
+        radar_dt = timestamp_radar()
+
+    radar_ts = iso(radar_dt)
+    mascara = None
+
+    try:
+        from scripts.procesador_radar import (
+            detectar_nucleos as detectar_nucleos_desde_procesador,
+            cargar_mascara as cargar_mascara_desde_procesador,
+            analizar_mascara as analizar_mascara_desde_procesador,
+            calcular_confianza as calcular_confianza_desde_procesador,
+        )
+        mascara = cargar_mascara_desde_procesador()
+    except Exception as exc:
+        raise RuntimeError(
+            "No se pudo cargar el procesador RMA10 para reconstruir el historial."
+        ) from exc
+
+    frames = frames_historicos_validos(radar_dt)
+
+    actual_path = BASE / "actual.png"
+    timestamps_presentes = {iso(dt) for dt, _ in frames}
+
+    if actual_path.exists() and radar_ts not in timestamps_presentes:
+        frames.append((radar_dt, actual_path))
+
+    frames.sort(key=lambda item: item[0])
+
+    if len(frames) > MAX_REPLAY_FRAMES:
+        frames = frames[-MAX_REPLAY_FRAMES:]
+
+    if not frames:
+        raise RuntimeError("No hay frames RMA10 disponibles para reconstruir el seguimiento.")
+
+    estado = estado_nuevo()
+    ultimo_resultado = None
+    resumen_replay = []
+
+    for frame_dt, frame_path in frames:
+        frame_ts = iso(frame_dt)
+        nucleos = nucleos_desde_imagen(
+            frame_path,
+            mascara,
+            detectar_nucleos_desde_procesador,
+            analizar_mascara_desde_procesador,
+            calcular_confianza_desde_procesador,
+        )
+
+        resultado = procesar_frame_secuencia(
+            estado,
+            nucleos,
+            frame_ts,
+            estado.get("ultimo_radar_timestamp")
+        )
+
+        ultimo_resultado = resultado
+        resumen_replay.append({
+            "timestamp": frame_ts,
+            "archivo": frame_path.name,
+            "nucleos": len(nucleos),
+            "seguimiento": resultado.get("nucleos_seguimiento", 0),
+            "movimiento": resultado.get("nucleos_movimiento", 0),
+        })
+
+    if ultimo_resultado is None:
+        raise RuntimeError("No se pudo reconstruir el seguimiento RMA10.")
+
+    ultimo_resultado["modo_seguimiento"] = "RECONSTRUCCION_HISTORICA"
+    ultimo_resultado["frames_reconstruidos"] = len(frames)
+    ultimo_resultado["historial_replay"] = resumen_replay
+
+    guardar_json(ESTADO, estado)
+    guardar_json(SALIDA, ultimo_resultado)
+
+    return ultimo_resultado
 
 
 if __name__ == "__main__":
