@@ -74,12 +74,14 @@ jobs:
         run: |
           set -e
           python scripts/construir_dataset_rma10_historico.py
+
           test -s data/radar/rma10_dataset_historico.csv
           test -s data/radar/rma10_dataset_resumen.json
 
       - name: Verificar dataset
         run: |
           set -e
+
           python - <<'PY'
           import csv
           import json
@@ -110,6 +112,7 @@ jobs:
           }
 
           missing = required - set(rows[0])
+
           if missing:
               raise SystemExit(
                   f"ERROR: faltan columnas: {sorted(missing)}"
@@ -119,13 +122,40 @@ jobs:
               json_path.read_text(encoding="utf-8")
           )
 
+          required_summary = {
+              "frames_validos",
+              "registros_entrenamiento",
+              "tracks",
+              "strengthened",
+              "weakened",
+              "toward_bahia",
+          }
+
+          missing_summary = required_summary - set(summary)
+
+          if missing_summary:
+              raise SystemExit(
+                  f"ERROR: faltan campos del resumen: {sorted(missing_summary)}"
+              )
+
+          if summary["frames_validos"] < 3:
+              raise SystemExit("ERROR: muy pocos frames validos.")
+
+          if summary["registros_entrenamiento"] <= 0:
+              raise SystemExit("ERROR: no se generaron registros de entrenamiento.")
+
+          if summary["tracks"] <= 0:
+              raise SystemExit("ERROR: no se reconstruyeron tracks.")
+
           print("===== DATASET RMA10 VERIFICADO =====")
+          print("Frames encontrados:", summary["frames_encontrados"])
           print("Frames validos:", summary["frames_validos"])
-          print("Tracks:", summary["tracks_reconstruidos"])
+          print("Frames descartados:", summary["frames_descartados"])
+          print("Tracks reconstruidos:", summary["tracks"])
           print("Registros etiquetados:", summary["registros_entrenamiento"])
-          print("Fortalecimiento:", summary["registros_fortalecimiento"])
-          print("Debilitamiento:", summary["registros_debilitamiento"])
-          print("Hacia Bahia:", summary["registros_hacia_bahia"])
+          print("Fortalecimiento:", summary["strengthened"])
+          print("Debilitamiento:", summary["weakened"])
+          print("Hacia Bahia:", summary["toward_bahia"])
           print("====================================")
           PY
 
