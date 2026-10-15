@@ -25,114 +25,37 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - name: Sincronizar main antes de restaurar estado
+      - name: Sincronizar main y preparar estado
         run: |
           set -e
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git fetch origin main
           git reset --hard origin/main
-
-          echo "Commit utilizado:"
-          git rev-parse HEAD
-
+          mkdir -p data/radar/historico data/radar/seguimiento data/radar/procesado data/radar/prediccion .climaar
           if [ -f .climaar/estado_rma10.json ]; then
-            python - <<'PY'
-          import json
-          from pathlib import Path
-
-          p = Path(".climaar/estado_rma10.json")
-          d = json.loads(p.read_text(encoding="utf-8"))
-
-          print("timestamp:", d.get("ultimo_radar_timestamp"))
-          print("tracks:", len(d.get("tracks", [])))
-          print("siguiente_track_id:", d.get("siguiente_track_id"))
-          PY
-          else
-            echo "No existe estado persistente previo."
+            cp .climaar/estado_rma10.json data/radar/seguimiento/estado.json
           fi
 
-      - name: Preparar directorios
-        run: |
-          mkdir -p data/radar/historico
-          mkdir -p data/radar/seguimiento
-          mkdir -p data/radar/procesado
-          mkdir -p data/radar/prediccion
-          mkdir -p .climaar
-
-      - name: Restaurar estado persistente
-        run: |
-          set -e
-
-          if [ -f .climaar/estado_rma10.json ]; then
-            cp \
-              .climaar/estado_rma10.json \
-              data/radar/seguimiento/estado.json
-
-            echo "Estado persistente restaurado."
-
-            python - <<'PY'
-          import json
-          from pathlib import Path
-
-          p = Path("data/radar/seguimiento/estado.json")
-          d = json.loads(p.read_text(encoding="utf-8"))
-
-          print("timestamp restaurado:", d.get("ultimo_radar_timestamp"))
-          print("tracks restaurados:", len(d.get("tracks", [])))
-          print("siguiente_track_id:", d.get("siguiente_track_id"))
-          PY
-          else
-            echo "No existe estado persistente previo. Se inicia estado nuevo."
-          fi
-
-      - name: Recuperar histórico desde artefactos anteriores
+      - name: Recuperar histórico desde ejecuciones anteriores
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-
           rm -rf /tmp/radar_artifacts
           mkdir -p /tmp/radar_artifacts
-
-          gh run list \
-            --workflow probar-radar-smn.yml \
-            --limit 20 \
-            --json databaseId,status,conclusion \
-            --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId' \
-            > /tmp/radar_runs.txt || true
-
+          gh run list --workflow probar-radar-smn.yml --limit 20 --json databaseId,status,conclusion             --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId'             > /tmp/radar_runs.txt || true
           while read -r run_id; do
             [ -z "$run_id" ] && continue
-
-            gh run download "$run_id" \
-              -n radar-rma10 \
-              -D "/tmp/radar_artifacts/$run_id" \
-              2>/dev/null || true
+            gh run download "$run_id" -n radar-rma10 -D "/tmp/radar_artifacts/$run_id" 2>/dev/null || true
           done < /tmp/radar_runs.txt
-
-          find /tmp/radar_artifacts \
-            -type f \
-            -path '*/historico/*.png' \
-            -exec cp -n {} data/radar/historico/ \; \
-            2>/dev/null || true
-
-          find /tmp/radar_artifacts \
-            -type f \
-            -name 'predicciones_pendientes.json' \
-            -exec cp -n {} data/radar/seguimiento/ \; \
-            2>/dev/null || true
-
-          echo "Histórico disponible:"
-          find data/radar/historico \
-            -maxdepth 1 \
-            -type f \
-            -name '*.png' | wc -l
+          find /tmp/radar_artifacts -type f -path '*/historico/*.png' -exec cp -n {} data/radar/historico/ \; 2>/dev/null || true
+          find /tmp/radar_artifacts -type f -name 'predicciones_pendientes.json' -exec cp -n {} data/radar/seguimiento/ \; 2>/dev/null || true
+          echo "Frames históricos: $(find data/radar/historico -maxdepth 1 -type f -name '*.png' | wc -l)"
 
       - name: Instalar dependencias
         run: |
+          set -e
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
@@ -140,408 +63,147 @@ jobs:
       - name: Capturar radar RMA10
         run: |
           set -e
-
           python scraper/capturar_radar_smn.py
-
-          test -f data/radar/actual.png
-
-          cp \
-            data/radar/actual.png \
-            data/radar/latest.png
-
-          echo "Radar capturado correctamente."
-
-          ls -lh data/radar/actual.png
-          ls -lh data/radar/latest.png
-
-          echo "Timestamp capturado:"
-          cat data/radar/radar_timestamp.txt
+          test -s data/radar/actual.png
+          cp data/radar/actual.png data/radar/latest.png
+          test -s data/radar/radar_timestamp.txt
+          echo "Radar: $(cat data/radar/radar_timestamp.txt)"
 
       - name: Aprender ecos estáticos
         run: |
           set -e
-
           python scripts/generar_mascara_estatica.py
-
-          test -f data/radar/mascara_ecos_estaticos.png
-          test -f data/radar/mascara_ecos_estaticos.json
-          test -f data/radar/mascara_ecos_estaticos_confianza.png
+          test -s data/radar/mascara_ecos_estaticos.json
+          test -s data/radar/mascara_ecos_estaticos.png
+          test -s data/radar/mascara_ecos_estaticos_confianza.png
 
       - name: Procesar radar
         run: |
           set -e
-
           python scripts/procesador_radar.py
-
           test -s data/radar/resultado_procesamiento.json
 
-          echo "Resultado de procesamiento generado correctamente."
-
-          ls -lh \
-            data/radar/resultado_procesamiento.json
-
-      - name: Verificar continuidad antes del seguimiento
+      - name: Verificar continuidad
         run: |
-          set -e
-
           python - <<'PY'
           import json
           from pathlib import Path
           from datetime import datetime
-
-          estado = Path(
-              "data/radar/seguimiento/estado.json"
-          )
-
-          timestamp = Path(
-              "data/radar/radar_timestamp.txt"
-          )
-
-          if not estado.exists():
-              print("No existe estado previo.")
+          p=Path('data/radar/seguimiento/estado.json')
+          ts=Path('data/radar/radar_timestamp.txt')
+          if not p.exists():
+              print('Sin estado previo.')
               raise SystemExit(0)
-
-          if not timestamp.exists():
-              print("No existe timestamp del radar.")
-              raise SystemExit(1)
-
-          d = json.loads(
-              estado.read_text(
-                  encoding="utf-8"
-              )
-          )
-
-          anterior = d.get(
-              "ultimo_radar_timestamp"
-          )
-
-          actual = timestamp.read_text(
-              encoding="utf-8"
-          ).strip()
-
-          print(
-              "Timestamp estado:",
-              anterior
-          )
-
-          print(
-              "Timestamp radar:",
-              actual
-          )
-
+          anterior=json.loads(p.read_text(encoding='utf-8')).get('ultimo_radar_timestamp')
+          actual=ts.read_text(encoding='utf-8').strip()
+          print('Estado:', anterior)
+          print('Radar:', actual)
           if anterior:
-              dt_anterior = datetime.fromisoformat(
-                  anterior.replace(
-                      "Z",
-                      "+00:00"
-                  )
-              )
-
-              dt_actual = datetime.fromisoformat(
-                  actual.replace(
-                      "Z",
-                      "+00:00"
-                  )
-              )
-
-              intervalo = (
-                  dt_actual - dt_anterior
-              ).total_seconds() / 60
-
-              print(
-                  "Intervalo:",
-                  round(intervalo, 2),
-                  "minutos"
-              )
-
+              a=datetime.fromisoformat(anterior.replace('Z','+00:00'))
+              b=datetime.fromisoformat(actual.replace('Z','+00:00'))
+              intervalo=(b-a).total_seconds()/60
+              print('Intervalo:', round(intervalo,2),'min')
               if intervalo < 0:
-                  raise SystemExit(
-                      "ERROR: el radar está atrasado respecto al estado."
-                  )
-
-              if intervalo > 30:
-                  print(
-                      "AVISO: intervalo mayor a 30 minutos."
-                  )
-
-          print(
-              "Tracks antes del seguimiento:",
-              len(d.get("tracks", []))
-          )
-
-          print(
-              "Siguiente ID:",
-              d.get("siguiente_track_id")
-          )
-          PY
+                  raise SystemExit('ERROR: timestamp radar anterior al estado.')
 
       - name: Seguimiento temporal
         run: |
           set -e
-
           python seguimiento_temporal.py
-
-          test -s \
-            data/radar/seguimiento/estado.json
-
-          test -s \
-            data/radar/seguimiento/seguimiento_temporal.json
-
-      - name: Mostrar resultado del seguimiento
-        run: |
+          test -s data/radar/seguimiento/estado.json
+          test -s data/radar/seguimiento/seguimiento_temporal.json
           python - <<'PY'
           import json
           from pathlib import Path
-
-          p = Path(
-              "data/radar/seguimiento/estado.json"
-          )
-
-          d = json.loads(
-              p.read_text(
-                  encoding="utf-8"
-              )
-          )
-
-          tracks = d.get(
-              "tracks",
-              []
-          )
-
-          activos = [
-              t
-              for t in tracks
-              if t.get("activo")
-          ]
-
-          mov = [
-              t
-              for t in activos
-              if t.get(
-                  "velocidad_pixeles_min",
-                  0
-              ) > 0
-          ]
-
-          print(
-              "timestamp:",
-              d.get(
-                  "ultimo_radar_timestamp"
-              )
-          )
-
-          print(
-              "tracks:",
-              len(tracks)
-          )
-
-          print(
-              "activos:",
-              len(activos)
-          )
-
-          print(
-              "con movimiento:",
-              len(mov)
-          )
-
-          print(
-              "siguiente_track_id:",
-              d.get(
-                  "siguiente_track_id"
-              )
-          )
+          p=Path('data/radar/seguimiento/seguimiento_temporal.json')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          print('Modo:', d.get('modo_seguimiento'))
+          print('Frames reconstruidos:', d.get('frames_reconstruidos'))
+          print('Tracks:', d.get('nucleos_seguimiento'))
+          print('Movimiento:', d.get('nucleos_movimiento'))
+          if d.get('modo_seguimiento') == 'RECONSTRUCCION_HISTORICA' and int(d.get('frames_reconstruidos') or 0) >= 2 and int(d.get('nucleos_movimiento') or 0) > 0:
+              print('SEGUIMIENTO CON MOVIMIENTO CONFIRMADO')
           PY
 
       - name: Predicción de evolución
         run: |
           set -e
-
           python prediccion_evolucion.py
+          test -s data/radar/seguimiento/prediccion_evolucion.json
 
-          test -s \
-            data/radar/seguimiento/prediccion_evolucion.json
-
-      - name: Preparar archivos generados
+      - name: Proteger resultados generados
         run: |
           set -e
-
+          rm -rf /tmp/climaar_radar_generado
           mkdir -p /tmp/climaar_radar_generado
+          cp data/radar/seguimiento/estado.json /tmp/climaar_radar_generado/estado.json
+          cp data/radar/seguimiento/seguimiento_temporal.json /tmp/climaar_radar_generado/seguimiento_temporal.json
+          cp data/radar/seguimiento/prediccion_evolucion.json /tmp/climaar_radar_generado/prediccion_evolucion.json
+          if [ -f data/radar/seguimiento/predicciones_pendientes.json ]; then cp data/radar/seguimiento/predicciones_pendientes.json /tmp/climaar_radar_generado/predicciones_pendientes.json; fi
+          cp data/radar/mascara_ecos_estaticos.json /tmp/climaar_radar_generado/mascara_ecos_estaticos.json
+          cp data/radar/mascara_ecos_estaticos.png /tmp/climaar_radar_generado/mascara_ecos_estaticos.png
+          cp data/radar/mascara_ecos_estaticos_confianza.png /tmp/climaar_radar_generado/mascara_ecos_estaticos_confianza.png
+          cp data/radar/radar_timestamp.txt /tmp/climaar_radar_generado/radar_timestamp.txt
 
-          cp \
-            data/radar/seguimiento/estado.json \
-            /tmp/climaar_radar_generado/estado_rma10.json
-
-          cp \
-            data/radar/mascara_ecos_estaticos.json \
-            /tmp/climaar_radar_generado/mascara_ecos_estaticos.json
-
-          cp \
-            data/radar/mascara_ecos_estaticos.png \
-            /tmp/climaar_radar_generado/mascara_ecos_estaticos.png
-
-          cp \
-            data/radar/mascara_ecos_estaticos_confianza.png \
-            /tmp/climaar_radar_generado/mascara_ecos_estaticos_confianza.png
-
-          cp \
-            data/radar/radar_timestamp.txt \
-            /tmp/climaar_radar_generado/radar_timestamp.txt
-
-          echo "Archivos generados protegidos."
-
-      - name: Sincronizar main antes de guardar
+      - name: Sincronizar main y restaurar resultados generados
         run: |
           set -e
-
           git fetch origin main
           git reset --hard origin/main
-
-          mkdir -p .climaar
-          mkdir -p data/radar
-
-          cp \
-            /tmp/climaar_radar_generado/estado_rma10.json \
-            .climaar/estado_rma10.json
-
-          cp \
-            /tmp/climaar_radar_generado/mascara_ecos_estaticos.json \
-            data/radar/mascara_ecos_estaticos.json
-
-          cp \
-            /tmp/climaar_radar_generado/mascara_ecos_estaticos.png \
-            data/radar/mascara_ecos_estaticos.png
-
-          cp \
-            /tmp/climaar_radar_generado/mascara_ecos_estaticos_confianza.png \
-            data/radar/mascara_ecos_estaticos_confianza.png
-
-          cp \
-            /tmp/climaar_radar_generado/radar_timestamp.txt \
-            data/radar/radar_timestamp.txt
-
-          echo "Archivos generados restaurados sobre main actualizado."
+          mkdir -p .climaar data/radar/seguimiento data/radar
+          cp /tmp/climaar_radar_generado/estado.json data/radar/seguimiento/estado.json
+          cp /tmp/climaar_radar_generado/seguimiento_temporal.json data/radar/seguimiento/seguimiento_temporal.json
+          cp /tmp/climaar_radar_generado/prediccion_evolucion.json data/radar/seguimiento/prediccion_evolucion.json
+          if [ -f /tmp/climaar_radar_generado/predicciones_pendientes.json ]; then cp /tmp/climaar_radar_generado/predicciones_pendientes.json data/radar/seguimiento/predicciones_pendientes.json; fi
+          cp /tmp/climaar_radar_generado/estado.json .climaar/estado_rma10.json
+          cp /tmp/climaar_radar_generado/mascara_ecos_estaticos.json data/radar/mascara_ecos_estaticos.json
+          cp /tmp/climaar_radar_generado/mascara_ecos_estaticos.png data/radar/mascara_ecos_estaticos.png
+          cp /tmp/climaar_radar_generado/mascara_ecos_estaticos_confianza.png data/radar/mascara_ecos_estaticos_confianza.png
+          cp /tmp/climaar_radar_generado/radar_timestamp.txt data/radar/radar_timestamp.txt
 
       - name: Guardar estado persistente
         run: |
           set -e
-
-          git config user.name \
-            "github-actions[bot]"
-
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add \
-            .climaar/estado_rma10.json \
-            data/radar/mascara_ecos_estaticos.json \
-            data/radar/mascara_ecos_estaticos.png \
-            data/radar/mascara_ecos_estaticos_confianza.png \
-            data/radar/radar_timestamp.txt
-
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .climaar/estado_rma10.json data/radar/mascara_ecos_estaticos.json data/radar/mascara_ecos_estaticos.png data/radar/mascara_ecos_estaticos_confianza.png data/radar/radar_timestamp.txt
           if git diff --cached --quiet; then
             echo "Sin cambios para guardar."
-          else
-            git commit \
-              -m "Actualizar estado RMA10"
+            exit 0
           fi
-
+          git commit -m "Actualizar estado RMA10"
           for intento in 1 2 3; do
-            echo "Intento de push $intento/3"
-
-            if git push origin HEAD:main; then
-              echo "Estado RMA10 guardado correctamente."
-              exit 0
-            fi
-
-            echo "Push rechazado. Sincronizando nuevamente..."
-
+            if git push origin HEAD:main; then exit 0; fi
             git fetch origin main
-
             git reset --hard origin/main
-
-            cp \
-              /tmp/climaar_radar_generado/estado_rma10.json \
-              .climaar/estado_rma10.json
-
-            cp \
-              /tmp/climaar_radar_generado/mascara_ecos_estaticos.json \
-              data/radar/mascara_ecos_estaticos.json
-
-            cp \
-              /tmp/climaar_radar_generado/mascara_ecos_estaticos.png \
-              data/radar/mascara_ecos_estaticos.png
-
-            cp \
-              /tmp/climaar_radar_generado/mascara_ecos_estaticos_confianza.png \
-              data/radar/mascara_ecos_estaticos_confianza.png
-
-            cp \
-              /tmp/climaar_radar_generado/radar_timestamp.txt \
-              data/radar/radar_timestamp.txt
-
-            git add \
-              .climaar/estado_rma10.json \
-              data/radar/mascara_ecos_estaticos.json \
-              data/radar/mascara_ecos_estaticos.png \
-              data/radar/mascara_ecos_estaticos_confianza.png \
-              data/radar/radar_timestamp.txt
-
-            git commit \
-              -m "Actualizar estado RMA10"
-
+            cp /tmp/climaar_radar_generado/estado.json .climaar/estado_rma10.json
+            cp /tmp/climaar_radar_generado/mascara_ecos_estaticos.json data/radar/mascara_ecos_estaticos.json
+            cp /tmp/climaar_radar_generado/mascara_ecos_estaticos.png data/radar/mascara_ecos_estaticos.png
+            cp /tmp/climaar_radar_generado/mascara_ecos_estaticos_confianza.png data/radar/mascara_ecos_estaticos_confianza.png
+            cp /tmp/climaar_radar_generado/radar_timestamp.txt data/radar/radar_timestamp.txt
+            git add .climaar/estado_rma10.json data/radar/mascara_ecos_estaticos.json data/radar/mascara_ecos_estaticos.png data/radar/mascara_ecos_estaticos_confianza.png data/radar/radar_timestamp.txt
+            git commit -m "Actualizar estado RMA10"
             sleep 2
           done
-
-          echo "No se pudo guardar el estado."
           exit 1
 
-      - name: Verificar estado final
+      - name: Verificar estado y resultados antes del artefacto
         run: |
           set -e
-
-          test -s \
-            .climaar/estado_rma10.json
-
+          test -s data/radar/seguimiento/estado.json
+          test -s data/radar/seguimiento/seguimiento_temporal.json
+          test -s data/radar/seguimiento/prediccion_evolucion.json
           python - <<'PY'
           import json
           from pathlib import Path
-
-          p = Path(
-              ".climaar/estado_rma10.json"
-          )
-
-          d = json.loads(
-              p.read_text(
-                  encoding="utf-8"
-              )
-          )
-
-          print("=== ESTADO FINAL ===")
-
-          print(
-              "timestamp:",
-              d.get(
-                  "ultimo_radar_timestamp"
-              )
-          )
-
-          print(
-              "tracks:",
-              len(
-                  d.get(
-                      "tracks",
-                      []
-                  )
-              )
-          )
-
-          print(
-              "siguiente_track_id:",
-              d.get(
-                  "siguiente_track_id"
-              )
-          )
+          e=json.loads(Path('data/radar/seguimiento/estado.json').read_text(encoding='utf-8'))
+          s=json.loads(Path('data/radar/seguimiento/seguimiento_temporal.json').read_text(encoding='utf-8'))
+          print('Estado timestamp:',e.get('ultimo_radar_timestamp'))
+          print('Seguimiento timestamp:',s.get('radar_timestamp'))
+          print('Frames:',s.get('frames_reconstruidos'))
+          print('Movimiento:',s.get('nucleos_movimiento'))
+          if e.get('ultimo_radar_timestamp') != s.get('radar_timestamp'):
+              raise SystemExit('ERROR: estado y seguimiento no están sincronizados.')
           PY
 
       - name: Subir artefacto radar-rma10
