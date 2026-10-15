@@ -86,19 +86,6 @@ def number(value, default=0.0):
     return default
 
 
-def clamp(value, low, high):
-    return max(
-        low,
-        min(
-            high,
-            number(
-                value,
-                low
-            )
-        )
-    )
-
-
 def distance_km(
     lat1,
     lon1,
@@ -258,9 +245,7 @@ def get_dimensions(resultado):
     return width, height
 
 
-def get_current_position(
-    track
-):
+def get_current_position(track):
     history = track.get(
         "historial",
         []
@@ -334,19 +319,24 @@ def get_motion(track):
             0.0,
             0.0,
             0.0,
+            0.0,
         )
 
     previous = history[-2]
     current = history[-1]
 
-    if not isinstance(
-        previous,
-        dict
-    ) or not isinstance(
-        current,
-        dict
+    if (
+        not isinstance(
+            previous,
+            dict
+        )
+        or not isinstance(
+            current,
+            dict
+        )
     ):
         return (
+            0.0,
             0.0,
             0.0,
             0.0,
