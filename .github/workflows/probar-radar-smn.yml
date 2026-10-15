@@ -107,7 +107,12 @@ jobs:
 
       - name: Procesar radar
         run: |
-          python scripts/procesar_radar.py
+          python scripts/procesador_radar.py
+
+          test -s data/radar/resultado_procesamiento.json
+
+          echo "Resultado de procesamiento generado correctamente."
+          ls -lh data/radar/resultado_procesamiento.json
 
       - name: Seguimiento temporal
         run: |
@@ -158,12 +163,14 @@ jobs:
               tracks = d.get("tracks", [])
 
               activos = [
-                  t for t in tracks
+                  t
+                  for t in tracks
                   if t.get("activo")
               ]
 
               mov = [
-                  t for t in activos
+                  t
+                  for t in activos
                   if t.get("velocidad_pixeles_min", 0) > 0
               ]
 
