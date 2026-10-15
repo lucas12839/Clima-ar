@@ -64,7 +64,6 @@ jobs:
               -n radar-rma10 \
               -D "/tmp/radar_artifacts/$run_id" \
               2>/dev/null || true
-
           done < /tmp/radar_runs.txt
 
           find /tmp/radar_artifacts \
@@ -154,6 +153,7 @@ jobs:
               d = json.loads(p.read_text())
 
               tracks = d.get("tracks", [])
+
               activos = [
                   t for t in tracks
                   if t.get("activo")
@@ -168,6 +168,7 @@ jobs:
               print("tracks:", len(tracks))
               print("activos:", len(activos))
               print("con movimiento:", len(mov))
+          PY
 
       - name: Persistir estado y máscara
         run: |
