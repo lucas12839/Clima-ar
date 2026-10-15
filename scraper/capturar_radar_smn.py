@@ -200,13 +200,51 @@ def extraer_urls_rma10(page):
     return list(unicos.values())
 
 
+def leer_timestamp_utc(value):
+    if not value:
+        return None
+
+    try:
+        texto = str(value).strip()
+
+        if texto.endswith("Z"):
+            texto = texto[:-1] + "+00:00"
+
+        dt = datetime.fromisoformat(texto)
+
+        if dt.tzinfo is None:
+            dt = dt.replace(
+                tzinfo=timezone.utc
+            )
+
+        return dt.astimezone(
+            timezone.utc
+        )
+
+    except Exception:
+        return None
+
+
 def timestamp_persistido():
     """
-    Devuelve el ultimo timestamp RMA10 aceptado,
-    siempre expresado en UTC.
+    Obtiene el ultimo frame RMA10 realmente aceptado.
+
+    IMPORTANTE:
+    - No usa archivos historicos para decidir el ultimo frame.
+    - Ignora timestamps futuros.
+    - Prioriza el estado persistente y radar_timestamp.txt.
     """
 
     candidatos = []
+
+    ahora = datetime.now(timezone.utc)
+
+    limite_futuro = (
+        ahora
+        + timedelta(
+            minutes=MAX_FUTURE_SKEW_MINUTES
+        )
+    )
 
     for path in (
         PERSISTENT_STATE,
@@ -226,26 +264,13 @@ def timestamp_persistido():
                 "ultimo_radar_timestamp"
             )
 
-            if value:
-                texto = str(value).replace(
-                    "Z",
-                    "+00:00"
-                )
+            dt = leer_timestamp_utc(value)
 
-                dt = datetime.fromisoformat(
-                    texto
-                )
+            if dt is None:
+                continue
 
-                if dt.tzinfo is None:
-                    dt = dt.replace(
-                        tzinfo=timezone.utc
-                    )
-
-                candidatos.append(
-                    dt.astimezone(
-                        timezone.utc
-                    )
-                )
+            if dt <= limite_futuro:
+                candidatos.append(dt)
 
         except Exception:
             pass
@@ -256,41 +281,13 @@ def timestamp_persistido():
                 encoding="utf-8"
             ).strip()
 
-            texto = texto.replace(
-                "Z",
-                "+00:00"
-            )
+            dt = leer_timestamp_utc(texto)
 
-            dt = datetime.fromisoformat(
-                texto
-            )
-
-            if dt.tzinfo is None:
-                dt = dt.replace(
-                    tzinfo=timezone.utc
-                )
-
-            candidatos.append(
-                dt.astimezone(
-                    timezone.utc
-                )
-            )
-
-        except Exception:
-            pass
-
-    for archivo in HIST.glob(
-        "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].png"
-    ):
-        try:
-            dt = datetime.strptime(
-                archivo.stem,
-                "%Y%m%d%H%M%S"
-            ).replace(
-                tzinfo=timezone.utc
-            )
-
-            candidatos.append(dt)
+            if (
+                dt is not None
+                and dt <= limite_futuro
+            ):
+                candidatos.append(dt)
 
         except Exception:
             pass
@@ -419,13 +416,19 @@ def migrar_objeto_timestamps(obj):
     }
 
     if isinstance(obj, dict):
+
         for key, value in list(obj.items()):
 
             if key in claves_radar:
+
                 if isinstance(value, str):
-                    obj[key] = migrar_iso_legacy(value)
+
+                    obj[key] = migrar_iso_legacy(
+                        value
+                    )
 
                 elif isinstance(value, list):
+
                     obj[key] = [
                         migrar_iso_legacy(item)
                         if isinstance(item, str)
@@ -434,25 +437,35 @@ def migrar_objeto_timestamps(obj):
                     ]
 
             else:
-                migrar_objeto_timestamps(value)
+
+                migrar_objeto_timestamps(
+                    value
+                )
 
     elif isinstance(obj, list):
+
         for item in obj:
-            migrar_objeto_timestamps(item)
+            migrar_objeto_timestamps(
+                item
+            )
 
 
 def migrar_json_legacy(path):
+
     if not path.exists():
         return False
 
     try:
+
         data = json.loads(
             path.read_text(
                 encoding="utf-8"
             )
         )
 
-        migrar_objeto_timestamps(data)
+        migrar_objeto_timestamps(
+            data
+        )
 
         path.write_text(
             json.dumps(
@@ -466,6 +479,7 @@ def migrar_json_legacy(path):
         return True
 
     except Exception as exc:
+
         print(
             f"AVISO: no se pudo migrar "
             f"{path}: {exc}"
@@ -475,6 +489,7 @@ def migrar_json_legacy(path):
 
 
 def migrar_historico_legacy():
+
     if MIGRATION_MARKER.exists():
         return
 
@@ -518,8 +533,11 @@ def migrar_historico_legacy():
 
         if destino.exists():
             archivo.unlink()
+
         else:
-            archivo.rename(destino)
+            archivo.rename(
+                destino
+            )
 
         renombrados += 1
 
@@ -534,6 +552,7 @@ def migrar_historico_legacy():
     migrados = 0
 
     for path in archivos_json:
+
         if migrar_json_legacy(path):
             migrados += 1
 
@@ -595,6 +614,7 @@ def main():
                     respuestas_radar = []
 
                     def capturar_respuesta(response):
+
                         url = response.url
 
                         if (
@@ -603,10 +623,13 @@ def main():
                         ):
 
                             timestamp = (
-                                timestamp_from_url(url)
+                                timestamp_from_url(
+                                    url
+                                )
                             )
 
                             if timestamp:
+
                                 respuestas_radar.append(
                                     (
                                         timestamp,
@@ -640,10 +663,13 @@ def main():
                         selects.count()
                     ):
 
-                        select = selects.nth(index)
+                        select = selects.nth(
+                            index
+                        )
 
                         try:
                             texto = select.inner_text()
+
                         except Exception:
                             continue
 
@@ -654,10 +680,12 @@ def main():
                             or
                             "RMA10" in texto
                         ):
+
                             selector = select
                             break
 
                     if selector is None:
+
                         raise RuntimeError(
                             "No se encontro selector "
                             "RMA10 en SINARAME"
@@ -673,15 +701,19 @@ def main():
                         opciones.count()
                     ):
 
-                        option = opciones.nth(index)
+                        option = opciones.nth(
+                            index
+                        )
 
                         texto = (
                             option.inner_text()
                             .strip()
                         )
 
-                        valor = option.get_attribute(
-                            "value"
+                        valor = (
+                            option.get_attribute(
+                                "value"
+                            )
                         )
 
                         if (
@@ -691,10 +723,12 @@ def main():
                             or
                             "RMA10" in texto
                         ):
+
                             value = valor
                             break
 
                     if value is None:
+
                         raise RuntimeError(
                             "No se encontro Bahia Blanca "
                             "RMA10 en SINARAME"
@@ -727,7 +761,9 @@ def main():
                     for (
                         timestamp,
                         url
-                    ) in extraer_urls_rma10(page):
+                    ) in extraer_urls_rma10(
+                        page
+                    ):
 
                         candidatos.append(
                             (
@@ -738,6 +774,7 @@ def main():
                         )
 
                     if not candidatos:
+
                         raise RuntimeError(
                             "SINARAME no expuso "
                             "ninguna URL RMA10 PNG"
@@ -747,7 +784,9 @@ def main():
 
                     for item in candidatos:
 
-                        timestamp, url, response = item
+                        timestamp, url, response = (
+                            item
+                        )
 
                         unicos[
                             (timestamp, url)
@@ -813,9 +852,11 @@ def main():
                         )
 
                     if not candidatos_validos:
+
                         raise RuntimeError(
                             "SINARAME solo entrego "
-                            "frames futuros o invalidos."
+                            "frames futuros "
+                            "o invalidos."
                         )
 
                     for (
@@ -870,14 +911,22 @@ def main():
                         f"{edad:.1f} minutos"
                     )
 
-                    if edad < -MAX_FUTURE_SKEW_MINUTES:
+                    if (
+                        edad
+                        < -MAX_FUTURE_SKEW_MINUTES
+                    ):
+
                         raise RuntimeError(
                             "Timestamp RMA10 "
                             "futuro o invalido: "
                             f"{timestamp}"
                         )
 
-                    if edad > MAX_RADAR_AGE_MINUTES:
+                    if (
+                        edad
+                        > MAX_RADAR_AGE_MINUTES
+                    ):
+
                         raise RuntimeError(
                             "SINARAME NO TIENE "
                             "UN RMA10 ACTUALIZADO: "
@@ -891,9 +940,14 @@ def main():
 
                         data = response.body()
 
-                        ok, detail = validar_png(data)
+                        ok, detail = (
+                            validar_png(
+                                data
+                            )
+                        )
 
                         if not ok:
+
                             data, detail = (
                                 descargar_imagen(
                                     page,
@@ -979,12 +1033,17 @@ def main():
                         f"Fallo: {exc}"
                     )
 
-                    if intento < MAX_RETRIES:
+                    if (
+                        intento
+                        < MAX_RETRIES
+                    ):
+
                         time.sleep(4)
 
             page.screenshot(
                 path=str(
-                    OUT / "error_rma10.png"
+                    OUT /
+                    "error_rma10.png"
                 ),
                 full_page=True
             )
@@ -998,6 +1057,7 @@ def main():
             )
 
         finally:
+
             browser.close()
 
 
