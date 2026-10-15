@@ -13,7 +13,9 @@ SALIDA = SEGUIMIENTO / "seguimiento_temporal.json"
 SCHEMA_VERSION = 6
 
 MIN_INTERVALO = 2.0
-MAX_INTERVALO = 30.0
+MAX_INTERVALO = 60.0
+# Permite recuperar continuidad cuando SINARAME salta uno o varios frames.
+# No inventa movimiento: la asociación sigue dependiendo de la compatibilidad.
 
 # Matching adaptativo para radar RMA10.
 # El valor anterior de 45 px era demasiado restrictivo para frames
