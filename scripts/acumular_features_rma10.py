@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import csv
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 ROOT = Path(".")
 RADAR_DIR = ROOT / "data" / "radar"
+
 RESULTADO = RADAR_DIR / "resultado_procesamiento.json"
 NOWCAST = RADAR_DIR / "radar_nowcast.json"
 TIMESTAMP_FILE = RADAR_DIR / "radar_timestamp.txt"
 OUT = RADAR_DIR / "radar_features_rma10.csv"
 
 MAX_ROWS = 4320
-
 
 FIELDS = [
     "frame_time",
@@ -30,7 +31,10 @@ FIELDS = [
     "fortalecimiento",
     "cambio_area_pct",
     "velocidad_pixeles_min",
+    "velocidad_kmh",
     "direccion_grados",
+    "rumbo_bahia_grados",
+    "error_rumbo_bahia_grados",
     "movimiento_hacia_bahia",
     "movimiento_hacia_centro_dominio",
     "eta_minutos",
@@ -39,14 +43,14 @@ FIELDS = [
     "nucleos_intensidad_4",
     "nucleos_intensidad_5",
     "nucleos_intensidad_6",
+    "nucleos_georreferenciados",
+    "nucleos_hacia_bahia",
 ]
 
 
 def leer_json(path: Path) -> dict:
     if not path.exists():
         return {}
-
-    import json
 
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -137,26 +141,54 @@ def construir_fila():
     frame_time, frame_dt = obtener_timestamp()
     nowcast = obtener_nowcast()
 
-    nucleos = nowcast.get("nucleos", [])
+    nucleos = nowcast.get("nucleos_georreferenciados")
+
+    if not isinstance(nucleos, list):
+        nucleos = nowcast.get("nucleos", [])
 
     if not isinstance(nucleos, list):
         nucleos = []
 
     intensidades = []
+    nucleos_hacia_bahia = 0
 
     for nucleo in nucleos:
         if not isinstance(nucleo, dict):
             continue
 
-        intensidad = nucleo.get("intensidad")
-
         try:
-            intensidad = int(float(intensidad))
+            intensidad = int(float(nucleo.get("intensidad", 0)))
         except (TypeError, ValueError):
-            continue
+            intensidad = 0
 
         if 0 <= intensidad <= 6:
             intensidades.append(intensidad)
+
+        movimiento_bahia = nucleo.get(
+            "movimiento_bahia",
+            {}
+        )
+
+        if isinstance(movimiento_bahia, dict):
+            if booleano(
+                movimiento_bahia.get(
+                    "movimiento_hacia_bahia"
+                )
+            ):
+                nucleos_hacia_bahia += 1
+
+    bahia = nowcast.get("bahia_blanca", {})
+    if not isinstance(bahia, dict):
+        bahia = {}
+
+    velocidad_kmh = numero(
+        nowcast.get("velocidad_kmh")
+    )
+
+    if velocidad_kmh == "":
+        velocidad_kmh = numero(
+            nowcast.get("velocidad_pixeles_min")
+        )
 
     row = {
         "frame_time": frame_time,
@@ -194,8 +226,17 @@ def construir_fila():
         "velocidad_pixeles_min": numero(
             nowcast.get("velocidad_pixeles_min")
         ),
+        "velocidad_kmh": velocidad_kmh,
         "direccion_grados": numero(
             nowcast.get("direccion_grados")
+        ),
+        "rumbo_bahia_grados": numero(
+            nowcast.get("rumbo_bahia_grados")
+        ),
+        "error_rumbo_bahia_grados": numero(
+            nowcast.get(
+                "error_rumbo_bahia_grados"
+            )
         ),
         "movimiento_hacia_bahia": booleano(
             nowcast.get("movimiento_hacia_bahia")
@@ -220,6 +261,34 @@ def construir_fila():
         ),
         "nucleos_intensidad_6": sum(
             1 for x in intensidades if x >= 6
+        ),
+        "nucleos_georreferenciados": entero(
+            nowcast.get(
+                "resumen_nucleos",
+                {}
+            ).get(
+                "total_georreferenciados",
+                len(nucleos)
+            )
+            if isinstance(
+                nowcast.get("resumen_nucleos", {}),
+                dict
+            )
+            else len(nucleos)
+        ),
+        "nucleos_hacia_bahia": entero(
+            nowcast.get(
+                "resumen_nucleos",
+                {}
+            ).get(
+                "hacia_bahia",
+                nucleos_hacia_bahia
+            )
+            if isinstance(
+                nowcast.get("resumen_nucleos", {}),
+                dict
+            )
+            else nucleos_hacia_bahia
         ),
     }
 
@@ -278,6 +347,11 @@ def main():
             "No existe resultado_procesamiento.json"
         )
 
+    if not NOWCAST.exists():
+        raise RuntimeError(
+            "No existe radar_nowcast.json"
+        )
+
     row = construir_fila()
 
     existentes = cargar_existentes()
@@ -300,6 +374,16 @@ def main():
 
     print(
         f"Frame: {row['frame_utc']}"
+    )
+
+    print(
+        f"Georreferenciados: "
+        f"{row['nucleos_georreferenciados']}"
+    )
+
+    print(
+        f"Hacia Bahía: "
+        f"{row['nucleos_hacia_bahia']}"
     )
 
 
