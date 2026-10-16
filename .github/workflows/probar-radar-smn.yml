@@ -8,7 +8,9 @@ permissions:
   actions: read
 
 jobs:
+
   radar:
+
     runs-on: ubuntu-latest
 
     steps:
@@ -22,11 +24,13 @@ jobs:
         with:
           fetch-depth: 1
 
+
       # ============================================================
       # 2. DIRECTORIOS
       # ============================================================
 
       - name: Preparar directorios
+        shell: bash
         run: |
           set -e
 
@@ -35,11 +39,13 @@ jobs:
           mkdir -p data/radar/seguimiento
           mkdir -p data/radar/mascaras
 
+
       # ============================================================
       # 3. DEPENDENCIAS
       # ============================================================
 
       - name: Instalar dependencias
+        shell: bash
         run: |
           set -e
 
@@ -58,6 +64,7 @@ jobs:
 
           playwright install --with-deps chromium
 
+
       # ============================================================
       # 4. BUSCAR ÚLTIMO WORKFLOW EXITOSO
       # ============================================================
@@ -70,23 +77,25 @@ jobs:
         run: |
           set -e
 
-          RUN_ID=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/probar-radar-smn.yml/runs?status=success&per_page=10" \
-            --jq '.workflow_runs
-              | map(select(.id != '\"${GITHUB_RUN_ID}\"'))
-              | .[0].id // empty')
+          RUN_ID="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/probar-radar-smn.yml/runs?status=success&per_page=20" \
+              --jq '.workflow_runs
+                | map(select(.id != '${GITHUB_RUN_ID}'))
+                | .[0].id // empty'
+          )"
 
           if [ -z "$RUN_ID" ]; then
-            echo "No hay workflow exitoso anterior."
+            echo "No existe un workflow exitoso anterior."
             echo "run_id=" >> "$GITHUB_OUTPUT"
-            exit 0
+          else
+            echo "Último workflow exitoso: $RUN_ID"
+            echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "Último workflow exitoso: $RUN_ID"
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
 
       # ============================================================
-      # 5. RECUPERAR HISTORIAL ANTERIOR
+      # 5. DESCARGAR HISTORIAL ANTERIOR
       # ============================================================
 
       - name: Descargar historial anterior
@@ -100,8 +109,9 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.ultimo_run.outputs.run_id }}
 
+
       # ============================================================
-      # 6. RESTAURAR HISTORIAL
+      # 6. RESTAURAR HISTORIAL ANTERIOR
       # ============================================================
 
       - name: Integrar historial anterior
@@ -111,14 +121,15 @@ jobs:
 
           if [ -d "/tmp/radar_anterior/historico" ]; then
 
-            cp -f \
-              /tmp/radar_anterior/historico/*.png \
-              data/radar/historico/ \
-              2>/dev/null || true
+            find /tmp/radar_anterior/historico \
+              -maxdepth 1 \
+              -type f \
+              -name "*.png" \
+              -exec cp -f {} data/radar/historico/ \;
 
           fi
 
-          if [ ! -f "data/radar/seguimiento/estado.json" ] &&
+          if [ ! -f "data/radar/seguimiento/estado.json" ] && \
              [ -f "/tmp/radar_anterior/seguimiento/estado.json" ]; then
 
             cp -f \
@@ -127,7 +138,7 @@ jobs:
 
           fi
 
-          echo "Historial recuperado:"
+          echo "Historial disponible:"
 
           find data/radar/historico \
             -maxdepth 1 \
@@ -136,24 +147,78 @@ jobs:
             | sort \
             | tail -20
 
+
       # ============================================================
-      # 7. CAPTURAR RADAR
+      # 7. CAPTURAR RMA10
       # ============================================================
 
       - name: Capturar radar RMA10
         id: captura
         timeout-minutes: 8
+        shell: bash
         run: |
           set -e
 
           python scraper/capturar_radar_smn.py
 
+
       # ============================================================
-      # 8. VERIFICAR CAPTURA
+      # 8. DETERMINAR SI HAY FRAME NUEVO
       # ============================================================
 
-      - name: Verificar captura
+      - name: Determinar estado de captura
+        id: frame
         if: steps.captura.outcome == 'success'
+        shell: bash
+        run: |
+          set -e
+
+          STATUS="data/radar/captura_estado.txt"
+
+          if [ ! -f "$STATUS" ]; then
+            echo "ERROR: falta captura_estado.txt"
+            exit 1
+          fi
+
+          echo "======================================"
+          echo "ESTADO DE CAPTURA"
+          echo "======================================"
+
+          cat "$STATUS"
+
+          if grep -q "^NUEVO" "$STATUS"; then
+
+            echo "new_frame=true" >> "$GITHUB_OUTPUT"
+
+            echo ""
+            echo "FRAME NUEVO."
+            echo "Continúa el procesamiento."
+
+          elif grep -q "^SIN_CAMBIO" "$STATUS"; then
+
+            echo "new_frame=false" >> "$GITHUB_OUTPUT"
+
+            echo ""
+            echo "SIN CAMBIO."
+            echo "Se conserva el radar actual."
+            echo "No se reprocesará."
+
+          else
+
+            echo "ERROR: estado de captura desconocido."
+            exit 1
+
+          fi
+
+
+      # ============================================================
+      # 9. VERIFICAR FRAME NUEVO
+      # ============================================================
+
+      - name: Verificar captura nueva
+        if: >
+          steps.captura.outcome == 'success' &&
+          steps.frame.outputs.new_frame == 'true'
         shell: bash
         run: |
           set -e
@@ -161,57 +226,76 @@ jobs:
           test -f data/radar/actual.png
           test -f data/radar/radar_timestamp.txt
 
-          COUNT=$(find data/radar/historico \
-            -maxdepth 1 \
-            -type f \
-            -name "*.png" \
-            | wc -l)
+          COUNT=$(
+            find data/radar/historico \
+              -maxdepth 1 \
+              -type f \
+              -name "*.png" \
+              | wc -l
+          )
 
           echo "Frames históricos: $COUNT"
 
           if [ "$COUNT" -lt 3 ]; then
+
             echo "ERROR: menos de 3 frames históricos."
+
             exit 1
+
           fi
 
+
       # ============================================================
-      # 9. MÁSCARA ESTÁTICA
+      # 10. GENERAR MÁSCARA ESTÁTICA
       # ============================================================
 
       - name: Generar máscara estática
-        if: steps.captura.outcome == 'success'
+        if: >
+          steps.frame.outputs.new_frame == 'true'
         timeout-minutes: 3
+        shell: bash
         run: |
           set -e
 
           python scripts/generar_mascara_estatica.py
 
+
       # ============================================================
-      # 10. PROCESAR RADAR
+      # 11. PROCESAR RADAR
       # ============================================================
 
       - name: Procesar radar
-        if: steps.captura.outcome == 'success'
+        if: >
+          steps.frame.outputs.new_frame == 'true'
         timeout-minutes: 3
+        shell: bash
         run: |
           set -e
 
           python scripts/procesador_radar.py
 
+
       # ============================================================
-      # 11. VERIFICAR CONTINUIDAD
+      # 12. VERIFICAR CONTINUIDAD
       # ============================================================
 
       - name: Verificar continuidad
         id: continuidad
-        if: steps.captura.outcome == 'success'
+        if: >
+          steps.frame.outputs.new_frame == 'true'
         shell: bash
         run: |
+
+          set -e
+
           python - <<'PY'
+
           import json
           import os
+
           from pathlib import Path
           from datetime import datetime, timezone
+
 
           estado_path = Path(
               "data/radar/seguimiento/estado.json"
@@ -221,23 +305,39 @@ jobs:
               "data/radar/radar_timestamp.txt"
           )
 
-          salida = os.environ["GITHUB_OUTPUT"]
+          salida = os.environ[
+              "GITHUB_OUTPUT"
+          ]
+
 
           def parse_ts(value):
+
               if not value:
                   return None
 
-              value = str(value).strip()
+              value = str(
+                  value
+              ).strip()
 
               if value.endswith("Z"):
-                  value = value[:-1] + "+00:00"
+
+                  value = (
+                      value[:-1]
+                      + "+00:00"
+                  )
 
               try:
-                  dt = datetime.fromisoformat(value)
+
+                  dt = datetime.fromisoformat(
+                      value
+                  )
+
               except Exception:
+
                   return None
 
               if dt.tzinfo is None:
+
                   dt = dt.replace(
                       tzinfo=timezone.utc
                   )
@@ -246,11 +346,15 @@ jobs:
                   timezone.utc
               )
 
+
           estado_ts = None
           radar_ts = None
 
+
           if estado_path.exists():
+
               try:
+
                   data = json.loads(
                       estado_path.read_text(
                           encoding="utf-8"
@@ -264,25 +368,34 @@ jobs:
                   )
 
               except Exception as exc:
+
                   print(
                       "Aviso estado.json:",
                       exc
                   )
 
+
           if radar_path.exists():
+
               radar_ts = parse_ts(
                   radar_path.read_text(
                       encoding="utf-8"
                   )
               )
 
-          print("Estado:", estado_ts)
-          print("Radar :", radar_ts)
+
+          print(
+              "Estado:",
+              estado_ts
+          )
+
+          print(
+              "Radar:",
+              radar_ts
+          )
+
 
           if radar_ts is None:
-              print(
-                  "ERROR: timestamp radar inválido."
-              )
 
               Path(
                   "data/radar/continuidad.txt"
@@ -296,101 +409,133 @@ jobs:
                   "a",
                   encoding="utf-8"
               ) as f:
+
                   f.write(
                       "accepted=false\n"
                   )
 
+              print(
+                  "ERROR: timestamp radar inválido."
+              )
+
               raise SystemExit(0)
 
+
           if estado_ts is None:
+
+              accepted = True
+
               print(
                   "Sin estado anterior."
               )
+
               print(
                   "Radar aceptado como inicio."
               )
 
-              accepted = True
-
           else:
+
               intervalo = (
-                  radar_ts - estado_ts
+                  radar_ts -
+                  estado_ts
               ).total_seconds() / 60.0
 
               print(
                   f"Intervalo: {intervalo:.1f} min"
               )
 
+
               if intervalo <= 0:
-                  print(
-                      "RADAR DESCARTADO: "
-                      "repetido o atrasado."
-                  )
+
                   accepted = False
+
+                  print(
+                      "RADAR DESCARTADO:"
+                      " repetido o atrasado."
+                  )
 
                   Path(
                       "data/radar/FRAME_DESCARTADO.txt"
                   ).write_text(
                       (
                           "Radar descartado.\n"
-                          f"Estado: {estado_ts.isoformat()}\n"
-                          f"Radar: {radar_ts.isoformat()}\n"
-                          f"Intervalo: {intervalo:.1f} min\n"
+                          f"Estado: "
+                          f"{estado_ts.isoformat()}\n"
+                          f"Radar: "
+                          f"{radar_ts.isoformat()}\n"
+                          f"Intervalo: "
+                          f"{intervalo:.1f} min\n"
                       ),
                       encoding="utf-8"
                   )
 
               else:
+
                   accepted = True
+
 
           Path(
               "data/radar/continuidad.txt"
           ).write_text(
-              f"accepted={'true' if accepted else 'false'}\n",
+              (
+                  "accepted="
+                  + (
+                      "true"
+                      if accepted
+                      else
+                      "false"
+                  )
+                  + "\n"
+              ),
               encoding="utf-8"
           )
+
 
           with open(
               salida,
               "a",
               encoding="utf-8"
           ) as f:
+
               f.write(
-                  f"accepted={'true' if accepted else 'false'}\n"
+                  "accepted="
+                  + (
+                      "true"
+                      if accepted
+                      else
+                      "false"
+                  )
+                  + "\n"
               )
+
 
           print(
               "Continuidad aceptada:",
               accepted
           )
+
           PY
 
+
       # ============================================================
-      # 12. PREPARAR HISTORIAL PARA TRACKING
-      #
-      # Acepta:
-      #   YYYYMMDDHHMMSS.png
-      #
-      # También acepta:
-      #   YYYYMMDD_HHMMSS.png
-      #
-      # Así no perdemos históricos antiguos.
-      #
-      # Máximo 6 frames.
-      # Máximo 60 minutos entre frames consecutivos.
+      # 13. PREPARAR HISTORIAL CONTINUO
       # ============================================================
 
       - name: Preparar historial continuo
-        id: preparar_tracking
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: >
+          steps.continuidad.outputs.accepted == 'true'
         shell: bash
         run: |
+
           set -e
 
           python - <<'PY'
+
           from pathlib import Path
           from datetime import datetime, timezone
+
           import shutil
+
 
           HIST = Path(
               "data/radar/historico"
@@ -405,29 +550,41 @@ jobs:
               exist_ok=True
           )
 
+
           ts_file = Path(
               "data/radar/radar_timestamp.txt"
           )
+
 
           raw = ts_file.read_text(
               encoding="utf-8"
           ).strip()
 
+
           if raw.endswith("Z"):
-              raw = raw[:-1] + "+00:00"
+
+              raw = (
+                  raw[:-1]
+                  + "+00:00"
+              )
+
 
           radar_ts = datetime.fromisoformat(
               raw
           )
 
+
           if radar_ts.tzinfo is None:
+
               radar_ts = radar_ts.replace(
                   tzinfo=timezone.utc
               )
 
+
           radar_ts = radar_ts.astimezone(
               timezone.utc
           )
+
 
           def parse_filename(path):
 
@@ -439,23 +596,33 @@ jobs:
               )
 
               for formato in formatos:
+
                   try:
+
                       return datetime.strptime(
                           name,
                           formato
                       ).replace(
                           tzinfo=timezone.utc
                       )
+
                   except ValueError:
+
                       pass
 
               return None
 
+
           frames = []
 
-          for path in HIST.glob("*.png"):
 
-              stamp = parse_filename(path)
+          for path in HIST.glob(
+              "*.png"
+          ):
+
+              stamp = parse_filename(
+                  path
+              )
 
               if stamp is None:
                   continue
@@ -464,33 +631,45 @@ jobs:
                   continue
 
               frames.append(
-                  (stamp, path)
+                  (
+                      stamp,
+                      path
+                  )
               )
+
 
           frames.sort(
               key=lambda x: x[0],
               reverse=True
           )
 
+
           seleccionados = []
 
           anterior = radar_ts
 
+
           for stamp, path in frames:
 
               diferencia = (
-                  anterior - stamp
+                  anterior -
+                  stamp
               ).total_seconds() / 60.0
+
 
               if diferencia < 0:
                   continue
 
+
               if diferencia > 60:
+
                   print(
                       "CORTE:",
                       f"{diferencia:.1f} min"
                   )
+
                   break
+
 
               seleccionados.append(
                   path
@@ -498,41 +677,54 @@ jobs:
 
               anterior = stamp
 
-              if len(seleccionados) >= 6:
+
+              if len(
+                  seleccionados
+              ) >= 6:
+
                   break
+
 
           usados = {
               p.resolve()
               for p in seleccionados
           }
 
+
           print()
           print(
               "Frames seleccionados:"
           )
 
-          for p in reversed(
+
+          for path in reversed(
               seleccionados
           ):
+
               print(
                   " ",
-                  p.name
+                  path.name
               )
+
 
           print(
               "Total:",
               len(seleccionados)
           )
 
-          # Guardar los que no serán usados.
+
           for stamp, path in frames:
 
               if path.resolve() in usados:
                   continue
 
-              destino = BACKUP / path.name
+              destino = (
+                  BACKUP /
+                  path.name
+              )
 
               if destino.exists():
+
                   destino.unlink()
 
               shutil.move(
@@ -540,48 +732,58 @@ jobs:
                   str(destino)
               )
 
+
           print(
-              "Historial listo para tracking."
+              "Historial listo."
           )
+
           PY
 
+
       # ============================================================
-      # 13. TRACKING
+      # 14. SEGUIMIENTO TEMPORAL
       # ============================================================
 
       - name: Seguimiento temporal
         id: seguimiento
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: >
+          steps.continuidad.outputs.accepted == 'true'
         timeout-minutes: 4
+        shell: bash
         run: |
           set -e
 
           python seguimiento_temporal.py
 
+
       # ============================================================
-      # 14. RESTAURAR HISTORIAL
+      # 15. RESTAURAR HISTORIAL
       # ============================================================
 
       - name: Restaurar historial
         if: always()
         shell: bash
         run: |
+
           set +e
 
           if [ -d "data/radar/historico_tracking_backup" ]; then
 
-            cp -f \
-              data/radar/historico_tracking_backup/*.png \
-              data/radar/historico/ \
-              2>/dev/null || true
+            find \
+              data/radar/historico_tracking_backup \
+              -maxdepth 1 \
+              -type f \
+              -name "*.png" \
+              -exec cp -f {} data/radar/historico/ \;
 
           fi
 
           rm -rf \
             data/radar/historico_tracking_backup
 
+
       # ============================================================
-      # 15. ML
+      # 16. MACHINE LEARNING
       # ============================================================
 
       - name: Predicción ML
@@ -589,13 +791,15 @@ jobs:
           steps.continuidad.outputs.accepted == 'true' &&
           steps.seguimiento.outcome == 'success'
         timeout-minutes: 5
+        shell: bash
         run: |
           set -e
 
           python scripts/prediccion_rma10_ml.py
 
+
       # ============================================================
-      # 16. EVOLUCIÓN
+      # 17. EVOLUCIÓN
       # ============================================================
 
       - name: Predicción de evolución
@@ -603,131 +807,181 @@ jobs:
           steps.continuidad.outputs.accepted == 'true' &&
           steps.seguimiento.outcome == 'success'
         timeout-minutes: 5
+        shell: bash
         run: |
           set -e
 
           python scripts/prediccion_evolucion.py
 
+
       # ============================================================
-      # 17. MOSTRAR RESULTADOS
+      # 18. MOSTRAR RESULTADOS
       # ============================================================
 
       - name: Resumen final
         if: always()
         shell: bash
         run: |
+
           echo ""
-          echo "======================================"
+          echo "=========================================="
           echo "       RESULTADO CLIMAAR RMA10"
-          echo "======================================"
+          echo "=========================================="
+          echo ""
+
+          if [ -f data/radar/captura_estado.txt ]; then
+
+            echo "CAPTURA:"
+            cat data/radar/captura_estado.txt
+
+          fi
+
           echo ""
 
           if [ -f data/radar/radar_timestamp.txt ]; then
-            echo "Radar:"
+
+            echo "RADAR:"
             cat data/radar/radar_timestamp.txt
+
           fi
 
           echo ""
 
           if [ -f data/radar/continuidad.txt ]; then
-            echo "Continuidad:"
+
+            echo "CONTINUIDAD:"
             cat data/radar/continuidad.txt
+
           fi
 
           echo ""
 
           if [ -f data/radar/resultado_procesamiento.json ]; then
-            echo "Procesamiento:"
+
+            echo "PROCESAMIENTO:"
+
             python - <<'PY'
+
           import json
 
-          path = "data/radar/resultado_procesamiento.json"
+          path = (
+              "data/radar/"
+              "resultado_procesamiento.json"
+          )
 
           try:
-              data = json.load(
-                  open(
-                      path,
-                      encoding="utf-8"
-                  )
-              )
+
+              with open(
+                  path,
+                  encoding="utf-8"
+              ) as f:
+
+                  data = json.load(f)
 
               print(
                   "Núcleos:",
                   data.get(
-                      "nucleos_detectados"
+                      "nucleos_detectados",
+                      0
                   )
               )
 
               print(
-                  "Dinámicos:",
+                  "Núcleos dinámicos:",
                   data.get(
-                      "pixeles_dinamicos"
+                      "nucleos_dinamicos",
+                      0
                   )
               )
 
               print(
                   "Estado:",
                   data.get(
-                      "estado_general"
+                      "estado_general",
+                      "N/D"
                   )
               )
 
           except Exception as exc:
+
               print(
-                  "No se pudo leer:",
+                  "No se pudo leer resultado:",
                   exc
               )
+
           PY
+
           fi
 
-      # ============================================================
-      # 18. GUARDAR ESTADO EN GIT
-      # ============================================================
-
-      - name: Guardar resultados
-        if: always()
-        shell: bash
-        run: |
-          set +e
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add \
-            data/radar/actual.png \
-            data/radar/radar_timestamp.txt \
-            data/radar/resultado_procesamiento.json \
-            data/radar/continuidad.txt \
-            data/radar/FRAME_DESCARTADO.txt \
-            data/radar/mascara_ecos_estaticos.png \
-            data/radar/mascara_ecos_estaticos_confianza.png \
-            data/radar/mascara_ecos_estaticos.json \
-            data/radar/seguimiento \
-            .climaar/estado_rma10.json \
-            2>/dev/null
-
-          git commit \
-            -m "Actualizar radar RMA10 ClimaAR" \
-            2>/dev/null || true
-
-          git push \
-            2>/dev/null || true
 
       # ============================================================
-      # 19. ARTIFACTO LIVIANO
+      # 19. GUARDAR ARTIFACTO
       # ============================================================
 
-      - name: Guardar historial radar
+      - name: Guardar artefacto RMA10
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: radar-rma10
           path: |
-            data/radar/historico/
             data/radar/actual.png
             data/radar/radar_timestamp.txt
-            data/radar/resultado_procesamiento.json
+            data/radar/captura_estado.txt
             data/radar/continuidad.txt
-            data/radar/seguimiento/
+            data/radar/resultado_procesamiento.json
+            data/radar/mascara_ecos_estaticos.png
+            data/radar/mascara_ecos_estaticos.json
+            data/radar/mascara_ecos_estaticos_confianza.png
+            data/radar/historico/*.png
+            data/radar/seguimiento/**
           if-no-files-found: ignore
           retention-days: 7
+
+
+      # ============================================================
+      # 20. GUARDAR CAMBIOS IMPORTANTES EN GITHUB
+      # ============================================================
+
+      - name: Guardar estado en repositorio
+        if: >
+          steps.frame.outputs.new_frame == 'true'
+        shell: bash
+        run: |
+
+          set +e
+
+          git config user.name \
+            "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+
+          git add \
+            data/radar/actual.png \
+            data/radar/radar_timestamp.txt \
+            data/radar/captura_estado.txt \
+            data/radar/continuidad.txt \
+            data/radar/resultado_procesamiento.json \
+            data/radar/mascara_ecos_estaticos.png \
+            data/radar/mascara_ecos_estaticos.json \
+            data/radar/mascara_ecos_estaticos_confianza.png \
+            data/radar/seguimiento/estado.json
+
+
+          git diff \
+            --cached \
+            --quiet
+
+          if [ "$?" -eq 0 ]; then
+
+            echo "No hay cambios para guardar."
+
+          else
+
+            git commit \
+              -m "Actualizar procesamiento RMA10"
+
+            git push
+
+          fi
