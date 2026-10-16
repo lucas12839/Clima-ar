@@ -9,10 +9,14 @@ SEGUIMIENTO = BASE / "seguimiento"
 ESTADO = SEGUIMIENTO / "estado.json"
 SALIDA = SEGUIMIENTO / "seguimiento_temporal.json"
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 MIN_INTERVALO = 2.0
 MAX_INTERVALO = 60.0
+MIN_DESPLAZAMIENTO_MOVIMIENTO = 1.0
+MIN_VELOCIDAD_RUMBO = 0.5
+UMBRAL_ACELERACION = 0.10
+UMBRAL_CAMBIO_RUMBO = 20.0
 
 MAX_DISTANCIA_BASE = 70.0
 MAX_DISTANCIA_SIN_OVERLAP = 85.0
@@ -1005,8 +1009,29 @@ def crear_track(
         "aceleracion_pixeles_min2":
             0.0,
 
+        "aceleracion_x_pixeles_min2":
+            0.0,
+
+        "aceleracion_y_pixeles_min2":
+            0.0,
+
+        "tendencia_aceleracion":
+            "SIN_COMPARACION",
+
         "cambio_rumbo_grados":
             0.0,
+
+        "cambio_rumbo_signado_grados":
+            0.0,
+
+        "cambio_rumbo_significativo":
+            False,
+
+        "tipo_cambio_rumbo":
+            "SIN_COMPARACION",
+
+        "rumbo_comparable":
+            False,
 
         "calidad_movimiento":
             "PRIMER_FRAME",
@@ -1088,7 +1113,14 @@ def nucleo_salida(
         "rumbo_grados",
         "direccion",
         "aceleracion_pixeles_min2",
+        "aceleracion_x_pixeles_min2",
+        "aceleracion_y_pixeles_min2",
+        "tendencia_aceleracion",
         "cambio_rumbo_grados",
+        "cambio_rumbo_signado_grados",
+        "cambio_rumbo_significativo",
+        "tipo_cambio_rumbo",
+        "rumbo_comparable",
         "calidad_movimiento",
         "cambio_area_porcentaje",
         "tendencia_area",
@@ -1137,8 +1169,43 @@ def actualizar_track(
         )
     )
 
+    anterior_velocidad_x = numero(
+        track.get(
+            "velocidad_x_pixeles_min",
+            0
+        )
+    )
+
+    anterior_velocidad_y = numero(
+        track.get(
+            "velocidad_y_pixeles_min",
+            0
+        )
+    )
+
     anterior_rumbo = track.get(
         "rumbo_grados"
+    )
+
+    historial_previo = track.get(
+        "historial",
+        []
+    )
+
+    if not isinstance(
+        historial_previo,
+        list
+    ):
+        historial_previo = []
+
+    movimiento_previo_valido = (
+        len(historial_previo) >= 2
+    )
+
+    intervalo_valido = (
+        MIN_INTERVALO
+        <= intervalo
+        <= MAX_INTERVALO
     )
 
     dx = (
@@ -1158,11 +1225,7 @@ def actualizar_track(
         dy
     )
 
-    if (
-        MIN_INTERVALO
-        <= intervalo
-        <= MAX_INTERVALO
-    ):
+    if intervalo_valido:
 
         velocidad = (
             desplazamiento
@@ -1182,11 +1245,28 @@ def actualizar_track(
             intervalo
         )
 
-        aceleracion = (
-            velocidad
-            -
-            anterior_velocidad
-        ) / intervalo
+        if movimiento_previo_valido:
+            aceleracion = (
+                velocidad
+                -
+                anterior_velocidad
+            ) / intervalo
+
+            aceleracion_x = (
+                velocidad_x
+                -
+                anterior_velocidad_x
+            ) / intervalo
+
+            aceleracion_y = (
+                velocidad_y
+                -
+                anterior_velocidad_y
+            ) / intervalo
+        else:
+            aceleracion = 0.0
+            aceleracion_x = 0.0
+            aceleracion_y = 0.0
 
     else:
 
@@ -1194,34 +1274,68 @@ def actualizar_track(
         velocidad_x = 0.0
         velocidad_y = 0.0
         aceleracion = 0.0
+        aceleracion_x = 0.0
+        aceleracion_y = 0.0
 
     grados, direccion = rumbo(
         dx,
         dy
     )
 
-    cambio_rumbo = 0.0
-
-    if (
+    rumbo_comparable = (
+        movimiento_previo_valido
+        and
         anterior_rumbo is not None
         and
         grados is not None
-    ):
+        and
+        anterior_velocidad >= MIN_VELOCIDAD_RUMBO
+        and
+        velocidad >= MIN_VELOCIDAD_RUMBO
+    )
+
+    cambio_rumbo = 0.0
+    cambio_rumbo_signado = 0.0
+
+    if rumbo_comparable:
+
+        cambio_rumbo_signado = (
+            grados
+            -
+            numero(
+                anterior_rumbo
+            )
+            +
+            180
+        ) % 360 - 180
 
         cambio_rumbo = abs(
-            (
-                grados
-                -
-                numero(
-                    anterior_rumbo
-                )
-                +
-                180
-            )
-            % 360
-            -
-            180
+            cambio_rumbo_signado
         )
+
+    cambio_rumbo_significativo = (
+        rumbo_comparable
+        and
+        cambio_rumbo >= UMBRAL_CAMBIO_RUMBO
+    )
+
+    if not rumbo_comparable:
+        tipo_cambio_rumbo = "SIN_COMPARACION"
+    elif cambio_rumbo < UMBRAL_CAMBIO_RUMBO:
+        tipo_cambio_rumbo = "ESTABLE"
+    elif cambio_rumbo_signado > 0:
+        tipo_cambio_rumbo = "GIRO_DERECHA"
+    else:
+        tipo_cambio_rumbo = "GIRO_IZQUIERDA"
+
+    if not movimiento_previo_valido:
+        tendencia_aceleracion = "SIN_COMPARACION"
+    elif aceleracion > UMBRAL_ACELERACION:
+        tendencia_aceleracion = "ACELERANDO"
+    elif aceleracion < -UMBRAL_ACELERACION:
+        tendencia_aceleracion = "DESACELERANDO"
+    else:
+        tendencia_aceleracion = "ESTABLE"
 
     anterior_area = max(
         numero(
@@ -1241,8 +1355,7 @@ def actualizar_track(
         )
         /
         anterior_area
-        *
-        100
+        * 100
     )
 
     if cambio_area >= 15:
@@ -1263,7 +1376,13 @@ def actualizar_track(
             "ESTABLE"
         )
 
-    if velocidad > (
+    if not movimiento_previo_valido:
+
+        tendencia_velocidad = (
+            "SIN_COMPARACION"
+        )
+
+    elif velocidad > (
         anterior_velocidad + 0.25
     ):
 
@@ -1285,9 +1404,13 @@ def actualizar_track(
             "ESTABLE"
         )
 
-    if desplazamiento < 1:
+    if desplazamiento < MIN_DESPLAZAMIENTO_MOVIMIENTO:
 
         confianza_movimiento = 0.35
+
+    elif not movimiento_previo_valido:
+
+        confianza_movimiento = 0.55
 
     else:
 
@@ -1301,21 +1424,14 @@ def actualizar_track(
         )
 
         confianza_movimiento = min(
-            1.0,
+            0.95,
             0.50 +
-            estabilidad * 0.35
+            estabilidad * 0.45
         )
 
-    historial = track.get(
-        "historial",
-        []
+    historial = list(
+        historial_previo
     )
-
-    if not isinstance(
-        historial,
-        list
-    ):
-        historial = []
 
     historial.append(
         {
@@ -1415,8 +1531,29 @@ def actualizar_track(
             "aceleracion_pixeles_min2":
                 aceleracion,
 
+            "aceleracion_x_pixeles_min2":
+                aceleracion_x,
+
+            "aceleracion_y_pixeles_min2":
+                aceleracion_y,
+
+            "tendencia_aceleracion":
+                tendencia_aceleracion,
+
             "cambio_rumbo_grados":
                 cambio_rumbo,
+
+            "cambio_rumbo_signado_grados":
+                cambio_rumbo_signado,
+
+            "cambio_rumbo_significativo":
+                cambio_rumbo_significativo,
+
+            "tipo_cambio_rumbo":
+                tipo_cambio_rumbo,
+
+            "rumbo_comparable":
+                rumbo_comparable,
 
             "calidad_movimiento":
                 calidad,
