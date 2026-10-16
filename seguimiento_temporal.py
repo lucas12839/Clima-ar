@@ -9,7 +9,7 @@ SEGUIMIENTO = BASE / "seguimiento"
 ESTADO = SEGUIMIENTO / "estado.json"
 SALIDA = SEGUIMIENTO / "seguimiento_temporal.json"
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 MIN_INTERVALO = 2.0
 MAX_INTERVALO = 60.0
@@ -1023,6 +1023,18 @@ def crear_track(
         "confianza_movimiento":
             0.0,
 
+        "parent_track_id":
+            None,
+
+        "origen_evento":
+            "NUEVO",
+
+        "fusionado_en_track_id":
+            None,
+
+        "evento_ultimo":
+            None,
+
         "historial":
             [
                 {
@@ -1082,6 +1094,10 @@ def nucleo_salida(
         "tendencia_area",
         "tendencia_velocidad",
         "confianza_movimiento",
+        "parent_track_id",
+        "origen_evento",
+        "fusionado_en_track_id",
+        "evento_ultimo",
         "historial",
     ]
 
@@ -1549,6 +1565,18 @@ def salida_sin_nucleos(
         "nucleos_desaparecidos":
             0,
 
+        "eventos_split":
+            [],
+
+        "eventos_merge":
+            [],
+
+        "cantidad_split":
+            0,
+
+        "cantidad_merge":
+            0,
+
         "asociaciones":
             [],
 
@@ -1563,6 +1591,170 @@ def salida_sin_nucleos(
         ] = motivo
 
     return salida
+
+
+
+def analizar_split_merge(
+    candidatos,
+    asociaciones,
+    asignados_tracks,
+    asignados_nucleos,
+    nucleos
+):
+    """Detecta divisiones y fusiones conservando el tracking existente.
+
+    Split: un track previo tiene compatibilidad fuerte con más de un núcleo
+    actual. El mejor conserva el track original y el segundo nace como hijo.
+
+    Merge: varios tracks previos son compatibles con el mismo núcleo actual.
+    Se conserva el track con mejor asociación y los demás se cierran como
+    fusionados, sin crear tracks duplicados.
+    """
+
+    por_track = {}
+    por_nucleo = {}
+
+    for candidato in candidatos:
+        tid = candidato["track"]["track_id"]
+        indice = candidato["indice"]
+        por_track.setdefault(tid, []).append(candidato)
+        por_nucleo.setdefault(indice, []).append(candidato)
+
+    for lista in por_track.values():
+        lista.sort(key=lambda item: item["score"], reverse=True)
+
+    for lista in por_nucleo.values():
+        lista.sort(key=lambda item: item["score"], reverse=True)
+
+    eventos_split = []
+    eventos_merge = []
+    nucleos_split = []
+    tracks_merge = set()
+
+    # SPLIT: el track original ya debe tener una asociación principal.
+    for asociacion in asociaciones:
+        tid = asociacion["track"]["track_id"]
+        indice_principal = asociacion["indice"]
+        score_principal = asociacion["score"]
+
+        candidatos_split = []
+
+        for candidato in por_track.get(tid, []):
+            indice = candidato["indice"]
+
+            if indice == indice_principal:
+                continue
+
+            if indice in asignados_nucleos:
+                continue
+
+            if candidato["score"] < max(
+                45.0,
+                score_principal * 0.55
+            ):
+                continue
+
+            if candidato["distancia"] > 100.0:
+                continue
+
+            if (
+                candidato["iou"] < 0.01
+                and
+                candidato["similitud_area"] < 0.35
+                and
+                candidato["similitud_forma"] < 0.45
+            ):
+                continue
+
+            candidatos_split.append(candidato)
+
+        if not candidatos_split:
+            continue
+
+        elegido = max(
+            candidatos_split,
+            key=lambda item: item["score"]
+        )
+
+        indice_hijo = elegido["indice"]
+        if indice_hijo in nucleos_split:
+            continue
+
+        nucleos_split.append(indice_hijo)
+
+        eventos_split.append(
+            {
+                "track_padre": tid,
+                "indice_nucleo_padre": indice_principal,
+                "indice_nucleo_hijo": indice_hijo,
+                "score": round(elegido["score"], 2),
+            }
+        )
+
+    # MERGE: un núcleo actual recibe candidatos de varios tracks previos.
+    for indice, lista in por_nucleo.items():
+        if indice not in asignados_nucleos:
+            continue
+
+        principal = next(
+            (
+                asociacion
+                for asociacion in asociaciones
+                if asociacion["indice"] == indice
+            ),
+            None
+        )
+
+        if principal is None:
+            continue
+
+        tid_principal = principal["track"]["track_id"]
+        score_principal = principal["score"]
+
+        for candidato in lista:
+            tid_secundario = candidato["track"]["track_id"]
+
+            if tid_secundario == tid_principal:
+                continue
+
+            if tid_secundario in asignados_tracks:
+                continue
+
+            if candidato["score"] < max(
+                45.0,
+                score_principal * 0.50
+            ):
+                continue
+
+            if candidato["distancia"] > 100.0:
+                continue
+
+            if (
+                candidato["iou"] < 0.02
+                and
+                candidato["similitud_area"] < 0.35
+                and
+                candidato["similitud_forma"] < 0.45
+            ):
+                continue
+
+            tracks_merge.add(tid_secundario)
+
+            eventos_merge.append(
+                {
+                    "track_principal": tid_principal,
+                    "track_fusionado": tid_secundario,
+                    "indice_nucleo": indice,
+                    "score": round(candidato["score"], 2),
+                }
+            )
+
+    return (
+        eventos_split,
+        eventos_merge,
+        nucleos_split,
+        tracks_merge,
+    )
 
 
 def procesar_frame_secuencia(
@@ -1696,6 +1888,18 @@ def procesar_frame_secuencia(
                 0,
 
             "nucleos_desaparecidos":
+                0,
+
+            "eventos_split":
+                [],
+
+            "eventos_merge":
+                [],
+
+            "cantidad_split":
+                0,
+
+            "cantidad_merge":
                 0,
 
             "asociaciones":
@@ -1939,6 +2143,11 @@ def procesar_frame_secuencia(
     asignados_nucleos = set()
     asociaciones = []
 
+    eventos_split = []
+    eventos_merge = []
+    nucleos_split = []
+    tracks_merge = set()
+
     for candidato in candidatos:
 
         tid = candidato[
@@ -1969,6 +2178,40 @@ def procesar_frame_secuencia(
         asociaciones.append(
             candidato
         )
+
+    (
+        eventos_split,
+        eventos_merge,
+        nucleos_split,
+        tracks_merge,
+    ) = analizar_split_merge(
+        candidatos,
+        asociaciones,
+        asignados_tracks,
+        asignados_nucleos,
+        nucleos
+    )
+
+    # Las fusiones cierran los tracks secundarios y evitan que vuelvan a
+    # aparecer como "desaparecidos" en este mismo frame.
+    for track in activos_previos:
+        tid = track["track_id"]
+
+        if tid not in tracks_merge:
+            continue
+
+        track["activo"] = False
+        track["presente_en_ultimo_frame"] = False
+        track["fusionado_en_track_id"] = next(
+            (
+                evento["track_principal"]
+                for evento in eventos_merge
+                if evento["track_fusionado"] == tid
+            ),
+            None
+        )
+        track["evento_ultimo"] = "MERGE"
+        asignados_tracks.add(tid)
 
     salida_nucleos = []
 
@@ -2042,6 +2285,43 @@ def procesar_frame_secuencia(
                 track
             )
         )
+
+    # Los núcleos secundarios de un split reciben un track hijo propio.
+    for evento in eventos_split:
+        indice_hijo = evento["indice_nucleo_hijo"]
+
+        if indice_hijo in asignados_nucleos:
+            continue
+
+        padre = next(
+            (
+                track
+                for track in activos_previos
+                if track["track_id"] == evento["track_padre"]
+            ),
+            None
+        )
+
+        if padre is None:
+            continue
+
+        tid = estado["siguiente_track_id"]
+        estado["siguiente_track_id"] += 1
+
+        hijo = crear_track(
+            tid,
+            nucleos[indice_hijo],
+            radar_ts
+        )
+        hijo["parent_track_id"] = padre["track_id"]
+        hijo["origen_evento"] = "SPLIT"
+        hijo["evento_ultimo"] = "SPLIT"
+
+        estado["tracks"].append(hijo)
+        asignados_nucleos.add(indice_hijo)
+        asignados_tracks.add(tid)
+        salida_nucleos.append(nucleo_salida(hijo))
+        nuevos += 1
 
     for track in activos_previos:
 
@@ -2200,6 +2480,18 @@ def procesar_frame_secuencia(
 
         "nucleos_desaparecidos":
             desaparecidos,
+
+        "eventos_split":
+            eventos_split,
+
+        "eventos_merge":
+            eventos_merge,
+
+        "cantidad_split":
+            len(eventos_split),
+
+        "cantidad_merge":
+            len(eventos_merge),
 
         "asociaciones":
             [
