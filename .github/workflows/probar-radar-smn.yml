@@ -31,7 +31,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
           mkdir -p data/radar
           mkdir -p data/radar/historico
           mkdir -p data/radar/seguimiento
@@ -116,29 +115,23 @@ jobs:
           set -e
 
           if [ -d "/tmp/radar_anterior/historico" ]; then
-
             find /tmp/radar_anterior/historico \
               -maxdepth 1 \
               -type f \
               -name "*.png" \
               -exec cp -f {} data/radar/historico/ \;
-
           fi
 
           if [ -f "/tmp/radar_anterior/radar_timestamp.txt" ]; then
-
             cp -f \
               /tmp/radar_anterior/radar_timestamp.txt \
               data/radar/radar_timestamp.txt
-
           fi
 
           if [ -f "/tmp/radar_anterior/seguimiento/estado.json" ]; then
-
             cp -f \
               /tmp/radar_anterior/seguimiento/estado.json \
               data/radar/seguimiento/estado.json
-
           fi
 
           echo "Historial disponible:"
@@ -747,6 +740,7 @@ jobs:
         timeout-minutes: 4
         shell: bash
         run: |
+
           set -e
 
           python seguimiento_temporal.py
@@ -757,61 +751,83 @@ jobs:
       # ============================================================
 
       - name: Restaurar historial
-        if: always()
+        if: steps.continuidad.outputs.accepted == 'true'
         shell: bash
         run: |
 
-          set +e
+          set -e
 
-          if [ -d "data/radar/historico_tracking_backup" ]; then
+          BACKUP="data/radar/historico_tracking_backup"
+          HIST="data/radar/historico"
 
-            find \
-              data/radar/historico_tracking_backup \
+
+          if [ -d "$BACKUP" ]; then
+
+            find "$BACKUP" \
               -maxdepth 1 \
               -type f \
               -name "*.png" \
-              -exec cp -f {} data/radar/historico/ \;
+              -exec mv -f {} "$HIST/" \;
 
           fi
 
-          rm -rf \
-            data/radar/historico_tracking_backup
+
+          rm -rf "$BACKUP"
+
+
+          echo "Historial restaurado."
 
 
       # ============================================================
-      # 17. MACHINE LEARNING
+      # 17. PREDICCIÓN ML
       # ============================================================
 
       - name: Predicción ML
-        if: >
-          steps.continuidad.outputs.accepted == 'true' &&
-          steps.seguimiento.outcome == 'success'
+        id: prediccion_ml
+        if: steps.continuidad.outputs.accepted == 'true'
         timeout-minutes: 5
         shell: bash
         run: |
+
           set -e
 
-          python scripts/prediccion_rma10_ml.py
+          if [ -f "scripts/prediccion_rma10_ml.py" ]; then
+
+            python scripts/prediccion_rma10_ml.py
+
+          else
+
+            echo "No existe scripts/prediccion_rma10_ml.py"
+
+          fi
 
 
       # ============================================================
-      # 18. EVOLUCIÓN
+      # 18. PREDICCIÓN DE EVOLUCIÓN
       # ============================================================
 
       - name: Predicción de evolución
-        if: >
-          steps.continuidad.outputs.accepted == 'true' &&
-          steps.seguimiento.outcome == 'success'
+        id: prediccion_evolucion
+        if: steps.continuidad.outputs.accepted == 'true'
         timeout-minutes: 5
         shell: bash
         run: |
+
           set -e
 
-          python scripts/prediccion_evolucion.py
+          if [ -f "scripts/prediccion_evolucion.py" ]; then
+
+            python scripts/prediccion_evolucion.py
+
+          else
+
+            echo "No existe scripts/prediccion_evolucion.py"
+
+          fi
 
 
       # ============================================================
-      # 19. MOSTRAR RESULTADOS
+      # 19. RESUMEN FINAL
       # ============================================================
 
       - name: Resumen final
@@ -819,48 +835,45 @@ jobs:
         shell: bash
         run: |
 
-          echo ""
-
-          echo "=========================================="
-          echo "             RESUMEN CLIMAAR"
-          echo "=========================================="
-
-          echo ""
+          echo "======================================"
+          echo "RESUMEN FINAL RMA10"
+          echo "======================================"
 
 
-          if [ -f data/radar/captura_estado.txt ]; then
-
-            echo "CAPTURA:"
-            cat data/radar/captura_estado.txt
-
-          else
-
-            echo "CAPTURA:"
-            echo "SIN_ESTADO"
-
-          fi
-
-
-          echo ""
-
-
-          if [ -f data/radar/radar_timestamp.txt ]; then
+          if [ -f "data/radar/radar_timestamp.txt" ]; then
 
             echo "RADAR:"
+
             cat data/radar/radar_timestamp.txt
 
-          else
+          fi
 
-            echo "RADAR:"
-            echo "SIN_TIMESTAMP"
+
+          if [ -f "data/radar/captura_estado.txt" ]; then
+
+            echo ""
+
+            echo "CAPTURA:"
+
+            cat data/radar/captura_estado.txt
 
           fi
 
 
-          echo ""
+          if [ -f "data/radar/continuidad.txt" ]; then
+
+            echo ""
+
+            echo "CONTINUIDAD:"
+
+            cat data/radar/continuidad.txt
+
+          fi
 
 
-          if [ -f data/radar/resultado_procesamiento.json ]; then
+          if [ -f "data/radar/resultado_procesamiento.json" ]; then
+
+            echo ""
 
             echo "PROCESAMIENTO:"
 
@@ -871,15 +884,15 @@ jobs:
           from pathlib import Path
 
 
-          path = Path(
+          p = Path(
               "data/radar/resultado_procesamiento.json"
           )
 
 
           try:
 
-              data = json.loads(
-                  path.read_text(
+              d = json.loads(
+                  p.read_text(
                       encoding="utf-8"
                   )
               )
@@ -887,33 +900,27 @@ jobs:
 
               print(
                   "Núcleos:",
-                  data.get(
+                  d.get(
                       "nucleos_detectados",
-                      data.get(
-                          "nucleos",
-                          "N/D"
-                      )
+                      0
                   )
               )
 
 
               print(
                   "Núcleos dinámicos:",
-                  data.get(
+                  d.get(
                       "nucleos_dinamicos",
-                      "N/D"
+                      0
                   )
               )
 
 
               print(
-                  "Clasificación:",
-                  data.get(
-                      "clasificacion",
-                      data.get(
-                          "precipitacion",
-                          "N/D"
-                      )
+                  "Estado:",
+                  d.get(
+                      "estado_general",
+                      "SIN_DATOS"
                   )
               )
 
@@ -921,93 +928,54 @@ jobs:
           except Exception as exc:
 
               print(
-                  "No se pudo leer:",
+                  "No se pudo leer resultado:",
                   exc
               )
 
           PY
 
+          fi
+
+
+          if [ -f "data/radar/seguimiento/estado.json" ]; then
+
+            echo ""
+
+            echo "SEGUIMIENTO: ESTADO DISPONIBLE"
+
           else
 
-            echo "PROCESAMIENTO:"
-            echo "NO EJECUTADO"
+            echo ""
+
+            echo "SEGUIMIENTO: SIN ESTADO"
 
           fi
 
 
-          echo ""
+          if [ -f "data/radar/prediccion_rma10.json" ]; then
 
-
-          if [ -f data/radar/continuidad.txt ]; then
-
-            echo "CONTINUIDAD:"
-            cat data/radar/continuidad.txt
+            echo "PREDICCIÓN ML: DISPONIBLE"
 
           else
 
-            echo "CONTINUIDAD:"
-            echo "NO DISPONIBLE"
+            echo "PREDICCIÓN ML: NO GENERADA"
 
           fi
 
 
-          echo ""
+          if [ -f "data/radar/prediccion_evolucion.json" ]; then
 
-
-          if [ -f data/radar/seguimiento/estado.json ]; then
-
-            echo "SEGUIMIENTO:"
-            echo "ESTADO DISPONIBLE"
+            echo "PREDICCIÓN DE EVOLUCIÓN: DISPONIBLE"
 
           else
 
-            echo "SEGUIMIENTO:"
-            echo "NO DISPONIBLE"
+            echo "PREDICCIÓN DE EVOLUCIÓN: NO GENERADA"
 
           fi
-
-
-          echo ""
-
-
-          if [ -f data/radar/prediccion_rma10.json ]; then
-
-            echo "PREDICCIÓN ML:"
-            echo "DISPONIBLE"
-
-          else
-
-            echo "PREDICCIÓN ML:"
-            echo "NO EJECUTADA"
-
-          fi
-
-
-          echo ""
-
-
-          if [ -f data/radar/prediccion_evolucion.json ]; then
-
-            echo "PREDICCIÓN DE EVOLUCIÓN:"
-            echo "DISPONIBLE"
-
-          else
-
-            echo "PREDICCIÓN DE EVOLUCIÓN:"
-            echo "NO EJECUTADA"
-
-          fi
-
-
-          echo ""
-
-          echo "=========================================="
-          echo "             FIN RESUMEN"
-          echo "=========================================="
 
 
       # ============================================================
-      # 20. GUARDAR ARTIFACTO
+      # 20. GUARDAR ARTEFACTO RMA10
       # ============================================================
 
       - name: Guardar artefacto RMA10
@@ -1015,22 +983,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: radar-rma10
-          path: |
-            data/radar/actual.png
-            data/radar/radar_timestamp.txt
-            data/radar/captura_estado.txt
-            data/radar/continuidad.txt
-            data/radar/resultado_procesamiento.json
-            data/radar/seguimiento/estado.json
-            data/radar/prediccion_rma10.json
-            data/radar/prediccion_evolucion.json
-            data/radar/historico/*.png
-          if-no-files-found: ignore
+          path: data/radar
+          if-no-files-found: warn
           retention-days: 7
 
 
       # ============================================================
-      # 21. GUARDAR CAMBIOS IMPORTANTES EN GITHUB
+      # 21. GUARDAR ESTADO EN REPOSITORIO
       # ============================================================
 
       - name: Guardar estado en repositorio
@@ -1040,21 +999,59 @@ jobs:
 
           set -e
 
-          git config user.name "github-actions[bot]"
+
+          git config user.name \
+            "github-actions[bot]"
+
 
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
 
-          git add \
-            data/radar/actual.png \
-            data/radar/radar_timestamp.txt \
-            data/radar/captura_estado.txt \
-            data/radar/continuidad.txt \
-            data/radar/resultado_procesamiento.json \
-            data/radar/seguimiento/estado.json \
-            data/radar/prediccion_rma10.json \
-            data/radar/prediccion_evolucion.json
+          FILES=(
+
+            "data/radar/actual.png"
+
+            "data/radar/radar_timestamp.txt"
+
+            "data/radar/captura_estado.txt"
+
+            "data/radar/continuidad.txt"
+
+            "data/radar/resultado_procesamiento.json"
+
+            "data/radar/seguimiento/estado.json"
+
+            "data/radar/seguimiento/seguimiento_temporal.json"
+
+            "data/radar/prediccion_rma10.json"
+
+            "data/radar/prediccion_evolucion.json"
+
+            "data/radar/mascara_ecos_estaticos.json"
+
+            "data/radar/mascara_ecos_estaticos.png"
+
+            "data/radar/mascara_ecos_estaticos_confianza.png"
+
+          )
+
+
+          for FILE in "${FILES[@]}"; do
+
+            if [ -f "$FILE" ]; then
+
+              echo "Agregando: $FILE"
+
+              git add "$FILE"
+
+            else
+
+              echo "No existe, se omite: $FILE"
+
+            fi
+
+          done
 
 
           if git diff --cached --quiet; then
@@ -1064,7 +1061,7 @@ jobs:
           else
 
             git commit \
-              -m "Actualizar procesamiento RMA10"
+              -m "Actualizar estado RMA10"
 
             git push
 
