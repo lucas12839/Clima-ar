@@ -1,189 +1,651 @@
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from PIL import Image, ImageFilter
-import json
-import math
 
-HISTORICO = Path("data/radar/historico")
-RADAR_TIMESTAMP = Path("data/radar/radar_timestamp.txt")
-SALIDA = Path("data/radar/mascara_ecos_estaticos.png")
-INFO = Path("data/radar/mascara_ecos_estaticos.json")
-CONFIANZA = Path("data/radar/mascara_ecos_estaticos_confianza.png")
+import json
+
+import numpy as np
+from PIL import Image
+from scipy import ndimage
+
+
+HISTORICO = Path(
+    "data/radar/historico"
+)
+
+RADAR_TIMESTAMP = Path(
+    "data/radar/radar_timestamp.txt"
+)
+
+SALIDA = Path(
+    "data/radar/mascara_ecos_estaticos.png"
+)
+
+INFO = Path(
+    "data/radar/mascara_ecos_estaticos.json"
+)
+
+CONFIANZA = Path(
+    "data/radar/mascara_ecos_estaticos_confianza.png"
+)
+
+
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
 
 MAX_FRAMES = 40
+
 PERSISTENCIA_MINIMA = 0.75
+
 ESTABILIDAD_MINIMA = 0.75
+
 MAX_FUTURE_SKEW_MINUTES = 2.0
 
 
-def intensidad(r, g, b):
-    if max(r, g, b) < 25:
-        return 0
-    if max(r, g, b) - min(r, g, b) < 20:
-        return 0
+# ============================================================
+# TIMESTAMP
+# ============================================================
 
-    if b > g and g > r * 1.5:
-        return 1
-    if g > r * 1.35 and g >= b * 0.95:
-        return 2
-    if r > 100 and g > 100 and b < 100 and abs(r - g) < 100:
-        return 3
-    if r > 130 and 60 < g < 180 and b < 90 and r > g * 1.15:
-        return 4
-    if r > 130 and r > g * 1.35 and r > b * 1.35:
-        return 5
-    if r > 100 and b > 100 and r > g * 1.3:
-        return 6
-    return 0
+def cargar_timestamp():
 
-
-def carregar_timestamp():
     if not RADAR_TIMESTAMP.exists():
         raise RuntimeError(
             "No existe data/radar/radar_timestamp.txt"
         )
 
-    value = RADAR_TIMESTAMP.read_text(encoding="utf-8").strip()
+    value = RADAR_TIMESTAMP.read_text(
+        encoding="utf-8"
+    ).strip()
+
     try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+        dt = datetime.fromisoformat(
+            value.replace(
+                "Z",
+                "+00:00"
+            )
+        )
+
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+            dt = dt.replace(
+                tzinfo=timezone.utc
+            )
+
+        return dt.astimezone(
+            timezone.utc
+        )
+
     except Exception as exc:
+
         raise RuntimeError(
-            f"Timestamp de radar invalido: {value}"
+            f"Timestamp de radar inválido: {value}"
         ) from exc
 
 
 def timestamp_archivo(path):
+
     try:
-        if len(path.stem) != 14 or not path.stem.isdigit():
-            return None
+
+        nombre = path.stem
+
+        # Formato actual:
+        # YYYYMMDDHHMMSS
+
+        if (
+            len(nombre) == 14
+            and nombre.isdigit()
+        ):
+
+            return datetime.strptime(
+                nombre,
+                "%Y%m%d%H%M%S"
+            ).replace(
+                tzinfo=timezone.utc
+            )
+
+        # Compatibilidad:
+        # YYYYMMDD_HHMMSS
+
         return datetime.strptime(
-            path.stem,
-            "%Y%m%d%H%M%S"
-        ).replace(tzinfo=timezone.utc)
+            nombre,
+            "%Y%m%d_%H%M%S"
+        ).replace(
+            tzinfo=timezone.utc
+        )
+
     except Exception:
+
         return None
 
 
-def main():
-    radar_dt = carregar_timestamp()
-    limite = radar_dt + timedelta(minutes=MAX_FUTURE_SKEW_MINUTES)
+# ============================================================
+# CLASIFICACIÓN VECTORIAL
+# ============================================================
+
+def intensidad_radar(rgb):
+
+    r = rgb[:, :, 0].astype(
+        np.int16
+    )
+
+    g = rgb[:, :, 1].astype(
+        np.int16
+    )
+
+    b = rgb[:, :, 2].astype(
+        np.int16
+    )
+
+    salida = np.zeros(
+        r.shape,
+        dtype=np.uint8
+    )
+
+    # --------------------------------------------------------
+    # NIVEL 1
+    # --------------------------------------------------------
+
+    salida[
+        (b > g) &
+        (g > r * 1.5)
+    ] = 1
+
+    # --------------------------------------------------------
+    # NIVEL 2
+    # --------------------------------------------------------
+
+    salida[
+        (g > r * 1.35) &
+        (g >= b * 0.95)
+    ] = 2
+
+    # --------------------------------------------------------
+    # NIVEL 3
+    # --------------------------------------------------------
+
+    salida[
+        (r > 100) &
+        (g > 100) &
+        (b < 100) &
+        (
+            np.abs(
+                r - g
+            ) < 100
+        )
+    ] = 3
+
+    # --------------------------------------------------------
+    # NIVEL 4
+    # --------------------------------------------------------
+
+    salida[
+        (r > 130) &
+        (g > 60) &
+        (g < 180) &
+        (b < 90) &
+        (r > g * 1.15)
+    ] = 4
+
+    # --------------------------------------------------------
+    # NIVEL 5
+    # --------------------------------------------------------
+
+    salida[
+        (r > 130) &
+        (r > g * 1.35) &
+        (r > b * 1.35)
+    ] = 5
+
+    # --------------------------------------------------------
+    # NIVEL 6
+    # --------------------------------------------------------
+
+    salida[
+        (r > 100) &
+        (b > 100) &
+        (r > g * 1.3)
+    ] = 6
+
+    # El radar necesita distinguir negro/gris
+    # de ecos válidos.
+
+    maxima = np.maximum.reduce(
+        [r, g, b]
+    )
+
+    minima = np.minimum.reduce(
+        [r, g, b]
+    )
+
+    poco_contraste = (
+        maxima < 25
+    ) | (
+        (maxima - minima) < 20
+    )
+
+    salida[
+        poco_contraste
+    ] = 0
+
+    return salida
+
+
+# ============================================================
+# CARGAR HISTORIAL
+# ============================================================
+
+def obtener_archivos():
+
+    radar_dt = cargar_timestamp()
+
+    limite = (
+        radar_dt +
+        timedelta(
+            minutes=MAX_FUTURE_SKEW_MINUTES
+        )
+    )
 
     archivos = []
-    futuros_descartados = []
 
-    for archivo in HISTORICO.glob("*.png"):
-        dt = timestamp_archivo(archivo)
+    futuros = []
+
+    for path in HISTORICO.glob(
+        "*.png"
+    ):
+
+        dt = timestamp_archivo(
+            path
+        )
+
         if dt is None:
             continue
-        if dt > limite:
-            futuros_descartados.append(archivo.name)
-            continue
-        archivos.append((dt, archivo))
 
-    archivos.sort(key=lambda item: item[0])
-    archivos = [archivo for _, archivo in archivos[-MAX_FRAMES:]]
+        if dt > limite:
+
+            futuros.append(
+                path.name
+            )
+
+            continue
+
+        archivos.append(
+            (
+                dt,
+                path
+            )
+        )
+
+    archivos.sort(
+        key=lambda x: x[0]
+    )
+
+    archivos = archivos[
+        -MAX_FRAMES:
+    ]
+
+    return (
+        radar_dt,
+        [path for _, path in archivos],
+        futuros
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print(
+        "======================================"
+    )
+
+    print(
+        "ClimaAR - Máscara estática optimizada"
+    )
+
+    print(
+        "======================================"
+    )
+
+    radar_dt, archivos, futuros = (
+        obtener_archivos()
+    )
 
     if len(archivos) < 3:
+
         raise RuntimeError(
-            f"Se necesitan al menos 3 frames historicos validos. Encontrados: {len(archivos)}"
+            "Se necesitan al menos 3 "
+            "frames históricos válidos. "
+            f"Encontrados: {len(archivos)}"
         )
 
-    if futuros_descartados:
+    print(
+        f"Frames analizados: {len(archivos)}"
+    )
+
+    if futuros:
+
         print(
-            "Frames futuros excluidos de la mascara:",
-            len(futuros_descartados)
-        )
-        for nombre in futuros_descartados[-10:]:
-            print("  DESCARTADO:", nombre)
-
-    imagenes = [
-        Image.open(p).convert("RGB")
-        for p in archivos
-    ]
-    ancho, alto = imagenes[0].size
-
-    if any(im.size != (ancho, alto) for im in imagenes):
-        raise RuntimeError(
-            "Los frames historicos tienen tamaños diferentes."
+            "Frames futuros excluidos:",
+            len(futuros)
         )
 
-    total = ancho * alto
-    activos = [0] * total
-    clases = [[0] * total for _ in range(7)]
+    # --------------------------------------------------------
+    # CARGAR IMÁGENES
+    # --------------------------------------------------------
 
-    for numero, imagen in enumerate(imagenes, 1):
+    matrices = []
+
+    tamaño = None
+
+    for numero, archivo in enumerate(
+        archivos,
+        start=1
+    ):
+
         print(
-            f"Analizando frame {numero}/{len(imagenes)}: "
-            f"{archivos[numero - 1].name}"
+            f"[{numero}/{len(archivos)}] "
+            f"{archivo.name}"
         )
-        for i, (r, g, b) in enumerate(imagen.getdata()):
-            c = intensidad(r, g, b)
-            if c:
-                activos[i] += 1
-                clases[c][i] += 1
+
+        try:
+
+            imagen = Image.open(
+                archivo
+            ).convert(
+                "RGB"
+            )
+
+            if tamaño is None:
+                tamaño = imagen.size
+
+            if imagen.size != tamaño:
+
+                raise RuntimeError(
+                    "Tamaño diferente al "
+                    "resto del historial."
+                )
+
+            rgb = np.asarray(
+                imagen,
+                dtype=np.uint8
+            )
+
+            intensidad = (
+                intensidad_radar(
+                    rgb
+                )
+            )
+
+            matrices.append(
+                intensidad
+            )
+
+        except Exception as exc:
+
+            raise RuntimeError(
+                f"No se pudo procesar "
+                f"{archivo}: {exc}"
+            ) from exc
+
+    # --------------------------------------------------------
+    # STACK TEMPORAL
+    #
+    # shape:
+    #
+    # frames x alto x ancho
+    # --------------------------------------------------------
+
+    historial = np.stack(
+        matrices,
+        axis=0
+    )
+
+    frames = historial.shape[0]
+
+    print(
+        "Matriz temporal:",
+        historial.shape
+    )
+
+    # --------------------------------------------------------
+    # PRESENCIA
+    # --------------------------------------------------------
+
+    presente = (
+        historial > 0
+    )
+
+    cantidad_presente = np.sum(
+        presente,
+        axis=0,
+        dtype=np.uint16
+    )
+
+    persistencia = (
+        cantidad_presente /
+        float(frames)
+    )
 
     min_activos = max(
         2,
-        math.ceil(
-            len(imagenes) * PERSISTENCIA_MINIMA
+        int(
+            np.ceil(
+                frames *
+                PERSISTENCIA_MINIMA
+            )
         )
     )
 
-    mascara_data = bytearray(total)
-    confianza_data = bytearray(total)
-    estaticos = 0
+    candidatos = (
+        cantidad_presente >=
+        min_activos
+    )
 
-    for i in range(total):
-        a = activos[i]
-        if a < min_activos:
-            continue
+    print(
+        "Frames mínimos activos:",
+        min_activos
+    )
 
-        dominante = max(
-            clases[c][i]
-            for c in range(1, 7)
+    # --------------------------------------------------------
+    # ESTABILIDAD DE INTENSIDAD
+    # --------------------------------------------------------
+    #
+    # Solamente evaluamos los candidatos.
+    # No recorremos píxel por píxel.
+    # --------------------------------------------------------
+
+    if np.any(candidatos):
+
+        valores = historial[
+            :,
+            candidatos
+        ]
+
+        minimo = np.min(
+            valores,
+            axis=0
         )
 
-        estabilidad = (
-            dominante / a
-            if a
-            else 0.0
+        maximo = np.max(
+            valores,
+            axis=0
         )
 
-        persistencia = (
-            a / len(imagenes)
+        variacion = (
+            maximo -
+            minimo
         )
 
-        if estabilidad >= ESTABILIDAD_MINIMA:
-            confianza = int(
-                round(
-                    min(
-                        1.0,
-                        0.65 * persistencia
-                        + 0.35 * estabilidad
-                    ) * 255
+        media = np.mean(
+            valores,
+            axis=0
+        )
+
+        # ----------------------------------------------------
+        # INTENSIDAD ACTUAL
+        # ----------------------------------------------------
+
+        actual = historial[
+            -1,
+            candidatos
+        ]
+
+        diferencia = np.abs(
+            actual.astype(
+                np.int16
+            ) -
+            np.rint(
+                media
+            ).astype(
+                np.int16
+            )
+        )
+
+        estatico = (
+            (variacion <= 2) &
+            (diferencia <= 2)
+        )
+
+        indices = np.flatnonzero(
+            candidatos
+        )
+
+        mascara_flat = np.zeros(
+            candidatos.size,
+            dtype=np.uint8
+        )
+
+        confianza_flat = np.zeros(
+            candidatos.size,
+            dtype=np.uint8
+        )
+
+        confianza = (
+            0.65 *
+            persistencia[
+                candidatos
+            ] +
+            0.35 *
+            (
+                np.maximum(
+                    0,
+                    1 -
+                    (
+                        variacion /
+                        6.0
+                    )
                 )
             )
-            mascara_data[i] = 255
-            confianza_data[i] = confianza
-            estaticos += 1
+        )
 
-    mascara = Image.frombytes(
-        "L",
-        (ancho, alto),
-        bytes(mascara_data)
+        confianza = np.clip(
+            confianza,
+            0.0,
+            1.0
+        )
+
+        mascara_flat[
+            indices[estatico]
+        ] = 255
+
+        confianza_flat[
+            indices[estatico]
+        ] = (
+            np.rint(
+                confianza[
+                    estatico
+                ] *
+                255
+            )
+            .astype(
+                np.uint8
+            )
+        )
+
+        mascara_data = (
+            mascara_flat.reshape(
+                candidatos.shape
+            )
+        )
+
+        confianza_data = (
+            confianza_flat.reshape(
+                candidatos.shape
+            )
+        )
+
+    else:
+
+        mascara_data = np.zeros(
+            historial.shape[1:],
+            dtype=np.uint8
+        )
+
+        confianza_data = np.zeros(
+            historial.shape[1:],
+            dtype=np.uint8
+        )
+
+    # --------------------------------------------------------
+    # LIMPIEZA PEQUEÑA
+    # --------------------------------------------------------
+
+    mascara_bool = (
+        mascara_data > 0
     )
 
-    mascara = mascara.filter(
-        ImageFilter.MedianFilter(3)
+    mascara_bool = ndimage.binary_opening(
+        mascara_bool,
+        structure=np.ones(
+            (3, 3),
+            dtype=bool
+        )
     )
 
-    confianza = Image.frombytes(
-        "L",
-        (ancho, alto),
-        bytes(confianza_data)
+    mascara_bool = ndimage.binary_closing(
+        mascara_bool,
+        structure=np.ones(
+            (3, 3),
+            dtype=bool
+        )
+    )
+
+    mascara_data = (
+        mascara_bool
+        .astype(np.uint8)
+        * 255
+    )
+
+    # --------------------------------------------------------
+    # RESULTADOS
+    # --------------------------------------------------------
+
+    estaticos = int(
+        np.sum(
+            mascara_bool
+        )
+    )
+
+    total = (
+        mascara_bool.size
+    )
+
+    porcentaje = (
+        estaticos /
+        total *
+        100
+    )
+
+    mascara = Image.fromarray(
+        mascara_data,
+        mode="L"
+    )
+
+    confianza = Image.fromarray(
+        confianza_data,
+        mode="L"
     )
 
     SALIDA.parent.mkdir(
@@ -191,34 +653,77 @@ def main():
         exist_ok=True
     )
 
-    mascara.save(SALIDA)
-    confianza.save(CONFIANZA)
+    mascara.save(
+        SALIDA
+    )
+
+    confianza.save(
+        CONFIANZA
+    )
 
     radar_iso = (
         radar_dt
         .isoformat()
-        .replace("+00:00", "Z")
+        .replace(
+            "+00:00",
+            "Z"
+        )
     )
 
     info = {
-        "schema_version": 3,
-        "metodo": "PERSISTENCIA_TEMPORAL_Y_ESTABILIDAD_DE_INTENSIDAD",
-        "radar_timestamp_utc": radar_iso,
-        "frames_analizados": len(archivos),
-        "frames": [p.name for p in archivos],
-        "frames_futuros_excluidos": len(futuros_descartados),
-        "persistencia_minima": PERSISTENCIA_MINIMA,
-        "estabilidad_minima": ESTABILIDAD_MINIMA,
-        "min_frames_activos": min_activos,
-        "pixeles_estaticos": estaticos,
-        "porcentaje_mascara": round(
-            estaticos / total * 100,
-            3
-        ),
-        "ancho": ancho,
-        "alto": alto,
-        "mascara_no_geografica": True,
-        "permite_recuperacion_de_ecos_nuevos": True,
+
+        "schema_version": 4,
+
+        "metodo":
+            "NUMPY_PERSISTENCIA_TEMPORAL_ESTABILIDAD",
+
+        "radar_timestamp_utc":
+            radar_iso,
+
+        "frames_analizados":
+            len(archivos),
+
+        "frames":
+            [p.name for p in archivos],
+
+        "frames_futuros_excluidos":
+            len(futuros),
+
+        "persistencia_minima":
+            PERSISTENCIA_MINIMA,
+
+        "estabilidad_minima":
+            ESTABILIDAD_MINIMA,
+
+        "min_frames_activos":
+            min_activos,
+
+        "pixeles_estaticos":
+            estaticos,
+
+        "porcentaje_mascara":
+            round(
+                porcentaje,
+                3
+            ),
+
+        "ancho":
+            tamaño[0],
+
+        "alto":
+            tamaño[1],
+
+        "mascara_no_geografica":
+            True,
+
+        "permite_recuperacion_de_ecos_nuevos":
+            True,
+
+        "proteccion_temporal":
+            True,
+
+        "permite_que_un_ecO_dinamico_cruce_la_zona":
+            True,
     }
 
     INFO.write_text(
@@ -230,19 +735,50 @@ def main():
         encoding="utf-8"
     )
 
-    print("======================================")
-    print("APRENDIZAJE ESTATICO COMPLETADO")
-    print("======================================")
-    print("Frames:", len(archivos))
-    print("Pixeles estaticos:", estaticos)
+    print()
     print(
-        "Porcentaje mascara:",
-        info["porcentaje_mascara"],
+        "======================================"
+    )
+    print(
+        "MÁSCARA ESTÁTICA COMPLETADA"
+    )
+    print(
+        "======================================"
+    )
+
+    print(
+        "Frames:",
+        len(archivos)
+    )
+
+    print(
+        "Píxeles estáticos:",
+        estaticos
+    )
+
+    print(
+        "Porcentaje:",
+        round(
+            porcentaje,
+            3
+        ),
         "%"
     )
-    print("Mascara:", SALIDA)
-    print("Confianza:", CONFIANZA)
-    print("Info:", INFO)
+
+    print(
+        "Máscara:",
+        SALIDA
+    )
+
+    print(
+        "Confianza:",
+        CONFIANZA
+    )
+
+    print(
+        "Info:",
+        INFO
+    )
 
 
 if __name__ == "__main__":
