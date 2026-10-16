@@ -97,15 +97,59 @@ def parse_iso(value):
 
 
 def parse_timestamp_filename(stem):
-    formatos = (
-        "%Y%m%d%H%M%S",
-        "%Y%m%d_%H%M%S",
-    )
 
-    for formato in formatos:
+    """Reconoce todos los formatos históricos usados por ClimaAR."""
+
+    texto = str(stem).strip()
+
+    # Formato actual: YYYYMMDDHHMMSS
+    if len(texto) == 14 and texto.isdigit():
+
         try:
             return datetime.strptime(
-                stem,
+                texto,
+                "%Y%m%d%H%M%S"
+            ).replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            pass
+
+    # Formato legacy: YYYYMMDD_HHMMSS
+    if len(texto) == 15 and texto[8] == "_":
+
+        try:
+            return datetime.strptime(
+                texto,
+                "%Y%m%d_%H%M%S"
+            ).replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            pass
+
+    # Historial legacy con epoch Unix en segundos.
+    if len(texto) == 10 and texto.isdigit():
+
+        try:
+            timestamp = int(texto)
+            dt = datetime.fromtimestamp(
+                timestamp,
+                tz=timezone.utc
+            )
+            if 2000 <= dt.year <= 2100:
+                return dt
+        except (OverflowError, OSError, ValueError):
+            pass
+
+    # Algunos históricos pueden conservar prefijos como radar_.
+    for formato in (
+        "radar_%Y%m%d%H%M%S",
+        "radar_%Y%m%d_%H%M%S",
+    ):
+        try:
+            return datetime.strptime(
+                texto,
                 formato
             ).replace(
                 tzinfo=timezone.utc
@@ -120,18 +164,22 @@ def timestamp_radar():
 
     candidatos = []
 
-    for archivo in BASE.glob(
-        "historico/*.png"
+    for carpeta in (
+        BASE / "historico",
+        BASE / "historico_tracking_backup",
     ):
 
-        dt = parse_timestamp_filename(
-            archivo.stem
-        )
-
-        if dt is None:
+        if not carpeta.exists():
             continue
 
-        candidatos.append(dt)
+        for archivo in carpeta.glob("*.png"):
+
+            dt = parse_timestamp_filename(
+                archivo.stem
+            )
+
+            if dt is not None:
+                candidatos.append(dt)
 
     if not candidatos:
         raise RuntimeError(
@@ -2213,42 +2261,50 @@ def frames_historicos_validos(
     radar_dt
 ):
 
-    candidatos = []
+    candidatos = {}
 
-    for archivo in BASE.glob(
-        "historico/*.png"
+    for carpeta in (
+        BASE / "historico",
+        BASE / "historico_tracking_backup",
     ):
 
-        dt = parse_timestamp_filename(
-            archivo.stem
-        )
-
-        if dt is None:
+        if not carpeta.exists():
             continue
 
-        if (
-            dt
-            >
-            radar_dt +
-            timedelta(
-                minutes=2
+        for archivo in carpeta.glob("*.png"):
+
+            dt = parse_timestamp_filename(
+                archivo.stem
             )
-        ):
-            continue
 
-        candidatos.append(
-            (
+            if dt is None:
+                continue
+
+            if (
+                dt
+                >
+                radar_dt +
+                timedelta(minutes=2)
+            ):
+                continue
+
+            # Un solo frame por timestamp.
+            candidatos[
+                iso(dt)
+            ] = (
                 dt,
                 archivo
             )
-        )
 
-    candidatos.sort(
-        key=lambda item:
-            item[0]
+    salida = list(
+        candidatos.values()
     )
 
-    return candidatos[
+    salida.sort(
+        key=lambda item: item[0]
+    )
+
+    return salida[
         -MAX_REPLAY_FRAMES:
     ]
 
@@ -2451,20 +2507,40 @@ def procesar():
             "para reconstruir el seguimiento."
         )
 
-    estado = estado_nuevo()
+    estado_previo = normalizar_estado(
+        cargar_json(
+            ESTADO,
+            {}
+        )
+    )
+
+    estado_previo_ts = estado_previo.get(
+        "ultimo_radar_timestamp"
+    )
+
+    estado_previo_dt = parse_iso(
+        estado_previo_ts
+    )
 
     ultimo_resultado = None
 
     resumen_replay = []
 
-    for frame_dt, frame_path in frames:
-
-        frame_ts = iso(
-            frame_dt
-        )
+    # Primero usamos el estado persistido de la ejecución anterior.
+    # Es la vía normal de continuidad y evita reiniciar los tracks
+    # cada vez que el artefacto histórico llegue incompleto.
+    if (
+        estado_previo_dt is not None
+        and estado_previo_ts != radar_ts
+        and estado_previo_dt < radar_dt
+        and (
+            radar_dt - estado_previo_dt
+        ).total_seconds() / 60.0 <= MAX_INTERVALO
+        and estado_previo.get("tracks")
+    ):
 
         nucleos = nucleos_desde_imagen(
-            frame_path,
+            actual_path,
             mascara,
             detectar_nucleos_desde_procesador,
             analizar_mascara_desde_procesador,
@@ -2472,42 +2548,93 @@ def procesar():
             aplicar_mascara_desde_procesador,
         )
 
-        resultado = (
+        estado = estado_previo
+
+        ultimo_resultado = (
             procesar_frame_secuencia(
                 estado,
                 nucleos,
-                frame_ts,
-                estado.get(
-                    "ultimo_radar_timestamp"
-                )
+                radar_ts,
+                estado_previo_ts
             )
         )
 
-        ultimo_resultado = resultado
-
         resumen_replay.append(
             {
-                "timestamp":
+                "timestamp": radar_ts,
+                "archivo": actual_path.name,
+                "nucleos": len(nucleos),
+                "seguimiento": ultimo_resultado.get(
+                    "nucleos_seguimiento",
+                    0
+                ),
+                "movimiento": ultimo_resultado.get(
+                    "nucleos_movimiento",
+                    0
+                ),
+                "modo": "ESTADO_PREVIO_PERSISTIDO",
+            }
+        )
+
+        frames_reconstruidos = 2
+        modo_reconstruccion = (
+            "CONTINUIDAD_ESTADO_PREVIO"
+        )
+
+    else:
+
+        estado = estado_nuevo()
+
+        for frame_dt, frame_path in frames:
+
+            frame_ts = iso(
+                frame_dt
+            )
+
+            nucleos = nucleos_desde_imagen(
+                frame_path,
+                mascara,
+                detectar_nucleos_desde_procesador,
+                analizar_mascara_desde_procesador,
+                calcular_confianza_desde_procesador,
+                aplicar_mascara_desde_procesador,
+            )
+
+            resultado = (
+                procesar_frame_secuencia(
+                    estado,
+                    nucleos,
                     frame_ts,
+                    estado.get(
+                        "ultimo_radar_timestamp"
+                    )
+                )
+            )
 
-                "archivo":
-                    frame_path.name,
+            ultimo_resultado = resultado
 
-                "nucleos":
-                    len(nucleos),
-
-                "seguimiento":
-                    resultado.get(
+            resumen_replay.append(
+                {
+                    "timestamp": frame_ts,
+                    "archivo": frame_path.name,
+                    "nucleos": len(nucleos),
+                    "seguimiento": resultado.get(
                         "nucleos_seguimiento",
                         0
                     ),
-
-                "movimiento":
-                    resultado.get(
+                    "movimiento": resultado.get(
                         "nucleos_movimiento",
                         0
                     ),
-            }
+                    "modo": "REPLAY_HISTORICO",
+                }
+            )
+
+        frames_reconstruidos = len(
+            frames
+        )
+        modo_reconstruccion = (
+            "RECONSTRUCCION_HISTORICA"
         )
 
     if ultimo_resultado is None:
@@ -2519,15 +2646,11 @@ def procesar():
 
     ultimo_resultado[
         "modo_seguimiento"
-    ] = (
-        "RECONSTRUCCION_HISTORICA"
-    )
+    ] = modo_reconstruccion
 
     ultimo_resultado[
         "frames_reconstruidos"
-    ] = len(
-        frames
-    )
+    ] = frames_reconstruidos
 
     ultimo_resultado[
         "historial_replay"
