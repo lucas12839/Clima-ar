@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
 
       # ============================================================
-      # PREPARAR DIRECTORIOS
+      # DIRECTORIOS
       # ============================================================
 
       - name: Preparar directorios
@@ -48,27 +48,30 @@ jobs:
             Pillow \
             pandas \
             joblib \
-            scikit-learn
+            scikit-learn \
+            playwright
+
+          playwright install --with-deps chromium
 
       # ============================================================
       # CAPTURA RMA10
-      #
-      # El archivo real está en:
-      # scraper/capturar_radar_smn.py
       # ============================================================
 
       - name: Capturar radar RMA10
+        id: captura
         run: |
           python scraper/capturar_radar_smn.py
 
       # ============================================================
       # GENERAR MÁSCARA ESTÁTICA
       #
+      # IMPORTANTE:
       # Se utiliza el historial completo.
-      # NO se limita a 60 minutos.
+      # No se limita a 60 minutos.
       # ============================================================
 
       - name: Generar máscara de ecos estáticos
+        if: steps.captura.outcome == 'success'
         run: |
           python scripts/generar_mascara_estatica.py
 
@@ -77,15 +80,17 @@ jobs:
       # ============================================================
 
       - name: Procesar radar
+        if: steps.captura.outcome == 'success'
         run: |
           python scripts/procesador_radar.py
 
       # ============================================================
-      # VERIFICAR CONTINUIDAD DEL RADAR
+      # VERIFICAR CONTINUIDAD
       # ============================================================
 
       - name: Verificar continuidad
         id: continuidad
+        if: steps.captura.outcome == 'success'
         shell: bash
         run: |
           python - <<'PY'
@@ -120,13 +125,15 @@ jobs:
                       tzinfo=timezone.utc
                   )
 
-              return dt.astimezone(timezone.utc)
+              return dt.astimezone(
+                  timezone.utc
+              )
 
           estado_ts = None
           radar_ts = None
 
           # --------------------------------------------------------
-          # ESTADO
+          # ESTADO PERSISTENTE
           # --------------------------------------------------------
 
           if estado_path.exists():
@@ -150,7 +157,7 @@ jobs:
                   )
 
           # --------------------------------------------------------
-          # RADAR TIMESTAMP
+          # TIMESTAMP DEL RADAR
           # --------------------------------------------------------
 
           if radar_ts_path.exists():
@@ -176,7 +183,7 @@ jobs:
           )
 
           # --------------------------------------------------------
-          # SIN TIMESTAMP DE RADAR
+          # SIN TIMESTAMP
           # --------------------------------------------------------
 
           if radar_ts is None:
@@ -237,7 +244,7 @@ jobs:
               raise SystemExit(0)
 
           # --------------------------------------------------------
-          # CALCULAR INTERVALO
+          # INTERVALO
           # --------------------------------------------------------
 
           intervalo_min = (
@@ -249,7 +256,7 @@ jobs:
           )
 
           # --------------------------------------------------------
-          # RADAR MÁS VIEJO QUE EL ESTADO
+          # RADAR ANTERIOR AL ESTADO
           # --------------------------------------------------------
 
           if intervalo_min < 0:
@@ -292,10 +299,6 @@ jobs:
                       "accepted=false\n"
                   )
 
-          # --------------------------------------------------------
-          # RADAR ACEPTADO
-          # --------------------------------------------------------
-
           else:
 
               print(
@@ -322,22 +325,19 @@ jobs:
       # ============================================================
       # PREPARAR HISTORIAL CONTINUO PARA TRACKING
       #
-      # IMPORTANTE:
+      # La máscara estática ya utilizó todo el historial.
       #
-      # La máscara estática ya utilizó el historial completo.
-      #
-      # Ahora solamente para TRACKING:
-      #
+      # Para tracking:
       # - se excluyen frames futuros
-      # - se parte desde el radar actual
-      # - se retrocede
       # - máximo 6 frames
       # - máximo 60 minutos entre frames
+      # - se corta ante un salto >60 minutos
       #
-      # El historial completo será restaurado después.
+      # Después se restaura todo el historial.
       # ============================================================
 
       - name: Preparar historial continuo para tracking
+        id: preparar_tracking
         if: steps.continuidad.outputs.accepted == 'true'
         shell: bash
         run: |
@@ -364,8 +364,7 @@ jobs:
 
           if not timestamp_file.exists():
               raise SystemExit(
-                  "No existe "
-                  "data/radar/radar_timestamp.txt"
+                  "No existe data/radar/radar_timestamp.txt"
               )
 
           raw = timestamp_file.read_text(
@@ -389,7 +388,7 @@ jobs:
           )
 
           # --------------------------------------------------------
-          # LEER TODOS LOS FRAMES
+          # LEER FRAMES
           # --------------------------------------------------------
 
           frames = []
@@ -416,7 +415,7 @@ jobs:
           )
 
           # --------------------------------------------------------
-          # SOLO FRAMES <= RADAR ACTUAL
+          # EXCLUIR FRAMES FUTUROS
           # --------------------------------------------------------
 
           validos = [
@@ -453,12 +452,11 @@ jobs:
                   anterior - stamp
               ).total_seconds() / 60.0
 
-              # Evitar diferencias negativas.
               if diferencia < 0:
                   continue
 
               # --------------------------------------------------
-              # CORTE DE CONTINUIDAD
+              # CORTE TEMPORAL
               # --------------------------------------------------
 
               if diferencia > 60.0:
@@ -515,7 +513,7 @@ jobs:
           )
 
           # --------------------------------------------------------
-          # GUARDAR TODO LO QUE VAMOS A APARTAR
+          # APARTAR FRAMES NO CONTINUOS
           # --------------------------------------------------------
 
           for _, path in frames:
@@ -544,15 +542,20 @@ jobs:
 
       # ============================================================
       # SEGUIMIENTO TEMPORAL
+      #
+      # ESTE PASO ES EL QUE DEBE TERMINAR BIEN ANTES DE EJECUTAR ML.
       # ============================================================
 
       - name: Seguimiento temporal
+        id: seguimiento
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
           python seguimiento_temporal.py
 
       # ============================================================
       # RESTAURAR HISTORIAL COMPLETO
+      #
+      # Se ejecuta incluso si tracking falla.
       # ============================================================
 
       - name: Restaurar historial completo
@@ -596,11 +599,6 @@ jobs:
           )
 
           try:
-              (BACKUP / "lista.txt").unlink()
-          except FileNotFoundError:
-              pass
-
-          try:
               BACKUP.rmdir()
           except OSError:
               pass
@@ -608,19 +606,29 @@ jobs:
 
       # ============================================================
       # PREDICCIÓN ML
+      #
+      # SOLO SE EJECUTA SI:
+      # 1. El radar fue aceptado.
+      # 2. El tracking terminó correctamente.
       # ============================================================
 
       - name: Predicción ML RMA10
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: >
+          steps.continuidad.outputs.accepted == 'true' &&
+          steps.seguimiento.outcome == 'success'
         run: |
           python scripts/prediccion_rma10_ml.py
 
       # ============================================================
       # PREDICCIÓN DE EVOLUCIÓN
+      #
+      # SOLO DESPUÉS DE TRACKING CORRECTO.
       # ============================================================
 
       - name: Predicción de evolución
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: >
+          steps.continuidad.outputs.accepted == 'true' &&
+          steps.seguimiento.outcome == 'success'
         run: |
           if [ -f scripts/prediccion_evolucion.py ]; then
             python scripts/prediccion_evolucion.py
@@ -630,43 +638,13 @@ jobs:
           fi
 
       # ============================================================
-      # PROTEGER RESULTADOS
-      # ============================================================
-
-      - name: Proteger resultados generados
-        if: always()
-        run: |
-          mkdir -p /tmp/climaar_generated
-
-          for file in \
-            data/radar/resultado_procesamiento.json \
-            data/radar/radar_timestamp.txt \
-            data/radar/FRAME_DESCARTADO.txt \
-            data/radar/continuidad.txt \
-            data/radar/seguimiento/estado.json \
-            data/radar/seguimiento/seguimiento_temporal.json \
-            data/radar/seguimiento/prediccion_ml_rma10.json
-          do
-
-            if [ -f "$file" ]; then
-
-              mkdir -p \
-                "/tmp/climaar_generated/$(dirname "$file")"
-
-              cp \
-                "$file" \
-                "/tmp/climaar_generated/$file"
-
-            fi
-
-          done
-
-      # ============================================================
-      # GUARDAR CAMBIOS
+      # GUARDAR RESULTADOS
+      #
+      # Solamente si la captura fue correcta.
       # ============================================================
 
       - name: Guardar resultados
-        if: always()
+        if: always() && steps.captura.outcome == 'success'
         run: |
           git config user.name \
             "github-actions[bot]"
