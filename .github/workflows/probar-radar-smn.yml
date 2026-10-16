@@ -829,10 +829,21 @@ jobs:
           echo "=========================================="
           echo ""
 
+          CAPTURA_SIN_CAMBIO="false"
+
           if [ -f data/radar/captura_estado.txt ]; then
 
             echo "CAPTURA:"
             cat data/radar/captura_estado.txt
+
+            if grep -q "^SIN_CAMBIO" data/radar/captura_estado.txt; then
+              CAPTURA_SIN_CAMBIO="true"
+            fi
+
+          else
+
+            echo "CAPTURA:"
+            echo "SIN_ESTADO"
 
           fi
 
@@ -843,24 +854,74 @@ jobs:
             echo "RADAR:"
             cat data/radar/radar_timestamp.txt
 
-          fi
+          else
 
-          echo ""
-
-          if [ -f data/radar/continuidad.txt ]; then
-
-            echo "CONTINUIDAD:"
-            cat data/radar/continuidad.txt
+            echo "RADAR:"
+            echo "SIN_TIMESTAMP"
 
           fi
 
           echo ""
 
-          if [ -f data/radar/resultado_procesamiento.json ]; then
+          if [ "$CAPTURA_SIN_CAMBIO" = "true" ]; then
+
+            echo "=========================================="
+            echo "SIN FRAME NUEVO"
+            echo "=========================================="
+            echo ""
+            echo "El radar no cambió."
+            echo "Se conserva el radar actual."
+            echo "No se ejecutó un nuevo procesamiento."
+            echo ""
 
             echo "PROCESAMIENTO:"
+            echo "NO EJECUTADO"
 
-            python - <<'PY'
+            echo ""
+
+            echo "CONTINUIDAD:"
+            echo "NO EVALUADA"
+
+            echo ""
+
+            echo "SEGUIMIENTO:"
+            echo "NO EJECUTADO"
+
+            echo ""
+
+            echo "PREDICCIÓN ML:"
+            echo "NO EJECUTADA"
+
+            echo ""
+
+            echo "PREDICCIÓN DE EVOLUCIÓN:"
+            echo "NO EJECUTADA"
+
+            echo ""
+
+            echo "Los resultados anteriores no se muestran."
+
+          else
+
+            if [ -f data/radar/continuidad.txt ]; then
+
+              echo "CONTINUIDAD:"
+              cat data/radar/continuidad.txt
+
+            else
+
+              echo "CONTINUIDAD:"
+              echo "NO DISPONIBLE"
+
+            fi
+
+            echo ""
+
+            if [ -f data/radar/resultado_procesamiento.json ]; then
+
+              echo "PROCESAMIENTO:"
+
+              python - <<'PY'
 
           import json
 
@@ -911,10 +972,48 @@ jobs:
 
           PY
 
+            else
+
+              echo "PROCESAMIENTO:"
+              echo "NO EJECUTADO"
+
+            fi
+
+            echo ""
+
+            echo "SEGUIMIENTO:"
+            if [ -f data/radar/seguimiento/estado.json ]; then
+              echo "ESTADO DISPONIBLE"
+            else
+              echo "NO DISPONIBLE"
+            fi
+
+            echo ""
+
+            echo "PREDICCIÓN ML:"
+            if [ -f data/radar/prediccion_ml.json ]; then
+              echo "EJECUTADA"
+            else
+              echo "NO EJECUTADA"
+            fi
+
+            echo ""
+
+            echo "PREDICCIÓN DE EVOLUCIÓN:"
+            if [ -f data/radar/prediccion_evolucion.json ]; then
+              echo "EJECUTADA"
+            else
+              echo "NO EJECUTADA"
+            fi
+
           fi
 
+          echo ""
+          echo "=========================================="
+          echo "             FIN RESUMEN"
+          echo "=========================================="
 
-      # ============================================================
+
       # 19. GUARDAR ARTIFACTO
       # ============================================================
 
