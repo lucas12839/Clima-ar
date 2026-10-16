@@ -1601,14 +1601,16 @@ def analizar_split_merge(
     asignados_nucleos,
     nucleos
 ):
-    """Detecta divisiones y fusiones conservando el tracking existente.
+    """Detecta divisiones y fusiones sin reutilizar tracks en un mismo frame.
 
     Split: un track previo tiene compatibilidad fuerte con más de un núcleo
-    actual. El mejor conserva el track original y el segundo nace como hijo.
+    actual. El mejor conserva el track original y un núcleo secundario puede
+    recibir un track hijo. Cada núcleo actual solo puede ser hijo de un padre.
 
-    Merge: varios tracks previos son compatibles con el mismo núcleo actual.
-    Se conserva el track con mejor asociación y los demás se cierran como
-    fusionados, sin crear tracks duplicados.
+    Merge: varios tracks previos pueden converger sobre el mismo núcleo actual.
+    Se conserva la asociación principal y cada track secundario se cierra como
+    fusionado. Un track secundario solo puede participar en UN merge por frame,
+    y se elige globalmente su mejor destino para evitar fusiones duplicadas.
     """
 
     por_track = {}
@@ -1691,19 +1693,19 @@ def analizar_split_merge(
             }
         )
 
-    # MERGE: un núcleo actual recibe candidatos de varios tracks previos.
-    for indice, lista in por_nucleo.items():
-        if indice not in asignados_nucleos:
-            continue
+    # MERGE: primero construimos TODAS las opciones válidas.
+    # Luego las ordenamos globalmente por score. Así un track secundario
+    # solamente puede ser consumido una vez y siempre conserva su mejor
+    # oportunidad de fusión.
+    opciones_merge = []
 
-        principal = next(
-            (
-                asociacion
-                for asociacion in asociaciones
-                if asociacion["indice"] == indice
-            ),
-            None
-        )
+    principales_por_nucleo = {
+        asociacion["indice"]: asociacion
+        for asociacion in asociaciones
+    }
+
+    for indice, lista in por_nucleo.items():
+        principal = principales_por_nucleo.get(indice)
 
         if principal is None:
             continue
@@ -1717,6 +1719,7 @@ def analizar_split_merge(
             if tid_secundario == tid_principal:
                 continue
 
+            # El track ya tiene asociación principal en este frame.
             if tid_secundario in asignados_tracks:
                 continue
 
@@ -1738,16 +1741,37 @@ def analizar_split_merge(
             ):
                 continue
 
-            tracks_merge.add(tid_secundario)
-
-            eventos_merge.append(
+            opciones_merge.append(
                 {
                     "track_principal": tid_principal,
                     "track_fusionado": tid_secundario,
                     "indice_nucleo": indice,
-                    "score": round(candidato["score"], 2),
+                    "score": candidato["score"],
                 }
             )
+
+    opciones_merge.sort(
+        key=lambda item: item["score"],
+        reverse=True
+    )
+
+    for opcion in opciones_merge:
+        tid_secundario = opcion["track_fusionado"]
+
+        # Un track previo no puede fusionarse con dos núcleos del mismo frame.
+        if tid_secundario in tracks_merge:
+            continue
+
+        tracks_merge.add(tid_secundario)
+
+        eventos_merge.append(
+            {
+                "track_principal": opcion["track_principal"],
+                "track_fusionado": tid_secundario,
+                "indice_nucleo": opcion["indice_nucleo"],
+                "score": round(opcion["score"], 2),
+            }
+        )
 
     return (
         eventos_split,
@@ -1755,7 +1779,6 @@ def analizar_split_merge(
         nucleos_split,
         tracks_merge,
     )
-
 
 def procesar_frame_secuencia(
     estado,
