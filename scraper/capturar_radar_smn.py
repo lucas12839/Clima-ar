@@ -19,6 +19,7 @@ OUT = Path("data/radar")
 HIST = OUT / "historico"
 ACTUAL = OUT / "actual.png"
 TSFILE = OUT / "radar_timestamp.txt"
+CAPTURE_STATUS = OUT / "captura_estado.txt"
 
 PERSISTENT_STATE = Path(".climaar/estado_rma10.json")
 STATE = OUT / "seguimiento" / "estado.json"
@@ -29,7 +30,11 @@ PENDIENTES = OUT / "seguimiento" / "predicciones_pendientes.json"
 MIGRATION_MARKER = OUT / ".timestamp_rma10_utc_v2"
 
 MAX_RETRIES = 5
-MAX_RADAR_AGE_MINUTES = 30
+
+# SINARAME puede entregar frames con bastante retraso.
+# Antes estaba en 30 minutos y eso provocaba falsos fallos.
+MAX_RADAR_AGE_MINUTES = 45
+
 MAX_FUTURE_SKEW_MINUTES = 2
 
 ARGENTINA_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -226,15 +231,6 @@ def leer_timestamp_utc(value):
 
 
 def timestamp_persistido():
-    """
-    Obtiene el ultimo frame RMA10 realmente aceptado.
-
-    IMPORTANTE:
-    - No usa archivos historicos para decidir el ultimo frame.
-    - Ignora timestamps futuros.
-    - Prioriza el estado persistente y radar_timestamp.txt.
-    """
-
     candidatos = []
 
     ahora = datetime.now(timezone.utc)
@@ -300,8 +296,13 @@ def timestamp_persistido():
 
 def seleccionar_mas_reciente(candidatos):
     """
-    Selecciona solamente un frame RMA10 realmente
-    posterior al ultimo frame aceptado.
+    Selecciona el frame mas reciente.
+
+    Si existe uno posterior al ultimo aceptado,
+    devuelve ese.
+
+    Si SINARAME todavia no publico uno nuevo,
+    devuelve el ultimo disponible sin generar error.
     """
 
     if not candidatos:
@@ -310,9 +311,11 @@ def seleccionar_mas_reciente(candidatos):
     ultimo = timestamp_persistido()
 
     if ultimo is not None:
+
         nuevos = []
 
         for item in candidatos:
+
             timestamp = item[0]
 
             fecha = (
@@ -327,15 +330,24 @@ def seleccionar_mas_reciente(candidatos):
             if fecha > ultimo:
                 nuevos.append(item)
 
-        if not nuevos:
-            raise RuntimeError(
-                "SINARAME no entrego un frame RMA10 nuevo. "
-                f"Ultimo frame aceptado: "
-                f"{ultimo.isoformat()}. "
-                "Se rechazan frames repetidos o atrasados."
+        if nuevos:
+            candidatos = nuevos
+
+        else:
+            print(
+                "SINARAME todavia no publico "
+                "un RMA10 nuevo."
             )
 
-        candidatos = nuevos
+            print(
+                f"Ultimo frame aceptado: "
+                f"{ultimo.isoformat()}"
+            )
+
+            print(
+                "Se conservara el frame actual "
+                "sin duplicarlo en el historial."
+            )
 
     return max(
         candidatos,
@@ -374,6 +386,7 @@ def migrar_iso_legacy(value):
         return value
 
     try:
+
         if texto.endswith("Z"):
             texto_parse = texto[:-1] + "+00:00"
         else:
@@ -405,6 +418,7 @@ def migrar_iso_legacy(value):
 
 
 def migrar_objeto_timestamps(obj):
+
     claves_radar = {
         "ultimo_radar_timestamp",
         "primer_frame",
@@ -568,6 +582,18 @@ def migrar_historico_legacy():
     )
 
 
+def escribir_estado(texto):
+    OUT.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    CAPTURE_STATUS.write_text(
+        texto,
+        encoding="utf-8"
+    )
+
+
 def main():
 
     OUT.mkdir(
@@ -609,39 +635,39 @@ def main():
                     f"{MAX_RETRIES}"
                 )
 
-                try:
+                respuestas_radar = []
 
-                    respuestas_radar = []
+                def capturar_respuesta(response):
 
-                    def capturar_respuesta(response):
+                    url = response.url
 
-                        url = response.url
+                    if (
+                        "/cache/RMA10/" in url
+                        and ".png" in url.lower()
+                    ):
 
-                        if (
-                            "/cache/RMA10/" in url
-                            and ".png" in url.lower()
-                        ):
+                        timestamp = (
+                            timestamp_from_url(
+                                url
+                            )
+                        )
 
-                            timestamp = (
-                                timestamp_from_url(
-                                    url
+                        if timestamp:
+
+                            respuestas_radar.append(
+                                (
+                                    timestamp,
+                                    url,
+                                    response
                                 )
                             )
 
-                            if timestamp:
+                page.on(
+                    "response",
+                    capturar_respuesta
+                )
 
-                                respuestas_radar.append(
-                                    (
-                                        timestamp,
-                                        url,
-                                        response
-                                    )
-                                )
-
-                    page.on(
-                        "response",
-                        capturar_respuesta
-                    )
+                try:
 
                     page.goto(
                         URL,
@@ -889,15 +915,26 @@ def main():
                         )
                     )
 
+                    if seleccionado is None:
+
+                        raise RuntimeError(
+                            "No se pudo seleccionar "
+                            "un frame RMA10."
+                        )
+
                     timestamp, image_url, response = (
                         seleccionado
                     )
 
-                    edad = (
-                        ahora
-                        - timestamp_source_to_datetime(
+                    fecha_seleccionada = (
+                        timestamp_source_to_datetime(
                             timestamp
                         )
+                    )
+
+                    edad = (
+                        ahora
+                        - fecha_seleccionada
                     ).total_seconds() / 60.0
 
                     print(
@@ -911,10 +948,7 @@ def main():
                         f"{edad:.1f} minutos"
                     )
 
-                    if (
-                        edad
-                        < -MAX_FUTURE_SKEW_MINUTES
-                    ):
+                    if edad < -MAX_FUTURE_SKEW_MINUTES:
 
                         raise RuntimeError(
                             "Timestamp RMA10 "
@@ -922,10 +956,7 @@ def main():
                             f"{timestamp}"
                         )
 
-                    if (
-                        edad
-                        > MAX_RADAR_AGE_MINUTES
-                    ):
+                    if edad > MAX_RADAR_AGE_MINUTES:
 
                         raise RuntimeError(
                             "SINARAME NO TIENE "
@@ -936,15 +967,67 @@ def main():
                             f"URL: {image_url}"
                         )
 
+                    ultimo = timestamp_persistido()
+
+                    seleccionado_utc = (
+                        fecha_seleccionada
+                        .astimezone(timezone.utc)
+                    )
+
+                    # -----------------------------------------
+                    # CASO IMPORTANTE:
+                    # SINARAME sigue mostrando el mismo frame.
+                    # NO lo volvemos a guardar.
+                    # NO hacemos fallar la Action.
+                    # -----------------------------------------
+
+                    if (
+                        ultimo is not None
+                        and seleccionado_utc <= ultimo
+                    ):
+
+                        escribir_estado(
+                            "SIN_CAMBIO\n"
+                            f"frame={timestamp}\n"
+                            f"ultimo_aceptado={ultimo.isoformat()}\n"
+                            f"edad_minutos={edad:.1f}\n"
+                        )
+
+                        print(
+                            "SIN CAMBIO: SINARAME "
+                            "todavia no publico un frame "
+                            "RMA10 posterior."
+                        )
+
+                        print(
+                            "Se conserva actual.png "
+                            "y no se duplica el historial."
+                        )
+
+                        return
+
+                    # -----------------------------------------
+                    # FRAME NUEVO
+                    # -----------------------------------------
+
                     if response is not None:
 
-                        data = response.body()
+                        try:
 
-                        ok, detail = (
-                            validar_png(
-                                data
+                            data = response.body()
+
+                            ok, detail = (
+                                validar_png(
+                                    data
+                                )
                             )
-                        )
+
+                        except Exception:
+
+                            ok = False
+                            detail = (
+                                "respuesta no disponible"
+                            )
 
                         if not ok:
 
@@ -1013,6 +1096,13 @@ def main():
                         encoding="utf-8"
                     )
 
+                    escribir_estado(
+                        "NUEVO\n"
+                        f"frame={timestamp}\n"
+                        f"utc={iso}\n"
+                        f"edad_minutos={edad:.1f}\n"
+                    )
+
                     print(
                         f"OK RMA10 "
                         f"{name} -> "
@@ -1033,25 +1123,36 @@ def main():
                         f"Fallo: {exc}"
                     )
 
-                    if (
-                        intento
-                        < MAX_RETRIES
-                    ):
+                    if intento < MAX_RETRIES:
 
                         time.sleep(4)
 
-            page.screenshot(
-                path=str(
-                    OUT /
-                    "error_rma10.png"
-                ),
-                full_page=True
-            )
+                finally:
+
+                    try:
+                        page.remove_listener(
+                            "response",
+                            capturar_respuesta
+                        )
+                    except Exception:
+                        pass
+
+            try:
+
+                page.screenshot(
+                    path=str(
+                        OUT /
+                        "error_rma10.png"
+                    ),
+                    full_page=True
+                )
+
+            except Exception:
+                pass
 
             raise RuntimeError(
                 "No se pudo obtener "
-                "un RMA10 actualizado "
-                "desde SINARAME. "
+                "un RMA10 desde SINARAME. "
                 f"Ultimo error: "
                 f"{ultimo_error}"
             )
