@@ -31,6 +31,7 @@ jobs:
         shell: bash
         run: |
           set -e
+
           mkdir -p data/radar
           mkdir -p data/radar/historico
           mkdir -p data/radar/seguimiento
@@ -106,35 +107,114 @@ jobs:
 
 
       # ============================================================
-      # 6. INTEGRAR HISTORIAL ANTERIOR
+      # 6. INTEGRAR ESTADO ANTERIOR
       # ============================================================
 
-      - name: Integrar historial anterior
+      - name: Integrar estado anterior
         shell: bash
         run: |
           set -e
 
+          # --------------------------------------------------------
+          # Historial radar
+          # --------------------------------------------------------
+
           if [ -d "/tmp/radar_anterior/historico" ]; then
+
             find /tmp/radar_anterior/historico \
               -maxdepth 1 \
               -type f \
               -name "*.png" \
               -exec cp -f {} data/radar/historico/ \;
+
           fi
 
+
+          # --------------------------------------------------------
+          # Timestamp anterior
+          # --------------------------------------------------------
+
           if [ -f "/tmp/radar_anterior/radar_timestamp.txt" ]; then
+
             cp -f \
               /tmp/radar_anterior/radar_timestamp.txt \
               data/radar/radar_timestamp.txt
+
           fi
 
+
+          # --------------------------------------------------------
+          # Estado de seguimiento
+          # --------------------------------------------------------
+
           if [ -f "/tmp/radar_anterior/seguimiento/estado.json" ]; then
+
             cp -f \
               /tmp/radar_anterior/seguimiento/estado.json \
               data/radar/seguimiento/estado.json
+
           fi
 
-          echo "Historial disponible:"
+
+          # --------------------------------------------------------
+          # Seguimiento temporal anterior
+          # --------------------------------------------------------
+
+          if [ -f "/tmp/radar_anterior/seguimiento/seguimiento_temporal.json" ]; then
+
+            cp -f \
+              /tmp/radar_anterior/seguimiento/seguimiento_temporal.json \
+              data/radar/seguimiento/seguimiento_temporal.json
+
+          fi
+
+
+          # --------------------------------------------------------
+          # Predicción ML anterior
+          # --------------------------------------------------------
+
+          if [ -f "/tmp/radar_anterior/seguimiento/prediccion_ml_rma10.json" ]; then
+
+            cp -f \
+              /tmp/radar_anterior/seguimiento/prediccion_ml_rma10.json \
+              data/radar/seguimiento/prediccion_ml_rma10.json
+
+          fi
+
+
+          # --------------------------------------------------------
+          # Predicción evolución anterior
+          # --------------------------------------------------------
+
+          if [ -f "/tmp/radar_anterior/seguimiento/prediccion_evolucion.json" ]; then
+
+            cp -f \
+              /tmp/radar_anterior/seguimiento/prediccion_evolucion.json \
+              data/radar/seguimiento/prediccion_evolucion.json
+
+          fi
+
+
+          # --------------------------------------------------------
+          # Predicciones pendientes
+          # --------------------------------------------------------
+
+          if [ -f "/tmp/radar_anterior/seguimiento/predicciones_pendientes.json" ]; then
+
+            cp -f \
+              /tmp/radar_anterior/seguimiento/predicciones_pendientes.json \
+              data/radar/seguimiento/predicciones_pendientes.json
+
+          fi
+
+
+          echo "======================================"
+          echo "ESTADO ANTERIOR INTEGRADO"
+          echo "======================================"
+
+
+          echo ""
+          echo "Frames históricos:"
 
           find data/radar/historico \
             -maxdepth 1 \
@@ -142,6 +222,15 @@ jobs:
             -name "*.png" \
             | sort \
             | tail -20
+
+
+          echo ""
+          echo "Archivos de seguimiento:"
+
+          find data/radar/seguimiento \
+            -maxdepth 1 \
+            -type f \
+            | sort
 
 
       # ============================================================
@@ -199,15 +288,20 @@ jobs:
           STATUS="data/radar/captura_estado.txt"
 
           if [ ! -f "$STATUS" ]; then
+
             echo "ERROR: falta captura_estado.txt"
+
             exit 1
+
           fi
+
 
           echo "======================================"
           echo "ESTADO DE CAPTURA"
           echo "======================================"
 
           cat "$STATUS"
+
 
           if grep -q "^NUEVO" "$STATUS"; then
 
@@ -229,6 +323,7 @@ jobs:
           else
 
             echo "ERROR: estado de captura desconocido."
+
             exit 1
 
           fi
@@ -249,6 +344,7 @@ jobs:
           test -f data/radar/actual.png
           test -f data/radar/radar_timestamp.txt
 
+
           COUNT=$(
             find data/radar/historico \
               -maxdepth 1 \
@@ -257,7 +353,9 @@ jobs:
               | wc -l
           )
 
+
           echo "Frames históricos: $COUNT"
+
 
           if [ "$COUNT" -lt 3 ]; then
 
@@ -681,7 +779,6 @@ jobs:
 
 
           print()
-
           print(
               "Frames seleccionados:"
           )
@@ -852,7 +949,6 @@ jobs:
           if [ -f "data/radar/captura_estado.txt" ]; then
 
             echo ""
-
             echo "CAPTURA:"
 
             cat data/radar/captura_estado.txt
@@ -863,7 +959,6 @@ jobs:
           if [ -f "data/radar/continuidad.txt" ]; then
 
             echo ""
-
             echo "CONTINUIDAD:"
 
             cat data/radar/continuidad.txt
@@ -874,7 +969,6 @@ jobs:
           if [ -f "data/radar/resultado_procesamiento.json" ]; then
 
             echo ""
-
             echo "PROCESAMIENTO:"
 
             python - <<'PY'
@@ -940,21 +1034,71 @@ jobs:
           if [ -f "data/radar/seguimiento/estado.json" ]; then
 
             echo ""
-
             echo "SEGUIMIENTO: ESTADO DISPONIBLE"
 
           else
 
             echo ""
-
             echo "SEGUIMIENTO: SIN ESTADO"
 
           fi
 
 
-          if [ -f "data/radar/prediccion_rma10.json" ]; then
+          # --------------------------------------------------------
+          # ML: RUTA REAL
+          # --------------------------------------------------------
+
+          ML_FILE="data/radar/seguimiento/prediccion_ml_rma10.json"
+
+
+          if [ -f "$ML_FILE" ]; then
 
             echo "PREDICCIÓN ML: DISPONIBLE"
+
+            python - <<'PY'
+
+          import json
+
+          from pathlib import Path
+
+
+          p = Path(
+              "data/radar/seguimiento/prediccion_ml_rma10.json"
+          )
+
+
+          try:
+
+              d = json.loads(
+                  p.read_text(
+                      encoding="utf-8"
+                  )
+              )
+
+              print(
+                  "Tracks analizados:",
+                  d.get(
+                      "tracks_analizados",
+                      0
+                  )
+              )
+
+              print(
+                  "Horizontes:",
+                  d.get(
+                      "horizontes_min",
+                      []
+                  )
+              )
+
+          except Exception as exc:
+
+              print(
+                  "No se pudo leer predicción ML:",
+                  exc
+              )
+
+          PY
 
           else
 
@@ -963,13 +1107,149 @@ jobs:
           fi
 
 
-          if [ -f "data/radar/prediccion_evolucion.json" ]; then
+          # --------------------------------------------------------
+          # EVOLUCIÓN: RUTA REAL
+          # --------------------------------------------------------
+
+          EVOLUTION_FILE="data/radar/seguimiento/prediccion_evolucion.json"
+
+
+          if [ -f "$EVOLUTION_FILE" ]; then
 
             echo "PREDICCIÓN DE EVOLUCIÓN: DISPONIBLE"
+
+            python - <<'PY'
+
+          import json
+
+          from pathlib import Path
+
+
+          p = Path(
+              "data/radar/seguimiento/prediccion_evolucion.json"
+          )
+
+
+          try:
+
+              d = json.loads(
+                  p.read_text(
+                      encoding="utf-8"
+                  )
+              )
+
+              print(
+                  "Predicciones:",
+                  len(
+                      d.get(
+                          "predicciones",
+                          []
+                      )
+                  )
+              )
+
+              print(
+                  "Validaciones:",
+                  len(
+                      d.get(
+                          "validaciones",
+                          []
+                      )
+                  )
+              )
+
+          except Exception as exc:
+
+              print(
+                  "No se pudo leer predicción de evolución:",
+                  exc
+              )
+
+          PY
 
           else
 
             echo "PREDICCIÓN DE EVOLUCIÓN: NO GENERADA"
+
+          fi
+
+
+          # --------------------------------------------------------
+          # PREDICCIONES PENDIENTES
+          # --------------------------------------------------------
+
+          PENDING_FILE="data/radar/seguimiento/predicciones_pendientes.json"
+
+
+          if [ -f "$PENDING_FILE" ]; then
+
+            echo "PREDICCIONES PENDIENTES: DISPONIBLES"
+
+            python - <<'PY'
+
+          import json
+
+          from pathlib import Path
+
+
+          p = Path(
+              "data/radar/seguimiento/predicciones_pendientes.json"
+          )
+
+
+          try:
+
+              d = json.loads(
+                  p.read_text(
+                      encoding="utf-8"
+                  )
+              )
+
+              if isinstance(
+                  d,
+                  list
+              ):
+
+                  print(
+                      "Pendientes:",
+                      len(d)
+                  )
+
+              elif isinstance(
+                  d,
+                  dict
+              ):
+
+                  items = d.get(
+                      "predicciones",
+                      d.get(
+                          "pendientes",
+                          []
+                      )
+                  )
+
+                  print(
+                      "Pendientes:",
+                      len(items)
+                      if isinstance(
+                          items,
+                          list
+                      )
+                      else 0
+                  )
+
+          except Exception as exc:
+
+              print(
+                  "No se pudo leer pendientes:",
+                  exc
+              )
+
+          PY
+
+          else
+
+            echo "PREDICCIONES PENDIENTES: NO EXISTEN"
 
           fi
 
@@ -1020,19 +1300,21 @@ jobs:
 
             "data/radar/resultado_procesamiento.json"
 
-            "data/radar/seguimiento/estado.json"
-
-            "data/radar/seguimiento/seguimiento_temporal.json"
-
-            "data/radar/prediccion_rma10.json"
-
-            "data/radar/prediccion_evolucion.json"
-
             "data/radar/mascara_ecos_estaticos.json"
 
             "data/radar/mascara_ecos_estaticos.png"
 
             "data/radar/mascara_ecos_estaticos_confianza.png"
+
+            "data/radar/seguimiento/estado.json"
+
+            "data/radar/seguimiento/seguimiento_temporal.json"
+
+            "data/radar/seguimiento/prediccion_ml_rma10.json"
+
+            "data/radar/seguimiento/prediccion_evolucion.json"
+
+            "data/radar/seguimiento/predicciones_pendientes.json"
 
           )
 
