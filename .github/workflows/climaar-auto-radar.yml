@@ -1,0 +1,26 @@
+name: ClimaAR Auto Radar
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: climaar-auto-radar
+  cancel-in-progress: false
+
+jobs:
+  dispatch-radar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lanzar captura RMA10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          gh workflow run probar-radar-smn.yml --ref main
+          echo "Captura RMA10 solicitada correctamente."
