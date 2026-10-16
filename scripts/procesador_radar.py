@@ -139,7 +139,7 @@ def cargar_mascara():
 
         print(
             "AVISO: no se pudo cargar "
-            f"la máscara estática: {exc}"
+            f"información de máscara: {exc}"
         )
 
         return None
@@ -427,7 +427,7 @@ def separar_region(
                 -int(
                     matriz[y, x]
                 ),
-                0,
+                0.0,
                 y,
                 x,
                 indice
@@ -447,11 +447,13 @@ def separar_region(
 
     while heap:
 
-        _,
-        distancia,
-        y,
-        x,
-        etiqueta = heapq.heappop(
+        (
+            _,
+            distancia,
+            y,
+            x,
+            etiqueta
+        ) = heapq.heappop(
             heap
         )
 
