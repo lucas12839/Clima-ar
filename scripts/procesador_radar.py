@@ -9,33 +9,18 @@ from PIL import Image
 from scipy import ndimage
 
 
-# ============================================================
-# RUTAS
-# ============================================================
-
 BASE = Path("data/radar")
 
 ACTUAL = BASE / "actual.png"
-
 MASCARA = BASE / "mascara_ecos_estaticos.png"
-
 MASCARA_JSON = BASE / "mascara_ecos_estaticos.json"
-
 SALIDA = BASE / "resultado_procesamiento.json"
 
 
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
-
 MIN_AREA_NUCLEO = 8
-
 MIN_AREA_CELDA_GRANDE = 80
-
 UMBRAL_REGION_GRANDE = 1500
-
 DISTANCIA_MIN_SEMILLAS = 12
-
 INTENSIDAD_MINIMA = 1
 
 
@@ -50,14 +35,9 @@ NIVELES = {
 }
 
 
-# ============================================================
-# CARGA DE IMAGEN
-# ============================================================
-
 def cargar_imagen(path):
 
     if isinstance(path, Image.Image):
-
         return np.array(
             path.convert("RGB")
         )
@@ -65,7 +45,6 @@ def cargar_imagen(path):
     path = Path(path)
 
     if not path.exists():
-
         raise FileNotFoundError(
             f"No existe: {path}"
         )
@@ -75,52 +54,32 @@ def cargar_imagen(path):
     )
 
 
-# ============================================================
-# INTENSIDAD RMA10
-# ============================================================
-
 def intensidad_radar(rgb):
 
-    if rgb.ndim != 3:
-
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
         raise ValueError(
-            "La imagen radar no tiene 3 dimensiones."
-        )
-
-    if rgb.shape[2] != 3:
-
-        raise ValueError(
-            "La imagen radar no tiene 3 canales RGB."
+            "La imagen radar no tiene formato RGB valido."
         )
 
     r = rgb[:, :, 0].astype(np.int16)
-
     g = rgb[:, :, 1].astype(np.int16)
-
     b = rgb[:, :, 2].astype(np.int16)
-
 
     intensidad = np.zeros(
         r.shape,
         dtype=np.uint8
     )
 
-
-    # Nivel 1
     intensidad[
         (b > r + 20) &
         (b > g + 10)
     ] = 1
 
-
-    # Nivel 2
     intensidad[
         (g > r + 15) &
         (g > b + 10)
     ] = 2
 
-
-    # Nivel 3
     intensidad[
         (r > 140) &
         (g > 100) &
@@ -128,8 +87,6 @@ def intensidad_radar(rgb):
         (r > b + 40)
     ] = 3
 
-
-    # Nivel 4
     intensidad[
         (r > 170) &
         (g > 60) &
@@ -138,8 +95,6 @@ def intensidad_radar(rgb):
         (r > g + 25)
     ] = 4
 
-
-    # Nivel 5
     intensidad[
         (r > 170) &
         (g < 90) &
@@ -147,26 +102,15 @@ def intensidad_radar(rgb):
         (r > g + 70)
     ] = 5
 
-
-    # Nivel 6
-    mascara_6 = (
+    intensidad[
         (r > 150) &
         (b > 80) &
         (g < 100) &
         (r > g + 50)
-    )
-
-    intensidad[
-        mascara_6
     ] = 6
-
 
     return intensidad
 
-
-# ============================================================
-# CARGAR MÁSCARA ESTÁTICA
-# ============================================================
 
 def cargar_mascara():
 
@@ -178,24 +122,18 @@ def cargar_mascara():
 
         return None
 
-
     try:
 
         imagen = cargar_imagen(
             MASCARA
         )
 
-
-        mascara = (
+        return (
             np.mean(
                 imagen,
                 axis=2
             ) > 100
         )
-
-
-        return mascara
-
 
     except Exception as exc:
 
@@ -207,16 +145,10 @@ def cargar_mascara():
         return None
 
 
-# ============================================================
-# INFORMACIÓN DE MÁSCARA
-# ============================================================
-
 def cargar_info_mascara():
 
     if not MASCARA_JSON.exists():
-
         return {}
-
 
     try:
 
@@ -228,14 +160,12 @@ def cargar_info_mascara():
 
             datos = json.load(f)
 
-
         if isinstance(
             datos,
             dict
         ):
 
             return datos
-
 
     except Exception as exc:
 
@@ -244,35 +174,14 @@ def cargar_info_mascara():
             f"información de máscara: {exc}"
         )
 
-
     return {}
 
-
-# ============================================================
-# APLICAR MÁSCARA ESTÁTICA
-# ============================================================
 
 def aplicar_mascara_estatica(
     actual
 ):
 
-    """
-    Utiliza exclusivamente la máscara temporal
-    generada por generar_mascara_estatica.py.
-
-    NO vuelve a analizar los históricos.
-
-    Esto evita:
-
-    - problemas entre imágenes de distinto tamaño
-    - np.stack() con arrays incompatibles
-    - doble filtrado de ecos
-    - eliminar nuevamente un eco dinámico
-    """
-
-
     mascara = cargar_mascara()
-
 
     if mascara is None:
 
@@ -286,7 +195,6 @@ def aplicar_mascara_estatica(
             0,
             0
         )
-
 
     if mascara.shape != actual.shape:
 
@@ -316,23 +224,18 @@ def aplicar_mascara_estatica(
             0
         )
 
-
     estaticos = (
         mascara &
         (actual > 0)
     )
 
-
     resultado = actual.copy()
-
 
     resultado[
         estaticos
     ] = 0
 
-
     info = cargar_info_mascara()
-
 
     frames = int(
         info.get(
@@ -341,30 +244,25 @@ def aplicar_mascara_estatica(
         )
     )
 
-
     cantidad = int(
         np.sum(
             estaticos
         )
     )
 
-
     print(
         "Máscara estática externa utilizada."
     )
-
 
     print(
         "Píxeles estáticos eliminados:",
         cantidad
     )
 
-
     print(
         "Frames utilizados para máscara:",
         frames
     )
-
 
     return (
         resultado,
@@ -372,10 +270,6 @@ def aplicar_mascara_estatica(
         frames
     )
 
-
-# ============================================================
-# DISTANCIA
-# ============================================================
 
 def distancia_px(
     x1,
@@ -390,10 +284,6 @@ def distancia_px(
     )
 
 
-# ============================================================
-# DETECTAR SEMILLAS
-# ============================================================
-
 def detectar_semillas(
     matriz,
     componente
@@ -401,14 +291,12 @@ def detectar_semillas(
 
     semillas = []
 
-
     maximo = ndimage.maximum_filter(
         matriz,
         size=15,
         mode="constant",
         cval=0
     )
-
 
     for nivel in (
         6,
@@ -423,21 +311,16 @@ def detectar_semillas(
             (matriz == maximo)
         )
 
-
         if not np.any(
             candidatos
         ):
-
             continue
-
 
         ys, xs = np.where(
             candidatos
         )
 
-
         puntos = []
-
 
         for y, x in zip(
             ys,
@@ -454,7 +337,6 @@ def detectar_semillas(
                 )
             )
 
-
         puntos.sort(
             key=lambda p: (
                 -p[0],
@@ -463,11 +345,9 @@ def detectar_semillas(
             )
         )
 
-
         for intensidad, y, x in puntos:
 
             cerca = False
-
 
             for _, sy, sx in semillas:
 
@@ -479,9 +359,7 @@ def detectar_semillas(
                 ) < DISTANCIA_MIN_SEMILLAS:
 
                     cerca = True
-
                     break
-
 
             if not cerca:
 
@@ -493,13 +371,8 @@ def detectar_semillas(
                     )
                 )
 
-
     return semillas
 
-
-# ============================================================
-# SEPARAR REGIONES GRANDES
-# ============================================================
 
 def separar_region(
     matriz,
@@ -512,19 +385,16 @@ def separar_region(
         )
     )
 
-
     if area < UMBRAL_REGION_GRANDE:
 
         return [
             componente
         ]
 
-
     semillas = detectar_semillas(
         matriz,
         componente
     )
-
 
     if len(semillas) <= 1:
 
@@ -532,18 +402,14 @@ def separar_region(
             componente
         ]
 
-
     h, w = matriz.shape
-
 
     etiquetas = np.zeros(
         (h, w),
         dtype=np.int32
     )
 
-
     heap = []
-
 
     for indice, (_, y, x) in enumerate(
         semillas,
@@ -554,7 +420,6 @@ def separar_region(
             y,
             x
         ] = indice
-
 
         heapq.heappush(
             heap,
@@ -569,7 +434,6 @@ def separar_region(
             )
         )
 
-
     vecinos = (
         (-1, -1),
         (-1, 0),
@@ -581,7 +445,6 @@ def separar_region(
         (1, 1),
     )
 
-
     while heap:
 
         _,
@@ -592,36 +455,39 @@ def separar_region(
             heap
         )
 
-
         intensidad_actual = int(
             matriz[y, x]
         )
 
-
         for dy, dx in vecinos:
 
             ny = y + dy
-
             nx = x + dx
 
-
-            if ny < 0 or ny >= h:
-
+            if not (
+                0 <= ny < h
+                and
+                0 <= nx < w
+            ):
                 continue
-
-
-            if nx < 0 or nx >= w:
-
-                continue
-
 
             if not componente[
                 ny,
                 nx
             ]:
-
                 continue
 
+            if matriz[
+                ny,
+                nx
+            ] <= 0:
+                continue
+
+            if etiquetas[
+                ny,
+                nx
+            ] != 0:
+                continue
 
             nueva = int(
                 matriz[
@@ -630,38 +496,19 @@ def separar_region(
                 ]
             )
 
-
-            if nueva <= 0:
-
-                continue
-
-
-            if etiquetas[
-                ny,
-                nx
-            ] != 0:
-
-                continue
-
-
-            salto = abs(
-                intensidad_actual -
-                nueva
-            )
-
-
             nuevo_costo = (
                 distancia +
                 1 +
-                salto * 100
+                abs(
+                    intensidad_actual -
+                    nueva
+                ) * 100
             )
-
 
             etiquetas[
                 ny,
                 nx
             ] = etiqueta
-
 
             heapq.heappush(
                 heap,
@@ -674,9 +521,7 @@ def separar_region(
                 )
             )
 
-
     regiones = []
-
 
     for etiqueta in range(
         1,
@@ -688,15 +533,15 @@ def separar_region(
             etiqueta
         )
 
-
         if int(
-            np.sum(region)
+            np.sum(
+                region
+            )
         ) >= MIN_AREA_CELDA_GRANDE:
 
             regiones.append(
                 region
             )
-
 
     if not regiones:
 
@@ -704,13 +549,8 @@ def separar_region(
             componente
         ]
 
-
     return regiones
 
-
-# ============================================================
-# DETECTAR COMPONENTES
-# ============================================================
 
 def detectar_componentes(
     matriz
@@ -721,21 +561,17 @@ def detectar_componentes(
         INTENSIDAD_MINIMA
     )
 
-
     estructura = np.ones(
         (3, 3),
         dtype=np.uint8
     )
-
 
     etiquetas, cantidad = ndimage.label(
         mascara,
         structure=estructura
     )
 
-
     componentes = []
-
 
     for etiqueta in range(
         1,
@@ -747,30 +583,18 @@ def detectar_componentes(
             etiqueta
         )
 
-
-        area = int(
+        if int(
             np.sum(
                 componente
             )
-        )
+        ) >= MIN_AREA_NUCLEO:
 
-
-        if area < MIN_AREA_NUCLEO:
-
-            continue
-
-
-        componentes.append(
-            componente
-        )
-
+            componentes.append(
+                componente
+            )
 
     return componentes
 
-
-# ============================================================
-# CREAR NÚCLEO
-# ============================================================
 
 def crear_nucleo(
     matriz,
@@ -781,59 +605,32 @@ def crear_nucleo(
         region
     )
 
-
     if len(xs) < MIN_AREA_NUCLEO:
-
         return None
-
 
     valores = matriz[
         region
     ]
 
-
     intensidad = int(
         valores.max()
     )
-
-
-    x_min = int(
-        xs.min()
-    )
-
-    x_max = int(
-        xs.max()
-    )
-
-    y_min = int(
-        ys.min()
-    )
-
-    y_max = int(
-        ys.max()
-    )
-
-
-    x = float(
-        np.mean(xs)
-    )
-
-    y = float(
-        np.mean(ys)
-    )
-
 
     return {
 
         "x":
             round(
-                x,
+                float(
+                    np.mean(xs)
+                ),
                 2
             ),
 
         "y":
             round(
-                y,
+                float(
+                    np.mean(ys)
+                ),
                 2
             ),
 
@@ -844,15 +641,15 @@ def crear_nucleo(
 
         "ancho":
             int(
-                x_max -
-                x_min +
+                xs.max() -
+                xs.min() +
                 1
             ),
 
         "alto":
             int(
-                y_max -
-                y_min +
+                ys.max() -
+                ys.min() +
                 1
             ),
 
@@ -883,21 +680,15 @@ def crear_nucleo(
     }
 
 
-# ============================================================
-# DETECTAR NÚCLEOS
-# ============================================================
-
 def detectar_nucleos(
     matriz
 ):
 
+    nucleos = []
+
     componentes = detectar_componentes(
         matriz
     )
-
-
-    nucleos = []
-
 
     for componente in componentes:
 
@@ -906,7 +697,6 @@ def detectar_nucleos(
             componente
         )
 
-
         for region in regiones:
 
             nucleo = crear_nucleo(
@@ -914,13 +704,11 @@ def detectar_nucleos(
                 region
             )
 
-
             if nucleo is not None:
 
                 nucleos.append(
                     nucleo
                 )
-
 
     nucleos.sort(
         key=lambda n: (
@@ -929,13 +717,8 @@ def detectar_nucleos(
         )
     )
 
-
     return nucleos
 
-
-# ============================================================
-# ANALIZAR MÁSCARA DE NÚCLEO
-# ============================================================
 
 def analizar_mascara(
     nucleo,
@@ -948,7 +731,6 @@ def analizar_mascara(
             "DINAMICO",
             0.70
         )
-
 
     try:
 
@@ -964,7 +746,6 @@ def analizar_mascara(
             )
         )
 
-
         ancho = max(
             int(
                 nucleo["ancho"]
@@ -979,9 +760,7 @@ def analizar_mascara(
             1
         )
 
-
         h, w = mascara.shape
-
 
         x1 = max(
             0,
@@ -993,7 +772,6 @@ def analizar_mascara(
             x + ancho // 2 + 1
         )
 
-
         y1 = max(
             0,
             y - alto // 2
@@ -1004,12 +782,10 @@ def analizar_mascara(
             y + alto // 2 + 1
         )
 
-
         region = mascara[
             y1:y2,
             x1:x2
         ]
-
 
         if region.size == 0:
 
@@ -1018,13 +794,11 @@ def analizar_mascara(
                 0.70
             )
 
-
         porcentaje = float(
             np.mean(
                 region
             )
         )
-
 
         if porcentaje >= 0.70:
 
@@ -1040,7 +814,6 @@ def analizar_mascara(
                 )
             )
 
-
         if porcentaje >= 0.40:
 
             return (
@@ -1048,12 +821,10 @@ def analizar_mascara(
                 0.65
             )
 
-
         return (
             "DINAMICO",
             0.75
         )
-
 
     except Exception:
 
@@ -1063,10 +834,6 @@ def analizar_mascara(
         )
 
 
-# ============================================================
-# CONFIANZA
-# ============================================================
-
 def calcular_confianza(
     nucleo,
     estado,
@@ -1074,40 +841,29 @@ def calcular_confianza(
 ):
 
     if estado == "ECO_ESTATICO":
-
         return 0.0
-
-
-    intensidad = int(
-        nucleo.get(
-            "intensidad",
-            0
-        )
-    )
-
-
-    area = int(
-        nucleo.get(
-            "pixeles",
-            0
-        )
-    )
-
 
     confianza = float(
         confianza_base
     )
 
-
-    if intensidad >= 5:
+    if int(
+        nucleo.get(
+            "intensidad",
+            0
+        )
+    ) >= 5:
 
         confianza += 0.08
 
-
-    if area >= 100:
+    if int(
+        nucleo.get(
+            "pixeles",
+            0
+        )
+    ) >= 100:
 
         confianza += 0.05
-
 
     return round(
         min(
@@ -1117,10 +873,6 @@ def calcular_confianza(
         3
     )
 
-
-# ============================================================
-# ESTADO GENERAL
-# ============================================================
 
 def calcular_estado_general(
     nucleos
@@ -1132,12 +884,10 @@ def calcular_estado_general(
             "SIN_ECOS_DINAMICOS"
         )
 
-
     intensidad_max = max(
         n["intensidad"]
         for n in nucleos
     )
-
 
     if intensidad_max >= 6:
 
@@ -1145,13 +895,11 @@ def calcular_estado_general(
             "PRECIPITACION_DINAMICA_MUY_FUERTE"
         )
 
-
     if intensidad_max >= 5:
 
         return (
             "PRECIPITACION_DINAMICA_FUERTE"
         )
-
 
     if intensidad_max >= 4:
 
@@ -1159,15 +907,10 @@ def calcular_estado_general(
             "PRECIPITACION_DINAMICA_MODERADA"
         )
 
-
     return (
         "PRECIPITACION_DINAMICA"
     )
 
-
-# ============================================================
-# MAIN
-# ============================================================
 
 def main():
 
@@ -1175,48 +918,30 @@ def main():
         "=== ClimaAR - Procesador RMA10 ==="
     )
 
-
-    # --------------------------------------------------------
-    # Comprobar radar
-    # --------------------------------------------------------
-
     if not ACTUAL.exists():
 
         raise FileNotFoundError(
             f"No existe {ACTUAL}"
         )
 
-
-    # --------------------------------------------------------
-    # Cargar radar actual
-    # --------------------------------------------------------
-
     imagen = cargar_imagen(
         ACTUAL
     )
-
 
     print(
         "Tamaño radar actual:",
         imagen.shape
     )
 
-
     matriz_original = intensidad_radar(
         imagen
     )
-
 
     pixeles_originales = int(
         np.sum(
             matriz_original > 0
         )
     )
-
-
-    # --------------------------------------------------------
-    # Aplicar máscara externa
-    # --------------------------------------------------------
 
     (
         matriz_dinamica,
@@ -1226,59 +951,36 @@ def main():
         matriz_original
     )
 
-
     pixeles_dinamicos = int(
         np.sum(
             matriz_dinamica > 0
         )
     )
 
-
-    # --------------------------------------------------------
-    # Detectar núcleos
-    # --------------------------------------------------------
-
     nucleos = detectar_nucleos(
         matriz_dinamica
     )
 
-
-    # --------------------------------------------------------
-    # Analizar estado de cada núcleo
-    # --------------------------------------------------------
-
     mascara = cargar_mascara()
-
 
     for nucleo in nucleos:
 
-        estado,
-        confianza_base = analizar_mascara(
+        estado, confianza_base = analizar_mascara(
             nucleo,
             mascara
         )
-
-
-        confianza = calcular_confianza(
-            nucleo,
-            estado,
-            confianza_base
-        )
-
 
         nucleo[
             "estado"
         ] = estado
 
-
         nucleo[
             "confianza"
-        ] = confianza
-
-
-    # --------------------------------------------------------
-    # El resultado principal se basa en núcleos dinámicos
-    # --------------------------------------------------------
+        ] = calcular_confianza(
+            nucleo,
+            estado,
+            confianza_base
+        )
 
     nucleos_dinamicos = [
 
@@ -1292,20 +994,14 @@ def main():
 
     ]
 
-
     estado_general = calcular_estado_general(
         nucleos_dinamicos
     )
 
-
-    # --------------------------------------------------------
-    # Resultado
-    # --------------------------------------------------------
-
     resultado = {
 
         "version":
-            "RMA10-procesador-10.0",
+            "RMA10-procesador-10.1",
 
         "timestamp_procesamiento":
             datetime.now(
@@ -1317,9 +1013,8 @@ def main():
 
         "metodo_segmentacion":
             (
-                "mascara_estatica_temporal_externa"
-                "_conectividad_semillas"
-                "_priority_flood"
+                "mascara_estatica_temporal_externa_"
+                "conectividad_semillas_priority_flood"
             ),
 
         "frames_historicos_utilizados":
@@ -1377,16 +1072,10 @@ def main():
             nucleos,
     }
 
-
-    # --------------------------------------------------------
-    # Guardar resultado
-    # --------------------------------------------------------
-
     SALIDA.parent.mkdir(
         parents=True,
         exist_ok=True
     )
-
 
     with open(
         SALIDA,
@@ -1400,13 +1089,6 @@ def main():
             indent=2,
             ensure_ascii=False
         )
-
-
-    # --------------------------------------------------------
-    # Consola
-    # --------------------------------------------------------
-
-    print()
 
     print(
         "Pixeles originales:",
@@ -1438,16 +1120,10 @@ def main():
         estado_general
     )
 
-    print()
-
     print(
         "Procesamiento RMA10 completado."
     )
 
-
-# ============================================================
-# EJECUCIÓN
-# ============================================================
 
 if __name__ == "__main__":
 
