@@ -2,14 +2,10 @@
 """
 ClimaAR - Predicción de evolución y validación temporal.
 
-Correcciones:
-- No usa aceleración futura para predecir huecos históricos.
-- Las predicciones de hueco usan únicamente información disponible
-  antes del comienzo del hueco.
-- Las pendientes antiguas que no pueden validarse expiran.
-- Se limita la acumulación de pendientes.
-- Mantiene predicciones 5/10/20/30 minutos.
-- Mantiene validación por mismo track o reasignación espacial.
+- Predicciones normales: 5/10/20/30 minutos.
+- Reconstrucción de huecos históricos sin contaminación temporal.
+- Las estimaciones de hueco NO se agregan a pendientes de validación.
+- Las pendientes antiguas expiran.
 - Nunca inventa una observación radar.
 """
 
@@ -34,11 +30,9 @@ HORIZONTES_MIN = (5, 10, 20, 30)
 PASO_HUECO_MIN = 5
 TOLERANCIA_HUECO_MIN = 12
 
-# Evita que las pendientes históricas se acumulen indefinidamente.
 MAX_PENDIENTES = 200
 MAX_PENDING_AGE_MIN = 45
 
-# Validación cruzada después de un reinicio de track.
 MIN_MATCH_PIXELS = 12.0
 MAX_MATCH_EXTRA_UNCERTAINTY = 1.75
 
@@ -313,15 +307,12 @@ def estimate_motion(
     history=None,
 ):
     """
-    Calcula el movimiento únicamente con
-    el historial suministrado.
+    Calcula el movimiento únicamente
+    con el historial suministrado.
 
-    IMPORTANTE:
-    No utiliza aceleracion_pixeles_min2
-    del estado actual del track.
-
-    Esto evita contaminación temporal al
-    reconstruir huecos históricos.
+    Al reconstruir un hueco histórico,
+    no utiliza información posterior
+    al comienzo de ese hueco.
     """
 
     history = (
@@ -382,9 +373,6 @@ def estimate_motion(
         else None
     )
 
-    # La aceleración se calcula SOLO
-    # con los movimientos del historial
-    # que estamos analizando.
     acceleration = None
 
     if len(movements) >= 2:
@@ -428,8 +416,6 @@ def estimate_motion(
         )
     )
 
-    # Conservamos la confianza actual
-    # del track, pero NO su aceleración.
     confidence_source = dict(track)
 
     confidence_source.update(
@@ -716,8 +702,7 @@ def validate_point(
             )
             if actual.get(
                 "track_id"
-            )
-            is not None
+            ) is not None
             else None
         ),
         "error_pixeles": round(
@@ -1301,8 +1286,6 @@ def process():
         old_pending,
     )
 
-    new_predictions = []
-
     nuclei_output = []
 
     for track in tracks:
@@ -1345,8 +1328,7 @@ def process():
                     )
                     if motion[
                         "bearing"
-                    ]
-                    is not None
+                    ] is not None
                     else None
                 ),
                 "direccion": sector(
@@ -1361,8 +1343,7 @@ def process():
                     )
                     if motion[
                         "acceleration"
-                    ]
-                    is not None
+                    ] is not None
                     else None
                 ),
                 "confianza": round(
@@ -1410,16 +1391,9 @@ def process():
             if gap <= TOLERANCIA_HUECO_MIN:
                 continue
 
-            # ====================================================
-            # CORRECCIÓN CRÍTICA:
-            #
-            # Para reconstruir un hueco solamente se permite usar
-            # información disponible ANTES del hueco.
-            #
-            # Nunca usamos la aceleración/movimiento actual del
-            # track si ocurrió después.
-            # ====================================================
-
+            # IMPORTANTE:
+            # Para reconstruir un hueco solamente se utiliza
+            # información disponible antes del comienzo del hueco.
             history_before = [
                 item
                 for item in history
@@ -1465,22 +1439,26 @@ def process():
                 }
             )
 
-            new_predictions.extend(
-                estimates
-            )
+            # ====================================================
+            # IMPORTANTE:
+            #
+            # NO agregar estimates a predicciones_pendientes.
+            #
+            # Estas predicciones reconstruyen un hueco HISTÓRICO.
+            # El timestamp objetivo ya quedó en el pasado y no
+            # debemos esperar un radar futuro con ese timestamp.
+            # ====================================================
 
     # ============================================================
-    # DEDUPLICAR PENDIENTES
+    # PENDIENTES
+    #
+    # Solo permanecen las pendientes que ya existían y que todavía
+    # pueden ser validadas.
     # ============================================================
-
-    merged = (
-        pending
-        + new_predictions
-    )
 
     unique = {}
 
-    for prediction in merged:
+    for prediction in pending:
 
         target = canonical_ts(
             prediction.get(
@@ -1523,10 +1501,6 @@ def process():
             tzinfo=timezone.utc
         )
     )
-
-    # ============================================================
-    # LIMITE DURO
-    # ============================================================
 
     pending = pending[
         -MAX_PENDIENTES:
