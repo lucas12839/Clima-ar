@@ -96,6 +96,26 @@ def parse_iso(value):
         return None
 
 
+def parse_timestamp_filename(stem):
+    formatos = (
+        "%Y%m%d%H%M%S",
+        "%Y%m%d_%H%M%S",
+    )
+
+    for formato in formatos:
+        try:
+            return datetime.strptime(
+                stem,
+                formato
+            ).replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            continue
+
+    return None
+
+
 def timestamp_radar():
 
     candidatos = []
@@ -104,25 +124,14 @@ def timestamp_radar():
         "historico/*.png"
     ):
 
-        if (
-            len(archivo.stem) != 14
-            or not archivo.stem.isdigit()
-        ):
+        dt = parse_timestamp_filename(
+            archivo.stem
+        )
+
+        if dt is None:
             continue
 
-        try:
-
-            dt = datetime.strptime(
-                archivo.stem,
-                "%Y%m%d%H%M%S"
-            ).replace(
-                tzinfo=timezone.utc
-            )
-
-            candidatos.append(dt)
-
-        except ValueError:
-            continue
+        candidatos.append(dt)
 
     if not candidatos:
         raise RuntimeError(
@@ -2210,24 +2219,11 @@ def frames_historicos_validos(
         "historico/*.png"
     ):
 
-        if (
-            len(archivo.stem) != 14
-            or
-            not archivo.stem.isdigit()
-        ):
-            continue
+        dt = parse_timestamp_filename(
+            archivo.stem
+        )
 
-        try:
-
-            dt = datetime.strptime(
-                archivo.stem,
-                "%Y%m%d%H%M%S"
-            ).replace(
-                tzinfo=timezone.utc
-            )
-
-        except ValueError:
-
+        if dt is None:
             continue
 
         if (
