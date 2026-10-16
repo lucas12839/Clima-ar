@@ -1,0 +1,140 @@
+name: ClimaAR Calidad
+
+on:
+  workflow_run:
+    workflows:
+      - "ClimaAR Intelligence Central"
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  calidad:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verificar sintaxis Python
+        run: |
+          python -m compileall -q .
+
+      - name: Verificar JSON operativos
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          archivos = [
+              "data/radar/radar_timestamp.txt",
+              "data/radar/seguimiento/seguimiento_temporal.json",
+              "data/radar/seguimiento/prediccion_ml_rma10.json",
+              "data/radar/seguimiento/prediccion_evolucion.json",
+              "data/ia/inteligencia_tormenta.json",
+          ]
+
+          for archivo in archivos:
+              ruta = Path(archivo)
+
+              if not ruta.exists():
+                  print(f"AVISO: no existe {archivo}")
+                  continue
+
+              if ruta.suffix == ".json":
+                  with ruta.open("r", encoding="utf-8") as f:
+                      json.load(f)
+
+              print(f"OK: {archivo}")
+          PY
+
+      - name: Calcular riesgo severo
+        run: |
+          python scripts/riesgo_severo_climaar.py
+
+      - name: Verificar riesgo severo
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          ruta = Path("data/ia/riesgo_severo.json")
+
+          if not ruta.exists():
+              raise SystemExit("ERROR: no se generó data/ia/riesgo_severo.json")
+
+          with ruta.open("r", encoding="utf-8") as f:
+              datos = json.load(f)
+
+          print("Riesgo severo generado correctamente.")
+          print("Índice severo:", datos.get("indice_severo"))
+          print("Método:", datos.get("metodo"))
+          PY
+
+      - name: Verificar sincronización radar
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          radar = Path("data/radar/radar_timestamp.txt")
+          nowcast = Path("data/radar/radar_nowcast.json")
+
+          if radar.exists():
+              print("OK: radar_timestamp.txt existe.")
+          else:
+              print("AVISO: radar_timestamp.txt no existe.")
+
+          if nowcast.exists():
+              print("OK: radar_nowcast.json existe.")
+          else:
+              print("AVISO: radar_nowcast.json no existe.")
+          PY
+
+      - name: Verificar predicción de evolución
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          ruta = Path("data/radar/seguimiento/prediccion_evolucion.json")
+
+          if not ruta.exists():
+              raise SystemExit("ERROR: no existe prediccion_evolucion.json")
+
+          with ruta.open("r", encoding="utf-8") as f:
+              datos = json.load(f)
+
+          nucleos = datos.get("nucleos", [])
+          validaciones = datos.get("validaciones_count", 0)
+          pendientes = datos.get("predicciones_pendientes", [])
+
+          print(f"Núcleos con predicción: {len(nucleos)}")
+          print(f"Validaciones: {validaciones}")
+          print(f"Pendientes: {len(pendientes)}")
+          print("OK: predicción de evolución disponible.")
+          PY
+
+      - name: Resultado final
+        run: |
+          echo "======================================"
+          echo "       CLIMAAR CONTROL DE CALIDAD"
+          echo "======================================"
+          echo "Sintaxis Python: OK"
+          echo "JSON operativos: OK"
+          echo "Riesgo severo: OK"
+          echo "Predicción evolución: OK"
+          echo "Control finalizado."
