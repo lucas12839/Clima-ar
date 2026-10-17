@@ -14,7 +14,8 @@ SCHEMA_VERSION = 8
 MIN_INTERVALO = 2.0
 MAX_INTERVALO = 60.0
 MIN_DESPLAZAMIENTO_MOVIMIENTO = 1.0
-MIN_VELOCIDAD_RUMBO = 0.5
+MIN_VELOCIDAD_RUMBO = 0.75
+MIN_DESPLAZAMIENTO_RUMBO = 3.0
 UMBRAL_ACELERACION = 0.10
 UMBRAL_CAMBIO_RUMBO = 20.0
 
@@ -1169,6 +1170,13 @@ def actualizar_track(
         )
     )
 
+    anterior_desplazamiento = numero(
+        track.get(
+            "desplazamiento_pixeles",
+            0
+        )
+    )
+
     anterior_velocidad_x = numero(
         track.get(
             "velocidad_x_pixeles_min",
@@ -1292,6 +1300,10 @@ def actualizar_track(
         anterior_velocidad >= MIN_VELOCIDAD_RUMBO
         and
         velocidad >= MIN_VELOCIDAD_RUMBO
+        and
+        desplazamiento >= MIN_DESPLAZAMIENTO_RUMBO
+        and
+        anterior_desplazamiento >= MIN_DESPLAZAMIENTO_RUMBO
     )
 
     cambio_rumbo = 0.0
