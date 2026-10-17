@@ -13,17 +13,17 @@
     "intensidad_escala": "RMA10_0_6",
     "dbz_max": null,
     "dbz_mean": null,
-    "distancia_km": 14.17,
-    "distancia_tipo": "georreferenciada_por_nucleo",
+    "distancia_km": 10.79,
+    "distancia_tipo": "georreferenciada_por_nucleo_validada",
     "fortalecimiento": "fortaleciendose",
     "cambio_area_pct": 5.15,
-    "velocidad_kmh": 5.3,
+    "velocidad_kmh": 10.72,
     "velocidad_pixeles_min": 0.19054,
     "direccion": 58.52054380732509,
-    "direccion_grados": 171.4,
-    "movimiento_hacia_bahia": true,
+    "direccion_grados": 58.52,
+    "movimiento_hacia_bahia": false,
     "movimiento_hacia_centro_dominio": false,
-    "eta_minutos": 160.5,
+    "eta_minutos": null,
     "eta_minutos_aproximada_centro_dominio": null,
     "confianza_movimiento": 0.009,
     "estado": "actividad_detectada",
@@ -2294,7 +2294,9 @@
     "proyecciones": {},
     "georreferenciacion": {
       "disponible": true,
-      "metodo": "RMA10_centrado_240km_radio",
+      "estado": "VALIDADA_OPERATIVAMENTE",
+      "metodo": "RMA10_CARTESIANO_CENTRADO_240KM_RADIO_GEODESICO",
+      "fuente_parametros": "SMN_RMA10",
       "radar_latitud": -38.7342,
       "radar_longitud": -62.1654,
       "bahia_blanca_latitud": -38.7196,
@@ -2305,7 +2307,51 @@
       "centro_radar_y_px": 256.0,
       "alcance_radio_km": 240.0,
       "alcance_diametro_km": 480.0,
-      "calibracion_geografica": "operativa_no_validada_con_capa_cartografica"
+      "km_por_pixel_horizontal": 0.9375,
+      "km_por_pixel_vertical": 0.9375,
+      "validacion": {
+        "estado": true,
+        "centro_ok": true,
+        "radio_cardinal_ok": true,
+        "orientacion_cardinal_ok": true,
+        "error_centro_m": 0.0,
+        "controles_cardinales": {
+          "norte": {
+            "latitud": -36.575831,
+            "longitud": -62.1654,
+            "distancia_km": 240.0,
+            "rumbo_grados": 0.0,
+            "error_rumbo_grados": 0.0,
+            "error_radio_km": 0.0
+          },
+          "sur": {
+            "latitud": -40.892569,
+            "longitud": -62.1654,
+            "distancia_km": 240.0,
+            "rumbo_grados": 180.0,
+            "error_rumbo_grados": 0.0,
+            "error_radio_km": 0.0
+          },
+          "este": {
+            "latitud": -38.701602,
+            "longitud": -59.399304,
+            "distancia_km": 240.0,
+            "rumbo_grados": 90.0,
+            "error_rumbo_grados": 0.0,
+            "error_radio_km": 0.0
+          },
+          "oeste": {
+            "latitud": -38.701602,
+            "longitud": -64.931496,
+            "distancia_km": 240.0,
+            "rumbo_grados": 270.0,
+            "error_rumbo_grados": 0.0,
+            "error_radio_km": 0.0
+          }
+        }
+      },
+      "calibracion_geografica": "VALIDADA_CON_COORDENADAS_OFICIALES_RMA10_Y_ALCANCE_240KM",
+      "limitacion": "La fuente PNG no contiene un GeoTransform GIS; la precision queda limitada a la geometria del producto RMA10 y a su renderizado pixelado."
     },
     "nucleos_georreferenciados": [
       {
@@ -2333,15 +2379,23 @@
           "confianza_track": 0.009
         },
         "georreferencia": {
-          "latitud": -38.806542,
-          "longitud": -62.217222,
+          "latitud": -38.806612,
+          "longitud": -62.217333,
+          "distancia_radar_km": 9.23,
+          "rumbo_desde_radar_grados": 209.2,
+          "este_desde_radar_km": -4.5,
+          "norte_desde_radar_km": -8.05,
+          "dentro_alcance_nominal": true,
           "distancia_bahia_km": 10.79,
           "rumbo_bahia_grados": 333.7
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 5.4,
-          "direccion_grados": 58.5,
-          "error_rumbo_bahia_grados": 84.9,
+          "velocidad_kmh": 10.72,
+          "direccion_grados": 58.52,
+          "dx_px": 3.25,
+          "dy_px": -1.99,
+          "velocidad_pixeles_min": 0.19054,
+          "error_rumbo_bahia_grados": 84.8,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -2372,17 +2426,25 @@
           "confianza_track": 0.009
         },
         "georreferencia": {
-          "latitud": -38.592379,
-          "longitud": -62.26235,
-          "distancia_bahia_km": 14.17,
-          "rumbo_bahia_grados": 183.5
+          "latitud": -38.59218,
+          "longitud": -62.262267,
+          "distancia_radar_km": 17.89,
+          "rumbo_desde_radar_grados": 331.9,
+          "este_desde_radar_km": -8.42,
+          "norte_desde_radar_km": 15.79,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 14.2,
+          "rumbo_bahia_grados": 183.6
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 5.3,
-          "direccion_grados": 171.4,
+          "velocidad_kmh": 10.67,
+          "direccion_grados": 171.36,
+          "dx_px": 0.57,
+          "dy_px": 3.75,
+          "velocidad_pixeles_min": 0.18965,
           "error_rumbo_bahia_grados": 12.2,
           "movimiento_hacia_bahia": true,
-          "eta_minutos": 160.5
+          "eta_minutos": 79.8
         },
         "indice_nucleo": 2
       },
@@ -2411,15 +2473,23 @@
           "confianza_track": 0.009
         },
         "georreferencia": {
-          "latitud": -38.338466,
-          "longitud": -62.293335,
-          "distancia_bahia_km": 42.42,
-          "rumbo_bahia_grados": 177.5
+          "latitud": -38.337952,
+          "longitud": -62.292774,
+          "distancia_radar_km": 45.43,
+          "rumbo_desde_radar_grados": 345.8,
+          "este_desde_radar_km": -11.11,
+          "norte_desde_radar_km": 44.05,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 42.47,
+          "rumbo_bahia_grados": 177.6
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 6.4,
-          "direccion_grados": 275.7,
-          "error_rumbo_bahia_grados": 98.2,
+          "velocidad_kmh": 12.72,
+          "direccion_grados": 275.71,
+          "dx_px": -4.5,
+          "dy_px": -0.45,
+          "velocidad_pixeles_min": 0.22612,
+          "error_rumbo_bahia_grados": 98.1,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -2450,15 +2520,23 @@
           "confianza_track": 0.009
         },
         "georreferencia": {
-          "latitud": -38.634066,
-          "longitud": -61.976466,
-          "distancia_bahia_km": 27.39,
-          "rumbo_bahia_grados": 249.6
+          "latitud": -38.633802,
+          "longitud": -61.976519,
+          "distancia_radar_km": 19.83,
+          "rumbo_desde_radar_grados": 55.8,
+          "este_desde_radar_km": 16.41,
+          "norte_desde_radar_km": 11.15,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 27.4,
+          "rumbo_bahia_grados": 249.5
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 14.4,
+          "velocidad_kmh": 28.71,
           "direccion_grados": 342.2,
-          "error_rumbo_bahia_grados": 92.6,
+          "dx_px": -3.12,
+          "dy_px": -9.72,
+          "velocidad_pixeles_min": 0.51042,
+          "error_rumbo_bahia_grados": 92.7,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -2489,15 +2567,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.605685,
-          "longitud": -62.439948,
-          "distancia_bahia_km": 19.29,
-          "rumbo_bahia_grados": 131.1
+          "latitud": -38.60522,
+          "longitud": -62.439762,
+          "distancia_radar_km": 27.8,
+          "rumbo_desde_radar_grados": 301.0,
+          "este_desde_radar_km": -23.84,
+          "norte_desde_radar_km": 14.31,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 19.31,
+          "rumbo_bahia_grados": 131.2
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 8.7,
-          "direccion_grados": 45.7,
-          "error_rumbo_bahia_grados": 85.4,
+          "velocidad_kmh": 17.34,
+          "direccion_grados": 45.66,
+          "dx_px": 4.41,
+          "dy_px": -4.31,
+          "velocidad_pixeles_min": 0.30832,
+          "error_rumbo_bahia_grados": 85.6,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -2528,17 +2614,25 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.723083,
-          "longitud": -62.551257,
-          "distancia_bahia_km": 24.2,
-          "rumbo_bahia_grados": 89.2
+          "latitud": -38.722435,
+          "longitud": -62.551628,
+          "distancia_radar_km": 33.53,
+          "rumbo_desde_radar_grados": 272.1,
+          "este_desde_radar_km": -33.51,
+          "norte_desde_radar_km": 1.24,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 24.23,
+          "rumbo_bahia_grados": 89.3
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 15.4,
-          "direccion_grados": 44.9,
-          "error_rumbo_bahia_grados": 44.3,
+          "velocidad_kmh": 30.89,
+          "direccion_grados": 44.89,
+          "dx_px": 7.75,
+          "dy_px": -7.78,
+          "velocidad_pixeles_min": 0.54907,
+          "error_rumbo_bahia_grados": 44.5,
           "movimiento_hacia_bahia": true,
-          "eta_minutos": 94.3
+          "eta_minutos": 47.1
         },
         "indice_nucleo": 6
       },
@@ -2567,17 +2661,25 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -39.070561,
-          "longitud": -62.176304,
-          "distancia_bahia_km": 39.9,
-          "rumbo_bahia_grados": 347.9
+          "latitud": -39.070939,
+          "longitud": -62.176368,
+          "distancia_radar_km": 37.46,
+          "rumbo_desde_radar_grados": 181.4,
+          "este_desde_radar_km": -0.95,
+          "norte_desde_radar_km": -37.44,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 39.94,
+          "rumbo_bahia_grados": 348.0
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 8.3,
-          "direccion_grados": 312.7,
+          "velocidad_kmh": 16.68,
+          "direccion_grados": 312.68,
+          "dx_px": -4.36,
+          "dy_px": -4.02,
+          "velocidad_pixeles_min": 0.29652,
           "error_rumbo_bahia_grados": 35.3,
           "movimiento_hacia_bahia": true,
-          "eta_minutos": 288.4
+          "eta_minutos": 143.7
         },
         "indice_nucleo": 7
       },
@@ -2606,15 +2708,23 @@
           "confianza_track": 0.009
         },
         "georreferencia": {
-          "latitud": -38.552039,
-          "longitud": -61.946992,
-          "distancia_bahia_km": 33.85,
-          "rumbo_bahia_grados": 236.5
+          "latitud": -38.551632,
+          "longitud": -61.947304,
+          "distancia_radar_km": 27.77,
+          "rumbo_desde_radar_grados": 43.1,
+          "este_desde_radar_km": 18.97,
+          "norte_desde_radar_km": 20.28,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 33.86,
+          "rumbo_bahia_grados": 236.4
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 4.8,
+          "velocidad_kmh": 9.56,
           "direccion_grados": 71.3,
-          "error_rumbo_bahia_grados": 165.2,
+          "dx_px": 3.22,
+          "dy_px": -1.09,
+          "velocidad_pixeles_min": 0.16997,
+          "error_rumbo_bahia_grados": 165.1,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -2645,15 +2755,23 @@
           "confianza_track": 0.009
         },
         "georreferencia": {
-          "latitud": -38.501425,
-          "longitud": -62.157087,
-          "distancia_bahia_km": 26.25,
+          "latitud": -38.501163,
+          "longitud": -62.157105,
+          "distancia_radar_km": 25.92,
+          "rumbo_desde_radar_grados": 1.6,
+          "este_desde_radar_km": 0.72,
+          "norte_desde_radar_km": 25.91,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 26.27,
           "rumbo_bahia_grados": 202.4
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 2.8,
-          "direccion_grados": 26.4,
-          "error_rumbo_bahia_grados": 176.0,
+          "velocidad_kmh": 5.69,
+          "direccion_grados": 26.44,
+          "dx_px": 0.9,
+          "dy_px": -1.81,
+          "velocidad_pixeles_min": 0.10107,
+          "error_rumbo_bahia_grados": 175.9,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -2684,15 +2802,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.483571,
-          "longitud": -62.38154,
-          "distancia_bahia_km": 27.91,
-          "rumbo_bahia_grados": 160.2
+          "latitud": -38.483091,
+          "longitud": -62.381027,
+          "distancia_radar_km": 33.63,
+          "rumbo_desde_radar_grados": 326.1,
+          "este_desde_radar_km": -18.77,
+          "norte_desde_radar_km": 27.9,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 27.94,
+          "rumbo_bahia_grados": 160.3
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 5.2,
-          "direccion_grados": 11.7,
-          "error_rumbo_bahia_grados": 148.5,
+          "velocidad_kmh": 10.42,
+          "direccion_grados": 11.67,
+          "dx_px": 0.75,
+          "dy_px": -3.63,
+          "velocidad_pixeles_min": 0.18533,
+          "error_rumbo_bahia_grados": 148.6,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -2723,15 +2849,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.159169,
-          "longitud": -61.966102,
-          "distancia_bahia_km": 67.79,
-          "rumbo_bahia_grados": 203.1
+          "latitud": -38.158355,
+          "longitud": -61.967467,
+          "distancia_radar_km": 66.31,
+          "rumbo_desde_radar_grados": 15.1,
+          "este_desde_radar_km": 17.31,
+          "norte_desde_radar_km": 64.01,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 67.82,
+          "rumbo_bahia_grados": 203.0
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 8.4,
-          "direccion_grados": 332.9,
-          "error_rumbo_bahia_grados": 129.8,
+          "velocidad_kmh": 16.74,
+          "direccion_grados": 332.92,
+          "dx_px": -2.71,
+          "dy_px": -5.3,
+          "velocidad_pixeles_min": 0.29763,
+          "error_rumbo_bahia_grados": 130.0,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -2762,15 +2896,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.482645,
-          "longitud": -62.279084,
-          "distancia_bahia_km": 26.35,
-          "rumbo_bahia_grados": 178.7
+          "latitud": -38.482307,
+          "longitud": -62.278813,
+          "distancia_radar_km": 29.69,
+          "rumbo_desde_radar_grados": 340.6,
+          "este_desde_radar_km": -9.87,
+          "norte_desde_radar_km": 28.0,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 26.39,
+          "rumbo_bahia_grados": 178.8
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 80.4,
-          "direccion_grados": 21.3,
-          "error_rumbo_bahia_grados": 157.4,
+          "velocidad_kmh": 160.87,
+          "direccion_grados": 21.33,
+          "dx_px": 20.81,
+          "dy_px": -53.28,
+          "velocidad_pixeles_min": 2.85999,
+          "error_rumbo_bahia_grados": 157.5,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -2801,14 +2943,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.742874,
-          "longitud": -61.808909,
-          "distancia_bahia_km": 40.29,
+          "latitud": -38.742341,
+          "longitud": -61.808467,
+          "distancia_radar_km": 30.97,
+          "rumbo_desde_radar_grados": 91.8,
+          "este_desde_radar_km": 30.96,
+          "norte_desde_radar_km": -0.97,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 40.32,
           "rumbo_bahia_grados": 273.5
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 2.0,
+          "velocidad_kmh": 4.01,
           "direccion_grados": 117.1,
+          "dx_px": 1.27,
+          "dy_px": 0.65,
+          "velocidad_pixeles_min": 0.07133,
           "error_rumbo_bahia_grados": 156.4,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -2840,17 +2990,25 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.415356,
-          "longitud": -62.364374,
-          "distancia_bahia_km": 34.76,
-          "rumbo_bahia_grados": 166.7
+          "latitud": -38.41483,
+          "longitud": -62.363713,
+          "distancia_radar_km": 39.48,
+          "rumbo_desde_radar_grados": 334.0,
+          "este_desde_radar_km": -17.28,
+          "norte_desde_radar_km": 35.49,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 34.81,
+          "rumbo_bahia_grados": 166.8
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 9.4,
-          "direccion_grados": 198.0,
-          "error_rumbo_bahia_grados": 31.2,
+          "velocidad_kmh": 18.86,
+          "direccion_grados": 197.98,
+          "dx_px": -2.07,
+          "dy_px": 6.38,
+          "velocidad_pixeles_min": 0.33537,
+          "error_rumbo_bahia_grados": 31.1,
           "movimiento_hacia_bahia": true,
-          "eta_minutos": 221.9
+          "eta_minutos": 110.7
         },
         "indice_nucleo": 14
       },
@@ -2879,14 +3037,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.847135,
-          "longitud": -61.624293,
-          "distancia_bahia_km": 57.94,
-          "rumbo_bahia_grados": 284.0
+          "latitud": -38.846009,
+          "longitud": -61.622832,
+          "distancia_radar_km": 48.64,
+          "rumbo_desde_radar_grados": 105.0,
+          "este_desde_radar_km": 46.99,
+          "norte_desde_radar_km": -12.57,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 58.03,
+          "rumbo_bahia_grados": 283.8
         },
         "movimiento_bahia": {
           "velocidad_kmh": null,
           "direccion_grados": null,
+          "dx_px": 0.0,
+          "dy_px": 0.0,
+          "velocidad_pixeles_min": 0.0,
           "error_rumbo_bahia_grados": null,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -2918,15 +3084,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.341161,
-          "longitud": -61.910501,
-          "distancia_bahia_km": 52.55,
-          "rumbo_bahia_grados": 216.7
+          "latitud": -38.340444,
+          "longitud": -61.91161,
+          "distancia_radar_km": 49.03,
+          "rumbo_desde_radar_grados": 26.8,
+          "este_desde_radar_km": 22.13,
+          "norte_desde_radar_km": 43.75,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 52.56,
+          "rumbo_bahia_grados": 216.6
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 3.0,
-          "direccion_grados": 167.4,
-          "error_rumbo_bahia_grados": 49.2,
+          "velocidad_kmh": 6.08,
+          "direccion_grados": 167.44,
+          "dx_px": 0.47,
+          "dy_px": 2.11,
+          "velocidad_pixeles_min": 0.10809,
+          "error_rumbo_bahia_grados": 49.1,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -2957,14 +3131,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.239932,
-          "longitud": -62.05571,
-          "distancia_bahia_km": 56.57,
-          "rumbo_bahia_grados": 199.4
+          "latitud": -38.239326,
+          "longitud": -62.05634,
+          "distancia_radar_km": 55.84,
+          "rumbo_desde_radar_grados": 9.8,
+          "este_desde_radar_km": 9.53,
+          "norte_desde_radar_km": 55.02,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 56.62,
+          "rumbo_bahia_grados": 199.3
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 2.7,
-          "direccion_grados": 356.7,
+          "velocidad_kmh": 5.32,
+          "direccion_grados": 356.67,
+          "dx_px": -0.11,
+          "dy_px": -1.89,
+          "velocidad_pixeles_min": 0.09466,
           "error_rumbo_bahia_grados": 157.3,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -2996,15 +3178,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.935309,
-          "longitud": -61.704078,
-          "distancia_bahia_km": 54.76,
-          "rumbo_bahia_grados": 295.8
+          "latitud": -38.934623,
+          "longitud": -61.702256,
+          "distancia_radar_km": 45.89,
+          "rumbo_desde_radar_grados": 119.2,
+          "este_desde_radar_km": 40.06,
+          "norte_desde_radar_km": -22.39,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 54.87,
+          "rumbo_bahia_grados": 295.7
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 2.2,
-          "direccion_grados": 315.8,
-          "error_rumbo_bahia_grados": 20.0,
+          "velocidad_kmh": 4.4,
+          "direccion_grados": 315.78,
+          "dx_px": -1.09,
+          "dy_px": -1.12,
+          "velocidad_pixeles_min": 0.07814,
+          "error_rumbo_bahia_grados": 20.1,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3035,14 +3225,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -39.128081,
-          "longitud": -61.706129,
-          "distancia_bahia_km": 66.8,
-          "rumbo_bahia_grados": 312.7
+          "latitud": -39.127616,
+          "longitud": -61.703057,
+          "distancia_radar_km": 59.27,
+          "rumbo_desde_radar_grados": 137.7,
+          "este_desde_radar_km": 39.88,
+          "norte_desde_radar_km": -43.85,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 66.96,
+          "rumbo_bahia_grados": 312.5
         },
         "movimiento_bahia": {
           "velocidad_kmh": null,
           "direccion_grados": null,
+          "dx_px": 0.0,
+          "dy_px": 0.0,
+          "velocidad_pixeles_min": 0.0,
           "error_rumbo_bahia_grados": null,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -3074,15 +3272,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -39.159073,
-          "longitud": -62.454955,
-          "distancia_bahia_km": 51.35,
-          "rumbo_bahia_grados": 18.0
+          "latitud": -39.159189,
+          "longitud": -62.457021,
+          "distancia_radar_km": 53.56,
+          "rumbo_desde_radar_grados": 208.0,
+          "este_desde_radar_km": -25.14,
+          "norte_desde_radar_km": -47.3,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 51.42,
+          "rumbo_bahia_grados": 18.1
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 9.6,
-          "direccion_grados": 283.7,
-          "error_rumbo_bahia_grados": 94.3,
+          "velocidad_kmh": 19.25,
+          "direccion_grados": 283.69,
+          "dx_px": -6.65,
+          "dy_px": -1.62,
+          "velocidad_pixeles_min": 0.34222,
+          "error_rumbo_bahia_grados": 94.5,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3113,15 +3319,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.518016,
-          "longitud": -61.57841,
-          "distancia_bahia_km": 64.32,
-          "rumbo_bahia_grados": 249.4
+          "latitud": -38.516309,
+          "longitud": -61.57953,
+          "distancia_radar_km": 56.37,
+          "rumbo_desde_radar_grados": 64.7,
+          "este_desde_radar_km": 50.97,
+          "norte_desde_radar_km": 24.07,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 64.3,
+          "rumbo_bahia_grados": 249.2
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 8.5,
-          "direccion_grados": 32.3,
-          "error_rumbo_bahia_grados": 142.9,
+          "velocidad_kmh": 17.06,
+          "direccion_grados": 32.28,
+          "dx_px": 3.24,
+          "dy_px": -5.13,
+          "velocidad_pixeles_min": 0.30337,
+          "error_rumbo_bahia_grados": 143.1,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3152,14 +3366,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -37.902308,
-          "longitud": -62.119408,
-          "distancia_bahia_km": 91.85,
+          "latitud": -37.901364,
+          "longitud": -62.119884,
+          "distancia_radar_km": 92.69,
+          "rumbo_desde_radar_grados": 2.5,
+          "este_desde_radar_km": 3.99,
+          "norte_desde_radar_km": 92.61,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 91.95,
           "rumbo_bahia_grados": 188.3
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 30.6,
-          "direccion_grados": 344.9,
+          "velocidad_kmh": 61.2,
+          "direccion_grados": 344.92,
+          "dx_px": -5.66,
+          "dy_px": -21.01,
+          "velocidad_pixeles_min": 1.08795,
           "error_rumbo_bahia_grados": 156.6,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -3191,15 +3413,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.634403,
-          "longitud": -61.790339,
+          "latitud": -38.633692,
+          "longitud": -61.790444,
+          "distancia_radar_km": 34.41,
+          "rumbo_desde_radar_grados": 71.2,
+          "este_desde_radar_km": 32.57,
+          "norte_desde_radar_km": 11.11,
+          "dentro_alcance_nominal": true,
           "distancia_bahia_km": 42.91,
-          "rumbo_bahia_grados": 257.1
+          "rumbo_bahia_grados": 257.0
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 6.9,
-          "direccion_grados": 157.5,
-          "error_rumbo_bahia_grados": 99.6,
+          "velocidad_kmh": 13.88,
+          "direccion_grados": 157.49,
+          "dx_px": 1.89,
+          "dy_px": 4.56,
+          "velocidad_pixeles_min": 0.24681,
+          "error_rumbo_bahia_grados": 99.5,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3230,15 +3460,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.176012,
-          "longitud": -61.613497,
-          "distancia_bahia_km": 83.34,
-          "rumbo_bahia_grados": 223.3
+          "latitud": -38.1741,
+          "longitud": -61.617155,
+          "distancia_radar_km": 78.47,
+          "rumbo_desde_radar_grados": 37.6,
+          "este_desde_radar_km": 47.93,
+          "norte_desde_radar_km": 62.14,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 83.28,
+          "rumbo_bahia_grados": 223.0
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 6.1,
-          "direccion_grados": 119.7,
-          "error_rumbo_bahia_grados": 103.6,
+          "velocidad_kmh": 12.27,
+          "direccion_grados": 119.68,
+          "dx_px": 3.79,
+          "dy_px": 2.16,
+          "velocidad_pixeles_min": 0.21812,
+          "error_rumbo_bahia_grados": 103.4,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3269,14 +3507,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -39.430756,
-          "longitud": -61.830285,
-          "distancia_bahia_km": 87.8,
-          "rumbo_bahia_grados": 334.1
+          "latitud": -39.431052,
+          "longitud": -61.826586,
+          "distancia_radar_km": 82.82,
+          "rumbo_desde_radar_grados": 159.4,
+          "este_desde_radar_km": 29.1,
+          "norte_desde_radar_km": -77.54,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 87.97,
+          "rumbo_bahia_grados": 333.9
         },
         "movimiento_bahia": {
           "velocidad_kmh": null,
           "direccion_grados": null,
+          "dx_px": 0.0,
+          "dy_px": 0.0,
+          "velocidad_pixeles_min": 0.0,
           "error_rumbo_bahia_grados": null,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -3308,15 +3554,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.63314,
-          "longitud": -62.728639,
-          "distancia_bahia_km": 40.76,
-          "rumbo_bahia_grados": 103.8
+          "latitud": -38.631675,
+          "longitud": -62.728467,
+          "distancia_radar_km": 50.19,
+          "rumbo_desde_radar_grados": 283.0,
+          "este_desde_radar_km": -48.91,
+          "norte_desde_radar_km": 11.25,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 40.78,
+          "rumbo_bahia_grados": 104.0
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 2.2,
-          "direccion_grados": 218.3,
-          "error_rumbo_bahia_grados": 114.5,
+          "velocidad_kmh": 4.41,
+          "direccion_grados": 218.26,
+          "dx_px": -0.97,
+          "dy_px": 1.23,
+          "velocidad_pixeles_min": 0.07832,
+          "error_rumbo_bahia_grados": 114.2,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3347,14 +3601,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.619581,
-          "longitud": -62.610852,
-          "distancia_bahia_km": 31.42,
-          "rumbo_bahia_grados": 110.8
+          "latitud": -38.618607,
+          "longitud": -62.610634,
+          "distancia_radar_km": 40.73,
+          "rumbo_desde_radar_grados": 288.3,
+          "este_desde_radar_km": -38.68,
+          "norte_desde_radar_km": 12.76,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 31.44,
+          "rumbo_bahia_grados": 111.0
         },
         "movimiento_bahia": {
           "velocidad_kmh": null,
           "direccion_grados": null,
+          "dx_px": 0.0,
+          "dy_px": 0.0,
+          "velocidad_pixeles_min": 0.0,
           "error_rumbo_bahia_grados": null,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -3386,15 +3648,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.567788,
-          "longitud": -61.656898,
-          "distancia_bahia_km": 56.06,
-          "rumbo_bahia_grados": 252.3
+          "latitud": -38.566501,
+          "longitud": -61.657515,
+          "distancia_radar_km": 47.88,
+          "rumbo_desde_radar_grados": 67.2,
+          "este_desde_radar_km": 44.16,
+          "norte_desde_radar_km": 18.52,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 56.05,
+          "rumbo_bahia_grados": 252.1
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 11.0,
-          "direccion_grados": 6.2,
-          "error_rumbo_bahia_grados": 113.9,
+          "velocidad_kmh": 21.95,
+          "direccion_grados": 6.18,
+          "dx_px": 0.84,
+          "dy_px": -7.76,
+          "velocidad_pixeles_min": 0.39027,
+          "error_rumbo_bahia_grados": 114.1,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3425,15 +3695,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -39.013715,
-          "longitud": -61.689287,
-          "distancia_bahia_km": 60.15,
-          "rumbo_bahia_grados": 302.8
+          "latitud": -39.013056,
+          "longitud": -61.686878,
+          "distancia_radar_km": 51.74,
+          "rumbo_desde_radar_grados": 127.0,
+          "este_desde_radar_km": 41.34,
+          "norte_desde_radar_km": -31.12,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 60.29,
+          "rumbo_bahia_grados": 302.6
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 8.8,
-          "direccion_grados": 256.6,
-          "error_rumbo_bahia_grados": 46.1,
+          "velocidad_kmh": 17.66,
+          "direccion_grados": 256.65,
+          "dx_px": -6.11,
+          "dy_px": 1.45,
+          "velocidad_pixeles_min": 0.31398,
+          "error_rumbo_bahia_grados": 45.9,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3464,15 +3742,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -39.043359,
-          "longitud": -62.371608,
-          "distancia_bahia_km": 37.01,
-          "rumbo_bahia_grados": 13.4
+          "latitud": -39.043524,
+          "longitud": -62.37274,
+          "distancia_radar_km": 38.8,
+          "rumbo_desde_radar_grados": 207.5,
+          "este_desde_radar_km": -17.91,
+          "norte_desde_radar_km": -34.42,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 37.05,
+          "rumbo_bahia_grados": 13.6
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 6.6,
-          "direccion_grados": 295.3,
-          "error_rumbo_bahia_grados": 78.1,
+          "velocidad_kmh": 13.16,
+          "direccion_grados": 295.31,
+          "dx_px": -4.23,
+          "dy_px": -2.0,
+          "velocidad_pixeles_min": 0.23395,
+          "error_rumbo_bahia_grados": 78.3,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3503,14 +3789,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.915687,
-          "longitud": -62.05042,
-          "distancia_bahia_km": 29.07,
+          "latitud": -38.915834,
+          "longitud": -62.049997,
+          "distancia_radar_km": 22.54,
+          "rumbo_desde_radar_grados": 153.7,
+          "este_desde_radar_km": 9.98,
+          "norte_desde_radar_km": -20.2,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 29.11,
           "rumbo_bahia_grados": 318.5
         },
         "movimiento_bahia": {
           "velocidad_kmh": null,
           "direccion_grados": null,
+          "dx_px": 0.0,
+          "dy_px": 0.0,
+          "velocidad_pixeles_min": 0.0,
           "error_rumbo_bahia_grados": null,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -3542,15 +3836,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.480624,
-          "longitud": -61.921297,
+          "latitud": -38.480086,
+          "longitud": -61.921888,
+          "distancia_radar_km": 35.3,
+          "rumbo_desde_radar_grados": 36.9,
+          "este_desde_radar_km": 21.2,
+          "norte_desde_radar_km": 28.23,
+          "dentro_alcance_nominal": true,
           "distancia_bahia_km": 40.46,
-          "rumbo_bahia_grados": 228.8
+          "rumbo_bahia_grados": 228.7
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 12.7,
-          "direccion_grados": 102.8,
-          "error_rumbo_bahia_grados": 126.1,
+          "velocidad_kmh": 25.46,
+          "direccion_grados": 102.76,
+          "dx_px": 8.83,
+          "dy_px": 2.0,
+          "velocidad_pixeles_min": 0.45268,
+          "error_rumbo_bahia_grados": 126.0,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3581,15 +3883,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.587326,
-          "longitud": -61.597951,
-          "distancia_bahia_km": 60.39,
-          "rumbo_bahia_grados": 255.7
+          "latitud": -38.585791,
+          "longitud": -61.598486,
+          "distancia_radar_km": 51.92,
+          "rumbo_desde_radar_grados": 71.6,
+          "este_desde_radar_km": 49.28,
+          "norte_desde_radar_km": 16.35,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 60.38,
+          "rumbo_bahia_grados": 255.5
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 50.4,
-          "direccion_grados": 352.2,
-          "error_rumbo_bahia_grados": 96.5,
+          "velocidad_kmh": 100.74,
+          "direccion_grados": 352.23,
+          "dx_px": -4.84,
+          "dy_px": -35.49,
+          "velocidad_pixeles_min": 1.79093,
+          "error_rumbo_bahia_grados": 96.7,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3620,14 +3930,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.859599,
-          "longitud": -62.667424,
-          "distancia_bahia_km": 37.61,
-          "rumbo_bahia_grados": 65.7
+          "latitud": -38.858661,
+          "longitud": -62.668869,
+          "distancia_radar_km": 45.77,
+          "rumbo_desde_radar_grados": 252.2,
+          "este_desde_radar_km": -43.59,
+          "norte_desde_radar_km": -13.96,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 37.68,
+          "rumbo_bahia_grados": 65.9
         },
         "movimiento_bahia": {
           "velocidad_kmh": null,
           "direccion_grados": null,
+          "dx_px": 0.0,
+          "dy_px": 0.0,
+          "velocidad_pixeles_min": 0.0,
           "error_rumbo_bahia_grados": null,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -3659,15 +3977,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.027285,
-          "longitud": -62.04405,
-          "distancia_bahia_km": 79.51,
-          "rumbo_bahia_grados": 194.4
+          "latitud": -38.026429,
+          "longitud": -62.0451,
+          "distancia_radar_km": 79.4,
+          "rumbo_desde_radar_grados": 7.6,
+          "este_desde_radar_km": 10.54,
+          "norte_desde_radar_km": 78.69,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 79.58,
+          "rumbo_bahia_grados": 194.3
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 1.2,
-          "direccion_grados": 118.0,
-          "error_rumbo_bahia_grados": 76.4,
+          "velocidad_kmh": 2.45,
+          "direccion_grados": 118.03,
+          "dx_px": 0.77,
+          "dy_px": 0.41,
+          "velocidad_pixeles_min": 0.04362,
+          "error_rumbo_bahia_grados": 76.3,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3698,17 +4024,25 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.45679,
-          "longitud": -61.680218,
-          "distancia_bahia_km": 59.19,
-          "rumbo_bahia_grados": 240.2
+          "latitud": -38.45548,
+          "longitud": -61.681555,
+          "distancia_radar_km": 52.24,
+          "rumbo_desde_radar_grados": 53.8,
+          "este_desde_radar_km": 42.13,
+          "norte_desde_radar_km": 30.88,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 59.16,
+          "rumbo_bahia_grados": 240.1
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 46.3,
-          "direccion_grados": 210.5,
-          "error_rumbo_bahia_grados": 29.7,
+          "velocidad_kmh": 92.68,
+          "direccion_grados": 210.51,
+          "dx_px": -16.73,
+          "dy_px": 28.39,
+          "velocidad_pixeles_min": 1.64764,
+          "error_rumbo_bahia_grados": 29.5,
           "movimiento_hacia_bahia": true,
-          "eta_minutos": 76.7
+          "eta_minutos": 38.3
         },
         "indice_nucleo": 36
       },
@@ -3737,14 +4071,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.977418,
-          "longitud": -62.535818,
-          "distancia_bahia_km": 36.64,
-          "rumbo_bahia_grados": 38.6
+          "latitud": -38.977102,
+          "longitud": -62.537503,
+          "distancia_radar_km": 42.04,
+          "rumbo_desde_radar_grados": 229.9,
+          "este_desde_radar_km": -32.17,
+          "norte_desde_radar_km": -27.07,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 36.7,
+          "rumbo_bahia_grados": 38.8
         },
         "movimiento_bahia": {
           "velocidad_kmh": null,
           "direccion_grados": null,
+          "dx_px": 0.0,
+          "dy_px": 0.0,
+          "velocidad_pixeles_min": 0.0,
           "error_rumbo_bahia_grados": null,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -3776,17 +4118,25 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -39.35513,
-          "longitud": -61.89258,
-          "distancia_bahia_km": 77.91,
-          "rumbo_bahia_grados": 335.0
+          "latitud": -39.355505,
+          "longitud": -61.889865,
+          "distancia_radar_km": 73.07,
+          "rumbo_desde_radar_grados": 161.1,
+          "este_desde_radar_km": 23.69,
+          "norte_desde_radar_km": -69.12,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 78.05,
+          "rumbo_bahia_grados": 334.8
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 22.9,
-          "direccion_grados": 328.7,
-          "error_rumbo_bahia_grados": 6.3,
+          "velocidad_kmh": 45.79,
+          "direccion_grados": 328.69,
+          "dx_px": -8.46,
+          "dy_px": -13.91,
+          "velocidad_pixeles_min": 0.81403,
+          "error_rumbo_bahia_grados": 6.1,
           "movimiento_hacia_bahia": true,
-          "eta_minutos": 204.1
+          "eta_minutos": 102.3
         },
         "indice_nucleo": 38
       },
@@ -3815,17 +4165,25 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -37.977934,
-          "longitud": -62.05204,
-          "distancia_bahia_km": 84.68,
+          "latitud": -37.977031,
+          "longitud": -62.053096,
+          "distancia_radar_km": 84.76,
+          "rumbo_desde_radar_grados": 6.7,
+          "este_desde_radar_km": 9.84,
+          "norte_desde_radar_km": 84.19,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 84.76,
           "rumbo_bahia_grados": 193.0
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 13.5,
-          "direccion_grados": 161.5,
-          "error_rumbo_bahia_grados": 31.6,
+          "velocidad_kmh": 27.02,
+          "direccion_grados": 161.49,
+          "dx_px": 3.05,
+          "dy_px": 9.11,
+          "velocidad_pixeles_min": 0.48035,
+          "error_rumbo_bahia_grados": 31.5,
           "movimiento_hacia_bahia": true,
-          "eta_minutos": 376.4
+          "eta_minutos": 188.2
         },
         "indice_nucleo": 39
       },
@@ -3854,15 +4212,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.970007,
-          "longitud": -62.440704,
-          "distancia_bahia_km": 31.43,
-          "rumbo_bahia_grados": 27.7
+          "latitud": -38.969946,
+          "longitud": -62.441928,
+          "distancia_radar_km": 35.5,
+          "rumbo_desde_radar_grados": 222.3,
+          "este_desde_radar_km": -23.91,
+          "norte_desde_radar_km": -26.25,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 31.47,
+          "rumbo_bahia_grados": 27.9
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 118.3,
-          "direccion_grados": 258.3,
-          "error_rumbo_bahia_grados": 129.4,
+          "velocidad_kmh": 236.64,
+          "direccion_grados": 258.26,
+          "dx_px": -82.38,
+          "dy_px": 17.12,
+          "velocidad_pixeles_min": 4.20701,
+          "error_rumbo_bahia_grados": 129.6,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3893,15 +4259,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -39.263081,
-          "longitud": -62.470933,
-          "distancia_bahia_km": 62.82,
-          "rumbo_bahia_grados": 15.9
+          "latitud": -39.263272,
+          "longitud": -62.473568,
+          "distancia_radar_km": 64.58,
+          "rumbo_desde_radar_grados": 204.3,
+          "este_desde_radar_km": -26.53,
+          "norte_desde_radar_km": -58.88,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 62.9,
+          "rumbo_bahia_grados": 16.1
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 6.3,
-          "direccion_grados": 295.2,
-          "error_rumbo_bahia_grados": 80.7,
+          "velocidad_kmh": 12.59,
+          "direccion_grados": 295.25,
+          "dx_px": -4.05,
+          "dy_px": -1.91,
+          "velocidad_pixeles_min": 0.22389,
+          "error_rumbo_bahia_grados": 80.9,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -3932,17 +4306,25 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.270082,
-          "longitud": -61.962647,
-          "distancia_bahia_km": 56.79,
-          "rumbo_bahia_grados": 208.2
+          "latitud": -38.269387,
+          "longitud": -61.963727,
+          "distancia_radar_km": 54.58,
+          "rumbo_desde_radar_grados": 18.8,
+          "este_desde_radar_km": 17.61,
+          "norte_desde_radar_km": 51.67,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 56.81,
+          "rumbo_bahia_grados": 208.1
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 29.0,
-          "direccion_grados": 174.6,
-          "error_rumbo_bahia_grados": 33.7,
+          "velocidad_kmh": 58.0,
+          "direccion_grados": 174.55,
+          "dx_px": 1.96,
+          "dy_px": 20.53,
+          "velocidad_pixeles_min": 1.03117,
+          "error_rumbo_bahia_grados": 33.6,
           "movimiento_hacia_bahia": true,
-          "eta_minutos": 117.5
+          "eta_minutos": 58.8
         },
         "indice_nucleo": 42
       },
@@ -3971,15 +4353,23 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.558271,
-          "longitud": -61.813875,
-          "distancia_bahia_km": 43.68,
-          "rumbo_bahia_grados": 245.6
+          "latitud": -38.557548,
+          "longitud": -61.814346,
+          "distancia_radar_km": 36.27,
+          "rumbo_desde_radar_grados": 57.3,
+          "este_desde_radar_km": 30.53,
+          "norte_desde_radar_km": 19.58,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 43.67,
+          "rumbo_bahia_grados": 245.5
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 95.0,
-          "direccion_grados": 36.4,
-          "error_rumbo_bahia_grados": 150.8,
+          "velocidad_kmh": 189.99,
+          "direccion_grados": 36.37,
+          "dx_px": 40.06,
+          "dy_px": -54.39,
+          "velocidad_pixeles_min": 3.37753,
+          "error_rumbo_bahia_grados": 150.9,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
         },
@@ -4010,17 +4400,25 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -38.635919,
-          "longitud": -61.708396,
-          "distancia_bahia_km": 49.84,
-          "rumbo_bahia_grados": 259.1
+          "latitud": -38.634919,
+          "longitud": -61.708515,
+          "distancia_radar_km": 41.16,
+          "rumbo_desde_radar_grados": 74.6,
+          "este_desde_radar_km": 39.68,
+          "norte_desde_radar_km": 10.94,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 49.85,
+          "rumbo_bahia_grados": 258.9
         },
         "movimiento_bahia": {
-          "velocidad_kmh": 27.6,
-          "direccion_grados": 255.3,
-          "error_rumbo_bahia_grados": 3.8,
+          "velocidad_kmh": 55.26,
+          "direccion_grados": 255.26,
+          "dx_px": -19.0,
+          "dy_px": 5.0,
+          "velocidad_pixeles_min": 0.98234,
+          "error_rumbo_bahia_grados": 3.7,
           "movimiento_hacia_bahia": true,
-          "eta_minutos": 108.3
+          "eta_minutos": 54.1
         },
         "indice_nucleo": 44
       },
@@ -4049,14 +4447,22 @@
           "confianza_track": 0.008
         },
         "georreferencia": {
-          "latitud": -39.214235,
-          "longitud": -62.567559,
-          "distancia_bahia_km": 60.63,
-          "rumbo_bahia_grados": 25.0
+          "latitud": -39.214077,
+          "longitud": -62.570745,
+          "distancia_radar_km": 63.84,
+          "rumbo_desde_radar_grados": 213.2,
+          "este_desde_radar_km": -34.92,
+          "norte_desde_radar_km": -53.44,
+          "dentro_alcance_nominal": true,
+          "distancia_bahia_km": 60.73,
+          "rumbo_bahia_grados": 25.2
         },
         "movimiento_bahia": {
           "velocidad_kmh": null,
           "direccion_grados": null,
+          "dx_px": 0.0,
+          "dy_px": 0.0,
+          "velocidad_pixeles_min": 0.0,
           "error_rumbo_bahia_grados": null,
           "movimiento_hacia_bahia": false,
           "eta_minutos": null
@@ -4064,80 +4470,16 @@
         "indice_nucleo": 45
       }
     ],
-    "rumbo_bahia_grados": 183.5,
-    "error_rumbo_bahia_grados": 12.2,
+    "rumbo_bahia_grados": 333.7,
+    "error_rumbo_bahia_grados": 84.8,
     "bahia_blanca": {
       "latitud": -38.7196,
       "longitud": -62.2724,
-      "distancia_principal_km": 14.17,
-      "rumbo_desde_principal_grados": 183.5,
-      "movimiento_hacia_bahia": true,
-      "eta_minutos": 160.5,
-      "nucleos_hacia_bahia": [
-        {
-          "nucleo_id": 2,
-          "track_id": 6,
-          "distancia_km": 14.17,
-          "eta_minutos": 160.5,
-          "intensidad": 5
-        },
-        {
-          "nucleo_id": 6,
-          "track_id": 9,
-          "distancia_km": 24.2,
-          "eta_minutos": 94.3,
-          "intensidad": 3
-        },
-        {
-          "nucleo_id": 14,
-          "track_id": 42,
-          "distancia_km": 34.76,
-          "eta_minutos": 221.9,
-          "intensidad": 5
-        },
-        {
-          "nucleo_id": 7,
-          "track_id": 17,
-          "distancia_km": 39.9,
-          "eta_minutos": 288.4,
-          "intensidad": 2
-        },
-        {
-          "nucleo_id": 44,
-          "track_id": 48,
-          "distancia_km": 49.84,
-          "eta_minutos": 108.3,
-          "intensidad": 2
-        },
-        {
-          "nucleo_id": 42,
-          "track_id": 45,
-          "distancia_km": 56.79,
-          "eta_minutos": 117.5,
-          "intensidad": 5
-        },
-        {
-          "nucleo_id": 36,
-          "track_id": 36,
-          "distancia_km": 59.19,
-          "eta_minutos": 76.7,
-          "intensidad": 3
-        },
-        {
-          "nucleo_id": 38,
-          "track_id": 47,
-          "distancia_km": 77.91,
-          "eta_minutos": 204.1,
-          "intensidad": 1
-        },
-        {
-          "nucleo_id": 39,
-          "track_id": 23,
-          "distancia_km": 84.68,
-          "eta_minutos": 376.4,
-          "intensidad": 4
-        }
-      ]
+      "distancia_principal_km": 10.79,
+      "rumbo_desde_principal_grados": 333.7,
+      "movimiento_hacia_bahia": false,
+      "eta_minutos": null,
+      "nucleo_principal_id": 1
     }
   },
   "diagnostico": {
@@ -4150,14 +4492,53 @@
     "georreferenciacion_operativa": true,
     "dBZ_disponible": false,
     "nota": "Los ecos estaticos se excluyen antes del tracking y del ML. Los nucleos DINAMICO/CAMBIO pasan a Intelligence.",
-    "georreferenciacion_por_nucleo": true,
+    "georreferenciacion_validada": true,
     "radar_latitud": -38.7342,
     "radar_longitud": -62.1654,
     "bahia_blanca_latitud": -38.7196,
     "bahia_blanca_longitud": -62.2724,
-    "nucleos_georreferenciados": 45,
-    "nucleos_hacia_bahia": 9,
-    "nota_georreferenciacion": "Cada nucleo se georreferencia y evalua individualmente. La posicion pixel->lat/lon usa el centro de RMA10 y 240 km de radio, por lo que continua siendo una transformacion operativa pendiente de validacion cartografica oficial."
+    "validacion_geografica": {
+      "estado": true,
+      "centro_ok": true,
+      "radio_cardinal_ok": true,
+      "orientacion_cardinal_ok": true,
+      "error_centro_m": 0.0,
+      "controles_cardinales": {
+        "norte": {
+          "latitud": -36.575831,
+          "longitud": -62.1654,
+          "distancia_km": 240.0,
+          "rumbo_grados": 0.0,
+          "error_rumbo_grados": 0.0,
+          "error_radio_km": 0.0
+        },
+        "sur": {
+          "latitud": -40.892569,
+          "longitud": -62.1654,
+          "distancia_km": 240.0,
+          "rumbo_grados": 180.0,
+          "error_rumbo_grados": 0.0,
+          "error_radio_km": 0.0
+        },
+        "este": {
+          "latitud": -38.701602,
+          "longitud": -59.399304,
+          "distancia_km": 240.0,
+          "rumbo_grados": 90.0,
+          "error_rumbo_grados": 0.0,
+          "error_radio_km": 0.0
+        },
+        "oeste": {
+          "latitud": -38.701602,
+          "longitud": -64.931496,
+          "distancia_km": 240.0,
+          "rumbo_grados": 270.0,
+          "error_rumbo_grados": 0.0,
+          "error_radio_km": 0.0
+        }
+      }
+    },
+    "nota_georreferenciacion": "Transformacion pixel->lat/lon validada matematicamente contra las coordenadas oficiales de RMA10 y el alcance nominal de 240 km de radio. La precision GIS de la PNG sigue limitada por el renderizado del producto."
   },
   "tracking": {
     "tracks_activos": 45,
