@@ -1,4 +1,4 @@
-name: Prueba VRAD RMA10
+name: Prueba VRAD RMA10 - Profunda
 
 on:
   workflow_dispatch:
@@ -7,105 +7,241 @@ permissions:
   contents: read
 
 jobs:
-  probar-vrad:
+  diagnostico:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Diagnosticar data.mapasmn.com
+      - name: Buscar elevaciones y tilesets VRAD
         shell: bash
         run: |
-          set -u
+          set -e
 
           BASE="https://data.mapasmn.com"
+          OUT="/tmp/vrad"
 
-          echo "========================================"
-          echo "1. CONECTIVIDAD"
-          echo "========================================"
+          mkdir -p "$OUT"
 
-          curl -L --max-time 20 -sS -o /tmp/root.txt \
-            -w "HTTP_ROOT=%{http_code}\n" \
-            "$BASE/" || true
+          echo "=============================================="
+          echo "   DIAGNOSTICO PROFUNDO VRAD RMA10"
+          echo "=============================================="
 
           echo
-          echo "========================================"
-          echo "2. OPENAPI"
-          echo "========================================"
+          echo "1) OPENAPI"
+          echo "----------------------------------------------"
 
-          HTTP=$(curl -L --max-time 30 -sS \
-            -o /tmp/openapi.json \
-            -w "%{http_code}" \
-            "$BASE/openapi.json" || true)
+          curl -L --max-time 30 -sS \
+            "$BASE/openapi.json" \
+            -o "$OUT/openapi.json"
 
-          echo "HTTP_OPENAPI=$HTTP"
-
-          if [ -s /tmp/openapi.json ]; then
-            echo "OpenAPI encontrado."
-
-            echo
-            echo "Rutas relacionadas con radar:"
-            python - <<'PY'
+          python - <<'PY'
           import json
 
-          try:
-              with open("/tmp/openapi.json", "r", encoding="utf-8") as f:
-                  data = json.load(f)
+          p="/tmp/vrad/openapi.json"
 
-              paths = data.get("paths", {})
+          with open(p,encoding="utf-8") as f:
+              data=json.load(f)
 
-              found = False
+          print("RUTAS RADAR EN OPENAPI:")
+          print()
 
-              for path in sorted(paths):
-                  p = path.lower()
-                  if "radar" in p or "vrad" in p:
-                      found = True
-                      print(path)
+          for path, methods in data.get("paths",{}).items():
+              if "radar-sinarame" not in path.lower():
+                  continue
 
-              if not found:
-                  print("NO_SE_ENCONTRARON_RUTAS_RADAR")
-          except Exception as e:
-              print("ERROR_OPENAPI:", e)
+              print(path)
+
+              for method, spec in methods.items():
+                  if method.lower() not in {
+                      "get","post","put","delete","patch"
+                  }:
+                      continue
+
+                  print("  METHOD:", method.upper())
+
+                  for par in spec.get("parameters",[]):
+                      name=par.get("name")
+                      loc=par.get("in")
+                      required=par.get("required",False)
+
+                      print(
+                          "   PARAM:",
+                          name,
+                          "IN:",
+                          loc,
+                          "REQUIRED:",
+                          required
+                      )
+
+                  print()
           PY
-          else
-            echo "NO_SE_PUDO_OBTENER_OPENAPI"
-          fi
 
           echo
-          echo "========================================"
-          echo "3. PROBAR LISTADOS DE RADAR"
-          echo "========================================"
+          echo "2) VARIABLES DE RMA10"
+          echo "----------------------------------------------"
 
-          for URL in \
-            "$BASE/products/radar-sinarame" \
-            "$BASE/products/radar-sinarame/rma10" \
+          curl -L --max-time 20 -sS \
             "$BASE/products/radar-sinarame/RMA10" \
-            "$BASE/products/radar-sinarame/rma10/vrad" \
-            "$BASE/products/radar-sinarame/RMA10/VRAD"
+            -o "$OUT/rma10.json"
+
+          cat "$OUT/rma10.json"
+
+          echo
+          echo
+          echo "3) INFORMACION VRAD"
+          echo "----------------------------------------------"
+
+          curl -L --max-time 20 -sS \
+            "$BASE/products/radar-sinarame/RMA10/VRAD" \
+            -o "$OUT/vrad.json"
+
+          cat "$OUT/vrad.json"
+
+          echo
+          echo
+          echo "4) PROBAR ELEVACIONES"
+          echo "----------------------------------------------"
+
+          for ELEV in \
+            elev0 \
+            elev1 \
+            elev2 \
+            0 \
+            1 \
+            2
           do
+
+            URL="$BASE/products/radar-sinarame/RMA10/VRAD/$ELEV"
+
             echo
+            echo "----------------------------------------------"
+            echo "ELEVACION: $ELEV"
             echo "URL: $URL"
+            echo "----------------------------------------------"
 
-            curl -L --max-time 20 -sS \
-              -o /tmp/response \
-              -w "HTTP=%{http_code} SIZE=%{size_download}\n" \
-              "$URL" || true
+            FILE="$OUT/elev_${ELEV}.json"
 
-            head -c 1000 /tmp/response 2>/dev/null || true
-            echo
+            HTTP=$(curl -L --max-time 20 -sS \
+              -o "$FILE" \
+              -w "%{http_code}" \
+              "$URL" || true)
+
+            echo "HTTP=$HTTP"
+
+            if [ -s "$FILE" ]; then
+              cat "$FILE"
+            else
+              echo "SIN_RESPUESTA"
+            fi
+
           done
 
           echo
-          echo "========================================"
-          echo "4. BUSCAR RMA10 / VRAD EN OPENAPI"
-          echo "========================================"
+          echo
+          echo "5) PROBAR DBZH PARA COMPARAR"
+          echo "----------------------------------------------"
 
-          if [ -s /tmp/openapi.json ]; then
-            grep -oiE '.{0,150}(rma10|vrad).{0,250}' \
-              /tmp/openapi.json | head -50 || true
-          fi
+          for ELEV in elev0 elev1 elev2 0 1 2
+          do
+
+            URL="$BASE/products/radar-sinarame/RMA10/dbzh/$ELEV"
+
+            echo
+            echo "ELEVACION DBZH: $ELEV"
+            echo "URL: $URL"
+
+            curl -L --max-time 20 -sS \
+              -w "\nHTTP=%{http_code}\n" \
+              "$URL" || true
+
+          done
 
           echo
-          echo "========================================"
-          echo "5. RESULTADO"
-          echo "========================================"
-          echo "La prueba terminó."
-          echo "Revisar este log completo antes de modificar ClimaAR."
+          echo
+          echo "6) EXTRAER POSIBLES TILESETS"
+          echo "----------------------------------------------"
+
+          python - <<'PY'
+          import json
+          import glob
+          import re
+
+          encontrados=set()
+
+          for fn in glob.glob("/tmp/vrad/*.json"):
+
+              try:
+                  with open(fn,encoding="utf-8") as f:
+                      txt=f.read()
+              except:
+                  continue
+
+              # Buscar timestamps
+              for x in re.findall(
+                  r'\d{8}T\d{4,6}Z',
+                  txt
+              ):
+                  encontrados.add(x)
+
+              # Buscar campos típicos
+              try:
+                  obj=json.loads(txt)
+              except:
+                  continue
+
+              def walk(x):
+
+                  if isinstance(x,dict):
+
+                      for k,v in x.items():
+
+                          kl=str(k).lower()
+
+                          if (
+                              "tileset" in kl
+                              or "timestamp" in kl
+                              or "time" == kl
+                              or "date" in kl
+                          ):
+                              print(
+                                  "ARCHIVO:",
+                                  fn,
+                                  "CAMPO:",
+                                  k,
+                                  "VALOR:",
+                                  v
+                              )
+
+                          walk(v)
+
+                  elif isinstance(x,list):
+
+                      for v in x:
+                          walk(v)
+
+              walk(obj)
+
+          print()
+          print("TIMESTAMPS ENCONTRADOS:")
+
+          for x in sorted(encontrados):
+              print(x)
+          PY
+
+          echo
+          echo
+          echo "7) RESULTADO"
+          echo "=============================================="
+          echo
+          echo "Si aparece:"
+          echo " - elevation"
+          echo " - tileset_id"
+          echo " - timestamp"
+          echo " - o una URL .webp"
+          echo
+          echo "ENTONCES TENEMOS UNA VIA REAL PARA OBTENER VRAD."
+          echo
+          echo "Si VRAD sigue devolviendo elevations=[] mientras"
+          echo "DBZH tiene elevaciones/tilesets, entonces el servicio"
+          echo "publico actualmente no esta entregando VRAD para RMA10."
+          echo
+          echo "=============================================="
