@@ -1,0 +1,111 @@
+name: Prueba VRAD RMA10
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probar-vrad:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Diagnosticar data.mapasmn.com
+        shell: bash
+        run: |
+          set -u
+
+          BASE="https://data.mapasmn.com"
+
+          echo "========================================"
+          echo "1. CONECTIVIDAD"
+          echo "========================================"
+
+          curl -L --max-time 20 -sS -o /tmp/root.txt \
+            -w "HTTP_ROOT=%{http_code}\n" \
+            "$BASE/" || true
+
+          echo
+          echo "========================================"
+          echo "2. OPENAPI"
+          echo "========================================"
+
+          HTTP=$(curl -L --max-time 30 -sS \
+            -o /tmp/openapi.json \
+            -w "%{http_code}" \
+            "$BASE/openapi.json" || true)
+
+          echo "HTTP_OPENAPI=$HTTP"
+
+          if [ -s /tmp/openapi.json ]; then
+            echo "OpenAPI encontrado."
+
+            echo
+            echo "Rutas relacionadas con radar:"
+            python - <<'PY'
+          import json
+
+          try:
+              with open("/tmp/openapi.json", "r", encoding="utf-8") as f:
+                  data = json.load(f)
+
+              paths = data.get("paths", {})
+
+              found = False
+
+              for path in sorted(paths):
+                  p = path.lower()
+                  if "radar" in p or "vrad" in p:
+                      found = True
+                      print(path)
+
+              if not found:
+                  print("NO_SE_ENCONTRARON_RUTAS_RADAR")
+          except Exception as e:
+              print("ERROR_OPENAPI:", e)
+          PY
+          else
+            echo "NO_SE_PUDO_OBTENER_OPENAPI"
+          fi
+
+          echo
+          echo "========================================"
+          echo "3. PROBAR LISTADOS DE RADAR"
+          echo "========================================"
+
+          for URL in \
+            "$BASE/products/radar-sinarame" \
+            "$BASE/products/radar-sinarame/rma10" \
+            "$BASE/products/radar-sinarame/RMA10" \
+            "$BASE/products/radar-sinarame/rma10/vrad" \
+            "$BASE/products/radar-sinarame/RMA10/VRAD"
+          do
+            echo
+            echo "URL: $URL"
+
+            curl -L --max-time 20 -sS \
+              -o /tmp/response \
+              -w "HTTP=%{http_code} SIZE=%{size_download}\n" \
+              "$URL" || true
+
+            head -c 1000 /tmp/response 2>/dev/null || true
+            echo
+          done
+
+          echo
+          echo "========================================"
+          echo "4. BUSCAR RMA10 / VRAD EN OPENAPI"
+          echo "========================================"
+
+          if [ -s /tmp/openapi.json ]; then
+            grep -oiE '.{0,150}(rma10|vrad).{0,250}' \
+              /tmp/openapi.json | head -50 || true
+          fi
+
+          echo
+          echo "========================================"
+          echo "5. RESULTADO"
+          echo "========================================"
+          echo "La prueba terminó."
+          echo "Revisar este log completo antes de modificar ClimaAR."
