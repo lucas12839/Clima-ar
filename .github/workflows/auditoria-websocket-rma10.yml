@@ -1,0 +1,413 @@
+name: Auditoria WebSocket RMA10
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  auditoria:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar Playwright
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Ejecutar auditoría WebSocket
+        run: |
+          mkdir -p auditoria_rma10/ws_frames
+          mkdir -p auditoria_rma10/js
+
+          cat > auditoria_rma10/auditar.py <<'PY'
+          import os
+          import json
+          import base64
+          import time
+          import re
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+
+          OUT = Path("auditoria_rma10")
+          WS_DIR = OUT / "ws_frames"
+          JS_DIR = OUT / "js"
+
+          WS_DIR.mkdir(parents=True, exist_ok=True)
+          JS_DIR.mkdir(parents=True, exist_ok=True)
+
+          requests_log = []
+          responses_log = []
+          websocket_log = []
+          frame_index = []
+
+          ws_counter = 0
+          ws_objects = {}
+
+          def safe_name(value):
+              value = re.sub(r"[^a-zA-Z0-9._-]+", "_", value)
+              return value[:120]
+
+          def save_frame(ws_id, direction, payload):
+              seq = len([x for x in frame_index if x["ws_id"] == ws_id]) + 1
+
+              if isinstance(payload, bytes):
+                  filename = f"ws_{ws_id:03d}_{direction}_{seq:05d}.bin"
+                  path = WS_DIR / filename
+
+                  with open(path, "wb") as f:
+                      f.write(payload)
+
+                  entry = {
+                      "ws_id": ws_id,
+                      "direction": direction,
+                      "sequence": seq,
+                      "type": "binary",
+                      "size": len(payload),
+                      "file": str(path.relative_to(OUT))
+                  }
+
+              else:
+                  text = str(payload)
+
+                  filename = f"ws_{ws_id:03d}_{direction}_{seq:05d}.txt"
+                  path = WS_DIR / filename
+
+                  path.write_text(text, encoding="utf-8", errors="replace")
+
+                  entry = {
+                      "ws_id": ws_id,
+                      "direction": direction,
+                      "sequence": seq,
+                      "type": "text",
+                      "size": len(text.encode("utf-8")),
+                      "file": str(path.relative_to(OUT)),
+                      "preview": text[:1000]
+                  }
+
+              frame_index.append(entry)
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(
+                  headless=True,
+                  args=[
+                      "--disable-dev-shm-usage",
+                      "--no-sandbox"
+                  ]
+              )
+
+              context = browser.new_context(
+                  viewport={"width": 1440, "height": 1000}
+              )
+
+              page = context.new_page()
+
+              def on_request(request):
+                  try:
+                      requests_log.append({
+                          "method": request.method,
+                          "url": request.url,
+                          "resource_type": request.resource_type
+                      })
+                  except Exception:
+                      pass
+
+              def on_response(response):
+                  try:
+                      content_type = response.headers.get("content-type", "")
+                      entry = {
+                          "status": response.status,
+                          "url": response.url,
+                          "content_type": content_type
+                      }
+
+                      responses_log.append(entry)
+
+                      # Guardar TODOS los JS cargados.
+                      if (
+                          "javascript" in content_type.lower()
+                          or response.url.lower().endswith(".js")
+                      ):
+                          try:
+                              body = response.body()
+                              filename = (
+                                  f"{len(list(JS_DIR.glob('*.js'))):03d}_"
+                                  f"{safe_name(response.url.split('/')[-1] or 'script.js')}"
+                              )
+
+                              if not filename.endswith(".js"):
+                                  filename += ".js"
+
+                              (JS_DIR / filename).write_bytes(body)
+
+                          except Exception as e:
+                              responses_log[-1]["js_save_error"] = str(e)
+
+                  except Exception:
+                      pass
+
+              def on_websocket(ws):
+                  global ws_counter
+
+                  ws_id = ws_counter
+                  ws_counter += 1
+
+                  ws_objects[ws_id] = ws
+
+                  entry = {
+                      "ws_id": ws_id,
+                      "url": ws.url,
+                      "frames_received": 0,
+                      "frames_sent": 0,
+                      "closed": False,
+                      "error": None
+                  }
+
+                  websocket_log.append(entry)
+
+                  def received(payload):
+                      try:
+                          save_frame(ws_id, "received", payload)
+                          entry["frames_received"] += 1
+                      except Exception as e:
+                          entry["error"] = f"received: {e}"
+
+                  def sent(payload):
+                      try:
+                          save_frame(ws_id, "sent", payload)
+                          entry["frames_sent"] += 1
+                      except Exception as e:
+                          entry["error"] = f"sent: {e}"
+
+                  def closed():
+                      entry["closed"] = True
+
+                  def socket_error(error):
+                      entry["error"] = str(error)
+
+                  ws.on("framereceived", received)
+                  ws.on("framesent", sent)
+                  ws.on("close", closed)
+                  ws.on("socketerror", socket_error)
+
+              page.on("request", on_request)
+              page.on("response", on_response)
+              page.on("websocket", on_websocket)
+
+              print("Abriendo radar...")
+              page.goto(
+                  "https://radares.hidricosargentina.gob.ar/",
+                  wait_until="domcontentloaded",
+                  timeout=120000
+              )
+
+              print("Esperando aplicación...")
+              page.wait_for_timeout(15000)
+
+              # Guardar HTML inicial.
+              try:
+                  (OUT / "pagina_inicial.html").write_text(
+                      page.content(),
+                      encoding="utf-8"
+                  )
+              except Exception:
+                  pass
+
+              # Inspeccionar todos los SELECT.
+              selects = page.locator("select")
+              select_info = []
+
+              for i in range(selects.count()):
+                  try:
+                      sel = selects.nth(i)
+
+                      select_info.append({
+                          "index": i,
+                          "id": sel.get_attribute("id"),
+                          "name": sel.get_attribute("name"),
+                          "options": sel.locator("option").all_text_contents(),
+                          "values": sel.locator("option").evaluate_all(
+                              "(els) => els.map(e => e.value)"
+                          )
+                      })
+                  except Exception as e:
+                      select_info.append({
+                          "index": i,
+                          "error": str(e)
+                      })
+
+              (OUT / "selects.json").write_text(
+                  json.dumps(select_info, indent=2, ensure_ascii=False),
+                  encoding="utf-8"
+              )
+
+              print("Selects detectados:")
+              print(json.dumps(select_info, indent=2, ensure_ascii=False))
+
+              # Seleccionar RMA10.
+              radar_ok = False
+
+              try:
+                  radar_selector = page.locator("#radar-selector")
+
+                  if radar_selector.count() > 0:
+                      radar_selector.select_option("RMA10")
+                      radar_ok = True
+                      print("RMA10 seleccionado por #radar-selector.")
+              except Exception as e:
+                  print(f"No se pudo seleccionar RMA10 por ID: {e}")
+
+              # Fallback: buscar cualquier select que contenga RMA10.
+              if not radar_ok:
+                  for i in range(selects.count()):
+                      try:
+                          sel = selects.nth(i)
+                          values = sel.locator("option").evaluate_all(
+                              "(els) => els.map(e => e.value)"
+                          )
+
+                          if "RMA10" in values:
+                              sel.select_option("RMA10")
+                              radar_ok = True
+                              print(f"RMA10 seleccionado en select {i}.")
+                              break
+                      except Exception:
+                          pass
+
+              # Esperar que la selección dispare la lógica Blazor.
+              page.wait_for_timeout(10000)
+
+              # Seleccionar 12 frames si existe un selector compatible.
+              frames_ok = False
+
+              for i in range(selects.count()):
+                  try:
+                      sel = selects.nth(i)
+
+                      values = sel.locator("option").evaluate_all(
+                          "(els) => els.map(e => e.value)"
+                      )
+
+                      texts = sel.locator("option").all_text_contents()
+
+                      if "12" in values:
+                          # Evitar volver a tocar el selector RMA10.
+                          if "RMA10" not in values:
+                              sel.select_option("12")
+                              frames_ok = True
+                              print(f"12 frames seleccionado en select {i}.")
+                              break
+
+                      elif "12" in texts:
+                          if "RMA10" not in values:
+                              sel.select_option(label="12")
+                              frames_ok = True
+                              print(f"12 frames seleccionado por texto en select {i}.")
+                              break
+
+                  except Exception:
+                      pass
+
+              # Esperar suficiente tiempo para capturar el circuito Blazor
+              # y los datos que lleguen por WebSocket.
+              print("Capturando tráfico durante 45 segundos...")
+              page.wait_for_timeout(45000)
+
+              # Segundo HTML, después de seleccionar RMA10.
+              try:
+                  (OUT / "pagina_final.html").write_text(
+                      page.content(),
+                      encoding="utf-8"
+                  )
+              except Exception:
+                  pass
+
+              # Resumen.
+              summary = {
+                  "url": page.url,
+                  "radar_RMA10_seleccionado": radar_ok,
+                  "frames_12_seleccionado": frames_ok,
+                  "websockets": len(websocket_log),
+                  "frames_totales": len(frame_index),
+                  "requests": len(requests_log),
+                  "responses": len(responses_log),
+                  "timestamp": time.time()
+              }
+
+              (OUT / "RESUMEN.json").write_text(
+                  json.dumps(summary, indent=2, ensure_ascii=False),
+                  encoding="utf-8"
+              )
+
+              (OUT / "websockets.json").write_text(
+                  json.dumps(websocket_log, indent=2, ensure_ascii=False),
+                  encoding="utf-8"
+              )
+
+              (OUT / "frame_index.json").write_text(
+                  json.dumps(frame_index, indent=2, ensure_ascii=False),
+                  encoding="utf-8"
+              )
+
+              (OUT / "requests.json").write_text(
+                  json.dumps(requests_log, indent=2, ensure_ascii=False),
+                  encoding="utf-8"
+              )
+
+              (OUT / "responses.json").write_text(
+                  json.dumps(responses_log, indent=2, ensure_ascii=False),
+                  encoding="utf-8"
+              )
+
+              print("\n===== RESUMEN =====")
+              print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+              print("\n===== WEBSOCKETS =====")
+              print(json.dumps(websocket_log, indent=2, ensure_ascii=False))
+
+              browser.close()
+          PY
+
+          python auditoria_rma10/auditar.py
+
+      - name: Buscar referencias RMA10 / VRAD / H5
+        run: |
+          set +e
+
+          {
+            echo "===== BUSQUEDA GLOBAL ====="
+            grep -RniE \
+              "RMA10|VRAD|DBZH|WRAD|H5|ODIM|radar|cfradial|sinarame|dataset[0-9]|data[0-9]|quantity" \
+              auditoria_rma10 \
+              --exclude-dir=ws_frames \
+              || true
+
+            echo
+            echo "===== BUSQUEDA EN FRAMES DE TEXTO ====="
+            grep -RniE \
+              "RMA10|VRAD|DBZH|WRAD|H5|ODIM|radar|sinarame|dataset[0-9]|data[0-9]|quantity" \
+              auditoria_rma10/ws_frames \
+              --include="*.txt" \
+              || true
+          } > auditoria_rma10/busqueda.txt
+
+      - name: Crear ZIP
+        run: |
+          zip -r auditoria-red-rma10-websocket.zip auditoria_rma10
+
+      - name: Subir auditoría
+        uses: actions/upload-artifact@v4
+        with:
+          name: auditoria-red-rma10-websocket
+          path: auditoria-red-rma10-websocket.zip
+          retention-days: 7
