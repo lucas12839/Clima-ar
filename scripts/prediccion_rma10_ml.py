@@ -7,7 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import GroupShuffleSplit
 
 
 ROOT = Path(".")
@@ -15,11 +19,8 @@ ROOT = Path(".")
 MODEL_PATH = ROOT / "data/models/rma10_model.joblib"
 STATE_PATH = ROOT / "data/radar/seguimiento/estado.json"
 RESULTADO_PATH = ROOT / "data/radar/resultado_procesamiento.json"
-
-OUTPUT_PATH = (
-    ROOT
-    / "data/radar/seguimiento/prediccion_ml_rma10.json"
-)
+DATASET_PATH = ROOT / "data/radar/rma10_dataset_historico.csv"
+OUTPUT_PATH = ROOT / "data/radar/seguimiento/prediccion_ml_rma10.json"
 
 RADAR_DIAMETRO_KM = 240.0
 
@@ -50,6 +51,9 @@ TARGETS = (
     "weakened",
     "toward_bahia",
 )
+
+CALIBRATION_MIN_SAMPLES = 20
+CALIBRATION_EPS = 1e-6
 
 
 def load_json(path):
@@ -453,6 +457,412 @@ def get_probability(
     )
 
 
+def logit(probability):
+    p = min(
+        1.0 - CALIBRATION_EPS,
+        max(
+            CALIBRATION_EPS,
+            float(probability)
+        )
+    )
+
+    return math.log(
+        p / (1.0 - p)
+    )
+
+
+def sigmoid(value):
+    value = max(
+        -60.0,
+        min(60.0, float(value))
+    )
+
+    return 1.0 / (
+        1.0 + math.exp(-value)
+    )
+
+
+def expected_calibration_error(
+    y_true,
+    probabilities,
+    bins=10,
+):
+    y = np.asarray(
+        y_true,
+        dtype=float
+    )
+
+    p = np.asarray(
+        probabilities,
+        dtype=float
+    )
+
+    if len(y) == 0:
+        return None
+
+    error = 0.0
+
+    for lower in np.linspace(
+        0.0,
+        1.0,
+        bins,
+        endpoint=False,
+    ):
+        upper = (
+            lower
+            + 1.0 / bins
+        )
+
+        if upper >= 1.0:
+            mask = (
+                (p >= lower)
+                & (p <= upper)
+            )
+        else:
+            mask = (
+                (p >= lower)
+                & (p < upper)
+            )
+
+        if not np.any(mask):
+            continue
+
+        error += (
+            float(mask.mean())
+            * abs(
+                float(p[mask].mean())
+                -
+                float(y[mask].mean())
+            )
+        )
+
+    return round(
+        error,
+        6
+    )
+
+
+def recreate_calibration_groups(df):
+    splitter = GroupShuffleSplit(
+        n_splits=1,
+        test_size=0.25,
+        random_state=42,
+    )
+
+    _, test_idx = next(
+        splitter.split(
+            df,
+            groups=df["track_id"],
+        )
+    )
+
+    original_test_groups = set(
+        df.iloc[test_idx]["track_id"]
+    )
+
+    test_df = df[
+        df["track_id"].isin(
+            original_test_groups
+        )
+    ].copy()
+
+    splitter_calibration = GroupShuffleSplit(
+        n_splits=1,
+        test_size=0.50,
+        random_state=123,
+    )
+
+    calibration_idx, evaluation_idx = next(
+        splitter_calibration.split(
+            test_df,
+            groups=test_df["track_id"],
+        )
+    )
+
+    calibration_groups = set(
+        test_df.iloc[
+            calibration_idx
+        ]["track_id"]
+    )
+
+    evaluation_groups = set(
+        test_df.iloc[
+            evaluation_idx
+        ]["track_id"]
+    )
+
+    return (
+        calibration_groups,
+        evaluation_groups,
+    )
+
+
+def build_probability_calibration(
+    models,
+):
+    if not DATASET_PATH.exists():
+        raise RuntimeError(
+            "No existe el dataset RMA10 para calibración."
+        )
+
+    df = pd.read_csv(
+        DATASET_PATH
+    )
+
+    required = (
+        set(FEATURES)
+        | {
+            "horizonte_min",
+            "track_id",
+        }
+        | set(TARGETS)
+    )
+
+    missing = sorted(
+        required
+        - set(df.columns)
+    )
+
+    if missing:
+        raise RuntimeError(
+            f"Faltan columnas para calibración: {missing}"
+        )
+
+    df = df.replace(
+        [np.inf, -np.inf],
+        np.nan,
+    ).copy()
+
+    df["track_id"] = (
+        df["track_id"].astype(str)
+    )
+
+    (
+        calibration_groups,
+        evaluation_groups,
+    ) = recreate_calibration_groups(
+        df
+    )
+
+    calibration = {}
+    metrics = {}
+
+    for horizon in HORIZONS:
+        subset = df[
+            df["horizonte_min"]
+            == horizon
+        ].copy()
+
+        subset = subset.dropna(
+            subset=(
+                list(FEATURES)
+                + list(TARGETS)
+                + ["track_id"]
+            )
+        )
+
+        calibration_subset = subset[
+            subset["track_id"].isin(
+                calibration_groups
+            )
+        ]
+
+        evaluation_subset = subset[
+            subset["track_id"].isin(
+                evaluation_groups
+            )
+        ]
+
+        for target in TARGETS:
+            key = (
+                f"{horizon}m_"
+                f"{target}"
+            )
+
+            model = models.get(
+                key
+            )
+
+            if model is None:
+                continue
+
+            y = calibration_subset[
+                target
+            ].astype(int).to_numpy()
+
+            y_evaluation = evaluation_subset[
+                target
+            ].astype(int).to_numpy()
+
+            if (
+                len(y)
+                < CALIBRATION_MIN_SAMPLES
+                or len(np.unique(y)) < 2
+            ):
+                calibration[key] = {
+                    "enabled": False,
+                    "reason": "CALIBRATION_INSUFFICIENT_DATA",
+                    "samples": int(len(y)),
+                }
+                metrics[key] = dict(
+                    calibration[key]
+                )
+                continue
+
+            raw = model.predict_proba(
+                calibration_subset[list(FEATURES)]
+            )[:, 1]
+
+            raw_evaluation = model.predict_proba(
+                evaluation_subset[list(FEATURES)]
+            )[:, 1]
+
+            z = np.array([
+                logit(value)
+                for value in raw
+            ]).reshape(-1, 1)
+
+            calibrator = LogisticRegression(
+                C=1e6,
+                solver="lbfgs",
+                random_state=42,
+            )
+
+            calibrator.fit(
+                z,
+                y,
+            )
+
+            a = float(
+                calibrator.coef_[0][0]
+            )
+
+            b = float(
+                calibrator.intercept_[0]
+            )
+
+            calibrated = np.array([
+                sigmoid(
+                    a * logit(value)
+                    + b
+                )
+                for value in raw_evaluation
+            ])
+
+            brier_raw = float(
+                np.mean(
+                    (
+                        raw_evaluation
+                        - y_evaluation
+                    ) ** 2
+                )
+            )
+
+            brier_calibrated = float(
+                np.mean(
+                    (
+                        calibrated
+                        - y_evaluation
+                    ) ** 2
+                )
+            )
+
+            calibration[key] = {
+                "enabled": True,
+                "method": "PLATT_SCALING_LOGIT",
+                "samples": int(len(y)),
+                "positive_samples": int(
+                    y.sum()
+                ),
+                "a": round(
+                    a,
+                    10
+                ),
+                "b": round(
+                    b,
+                    10
+                ),
+            }
+
+            metrics[key] = {
+                "samples": int(len(y)),
+                "positive": int(
+                    y_evaluation.sum()
+                ),
+                "calibration_samples": int(
+                    len(y)
+                ),
+                "evaluation_samples": int(
+                    len(y_evaluation)
+                ),
+                "brier_raw": round(
+                    brier_raw,
+                    6
+                ),
+                "brier_calibrated": round(
+                    brier_calibrated,
+                    6
+                ),
+                "ece_raw": expected_calibration_error(
+                    y_evaluation,
+                    raw_evaluation,
+                ),
+                "ece_calibrated": expected_calibration_error(
+                    y_evaluation,
+                    calibrated,
+                ),
+            }
+
+    return {
+        "schema_version": 1,
+        "method": "PLATT_SCALING_LOGIT",
+        "generated_utc": datetime.now(
+            timezone.utc
+        ).isoformat().replace(
+            "+00:00",
+            "Z",
+        ),
+        "calibration_tracks": len(
+            calibration_groups
+        ),
+        "evaluation_tracks": len(
+            evaluation_groups
+        ),
+        "minimum_samples": CALIBRATION_MIN_SAMPLES,
+        "models": calibration,
+        "metrics": metrics,
+    }
+
+
+def apply_probability_calibration(
+    probability,
+    calibration,
+):
+    if not calibration:
+        return probability
+
+    if not calibration.get(
+        "enabled",
+        False,
+    ):
+        return probability
+
+    a = number(
+        calibration.get("a"),
+        1.0,
+    )
+
+    b = number(
+        calibration.get("b"),
+        0.0,
+    )
+
+    return sigmoid(
+        a * logit(probability)
+        + b
+    )
+
+
 def main():
 
     if not MODEL_PATH.exists():
@@ -483,6 +893,12 @@ def main():
             "El modelo no contiene modelos entrenados."
         )
 
+    probability_calibration = (
+        build_probability_calibration(
+            models
+        )
+    )
+
     width, height = (
         get_dimensions(
             resultado
@@ -501,6 +917,8 @@ def main():
         tracks = []
 
     predictions = []
+
+    calibrated_values = 0
 
     for track in tracks:
 
@@ -665,17 +1083,32 @@ def main():
                     ] = None
                     continue
 
-                probability = (
+                raw_probability = (
                     get_probability(
                         model,
                         row
                     )
                 )
 
+                calibrated_probability = (
+                    apply_probability_calibration(
+                        raw_probability,
+                        probability_calibration[
+                            "models"
+                        ].get(
+                            key,
+                            {},
+                        ),
+                    )
+                )
+
+                if calibrated_probability != raw_probability:
+                    calibrated_values += 1
+
                 targets[
                     target
                 ] = round(
-                    probability
+                    calibrated_probability
                     * 100.0,
                     1
                 )
@@ -773,6 +1206,22 @@ def main():
         "horizontes_min":
             list(HORIZONS),
 
+        "calibracion_probabilistica": {
+            "aplicada": True,
+            "metodo": "PLATT_SCALING_LOGIT",
+            "tracks_calibracion": probability_calibration[
+                "calibration_tracks"
+            ],
+            "tracks_evaluacion": probability_calibration[
+                "evaluation_tracks"
+            ],
+            "minimo_muestras": CALIBRATION_MIN_SAMPLES,
+            "valores_calibrados": calibrated_values,
+            "metricas": probability_calibration[
+                "metrics"
+            ],
+        },
+
         "predicciones":
             predictions,
     }
@@ -801,6 +1250,11 @@ def main():
                     str(
                         OUTPUT_PATH
                     ),
+                "calibracion_probabilistica": True,
+                "tracks_calibracion": probability_calibration[
+                    "calibration_tracks"
+                ],
+                "valores_calibrados": calibrated_values,
             },
             ensure_ascii=False,
             indent=2
