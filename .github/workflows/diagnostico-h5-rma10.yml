@@ -1,0 +1,266 @@
+name: Diagnostico H5 RMA10
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar entorno
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          pip install h5py numpy
+
+      - name: Buscar archivos H5
+        shell: bash
+        run: |
+          set -e
+
+          echo "========================================"
+          echo " BUSQUEDA DE ARCHIVOS H5"
+          echo "========================================"
+
+          mkdir -p diagnostico_h5
+
+          find . \
+            -type f \
+            \( -iname "*.h5" -o -iname "*.hdf5" -o -iname "*.H5" \) \
+            -print | tee diagnostico_h5/archivos_h5.txt
+
+          echo ""
+          echo "Cantidad encontrada:"
+          find . \
+            -type f \
+            \( -iname "*.h5" -o -iname "*.hdf5" -o -iname "*.H5" \) \
+            | wc -l
+
+      - name: Analizar H5
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p diagnostico_h5
+
+          python <<'PY'
+          import os
+          import json
+          import h5py
+          import numpy as np
+
+          ROOT = "."
+          OUT = "diagnostico_h5"
+
+          archivos = []
+
+          for root, dirs, files in os.walk(ROOT):
+              if OUT in root.split(os.sep):
+                  continue
+
+              for name in files:
+                  if name.lower().endswith((".h5", ".hdf5")):
+                      archivos.append(os.path.join(root, name))
+
+          print()
+          print("=" * 70)
+          print("ANALISIS H5")
+          print("=" * 70)
+
+          if not archivos:
+              print("NO SE ENCONTRARON ARCHIVOS H5 EN EL REPOSITORIO.")
+              print()
+              raise SystemExit(0)
+
+          resultado = []
+
+          def convertir_atributo(valor):
+              if isinstance(valor, bytes):
+                  try:
+                      return valor.decode("utf-8", errors="replace")
+                  except Exception:
+                      return str(valor)
+
+              if isinstance(valor, np.ndarray):
+                  return valor.tolist()
+
+              if isinstance(valor, np.generic):
+                  return valor.item()
+
+              return valor
+
+          def inspeccionar(nombre, obj, registro):
+              if isinstance(obj, h5py.Dataset):
+                  datos = {
+                      "ruta": nombre,
+                      "tipo": "dataset",
+                      "dtype": str(obj.dtype),
+                      "shape": list(obj.shape),
+                  }
+
+                  for clave in [
+                      "quantity",
+                      "gain",
+                      "offset",
+                      "nodata",
+                      "undetect",
+                      "what",
+                      "CLASS",
+                      "IMAGE_VERSION"
+                  ]:
+                      if clave in obj.attrs:
+                          datos[f"attr_{clave}"] = convertir_atributo(
+                              obj.attrs[clave]
+                          )
+
+                  registro["datasets"].append(datos)
+
+              elif isinstance(obj, h5py.Group):
+                  grupo = {
+                      "ruta": nombre,
+                      "tipo": "group",
+                      "attrs": {}
+                  }
+
+                  for clave, valor in obj.attrs.items():
+                      grupo["attrs"][clave] = convertir_atributo(valor)
+
+                  registro["groups"].append(grupo)
+
+          for archivo in archivos:
+              print()
+              print("=" * 70)
+              print(f"ARCHIVO: {archivo}")
+              print("=" * 70)
+
+              registro = {
+                  "archivo": archivo,
+                  "groups": [],
+                  "datasets": [],
+                  "vrad": []
+              }
+
+              try:
+                  with h5py.File(archivo, "r") as f:
+
+                      def visitor(nombre, obj):
+                          inspeccionar(nombre, obj, registro)
+
+                      f.visititems(visitor)
+
+                      # Buscar VRAD en:
+                      # - nombres de datasets
+                      # - atributos quantity
+                      # - nombres de grupos
+                      for ds in registro["datasets"]:
+                          texto = json.dumps(ds, ensure_ascii=False).upper()
+
+                          if "VRAD" in texto or "VELOCITY" in texto:
+                              registro["vrad"].append(ds)
+
+                      print()
+                      print("ESTRUCTURA:")
+                      print("-" * 70)
+
+                      def mostrar(nombre, obj):
+                          if isinstance(obj, h5py.Dataset):
+                              print(
+                                  f"DATASET  {nombre} "
+                                  f"dtype={obj.dtype} shape={obj.shape}"
+                              )
+                          else:
+                              print(f"GROUP    {nombre}")
+
+                      f.visititems(mostrar)
+
+                      print()
+                      print("DATASETS:")
+                      print("-" * 70)
+
+                      for ds in registro["datasets"]:
+                          print(
+                              f"{ds['ruta']} | "
+                              f"dtype={ds['dtype']} | "
+                              f"shape={ds['shape']}"
+                          )
+
+                          attrs = {
+                              k: v
+                              for k, v in ds.items()
+                              if k.startswith("attr_")
+                          }
+
+                          if attrs:
+                              print(f"  atributos: {attrs}")
+
+                      print()
+                      print("POSIBLES DATOS DOPPLER / VELOCIDAD:")
+                      print("-" * 70)
+
+                      if registro["vrad"]:
+                          for item in registro["vrad"]:
+                              print(json.dumps(
+                                  item,
+                                  indent=2,
+                                  ensure_ascii=False,
+                                  default=str
+                              ))
+                      else:
+                          print("NO SE ENCONTRO VRAD/VELOCITY.")
+
+                      resultado.append(registro)
+
+              except Exception as e:
+                  print(f"ERROR LEYENDO {archivo}: {e}")
+                  registro["error"] = str(e)
+                  resultado.append(registro)
+
+          with open(
+              os.path.join(OUT, "resultado_h5.json"),
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  resultado,
+                  f,
+                  indent=2,
+                  ensure_ascii=False,
+                  default=str
+              )
+
+          print()
+          print("=" * 70)
+          print("FIN DEL ANALISIS")
+          print("=" * 70)
+          PY
+
+      - name: Crear resumen
+        shell: bash
+        run: |
+          set -e
+
+          {
+            echo "# Diagnóstico H5 RMA10"
+            echo
+            echo "## Archivos encontrados"
+            echo
+            cat diagnostico_h5/archivos_h5.txt || true
+            echo
+            echo "## Resultado completo"
+            echo
+            cat diagnostico_h5/resultado_h5.json || true
+          } > diagnostico_h5/INFORME_H5.md
+
+      - name: Guardar informe
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostico-h5-rma10
+          path: diagnostico_h5/
+          if-no-files-found: warn
