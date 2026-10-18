@@ -298,8 +298,12 @@ jobs:
                   {dqf_var.dims[0]: 0}
               )
 
+          # IMPORTANTE:
+          # Convertimos ANTES a entero con signo.
+          # DQF puede ser uint8 y no acepta -1.
           raw_dqf = np.asarray(
-              dqf_var.values
+              dqf_var.values,
+              dtype=np.int16
           )
 
           dqf_fill = dqf_var.attrs.get(
@@ -307,15 +311,11 @@ jobs:
           )
 
           if dqf_fill is not None:
-              raw_dqf = np.where(
-                  raw_dqf == dqf_fill,
-                  -1,
-                  raw_dqf
-              )
+              raw_dqf[
+                  raw_dqf == int(dqf_fill)
+              ] = -1
 
-          dqf = raw_dqf.astype(
-              np.int16
-          )
+          dqf = raw_dqf
 
           good_quality = (
               dqf == 0
@@ -328,7 +328,7 @@ jobs:
           ] = np.nan
 
           # ============================================================
-          # COORDENADAS CORRECTAMENTE DECODIFICADAS
+          # COORDENADAS DECODIFICADAS
           # ============================================================
 
           x = np.asarray(
@@ -361,31 +361,15 @@ jobs:
           print("COORDENADAS GOES DECODIFICADAS")
           print("========================================")
 
-          print(
-              "x min:",
-              float(np.min(x))
-          )
-
-          print(
-              "x max:",
-              float(np.max(x))
-          )
-
+          print("x min:", float(np.min(x)))
+          print("x max:", float(np.max(x)))
           print(
               "x centro:",
               float(x[len(x) // 2])
           )
 
-          print(
-              "y min:",
-              float(np.min(y))
-          )
-
-          print(
-              "y max:",
-              float(np.max(y))
-          )
-
+          print("y min:", float(np.min(y)))
+          print("y max:", float(np.max(y)))
           print(
               "y centro:",
               float(y[len(y) // 2])
@@ -818,13 +802,8 @@ jobs:
               "GOES-19 CCLF - Bahía Blanca"
           )
 
-          ax.set_xlabel(
-              "X"
-          )
-
-          ax.set_ylabel(
-              "Y"
-          )
+          ax.set_xlabel("X")
+          ax.set_ylabel("Y")
 
           fig.colorbar(
               im,
@@ -895,11 +874,17 @@ jobs:
           assert d["indice_x"] > 0
           assert d["indice_y"] > 0
 
-          assert 0 <= d["nubosidad_local_3x3_porcentaje"] <= 100
+          assert 0 <= d[
+              "nubosidad_local_3x3_porcentaje"
+          ] <= 100
 
-          assert d["pixeles_validos_3x3"] > 0
+          assert d[
+              "pixeles_validos_3x3"
+          ] > 0
 
-          assert d["dqf_punto"] >= 0
+          assert d[
+              "dqf_punto"
+          ] >= 0
 
           assert math.isfinite(
               float(d["x_real"])
@@ -910,23 +895,31 @@ jobs:
           )
 
           print("RESULTADO VALIDADO")
+
           print(
               "Nubosidad:",
-              d["nubosidad_local_3x3_porcentaje"],
+              d[
+                  "nubosidad_local_3x3_porcentaje"
+              ],
               "%"
           )
+
           print(
               "Pixel:",
               d["indice_x"],
               d["indice_y"]
           )
+
           print(
               "DQF:",
               d["dqf_punto"]
           )
+
           print(
               "Pixeles validos:",
-              d["pixeles_validos_3x3"]
+              d[
+                  "pixeles_validos_3x3"
+              ]
           )
           PY
 
