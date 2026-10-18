@@ -177,8 +177,307 @@ def cargar_info_mascara():
     return {}
 
 
+TEMPORAL_MAX_FRAMES = 3
+TEMPORAL_MAX_GAP_MINUTOS = 60.0
+TEMPORAL_DELTA_INTENSIDAD = 2
+TEMPORAL_NUEVO_ECO_MIN_FRAMES = 2
+
+
+def _parse_timestamp_text(texto):
+
+    if texto is None:
+        return None
+
+    texto = str(texto).strip()
+
+    if not texto:
+        return None
+
+    if texto.endswith("Z"):
+        texto = texto[:-1] + "+00:00"
+
+    try:
+        dt = datetime.fromisoformat(texto)
+        if dt.tzinfo is None:
+            dt = dt.replace(
+                tzinfo=timezone.utc
+            )
+        return dt.astimezone(
+            timezone.utc
+        )
+    except ValueError:
+        pass
+
+    formatos = (
+        "%Y%m%d%H%M%S",
+        "%Y%m%d_%H%M%S",
+        "%Y-%m-%dT%H_%M_%S+00_00",
+        "%Y-%m-%dT%H_%M_%S",
+        "%Y-%m-%dT%H-%M-%S",
+    )
+
+    for formato in formatos:
+        try:
+            return datetime.strptime(
+                texto,
+                formato
+            ).replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            continue
+
+    if texto.isdigit() and len(texto) == 10:
+        try:
+            dt = datetime.fromtimestamp(
+                int(texto),
+                tz=timezone.utc
+            )
+            if 2000 <= dt.year <= 2100:
+                return dt
+        except (OverflowError, OSError, ValueError):
+            pass
+
+    return None
+
+
+def _timestamp_de_path(path):
+
+    try:
+        path = Path(path)
+    except Exception:
+        return None
+
+    return _parse_timestamp_text(
+        path.stem
+    )
+
+
+def _timestamp_actual():
+
+    timestamp_path = (
+        BASE /
+        "radar_timestamp.txt"
+    )
+
+    if not timestamp_path.exists():
+        return None
+
+    try:
+        return _parse_timestamp_text(
+            timestamp_path.read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception:
+        return None
+
+
+def _frames_previos(ruta_actual=None):
+
+    if ruta_actual is None:
+        objetivo = _timestamp_actual()
+    else:
+        objetivo = _timestamp_de_path(
+            ruta_actual
+        )
+
+        if objetivo is None:
+            objetivo = _timestamp_actual()
+
+    if objetivo is None:
+        return []
+
+    candidatos = {}
+
+    for carpeta in (
+        BASE / "historico",
+        BASE / "historico_tracking_backup",
+    ):
+        if not carpeta.exists():
+            continue
+
+        for path in carpeta.glob("*.png"):
+            stamp = _timestamp_de_path(
+                path
+            )
+
+            if stamp is None:
+                continue
+
+            if stamp >= objetivo:
+                continue
+
+            diferencia = (
+                objetivo - stamp
+            ).total_seconds() / 60.0
+
+            if (
+                diferencia <= 0
+                or diferencia > TEMPORAL_MAX_GAP_MINUTOS
+            ):
+                continue
+
+            clave = stamp.isoformat()
+            anterior = candidatos.get(
+                clave
+            )
+
+            if anterior is None:
+                candidatos[clave] = (
+                    stamp,
+                    path
+                )
+
+    salida = list(
+        candidatos.values()
+    )
+
+    salida.sort(
+        key=lambda item: item[0],
+        reverse=True
+    )
+
+    return [
+        path
+        for _, path in salida[
+            :TEMPORAL_MAX_FRAMES
+        ]
+    ]
+
+
+def _cargar_intensidades_previas(
+    actual,
+    ruta_actual=None
+):
+
+    previas = []
+
+    for path in _frames_previos(
+        ruta_actual
+    ):
+        try:
+            rgb = cargar_imagen(
+                path
+            )
+            matriz = intensidad_radar(
+                rgb
+            )
+
+            if matriz.shape != actual.shape:
+                continue
+
+            previas.append(
+                matriz
+            )
+        except Exception as exc:
+            print(
+                "AVISO: no se pudo usar "
+                f"frame previo {path}: {exc}"
+            )
+
+    return previas
+
+
+def _mascara_temporal_dinamica(
+    actual,
+    mascara,
+    ruta_actual=None
+):
+
+    if mascara is None:
+        return np.zeros(
+            actual.shape,
+            dtype=bool
+        ), 0
+
+    previas = _cargar_intensidades_previas(
+        actual,
+        ruta_actual
+    )
+
+    if not previas:
+        return np.zeros(
+            actual.shape,
+            dtype=bool
+        ), 0
+
+    apilado = np.stack(
+        previas,
+        axis=0
+    )
+
+    presentes = (
+        apilado > 0
+    )
+
+    cantidad_presente = np.sum(
+        presentes,
+        axis=0
+    )
+
+    mediana_previa = np.median(
+        apilado,
+        axis=0
+    )
+
+    maximo_previo = np.max(
+        apilado,
+        axis=0
+    )
+
+    actual_presente = (
+        actual > 0
+    )
+
+    nuevo_eco = (
+        actual_presente &
+        (
+            cantidad_presente
+            <= max(
+                0,
+                len(previas) - TEMPORAL_NUEVO_ECO_MIN_FRAMES
+            )
+        )
+    )
+
+    cambio_intensidad = (
+        actual_presente &
+        (
+            np.abs(
+                actual.astype(np.int16)
+                - mediana_previa.astype(np.int16)
+            ) >= TEMPORAL_DELTA_INTENSIDAD
+        )
+    )
+
+    intensificacion = (
+        actual_presente &
+        (
+            actual.astype(np.int16)
+            >= maximo_previo.astype(np.int16)
+            + TEMPORAL_DELTA_INTENSIDAD
+        )
+    )
+
+    evidencia = (
+        mascara &
+        (
+            nuevo_eco |
+            cambio_intensidad |
+            intensificacion
+        )
+    )
+
+    return (
+        evidencia,
+        len(previas)
+    )
+
+
 def aplicar_mascara_estatica(
-    actual
+    actual,
+    ruta_actual=None
 ):
 
     mascara = cargar_mascara()
@@ -229,15 +528,28 @@ def aplicar_mascara_estatica(
         (actual > 0)
     )
 
+    evidencia_temporal, frames_temporales = (
+        _mascara_temporal_dinamica(
+            actual,
+            mascara,
+            ruta_actual
+        )
+    )
+
+    eliminar = (
+        estaticos &
+        ~evidencia_temporal
+    )
+
     resultado = actual.copy()
 
     resultado[
-        estaticos
+        eliminar
     ] = 0
 
     info = cargar_info_mascara()
 
-    frames = int(
+    frames_mascara = int(
         info.get(
             "frames_analizados",
             0
@@ -246,6 +558,13 @@ def aplicar_mascara_estatica(
 
     cantidad = int(
         np.sum(
+            eliminar
+        )
+    )
+
+    rescatados = int(
+        np.sum(
+            evidencia_temporal &
             estaticos
         )
     )
@@ -260,14 +579,25 @@ def aplicar_mascara_estatica(
     )
 
     print(
+        "Píxeles dinámicos dentro de máscara "
+        "conservados:",
+        rescatados
+    )
+
+    print(
+        "Frames temporales comparados:",
+        frames_temporales
+    )
+
+    print(
         "Frames utilizados para máscara:",
-        frames
+        frames_mascara
     )
 
     return (
         resultado,
         cantidad,
-        frames
+        frames_mascara
     )
 
 
@@ -803,17 +1133,9 @@ def analizar_mascara(
         )
 
         if porcentaje >= 0.70:
-
             return (
-                "ECO_ESTATICO",
-                round(
-                    min(
-                        0.99,
-                        0.70 +
-                        porcentaje * 0.29
-                    ),
-                    3
-                )
+                "CAMBIO",
+                0.70
             )
 
         if porcentaje >= 0.40:
@@ -950,7 +1272,8 @@ def main():
         pixeles_estaticos,
         frames
     ) = aplicar_mascara_estatica(
-        matriz_original
+        matriz_original,
+        ruta_actual=ACTUAL
     )
 
     pixeles_dinamicos = int(
@@ -1003,7 +1326,7 @@ def main():
     resultado = {
 
         "version":
-            "RMA10-procesador-10.1",
+            "RMA10-procesador-10.2",
 
         "timestamp_procesamiento":
             datetime.now(
@@ -1015,7 +1338,8 @@ def main():
 
         "metodo_segmentacion":
             (
-                "mascara_estatica_temporal_externa_"
+                "mascara_estatica_temporal_"
+                "con_rescate_de_ecos_dinamicos_"
                 "conectividad_semillas_priority_flood"
             ),
 
