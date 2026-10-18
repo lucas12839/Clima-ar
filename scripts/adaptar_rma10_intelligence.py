@@ -635,15 +635,14 @@ def associate_tracks(
                         clamp(
                             number(
                                 best_track.get(
-                                    "confianza"
+                                    "confianza_movimiento",
+                                    0
                                 ),
                                 0
                             ),
                             0,
-                            99
-                        )
-                        /
-                        99.0,
+                            1
+                        ),
                         3
                     ),
             }
@@ -986,15 +985,14 @@ def main():
             clamp(
                 number(
                     compat_track.get(
-                        "confianza"
+                        "confianza_movimiento",
+                        0
                     ),
                     0
                 ),
                 0,
-                99
+                1
             )
-            /
-            99.0
         )
 
     else:
