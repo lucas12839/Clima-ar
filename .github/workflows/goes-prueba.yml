@@ -31,7 +31,6 @@ jobs:
           FOUND=""
 
           for OFFSET in 0 1 2 3 4 5 6; do
-
             TARGET=$(date -u -d "-${OFFSET} hour" "+%Y %j %H")
 
             YEAR=$(echo "$TARGET" | awk '{print $1}')
@@ -54,13 +53,9 @@ jobs:
 
             if [ -n "$FILE" ]; then
               FOUND="s3://noaa-goes19/ABI-L2-CCLF/${YEAR}/${DOY}/${HOUR}/${FILE}"
-
-              echo "Encontrado:"
-              echo "$FOUND"
-
+              echo "Encontrado: $FOUND"
               break
             fi
-
           done
 
           if [ -z "$FOUND" ]; then
@@ -74,8 +69,6 @@ jobs:
             --no-sign-request
 
           test -s data/goes/goes_ccl.nc
-
-          echo "Archivo descargado correctamente."
 
       - name: Inspeccionar producto GOES
         run: |
@@ -91,11 +84,8 @@ jobs:
           print("GOES-19 CCLF")
           print("========================================")
 
-          print("Variables:")
-
           for name in ds.variables:
               var = ds[name]
-
               print(
                   name,
                   "| dims=", var.dims,
@@ -106,50 +96,38 @@ jobs:
               )
 
           print("========================================")
-          print("TCF")
+          print("TCF ATTRS")
           print("========================================")
 
-          if "TCF" in ds.variables:
+          tcf = ds["TCF"]
 
-              tcf = ds["TCF"]
-
-              for key in [
-                  "_FillValue",
-                  "valid_range",
-                  "scale_factor",
-                  "add_offset",
-                  "units",
-                  "long_name",
-                  "standard_name",
-              ]:
-                  print(
-                      key,
-                      "=",
-                      tcf.attrs.get(key)
-                  )
+          for key in [
+              "_FillValue",
+              "valid_range",
+              "scale_factor",
+              "add_offset",
+              "units",
+              "long_name",
+              "standard_name",
+          ]:
+              print(key, "=", tcf.attrs.get(key))
 
           print("========================================")
-          print("DQF")
+          print("DQF ATTRS")
           print("========================================")
 
-          if "DQF" in ds.variables:
+          dqf = ds["DQF"]
 
-              dqf = ds["DQF"]
-
-              for key in [
-                  "_FillValue",
-                  "valid_range",
-                  "flag_values",
-                  "flag_meanings",
-                  "units",
-                  "long_name",
-                  "standard_name",
-              ]:
-                  print(
-                      key,
-                      "=",
-                      dqf.attrs.get(key)
-                  )
+          for key in [
+              "_FillValue",
+              "valid_range",
+              "flag_values",
+              "flag_meanings",
+              "units",
+              "long_name",
+              "standard_name",
+          ]:
+              print(key, "=", dqf.attrs.get(key))
 
           print("========================================")
           print("PROYECCION")
@@ -171,7 +149,7 @@ jobs:
               )
 
           print("========================================")
-          print("ATRIBUTOS")
+          print("TIEMPO")
           print("========================================")
 
           for key in [
@@ -208,45 +186,45 @@ jobs:
           LAT = -38.72
           LON = -62.27
 
-          ds = xr.open_dataset(
+          # ============================================================
+          # DATASET RAW
+          # ============================================================
+
+          ds_raw = xr.open_dataset(
               ARCHIVO,
               decode_cf=False
           )
 
           # ============================================================
-          # 1. VARIABLES OBLIGATORIAS
+          # DATASET DECODED
+          # SOLO PARA COORDENADAS x/y
           # ============================================================
 
-          if "TCF" not in ds.variables:
-              raise RuntimeError(
-                  "No existe la variable TCF en el producto CCLF."
-              )
+          ds = xr.open_dataset(
+              ARCHIVO,
+              decode_cf=True,
+              mask_and_scale=True
+          )
 
-          if "DQF" not in ds.variables:
-              raise RuntimeError(
-                  "No existe la variable DQF en el producto CCLF."
-              )
+          required = [
+              "TCF",
+              "DQF",
+              "x",
+              "y",
+              "goes_imager_projection",
+          ]
 
-          if "x" not in ds.variables:
-              raise RuntimeError(
-                  "No existe coordenada x."
-              )
-
-          if "y" not in ds.variables:
-              raise RuntimeError(
-                  "No existe coordenada y."
-              )
-
-          if "goes_imager_projection" not in ds.variables:
-              raise RuntimeError(
-                  "No existe la proyección GOES."
-              )
+          for name in required:
+              if name not in ds_raw.variables:
+                  raise RuntimeError(
+                      f"No existe variable requerida: {name}"
+                  )
 
           # ============================================================
-          # 2. LEER TCF SIN DECODIFICACION AUTOMATICA
+          # TCF RAW
           # ============================================================
 
-          tcf_var = ds["TCF"]
+          tcf_var = ds_raw["TCF"]
 
           while tcf_var.ndim > 2:
               tcf_var = tcf_var.isel(
@@ -254,18 +232,14 @@ jobs:
               )
 
           raw_tcf = np.asarray(
-              tcf_var.values
+              tcf_var.values,
+              dtype=np.float64
           )
 
-          raw_tcf = raw_tcf.astype(
-              np.float64
-          )
+          attrs = tcf_var.attrs
 
-          tcf_attrs = tcf_var.attrs
-
-          fill_value = tcf_attrs.get(
-              "_FillValue",
-              None
+          fill_value = attrs.get(
+              "_FillValue"
           )
 
           if fill_value is not None:
@@ -273,36 +247,28 @@ jobs:
                   raw_tcf == float(fill_value)
               ] = np.nan
 
-          valid_range = tcf_attrs.get(
-              "valid_range",
-              None
+          valid_range = attrs.get(
+              "valid_range"
           )
 
           if valid_range is not None:
-
-              valid_min = float(
-                  valid_range[0]
-              )
-
-              valid_max = float(
-                  valid_range[1]
-              )
+              vmin = float(valid_range[0])
+              vmax = float(valid_range[1])
 
               raw_tcf[
-                  (raw_tcf < valid_min)
-                  |
-                  (raw_tcf > valid_max)
+                  (raw_tcf < vmin)
+                  | (raw_tcf > vmax)
               ] = np.nan
 
           scale_factor = float(
-              tcf_attrs.get(
+              attrs.get(
                   "scale_factor",
                   1.0
               )
           )
 
           add_offset = float(
-              tcf_attrs.get(
+              attrs.get(
                   "add_offset",
                   0.0
               )
@@ -315,56 +281,45 @@ jobs:
           )
 
           tcf[
-              ~np.isfinite(tcf)
-          ] = np.nan
-
-          # CCLF TCF debe estar entre 0 y 1.
-          tcf[
               (tcf < 0.0)
-              |
-              (tcf > 1.0)
+              | (tcf > 1.0)
           ] = np.nan
 
           tcf_percent = tcf * 100.0
 
           # ============================================================
-          # 3. LEER DQF
+          # DQF
           # ============================================================
 
-          dqf_var = ds["DQF"]
+          dqf_var = ds_raw["DQF"]
 
           while dqf_var.ndim > 2:
               dqf_var = dqf_var.isel(
                   {dqf_var.dims[0]: 0}
               )
 
-          dqf = np.asarray(
+          raw_dqf = np.asarray(
               dqf_var.values
-          ).astype(
-              np.int16
           )
 
-          dqf_attrs = dqf_var.attrs
-
-          dqf_fill = dqf_attrs.get(
-              "_FillValue",
-              None
+          dqf_fill = dqf_var.attrs.get(
+              "_FillValue"
           )
 
           if dqf_fill is not None:
-              dqf[
-                  dqf == int(dqf_fill)
-              ] = -1
+              raw_dqf = np.where(
+                  raw_dqf == dqf_fill,
+                  -1,
+                  raw_dqf
+              )
 
-          # Para el cálculo cuantitativo usamos
-          # exclusivamente DQF=0.
+          dqf = raw_dqf.astype(
+              np.int16
+          )
+
           good_quality = (
               dqf == 0
           )
-
-          # ============================================================
-          # 4. APLICAR CALIDAD AL TCF
-          # ============================================================
 
           tcf_quality = tcf_percent.copy()
 
@@ -373,7 +328,7 @@ jobs:
           ] = np.nan
 
           # ============================================================
-          # 5. COORDENADAS GOES
+          # COORDENADAS CORRECTAMENTE DECODIFICADAS
           # ============================================================
 
           x = np.asarray(
@@ -386,7 +341,61 @@ jobs:
               dtype=np.float64
           )
 
-          projection = ds[
+          if x.ndim != 1 or y.ndim != 1:
+              raise RuntimeError(
+                  "Las coordenadas x/y no son vectores 1D."
+              )
+
+          if not np.all(np.isfinite(x)):
+              raise RuntimeError(
+                  "La coordenada x contiene valores invalidos."
+              )
+
+          if not np.all(np.isfinite(y)):
+              raise RuntimeError(
+                  "La coordenada y contiene valores invalidos."
+              )
+
+          print("")
+          print("========================================")
+          print("COORDENADAS GOES DECODIFICADAS")
+          print("========================================")
+
+          print(
+              "x min:",
+              float(np.min(x))
+          )
+
+          print(
+              "x max:",
+              float(np.max(x))
+          )
+
+          print(
+              "x centro:",
+              float(x[len(x) // 2])
+          )
+
+          print(
+              "y min:",
+              float(np.min(y))
+          )
+
+          print(
+              "y max:",
+              float(np.max(y))
+          )
+
+          print(
+              "y centro:",
+              float(y[len(y) // 2])
+          )
+
+          # ============================================================
+          # PROYECCION
+          # ============================================================
+
+          projection = ds_raw[
               "goes_imager_projection"
           ]
 
@@ -416,8 +425,18 @@ jobs:
               )
           )
 
+          sweep_axis = projection.attrs.get(
+              "sweep_angle_axis",
+              "x"
+          )
+
+          if sweep_axis != "x":
+              raise RuntimeError(
+                  f"sweep_angle_axis inesperado: {sweep_axis}"
+              )
+
           # ============================================================
-          # 6. CONVERSION LAT/LON -> GOES FIXED GRID
+          # LAT/LON -> GOES FIXED GRID
           # ============================================================
 
           H = (
@@ -429,10 +448,10 @@ jobs:
           lon = math.radians(LON)
 
           eccentricity2 = (
-              semi_major**2
-              - semi_minor**2
+              semi_major ** 2
+              - semi_minor ** 2
           ) / (
-              semi_major**2
+              semi_major ** 2
           )
 
           sin_lat = math.sin(lat)
@@ -443,7 +462,7 @@ jobs:
               / math.sqrt(
                   1.0
                   - eccentricity2
-                  * sin_lat**2
+                  * sin_lat ** 2
               )
           )
 
@@ -476,10 +495,14 @@ jobs:
           y_angle = math.atan2(
               sz,
               math.sqrt(
-                  (H - sx)**2
-                  + sy**2
+                  (H - sx) ** 2
+                  + sy ** 2
               )
           )
+
+          # ============================================================
+          # BUSQUEDA DEL PIXEL MAS CERCANO
+          # ============================================================
 
           ix = int(
               np.argmin(
@@ -497,72 +520,79 @@ jobs:
               )
           )
 
-          print("")
-          print("================================")
-          print("GEOLOCALIZACION")
-          print("================================")
-
-          print(
-              "Bahia Blanca lat:",
-              LAT
-          )
-
-          print(
-              "Bahia Blanca lon:",
-              LON
-          )
-
-          print(
-              "GOES x:",
-              x_angle
-          )
-
-          print(
-              "GOES y:",
-              y_angle
-          )
-
-          print(
-              "Indice x:",
-              ix
-          )
-
-          print(
-              "Indice y:",
-              iy
-          )
-
-          print(
-              "x real:",
+          x_real = float(
               x[ix]
           )
 
-          print(
-              "y real:",
+          y_real = float(
               y[iy]
           )
 
+          distancia_grid = math.sqrt(
+              (x_real - x_angle) ** 2
+              + (y_real - y_angle) ** 2
+          )
+
+          print("")
+          print("========================================")
+          print("GEOLOCALIZACION")
+          print("========================================")
+
+          print("Latitud:", LAT)
+          print("Longitud:", LON)
+
+          print("x objetivo:", x_angle)
+          print("y objetivo:", y_angle)
+
+          print("Indice x:", ix)
+          print("Indice y:", iy)
+
+          print("x real:", x_real)
+          print("y real:", y_real)
+
+          print(
+              "Distancia grid:",
+              distancia_grid
+          )
+
           # ============================================================
-          # 7. PIXEL EXACTO
+          # VALIDACION DE INDICE
           # ============================================================
 
-          punto = tcf_quality[
+          if ix <= 0 or ix >= len(x) - 1:
+              raise RuntimeError(
+                  "Indice x fuera de zona valida."
+              )
+
+          if iy <= 0 or iy >= len(y) - 1:
+              raise RuntimeError(
+                  "Indice y fuera de zona valida."
+              )
+
+          # ============================================================
+          # PIXEL EXACTO
+          # ============================================================
+
+          punto_raw = tcf_quality[
               iy,
               ix
           ]
 
           punto_dqf = int(
-              dqf[iy, ix]
+              dqf[
+                  iy,
+                  ix
+              ]
           )
 
           print("")
-          print("================================")
+          print("========================================")
           print("PUNTO BAHIA BLANCA")
-          print("================================")
+          print("========================================")
 
           print(
               "TCF:",
-              punto,
+              punto_raw,
               "%"
           )
 
@@ -572,7 +602,7 @@ jobs:
           )
 
           # ============================================================
-          # 8. VENTANA 3x3
+          # VENTANA 3x3
           # ============================================================
 
           radius = 1
@@ -606,16 +636,29 @@ jobs:
               np.isfinite(window)
           ]
 
-          if valid_pixels.size == 0:
+          total_pixels = int(
+              window.size
+          )
+
+          valid_count = int(
+              valid_pixels.size
+          )
+
+          print(
+              "Pixeles validos 3x3:",
+              valid_count,
+              "/",
+              total_pixels
+          )
+
+          if valid_count == 0:
               raise RuntimeError(
                   "No existen pixeles TCF con DQF=0 "
                   "en la ventana 3x3."
               )
 
           nubosidad_3x3 = float(
-              np.nanmean(
-                  valid_pixels
-              )
+              np.mean(valid_pixels)
           )
 
           nubosidad_3x3 = round(
@@ -629,63 +672,59 @@ jobs:
               1
           )
 
-          punto_valido = (
-              np.isfinite(punto)
-          )
-
-          if punto_valido:
+          if np.isfinite(
+              punto_raw
+          ):
               nubosidad_punto = round(
-                  float(punto),
+                  float(punto_raw),
                   1
               )
           else:
               nubosidad_punto = None
 
           # ============================================================
-          # 9. ESTADO DE NUBOSIDAD
+          # ESTADO
           # ============================================================
 
-          # Para esta prueba el estado se basa en la ventana 3x3.
-          nubosidad_estado = (
-              nubosidad_3x3
-          )
-
-          if nubosidad_estado < 10:
+          if nubosidad_3x3 < 10:
               estado = "despejado"
 
-          elif nubosidad_estado < 30:
+          elif nubosidad_3x3 < 30:
               estado = "poco_nublado"
 
-          elif nubosidad_estado < 60:
+          elif nubosidad_3x3 < 60:
               estado = "parcialmente_nublado"
 
-          elif nubosidad_estado < 85:
+          elif nubosidad_3x3 < 85:
               estado = "muy_nublado"
 
           else:
               estado = "cubierto"
 
           # ============================================================
-          # 10. INFORMACION TEMPORAL
+          # TIEMPO
           # ============================================================
 
           frame_utc = (
-              ds.attrs.get(
+              ds_raw.attrs.get(
                   "time_coverage_end"
               )
-              or ds.attrs.get(
+              or ds_raw.attrs.get(
                   "time_coverage_start"
               )
           )
 
-          generado_utc = (
-              datetime.now(
-                  timezone.utc
-              ).isoformat()
-          )
+          if frame_utc is None:
+              raise RuntimeError(
+                  "GOES no contiene timestamp."
+              )
+
+          generado = datetime.now(
+              timezone.utc
+          ).isoformat()
 
           # ============================================================
-          # 11. RESULTADO
+          # JSON
           # ============================================================
 
           resultado = {
@@ -699,61 +738,43 @@ jobs:
               "latitud": LAT,
               "longitud": LON,
               "frame_goes_utc": frame_utc,
-
-              "nubosidad_punto_porcentaje":
-                  nubosidad_punto,
-
-              "nubosidad_local_3x3_porcentaje":
-                  nubosidad_3x3,
-
-              "estado_nubosidad":
-                  estado,
-
-              "dqf_punto":
-                  punto_dqf,
-
-              "solo_dqf_0":
-                  True,
-
-              "pixeles_validos_3x3":
-                  int(
-                      valid_pixels.size
-                  ),
-
-              "pixeles_totales_3x3":
-                  int(
-                      window.size
-                  ),
-
-              "resolucion_producto":
-                  ds.attrs.get(
+              "nubosidad_total_porcentaje": (
+                  nubosidad_3x3
+              ),
+              "nubosidad_punto_porcentaje": (
+                  nubosidad_punto
+              ),
+              "nubosidad_local_3x3_porcentaje": (
+                  nubosidad_3x3
+              ),
+              "estado_nubosidad": estado,
+              "dqf_punto": punto_dqf,
+              "pixeles_validos_3x3": valid_count,
+              "pixeles_totales_3x3": total_pixels,
+              "indice_x": ix,
+              "indice_y": iy,
+              "x_objetivo": x_angle,
+              "y_objetivo": y_angle,
+              "x_real": x_real,
+              "y_real": y_real,
+              "distancia_grid": distancia_grid,
+              "resolucion_producto": (
+                  ds_raw.attrs.get(
                       "spatial_resolution"
-                  ),
-
-              "variable_utilizada":
-                  "TCF",
-
-              "variable_calidad":
-                  "DQF",
-
+                  )
+              ),
+              "variable_utilizada": "TCF",
               "ventana_pixeles": {
                   "x": [
                       x0,
-                      x1
+                      x1 - 1
                   ],
                   "y": [
                       y0,
-                      y1
+                      y1 - 1
                   ]
               },
-
-              "indice_bahia_blanca": {
-                  "x": ix,
-                  "y": iy
-              },
-
-              "generado_utc":
-                  generado_utc
+              "generado_utc": generado
           }
 
           with open(
@@ -761,7 +782,6 @@ jobs:
               "w",
               encoding="utf-8"
           ) as f:
-
               json.dump(
                   resultado,
                   f,
@@ -770,15 +790,17 @@ jobs:
               )
 
           # ============================================================
-          # 12. IMAGEN DE CONTROL
+          # PNG DE CONTROL
           # ============================================================
 
           fig, ax = plt.subplots(
-              figsize=(8, 6)
+              figsize=(8, 8)
           )
 
-          image = ax.imshow(
-              tcf_quality,
+          mostrar = tcf_quality.copy()
+
+          im = ax.imshow(
+              mostrar,
               origin="upper",
               cmap="gray",
               vmin=0,
@@ -788,169 +810,123 @@ jobs:
           ax.scatter(
               [ix],
               [iy],
-              s=150,
-              facecolors="none",
-              edgecolors="red",
-              linewidths=2
+              s=80,
+              marker="+"
           )
 
           ax.set_title(
-              "GOES-19 CCLF - Bahía Blanca\n"
-              f"Punto: "
-              f"{'N/D' if nubosidad_punto is None else f'{nubosidad_punto:.1f}%'}"
-              f" | 3x3: {nubosidad_3x3:.1f}%"
+              "GOES-19 CCLF - Bahía Blanca"
           )
 
           ax.set_xlabel(
-              "X GOES"
+              "X"
           )
 
           ax.set_ylabel(
-              "Y GOES"
+              "Y"
           )
 
           fig.colorbar(
-              image,
+              im,
               ax=ax,
               label="Nubosidad (%)"
           )
 
-          plt.tight_layout()
+          fig.tight_layout()
 
-          plt.savefig(
+          fig.savefig(
               IMAGEN,
-              dpi=120,
-              bbox_inches="tight"
+              dpi=150
           )
 
           plt.close(fig)
 
-          # ============================================================
-          # 13. SALIDA
-          # ============================================================
+          ds.close()
+          ds_raw.close()
 
           print("")
-          print("================================")
-          print("RESULTADO GOES")
-          print("================================")
-
-          print(
-              "Nubosidad punto:",
-              nubosidad_punto,
-              "%"
-          )
-
+          print("========================================")
+          print("RESULTADO FINAL")
+          print("========================================")
           print(
               "Nubosidad 3x3:",
               nubosidad_3x3,
               "%"
           )
-
           print(
               "Estado:",
               estado
           )
-
-          print(
-              "DQF punto:",
-              punto_dqf
-          )
-
-          print(
-              "Pixeles validos:",
-              valid_pixels.size,
-              "/",
-              window.size
-          )
-
           print(
               "Frame:",
               frame_utc
           )
-
           print(
-              "Variable:",
-              "TCF"
+              "JSON:",
+              JSON_OUT
           )
-
-          print("================================")
-
-          ds.close()
+          print(
+              "PNG:",
+              IMAGEN
+          )
           PY
 
       - name: Verificar resultado
         run: |
+          set -euo pipefail
+
           test -s data/goes/nubosidad.json
           test -s data/goes/nubosidad_bahia_blanca.png
 
           python - <<'PY'
           import json
+          import math
 
           with open(
               "data/goes/nubosidad.json",
               encoding="utf-8"
           ) as f:
-              data = json.load(f)
+              d = json.load(f)
 
-          assert data["ok"] is True
-          assert data["fuente"] == "GOES-19"
-          assert data["producto"] == "ABI-L2-CCLF"
-          assert data["variable_utilizada"] == "TCF"
-          assert data["variable_calidad"] == "DQF"
-          assert data["solo_dqf_0"] is True
+          assert d["ok"] is True
+          assert d["fuente"] == "GOES-19"
+          assert d["variable_utilizada"] == "TCF"
 
-          value = data[
-              "nubosidad_local_3x3_porcentaje"
-          ]
+          assert d["indice_x"] > 0
+          assert d["indice_y"] > 0
 
-          assert isinstance(
-              value,
-              (int, float)
+          assert 0 <= d["nubosidad_local_3x3_porcentaje"] <= 100
+
+          assert d["pixeles_validos_3x3"] > 0
+
+          assert d["dqf_punto"] >= 0
+
+          assert math.isfinite(
+              float(d["x_real"])
           )
 
-          assert 0 <= value <= 100
+          assert math.isfinite(
+              float(d["y_real"])
+          )
 
-          assert data[
-              "pixeles_validos_3x3"
-          ] > 0
-
-          print("")
-          print("GOES OK")
+          print("RESULTADO VALIDADO")
           print(
-              "Nubosidad punto:",
-              data[
-                  "nubosidad_punto_porcentaje"
-              ],
+              "Nubosidad:",
+              d["nubosidad_local_3x3_porcentaje"],
               "%"
           )
           print(
-              "Nubosidad 3x3:",
-              value,
-              "%"
+              "Pixel:",
+              d["indice_x"],
+              d["indice_y"]
           )
           print(
-              "Estado:",
-              data[
-                  "estado_nubosidad"
-              ]
-          )
-          print(
-              "DQF punto:",
-              data[
-                  "dqf_punto"
-              ]
+              "DQF:",
+              d["dqf_punto"]
           )
           print(
               "Pixeles validos:",
-              data[
-                  "pixeles_validos_3x3"
-              ]
-          )
-          print(
-              "Frame:",
-              data[
-                  "frame_goes_utc"
-              ]
+              d["pixeles_validos_3x3"]
           )
           PY
 
@@ -959,11 +935,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add data/goes
+          git add data/goes/goes_ccl.nc
+          git add data/goes/nubosidad.json
+          git add data/goes/nubosidad_bahia_blanca.png
 
-          if git diff --cached --quiet; then
-            echo "Sin cambios."
-          else
-            git commit -m "GOES: corregir calculo nubosidad Bahia Blanca"
-            git push
-          fi
+          git diff --cached --quiet || \
+            git commit -m "Actualizar nubosidad GOES-19 Bahia Blanca"
+
+          git push
