@@ -682,22 +682,125 @@ def prediccion() -> dict[str, Any]:
     )
 
 
+def _interp(a: float | None, b: float | None, fraction: float) -> float | None:
+    if a is None and b is None:
+        return None
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a + (b - a) * fraction
+
+
+def _live_ml_projection(ml: dict[str, Any], elapsed: float) -> dict[str, Any]:
+    tracks = ml.get("predicciones", [])
+    if not isinstance(tracks, list):
+        return {"tracks": []}
+
+    horizons = [5, 10, 20, 30]
+    result = []
+
+    for track in tracks:
+        if not isinstance(track, dict):
+            continue
+
+        raw = track.get("horizontes", {})
+        if not isinstance(raw, dict):
+            continue
+
+        points = []
+        for h in horizons:
+            item = raw.get(str(h))
+            if isinstance(item, dict):
+                points.append((h, item))
+
+        if not points:
+            continue
+
+        if elapsed <= points[0][0]:
+            left_h, left = points[0]
+            right_h, right = points[0]
+        elif elapsed >= points[-1][0]:
+            left_h, left = points[-1]
+            right_h, right = points[-1]
+        else:
+            left_h, left = points[0]
+            right_h, right = points[-1]
+            for index in range(len(points) - 1):
+                h1, p1 = points[index]
+                h2, p2 = points[index + 1]
+                if h1 <= elapsed <= h2:
+                    left_h, left = h1, p1
+                    right_h, right = h2, p2
+                    break
+
+        fraction = 0.0 if right_h == left_h else (elapsed - left_h) / (right_h - left_h)
+        fraction = max(0.0, min(1.0, fraction))
+
+        def value(target: str) -> float | None:
+            a = left.get(target)
+            b = right.get(target)
+            try:
+                a = float(a) if a is not None else None
+            except (TypeError, ValueError):
+                a = None
+            try:
+                b = float(b) if b is not None else None
+            except (TypeError, ValueError):
+                b = None
+            return _interp(a, b, fraction)
+
+        result.append({
+            "track_id": track.get("track_id"),
+            "lat": track.get("lat"),
+            "lon": track.get("lon"),
+            "distance_km": track.get("distance_km"),
+            "rumbo_grados": track.get("motion_bearing_deg"),
+            "velocidad_px_min": track.get("speed_px_min"),
+            "probabilidades": {
+                "fortalecimiento": value("strengthened"),
+                "debilitamiento": value("weakened"),
+                "hacia_bahia": value("toward_bahia"),
+            },
+            "horizonte_base_min": [left_h, right_h],
+        })
+
+    return {"tracks": result}
+
+
 @app.get("/prediccion/en-vivo")
 def prediccion_en_vivo() -> dict[str, Any]:
     radar_ts = radar_timestamp()
     age = frame_age_minutes(radar_ts)
     ml = read_json(ML_PREDICTION_FILE) or {}
 
+    if not ml or not radar_ts:
+        return {
+            "estado": "sin_datos",
+            "fuente_radar": FUENTE,
+            "radar": "RMA10",
+            "modo": "PREDICCION_ENTRE_FRAMES",
+            "ultimo_radar_real_utc": radar_ts,
+            "ultimo_radar_edad_minutos": round(age, 2) if age is not None else None,
+            "actualizado_utc": datetime.now(timezone.utc).isoformat(),
+            "prediccion": ml,
+        }
+
+    elapsed = max(0.0, min(30.0, age or 0.0))
+
     return {
-        "estado": "ok" if ml else "sin_datos",
+        "estado": "ok",
         "fuente_radar": FUENTE,
         "radar": "RMA10",
-        "modo": "PREDICCION_IA_ENTRE_FRAMES",
+        "modo": "PREDICCION_ENTRE_FRAMES",
+        "base": "ML_RMA10",
         "ultimo_radar_real_utc": radar_ts,
         "ultimo_radar_edad_minutos": round(age, 2) if age is not None else None,
+        "minutos_proyectados": round(elapsed, 2),
         "actualizado_utc": datetime.now(timezone.utc).isoformat(),
-        "mensaje": "Predicción IA en curso · estimación entre datos de radar",
-        "prediccion": ml,
+        "mensaje": "Predicción entre frames · proyección basada en el último radar real",
+        "prediccion_ml": ml,
+        "proyeccion_en_vivo": _live_ml_projection(ml, elapsed),
     }
 
 

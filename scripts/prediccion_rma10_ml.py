@@ -1184,12 +1184,23 @@ def main():
             }
         )
 
-    timestamp = (
-        read_radar_timestamp()
-        or resultado.get(
-            "imagen_procesada"
+    timestamp_path = ROOT / "data/radar/radar_timestamp.txt"
+
+    if not timestamp_path.exists():
+        raise SystemExit(
+            "No existe un timestamp real de RMA10. "
+            "No se generará una predicción ML sin frame radar válido."
         )
-    )
+
+    timestamp = timestamp_path.read_text(
+        encoding="utf-8"
+    ).strip()
+
+    if not timestamp:
+        raise SystemExit(
+            "El timestamp real de RMA10 está vacío. "
+            "No se generará una predicción ML sin frame radar válido."
+        )
 
     output = {
         "ok": True,
@@ -1218,8 +1229,11 @@ def main():
             list(HORIZONS),
 
         "calibracion_probabilistica": {
-            "aplicada": calibrated_values > 0,
-            "metodo": "PLATT_SCALING_LOGIT",
+            "aplicada": any(
+                bool(model_info.get("enabled"))
+                for model_info in probability_calibration["models"].values()
+                if isinstance(model_info, dict)
+            ),
             "tracks_calibracion": probability_calibration[
                 "calibration_tracks"
             ],

@@ -2212,26 +2212,43 @@ def procesar_frame_secuencia(
                 ],
         }
 
-    activos_previos = [
+    activos_previos = []
+    intervalos_por_track = {}
 
-        track
+    for track in estado["tracks"]:
 
-        for track in estado[
-            "tracks"
-        ]
+        if track.get("activo") is not True:
+            continue
 
-        if (
-            track.get(
-                "activo"
-            ) is True
-
-            and
-
-            track.get(
-                "ultimo_frame"
-            ) == anterior_ts
+        track_ts = parse_iso(
+            track.get("ultimo_frame")
         )
-    ]
+
+        if track_ts is None:
+            continue
+
+        if track_ts > actual_dt:
+            continue
+
+        gap_minutos = (
+            actual_dt - track_ts
+        ).total_seconds() / 60.0
+
+        if gap_minutos <= 0:
+            continue
+
+        if gap_minutos > MAX_INTERVALO * (MAX_MISSED_FRAMES + 1):
+            continue
+
+        missed = entero(
+            track.get("missed_frames", 0)
+        )
+
+        if missed > MAX_MISSED_FRAMES:
+            continue
+
+        activos_previos.append(track)
+        intervalos_por_track[track["track_id"]] = gap_minutos
 
     candidatos = []
 
@@ -2283,10 +2300,15 @@ def procesar_frame_secuencia(
             nucleos
         ):
 
+            intervalo_track = intervalos_por_track.get(
+                track["track_id"],
+                intervalo,
+            )
+
             comp = compatibilidad(
                 anterior,
                 actual,
-                intervalo,
+                intervalo_track,
                 track
             )
 
@@ -2416,11 +2438,16 @@ def procesar_frame_secuencia(
             ]
         ]
 
+        intervalo_track = intervalos_por_track.get(
+            track["track_id"],
+            intervalo,
+        )
+
         actualizar_track(
             track,
             nucleo,
             radar_ts,
-            intervalo,
+            intervalo_track,
             calidad
         )
 
