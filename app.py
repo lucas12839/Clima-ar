@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -10,15 +11,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
+try:
+    from PIL import Image
+except Exception:
+    Image = None
+
 BASE_DIR = Path(__file__).resolve().parent
 RADAR_DIR = BASE_DIR / "data" / "radar"
 HISTORY_DIR = RADAR_DIR / "historico"
+IA_DIR = BASE_DIR / "data" / "ia"
 
 NOWCAST_FILE = RADAR_DIR / "radar_nowcast.json"
 RESULTADO_FILE = RADAR_DIR / "resultado_procesamiento.json"
-DECISION_FILE = BASE_DIR / "data" / "ia" / "resultado_final.json"
-STORM_FILE = BASE_DIR / "data" / "ia" / "inteligencia_tormenta.json"
-METEO_FILE = BASE_DIR / "data" / "ia" / "estado_meteorologico.json"
+DECISION_FILE = IA_DIR / "resultado_final.json"
+STORM_FILE = IA_DIR / "inteligencia_tormenta.json"
+METEO_FILE = IA_DIR / "estado_meteorologico.json"
 PREDICTION_FILE = RADAR_DIR / "seguimiento" / "prediccion_evolucion.json"
 ML_PREDICTION_FILE = RADAR_DIR / "seguimiento" / "prediccion_ml_rma10.json"
 TIMESTAMP_FILE = RADAR_DIR / "radar_timestamp.txt"
@@ -27,152 +34,185 @@ ACTUAL_IMAGE = RADAR_DIR / "actual.png"
 LAT = -38.7196
 LON = -62.2724
 CITY = "Bahía Blanca"
-
-VERSION = "8.0-rma10"
+VERSION = "8.1-rma10-operativo"
 FUENTE = "SINARAME RMA10"
+MAX_RADAR_AGE_MINUTES = 45.0
+MAX_FUTURE_SKEW_MINUTES = 2.0
+MAX_LIVE_PREDICTION_MINUTES = 30.0
 
+
+def _cors_origins() -> list[str]:
+    raw = os.getenv("CLIMAAR_CORS_ORIGINS", "*").strip()
+    if not raw:
+        return ["*"]
+    return [item.strip() for item in raw.split(",") if item.strip()] or ["*"]
+
+
+CORS_ORIGINS = _cors_origins()
+CORS_WILDCARD = CORS_ORIGINS == ["*"]
 
 app = FastAPI(
     title="ClimaAR - Radar Bahía Blanca",
-    description="ClimaAR basado exclusivamente en SINARAME/RMA10 para radar operativo.",
+    description="ClimaAR basado en SINARAME/RMA10 para radar operativo.",
     version=VERSION,
 )
 
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False if CORS_WILDCARD else True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
 def read_json(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
 
-        if isinstance(value, dict):
-            return value
 
-    except Exception:
-        pass
+def parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return None
+    return dt.astimezone(timezone.utc)
+
+
+def radar_timestamp() -> str | None:
+    try:
+        value = TIMESTAMP_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        value = ""
+
+    if value:
+        return value
+
+    nowcast = read_json(NOWCAST_FILE) or {}
+    block = nowcast.get("nowcast")
+
+    if isinstance(block, dict):
+        value = block.get("frame_actual_utc")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
 
     return None
 
 
-def radar_timestamp() -> str | None:
-
-    if TIMESTAMP_FILE.exists():
-        try:
-            value = TIMESTAMP_FILE.read_text(
-                encoding="utf-8"
-            ).strip()
-
-            if value:
-                return value
-
-        except Exception:
-            pass
-
-    nowcast = read_json(NOWCAST_FILE) or {}
-
-    nc = nowcast.get("nowcast", {})
-
-    if not isinstance(nc, dict):
-        nc = {}
-
-    return (
-        nc.get("frame_actual_utc")
-        or nowcast.get("actualizado")
-    )
-
-
-def parse_iso(value: str | None) -> datetime | None:
-
-    if not value:
-        return None
-
-    try:
-        return datetime.fromisoformat(
-            value.replace("Z", "+00:00")
-        )
-
-    except Exception:
-        return None
-
-
-def frame_age_minutes(
-    timestamp: str | None,
-) -> float | None:
-
+def frame_age_minutes(timestamp: str | None) -> float | None:
     dt = parse_iso(timestamp)
 
     if dt is None:
         return None
 
-    return max(
-        0.0,
-        (
-            datetime.now(timezone.utc)
-            - dt.astimezone(timezone.utc)
-        ).total_seconds()
-        / 60.0,
-    )
+    age = (
+        datetime.now(timezone.utc) - dt
+    ).total_seconds() / 60.0
+
+    return round(age, 2)
+
+
+def radar_status(timestamp: str | None = None) -> str:
+    timestamp = timestamp or radar_timestamp()
+
+    if not timestamp:
+        return "no_disponible"
+
+    dt = parse_iso(timestamp)
+
+    if dt is None:
+        return "no_disponible"
+
+    age = frame_age_minutes(timestamp)
+
+    if age is None or age < -MAX_FUTURE_SKEW_MINUTES:
+        return "no_disponible"
+
+    if age > MAX_RADAR_AGE_MINUTES:
+        return "retrasado"
+
+    return "actualizado"
+
+
+def radar_metadata() -> dict[str, Any]:
+    timestamp = radar_timestamp()
+    age = frame_age_minutes(timestamp)
+    status = radar_status(timestamp)
+
+    return {
+        "frame_actual_utc": timestamp,
+        "frame_edad_minutos": age,
+        "estado_radar": status,
+        "radar_actualizado": status == "actualizado",
+        "radar_retrasado": status == "retrasado",
+        "radar_disponible": status != "no_disponible",
+        "edad_maxima_procesamiento_minutos": MAX_RADAR_AGE_MINUTES,
+    }
+
+
+def png_is_valid(path: Path) -> tuple[bool, str]:
+    if not path.is_file():
+        return False, "archivo_no_existe"
+
+    try:
+        if path.stat().st_size <= 1024:
+            return False, "archivo_demasiado_pequeno"
+    except OSError:
+        return False, "no_se_pudo_leer_tamanio"
+
+    if Image is None:
+        return False, "Pillow_no_disponible"
+
+    try:
+        with Image.open(path) as image:
+            if image.format != "PNG":
+                return False, "formato_no_png"
+
+            image.verify()
+
+        return True, "ok"
+
+    except Exception:
+        return False, "png_invalido"
 
 
 def get_openmeteo_data() -> dict[str, Any] | None:
+    url = (
+        "https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        "&current=temperature_2m,dewpoint_2m,pressure_msl,"
+        "wind_speed_10m,wind_direction_10m,precipitation"
+        "&timezone=America/Argentina/Buenos_Aires"
+    )
 
     try:
-
-        url = (
-            "https://api.open-meteo.com/v1/forecast?"
-            f"latitude={LAT}"
-            f"&longitude={LON}"
-            "&current="
-            "temperature_2m,"
-            "dewpoint_2m,"
-            "pressure_msl,"
-            "wind_speed_10m,"
-            "wind_direction_10m,"
-            "precipitation"
-            "&timezone=America/Argentina/Buenos_Aires"
-        )
-
-        response = requests.get(
-            url,
-            timeout=10,
-        )
-
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
 
-        current = response.json().get(
-            "current",
-            {},
-        )
+        payload = response.json()
+        current = payload.get("current")
+
+        if not isinstance(current, dict):
+            return None
 
         return {
-            "temperatura": current.get(
-                "temperature_2m"
-            ),
-            "punto_rocio": current.get(
-                "dewpoint_2m"
-            ),
-            "presion": current.get(
-                "pressure_msl"
-            ),
-            "viento_vel": current.get(
-                "wind_speed_10m"
-            ),
-            "viento_dir": current.get(
-                "wind_direction_10m"
-            ),
-            "precipitacion": current.get(
-                "precipitation"
-            ),
+            "temperatura": current.get("temperature_2m"),
+            "punto_rocio": current.get("dewpoint_2m"),
+            "presion": current.get("pressure_msl"),
+            "viento_vel": current.get("wind_speed_10m"),
+            "viento_dir": current.get("wind_direction_10m"),
+            "precipitacion": current.get("precipitation"),
+            "fuente": "Open-Meteo",
         }
 
     except Exception:
@@ -183,72 +223,42 @@ def get_nowcast() -> dict[str, Any]:
     return read_json(NOWCAST_FILE) or {}
 
 
-def get_nucleos(
-    nowcast: dict[str, Any],
-) -> list[dict[str, Any]]:
+def get_nucleos(nowcast: dict[str, Any]) -> list[dict[str, Any]]:
+    block = nowcast.get("nowcast")
 
-    nc = nowcast.get(
-        "nowcast",
-        {},
-    )
-
-    if not isinstance(nc, dict):
+    if not isinstance(block, dict):
         return []
 
-    nucleos = nc.get(
-        "nucleos",
-        [],
-    )
+    value = block.get("nucleos")
 
-    if isinstance(nucleos, list):
-        return nucleos
-
-    return []
+    return value if isinstance(value, list) else []
 
 
-def max_intensity(
-    nowcast: dict[str, Any],
-) -> int | None:
+def max_intensity(nowcast: dict[str, Any]) -> int | None:
+    block = nowcast.get("nowcast")
 
-    nc = nowcast.get(
-        "nowcast",
-        {},
-    )
+    if not isinstance(block, dict):
+        return None
 
-    if isinstance(nc, dict):
+    value = block.get("intensidad_nivel_max")
 
-        value = nc.get(
-            "intensidad_nivel_max"
+    if isinstance(value, (int, float)):
+        return int(value)
+
+    values = [
+        item.get("intensidad")
+        for item in get_nucleos(nowcast)
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("intensidad"), (int, float))
         )
+    ]
 
-        if isinstance(value, (int, float)):
-            return int(value)
-
-    values = []
-
-    for nucleus in get_nucleos(nowcast):
-
-        if not isinstance(nucleus, dict):
-            continue
-
-        value = nucleus.get(
-            "intensidad"
-        )
-
-        if isinstance(value, (int, float)):
-            values.append(value)
-
-    if values:
-        return int(max(values))
-
-    return None
+    return int(max(values)) if values else None
 
 
-def intensity_label(
-    level: int | None,
-) -> str:
-
-    labels = {
+def intensity_label(level: int | None) -> str:
+    return {
         0: "Sin precipitación",
         1: "Muy débil",
         2: "Débil",
@@ -256,109 +266,127 @@ def intensity_label(
         4: "Fuerte",
         5: "Muy fuerte",
         6: "Severa",
-    }
-
-    return labels.get(
-        level,
-        "Sin datos",
-    )
+    }.get(level, "Sin datos")
 
 
-def load_history_list() -> list[
-    tuple[str, Path]
-]:
-
+def load_history_list() -> list[tuple[str, Path]]:
     if not HISTORY_DIR.exists():
         return []
 
     items = []
 
-    for path in HISTORY_DIR.glob(
-        "*.png"
-    ):
+    for path in HISTORY_DIR.glob("*.png"):
+        if len(path.stem) == 14 and path.stem.isdigit():
+            items.append((path.stem, path))
 
-        stem = path.stem
-
-        if (
-            len(stem) == 14
-            and stem.isdigit()
-        ):
-            items.append(
-                (
-                    stem,
-                    path,
-                )
-            )
-
-    items.sort(
-        key=lambda item: item[0]
-    )
+    items.sort(key=lambda item: item[0])
 
     return items[-13:]
 
 
+def synchronized_frame_status() -> dict[str, Any]:
+    radar_ts = radar_timestamp()
+
+    nowcast = get_nowcast().get("nowcast", {})
+    ml = read_json(ML_PREDICTION_FILE) or {}
+
+    nowcast_ts = (
+        nowcast.get("frame_actual_utc")
+        if isinstance(nowcast, dict)
+        else None
+    )
+
+    ml_ts = ml.get("frame_radar")
+
+    equal = bool(
+        radar_ts
+        and nowcast_ts
+        and ml_ts
+        and radar_ts == nowcast_ts == ml_ts
+    )
+
+    return {
+        "radar": radar_ts,
+        "nowcast": nowcast_ts,
+        "ml": ml_ts,
+        "sincronizados": equal,
+    }
+
+
 def result_payload() -> dict[str, Any]:
+    storm = read_json(STORM_FILE)
+
+    if storm is not None:
+        storm = dict(storm)
+
+        storm["interpretacion_probabilidades"] = (
+            "heuristicas_no_calibradas"
+        )
+
+        storm["probabilidades_calibradas"] = False
+
+        storm["nota"] = (
+            "Los campos probabilidad/peligros del Storm Engine son "
+            "estimaciones heurísticas; no representan probabilidades "
+            "científicas calibradas."
+        )
 
     return {
         "radar_nowcast": get_nowcast(),
-        "resultado_procesamiento": (
-            read_json(
-                RESULTADO_FILE
-            )
-        ),
-        "resultado_final": (
-            read_json(
-                DECISION_FILE
-            )
-        ),
-        "inteligencia_tormenta": (
-            read_json(
-                STORM_FILE
-            )
-        ),
-        "estado_meteorologico": (
-            read_json(
-                METEO_FILE
-            )
-        ),
-        "prediccion_evolucion": (
-            read_json(
-                PREDICTION_FILE
-            )
-        ),
+        "resultado_procesamiento": read_json(RESULTADO_FILE),
+        "resultado_final": read_json(DECISION_FILE),
+        "inteligencia_tormenta": storm,
+        "estado_meteorologico": read_json(METEO_FILE),
+        "prediccion_evolucion": read_json(PREDICTION_FILE),
+        "sincronizacion": synchronized_frame_status(),
+        **radar_metadata(),
     }
 
 
 @app.get("/")
 def inicio() -> dict[str, Any]:
-
     return {
         "app": "ClimaAR",
-        "estado": "operativo",
+        "estado": (
+            "operativo"
+            if radar_status() == "actualizado"
+            else "degradado"
+        ),
         "version": VERSION,
         "fuente_radar": FUENTE,
         "ciudad": CITY,
         "radar": "RMA10",
-        "mensaje": (
-            "ClimaAR utiliza "
-            "SINARAME/RMA10 "
-            "como fuente radar "
-            "operativa."
-        ),
+        **radar_metadata(),
     }
 
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    metadata = radar_metadata()
 
-    timestamp = radar_timestamp()
+    required = {
+        "timestamp": TIMESTAMP_FILE.is_file(),
+        "radar_nowcast": NOWCAST_FILE.is_file(),
+        "imagen": ACTUAL_IMAGE.is_file(),
+    }
 
-    age = frame_age_minutes(
-        timestamp
-    )
+    png_ok, png_reason = png_is_valid(ACTUAL_IMAGE)
+
+    required["imagen_png_valido"] = png_ok
+
+    status = metadata["estado_radar"]
+
+    if status == "actualizado" and all(required.values()):
+        overall = "ok"
+
+    elif status == "retrasado":
+        overall = "degraded"
+
+    else:
+        overall = "unavailable"
 
     return {
-        "status": "ok",
+        "status": overall,
         "app": "ClimaAR",
         "version": VERSION,
         "fuente": FUENTE,
@@ -366,144 +394,66 @@ def health() -> dict[str, Any]:
         "ciudad": CITY,
         "lat": LAT,
         "lon": LON,
-        "frame_actual_utc": timestamp,
-        "frame_edad_minutos": (
-            round(age, 2)
-            if age is not None
-            else None
-        ),
-        "frame_es_viejo": (
-            age > 35
-            if age is not None
-            else None
-        ),
-        "timestamp": (
-            datetime.now(
-                timezone.utc
-            ).isoformat()
-        ),
+        **metadata,
+        "archivos": required,
+        "imagen_validacion": png_reason,
+        "sincronizacion": synchronized_frame_status(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
 @app.get("/estado")
 def estado() -> dict[str, Any]:
-
     nowcast = get_nowcast()
 
-    nc = nowcast.get(
-        "nowcast",
-        {},
-    )
+    nc = nowcast.get("nowcast", {})
 
     if not isinstance(nc, dict):
         nc = {}
 
     meteo = get_openmeteo_data()
-
     timestamp = radar_timestamp()
+    age = frame_age_minutes(timestamp)
+    level = max_intensity(nowcast)
+    nucleos = get_nucleos(nowcast)
 
-    age = frame_age_minutes(
-        timestamp
-    )
+    speed = nc.get("velocidad_kmh")
+    direction = nc.get("direccion")
 
-    level = max_intensity(
-        nowcast
-    )
+    movement = "Sin movimiento confirmado"
 
-    nucleos = get_nucleos(
-        nowcast
-    )
-
-    speed = nc.get(
-        "velocidad_kmh"
-    )
-
-    direction = nc.get(
-        "direccion"
-    )
-
-    movement = (
-        "Sin movimiento confirmado"
-    )
-
-    if (
-        isinstance(speed, (int, float))
-        and speed > 0
-    ):
-
-        movement = (
-            f"{speed:.1f} km/h"
-        )
+    if isinstance(speed, (int, float)) and speed > 0:
+        movement = f"{speed:.1f} km/h"
 
         if direction:
-            movement += (
-                f" - {direction}"
-            )
+            movement += f" - {direction}"
 
     return {
-        "temperatura": (
-            meteo.get("temperatura")
-            if meteo
-            else None
+        "temperatura": meteo.get("temperatura") if meteo else None,
+        "punto_rocio": meteo.get("punto_rocio") if meteo else None,
+        "viento": meteo.get("viento_vel") if meteo else None,
+        "viento_direccion": meteo.get("viento_dir") if meteo else None,
+        "presion": meteo.get("presion") if meteo else None,
+        "precipitacion": meteo.get("precipitacion") if meteo else None,
+        "meteorologia_externa": (
+            "disponible" if meteo else "no_disponible"
         ),
-        "punto_rocio": (
-            meteo.get("punto_rocio")
-            if meteo
-            else None
-        ),
-        "viento": (
-            meteo.get("viento_vel")
-            if meteo
-            else None
-        ),
-        "viento_direccion": (
-            meteo.get("viento_dir")
-            if meteo
-            else None
-        ),
-        "presion": (
-            meteo.get("presion")
-            if meteo
-            else None
-        ),
-        "precipitacion": (
-            meteo.get("precipitacion")
-            if meteo
-            else None
-        ),
-        "cobertura_radar": bool(
-            nucleos
-        ),
+        "cobertura_radar": bool(nucleos),
         "intensidad_nivel": level,
-        "intensidad": intensity_label(
-            level
-        ),
+        "intensidad": intensity_label(level),
         "nucleos": len(nucleos),
         "actualizado": timestamp,
-        "frame_edad_minutos": (
-            round(age, 2)
-            if age is not None
-            else None
-        ),
-        "frame_es_viejo": (
-            age > 35
-            if age is not None
-            else None
-        ),
+        "frame_edad_minutos": age,
+        "estado_radar": radar_status(timestamp),
         "nowcast": nc.get(
             "estado",
-            nowcast.get(
-                "estado",
-                "sin datos",
-            ),
+            nowcast.get("estado", "sin datos"),
         ),
         "movimiento": movement,
         "movimiento_hacia_bahia": nc.get(
             "movimiento_hacia_bahia"
         ),
-        "eta_minutos": nc.get(
-            "eta_minutos"
-        ),
+        "eta_minutos": nc.get("eta_minutos"),
         "fuente": FUENTE,
         "version": VERSION,
     }
@@ -511,371 +461,30 @@ def estado() -> dict[str, Any]:
 
 @app.get("/radar")
 def radar() -> dict[str, Any]:
-
     nowcast = get_nowcast()
 
-    nc = nowcast.get(
-        "nowcast",
-        {},
-    )
+    nc = nowcast.get("nowcast", {})
 
     if not isinstance(nc, dict):
         nc = {}
 
+    metadata = radar_metadata()
+
     return {
-        "estado": (
-            "ok"
-            if nowcast
-            else "sin_datos"
-        ),
+        "estado": "ok" if nowcast else "sin_datos",
         "fuente": FUENTE,
         "radar": "RMA10",
-        "timestamp": radar_timestamp(),
+        **metadata,
         "imagen_local": "/radar/imagen",
-        "frames_historicos": len(
-            load_history_list()
+        "frames_historicos": len(load_history_list()),
+        "frames_analizados": nc.get("frames_analizados"),
+        "frames_analizados_significado": (
+            "valor generado por el motor de nowcast; "
+            "no asumir que representa cantidad de imágenes "
+            "sin auditar su productor"
         ),
-        "frames_analizados": nc.get(
-            "frames_analizados"
-        ),
-        "actividad": nc.get(
-            "actividad"
-        ),
-        "intensidad_nivel_max": nc.get(
-            "intensidad_nivel_max"
-        ),
-        "intensidad_escala": nc.get(
-            "intensidad_escala",
-            "RMA10_0_6",
-        ),
-        "area_px": nc.get(
-            "area_px"
-        ),
-        "distancia_km": nc.get(
-            "distancia_km"
-        ),
-        "fortalecimiento": nc.get(
-            "fortalecimiento"
-        ),
-        "cambio_area_pct": nc.get(
-            "cambio_area_pct"
-        ),
-        "velocidad_pixeles_min": nc.get(
-            "velocidad_pixeles_min"
-        ),
-        "direccion": nc.get(
-            "direccion"
-        ),
-        "movimiento_hacia_bahia": nc.get(
-            "movimiento_hacia_bahia"
-        ),
-        "eta_minutos": nc.get(
-            "eta_minutos"
-        ),
-        "nucleos": get_nucleos(
-            nowcast
-        ),
+        "nucleos": get_nucleos(nowcast),
+        "intensidad_nivel_max": max_intensity(nowcast),
+        "intensidad": intensity_label(max_intensity(nowcast)),
+        "sincronizacion": synchronized_frame_status(),
     }
-
-
-@app.get("/radar/imagen")
-def radar_imagen():
-
-    if not ACTUAL_IMAGE.exists():
-
-        return JSONResponse(
-            status_code=404,
-            content={
-                "estado": "sin_imagen",
-                "fuente": FUENTE,
-            },
-        )
-
-    return FileResponse(
-        ACTUAL_IMAGE,
-        media_type="image/png",
-        filename="rma10_actual.png",
-    )
-
-
-@app.get("/secuencia")
-def secuencia() -> dict[str, Any]:
-
-    history = load_history_list()
-
-    return {
-        "fuente": FUENTE,
-        "radar": "RMA10",
-        "frames": [
-            {
-                "timestamp": timestamp,
-                "url": (
-                    f"/radar/historico/"
-                    f"{timestamp}"
-                ),
-            }
-            for timestamp, _ in history
-        ],
-    }
-
-
-@app.get(
-    "/radar/historico/{timestamp}"
-)
-def radar_historico(
-    timestamp: str,
-):
-
-    if (
-        len(timestamp) != 14
-        or not timestamp.isdigit()
-    ):
-
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error":
-                    "timestamp_invalido"
-            },
-        )
-
-    path = (
-        HISTORY_DIR
-        / f"{timestamp}.png"
-    )
-
-    if not path.exists():
-
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error":
-                    "frame_no_encontrado"
-            },
-        )
-
-    return FileResponse(
-        path,
-        media_type="image/png",
-        filename=(
-            f"rma10_{timestamp}.png"
-        ),
-    )
-
-
-@app.get("/nowcast")
-def nowcast() -> dict[str, Any]:
-    return get_nowcast()
-
-
-@app.get("/prediccion")
-def prediccion() -> dict[str, Any]:
-
-    return (
-        read_json(
-            PREDICTION_FILE
-        )
-        or {
-            "estado": "sin_datos",
-            "fuente": FUENTE,
-        }
-    )
-
-
-def _interp(a: float | None, b: float | None, fraction: float) -> float | None:
-    if a is None and b is None:
-        return None
-    if a is None:
-        return b
-    if b is None:
-        return a
-    return a + (b - a) * fraction
-
-
-def _live_ml_projection(ml: dict[str, Any], elapsed: float) -> dict[str, Any]:
-    tracks = ml.get("predicciones", [])
-    if not isinstance(tracks, list):
-        return {"tracks": []}
-
-    horizons = [5, 10, 20, 30]
-    result = []
-
-    for track in tracks:
-        if not isinstance(track, dict):
-            continue
-
-        raw = track.get("horizontes", {})
-        if not isinstance(raw, dict):
-            continue
-
-        points = []
-        for h in horizons:
-            item = raw.get(str(h))
-            if isinstance(item, dict):
-                points.append((h, item))
-
-        if not points:
-            continue
-
-        if elapsed <= points[0][0]:
-            left_h, left = points[0]
-            right_h, right = points[0]
-        elif elapsed >= points[-1][0]:
-            left_h, left = points[-1]
-            right_h, right = points[-1]
-        else:
-            left_h, left = points[0]
-            right_h, right = points[-1]
-            for index in range(len(points) - 1):
-                h1, p1 = points[index]
-                h2, p2 = points[index + 1]
-                if h1 <= elapsed <= h2:
-                    left_h, left = h1, p1
-                    right_h, right = h2, p2
-                    break
-
-        fraction = 0.0 if right_h == left_h else (elapsed - left_h) / (right_h - left_h)
-        fraction = max(0.0, min(1.0, fraction))
-
-        def value(target: str) -> float | None:
-            a = left.get(target)
-            b = right.get(target)
-            try:
-                a = float(a) if a is not None else None
-            except (TypeError, ValueError):
-                a = None
-            try:
-                b = float(b) if b is not None else None
-            except (TypeError, ValueError):
-                b = None
-            return _interp(a, b, fraction)
-
-        result.append({
-            "track_id": track.get("track_id"),
-            "lat": track.get("lat"),
-            "lon": track.get("lon"),
-            "distance_km": track.get("distance_km"),
-            "rumbo_grados": track.get("motion_bearing_deg"),
-            "velocidad_px_min": track.get("speed_px_min"),
-            "probabilidades": {
-                "fortalecimiento": value("strengthened"),
-                "debilitamiento": value("weakened"),
-                "hacia_bahia": value("toward_bahia"),
-            },
-            "horizonte_base_min": [left_h, right_h],
-        })
-
-    return {"tracks": result}
-
-
-@app.get("/prediccion/en-vivo")
-def prediccion_en_vivo() -> dict[str, Any]:
-    radar_ts = radar_timestamp()
-    age = frame_age_minutes(radar_ts)
-    ml = read_json(ML_PREDICTION_FILE) or {}
-
-    if not ml or not radar_ts:
-        return {
-            "estado": "sin_datos",
-            "fuente_radar": FUENTE,
-            "radar": "RMA10",
-            "modo": "PREDICCION_ENTRE_FRAMES",
-            "ultimo_radar_real_utc": radar_ts,
-            "ultimo_radar_edad_minutos": round(age, 2) if age is not None else None,
-            "actualizado_utc": datetime.now(timezone.utc).isoformat(),
-            "prediccion": ml,
-        }
-
-    elapsed = max(0.0, min(30.0, age or 0.0))
-
-    return {
-        "estado": "ok",
-        "fuente_radar": FUENTE,
-        "radar": "RMA10",
-        "modo": "PREDICCION_ENTRE_FRAMES",
-        "base": "ML_RMA10",
-        "ultimo_radar_real_utc": radar_ts,
-        "ultimo_radar_edad_minutos": round(age, 2) if age is not None else None,
-        "minutos_proyectados": round(elapsed, 2),
-        "actualizado_utc": datetime.now(timezone.utc).isoformat(),
-        "mensaje": "Predicción entre frames · proyección basada en el último radar real",
-        "prediccion_ml": ml,
-        "proyeccion_en_vivo": _live_ml_projection(ml, elapsed),
-    }
-
-
-@app.get("/tormenta")
-def tormenta() -> dict[str, Any]:
-
-    return (
-        read_json(
-            STORM_FILE
-        )
-        or {
-            "estado": "sin_datos",
-            "fuente_radar": FUENTE,
-        }
-    )
-
-
-@app.get("/modelo")
-def modelo() -> dict[str, Any]:
-
-    return (
-        read_json(
-            DECISION_FILE
-        )
-        or {
-            "estado": "sin_datos",
-            "fuente_radar": FUENTE,
-        }
-    )
-
-
-@app.get("/modelo/nowcast")
-def modelo_nowcast() -> dict[str, Any]:
-
-    return {
-        "fuente_radar": FUENTE,
-        "radar": get_nowcast(),
-        "prediccion": read_json(
-            PREDICTION_FILE
-        ),
-        "decision": read_json(
-            DECISION_FILE
-        ),
-    }
-
-
-@app.get("/inteligencia")
-def inteligencia() -> dict[str, Any]:
-    return result_payload()
-
-
-@app.get("/debug")
-def debug() -> dict[str, Any]:
-
-    return {
-        "version": VERSION,
-        "fuente_radar": FUENTE,
-        "archivos": {
-            "actual_png":
-                ACTUAL_IMAGE.exists(),
-            "radar_nowcast":
-                NOWCAST_FILE.exists(),
-            "resultado_procesamiento":
-                RESULTADO_FILE.exists(),
-            "resultado_final":
-                DECISION_FILE.exists(),
-            "storm_engine":
-                STORM_FILE.exists(),
-            "meteorologia":
-                METEO_FILE.exists(),
-            "prediccion":
-                PREDICTION_FILE.exists(),
-            "timestamp":
-                TIMESTAMP_FILE.exists(),
-        },
-        "timestamp_radar":
-            radar_timestamp(),
-}
