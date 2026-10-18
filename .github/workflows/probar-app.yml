@@ -9,26 +9,201 @@ permissions:
 jobs:
   probar:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Configurar Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verificar sintaxis Python
+        run: |
+          set -e
+          python -m compileall -q .
+
+      - name: Verificar archivos operativos
+        run: |
+          set -e
+          test -s data/radar/radar_nowcast.json
+          test -s data/radar/radar_timestamp.txt
+          test -s data/radar/seguimiento/prediccion_ml_rma10.json
+          test -s data/ia/resultado_final.json
+          echo "Archivos operativos OK."
 
       - name: Iniciar ClimaAR
         run: |
-          nohup uvicorn app:app --host 0.0.0.0 --port 8000 > app.log 2>&1 &
-          sleep 10
+          set -e
+          nohup uvicorn app:app --host 127.0.0.1 --port 8000 > app.log 2>&1 &
+          echo $! > app.pid
 
-      - name: Probar endpoints
+          for intento in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8000/health > /tmp/health.json; then
+              echo "ClimaAR iniciado correctamente."
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "ERROR: ClimaAR no inició."
+          cat app.log
+          exit 1
+
+      - name: Probar API principal
         run: |
-          curl -f http://127.0.0.1:8000/health
-          curl -f http://127.0.0.1:8000/modelo
-          curl -f http://127.0.0.1:8000/prediccion
-          curl -f http://127.0.0.1:8000/tormenta
-          curl -f http://127.0.0.1:8000/estado
+          set -e
+
+          for endpoint in \
+            "/" \
+            "/health" \
+            "/estado" \
+            "/radar" \
+            "/nowcast" \
+            "/prediccion" \
+            "/prediccion/en-vivo" \
+            "/tormenta" \
+            "/modelo" \
+            "/modelo/nowcast" \
+            "/inteligencia" \
+            "/secuencia" \
+            "/debug"
+          do
+            echo "Probando $endpoint"
+            curl -fsS \
+              -H "Accept: application/json" \
+              "http://127.0.0.1:8000$endpoint" \
+              > /tmp/response.json
+
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(
+              Path("/tmp/response.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          if not isinstance(data, dict):
+              raise SystemExit(
+                  "ERROR: la respuesta API no es un objeto JSON."
+              )
+
+          print("JSON válido.")
+          PY
+          done
+
+      - name: Verificar contratos de endpoints
+        run: |
+          set -e
+
+          python - <<'PY'
+          import json
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8000"
+
+          def get(path):
+              with urllib.request.urlopen(
+                  BASE + path,
+                  timeout=10,
+              ) as response:
+                  if response.status != 200:
+                      raise SystemExit(
+                          f"ERROR {path}: HTTP {response.status}"
+                      )
+                  return json.loads(
+                      response.read().decode("utf-8")
+                  )
+
+          health = get("/health")
+          required_health = {
+              "status",
+              "frame_actual_utc",
+              "frame_edad_minutos",
+          }
+
+          missing = required_health - health.keys()
+          if missing:
+              raise SystemExit(
+                  f"ERROR /health: faltan campos {sorted(missing)}"
+              )
+
+          radar = get("/radar")
+          if radar.get("radar") != "RMA10":
+              raise SystemExit(
+                  "ERROR /radar: radar inesperado."
+              )
+
+          live = get("/prediccion/en-vivo")
+          if live.get("modo") != "PREDICCION_ENTRE_FRAMES":
+              raise SystemExit(
+                  "ERROR /prediccion/en-vivo: modo incorrecto."
+              )
+
+          inteligencia = get("/inteligencia")
+          required_intelligence = {
+              "radar_nowcast",
+              "resultado_final",
+              "inteligencia_tormenta",
+          }
+
+          missing = required_intelligence - inteligencia.keys()
+          if missing:
+              raise SystemExit(
+                  "ERROR /inteligencia: "
+                  f"faltan campos {sorted(missing)}"
+              )
+
+          secuencia = get("/secuencia")
+          if not isinstance(secuencia.get("frames"), list):
+              raise SystemExit(
+                  "ERROR /secuencia: frames no es una lista."
+              )
+
+          print("Contratos API OK.")
+          PY
+
+      - name: Probar imagen radar
+        run: |
+          set -e
+
+          STATUS="$(
+            curl -sS -o /tmp/radar.png \
+              -w "%{http_code}" \
+              http://127.0.0.1:8000/radar/imagen
+          )"
+
+          if [ "$STATUS" = "200" ]; then
+            test -s /tmp/radar.png
+            FILE_TYPE="$(file -b --mime-type /tmp/radar.png)"
+            test "$FILE_TYPE" = "image/png"
+            echo "Imagen radar OK."
+          elif [ "$STATUS" = "404" ]; then
+            echo "Imagen radar no disponible en checkout; endpoint respondió correctamente 404."
+          else
+            echo "ERROR: /radar/imagen respondió HTTP $STATUS."
+            exit 1
+          fi
+
+      - name: Mostrar logs si falla
+        if: failure()
+        run: |
+          echo "===== APP.LOG ====="
+          cat app.log || true
+
+      - name: Detener ClimaAR
+        if: always()
+        run: |
+          if [ -f app.pid ]; then
+            kill "$(cat app.pid)" 2>/dev/null || true
+          fi
