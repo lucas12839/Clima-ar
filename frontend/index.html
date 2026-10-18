@@ -1,244 +1,425 @@
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>ClimaAR</title>
-<link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8">
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1,viewport-fit=cover"
+  >
+
+  <title>ClimaAR</title>
+
+  <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
 
 <div class="app">
 
-<header>
-  <button class="menu">☰</button>
+  <header>
 
-  <div class="logo">
-    Clima<span>AR</span>
-    <small>Bahía Blanca</small>
-  </div>
+    <button class="menu" aria-label="Menú">
+      ☰
+    </button>
 
-  <button class="bell">♧</button>
-</header>
-
-<section class="hero">
-
-  <div class="heroTop">
-    <span>AHORA</span>
-    <b>Bahía Blanca</b>
-  </div>
-
-  <div class="weather">
-    <strong id="temp">24°</strong>
-
-    <div>
-      <b id="condition">Parcialmente nublado</b>
-      <span>Sensación 24° · Humedad 58%</span>
-    </div>
-  </div>
-
-  <div class="metrics">
-
-    <div>
-      <small>Viento</small>
-      <b>12 km/h</b>
+    <div class="logo">
+      Clima<span>AR</span>
+      <small>Bahía Blanca</small>
     </div>
 
-    <div>
-      <small>Presión</small>
-      <b>1012 hPa</b>
-    </div>
+    <button class="bell" aria-label="Notificaciones">
+      ♧
+    </button>
 
-    <div>
-      <small>Lluvia</small>
-      <b>0 mm</b>
-    </div>
+  </header>
 
-  </div>
 
-</section>
+  <section class="hero">
 
-<section class="alert">
-
-  <div class="alertIcon">ϟ</div>
-
-  <div>
-    <small>SEGUIMIENTO ACTIVO</small>
-    <b>Tormenta en seguimiento</b>
-    <span>Se detectó un núcleo al sudoeste.</span>
-  </div>
-
-  <strong>→</strong>
-
-</section>
-
-<section class="card">
-
-  <div class="title">
-
-    <div>
-      <small>RADAR EN VIVO</small>
-      <b>RMA10 · Bahía Blanca</b>
-    </div>
-
-    <span class="live">● EN VIVO</span>
-
-  </div>
-
-  <div class="radar">
-
-    <img
-      id="radar"
-      src="/radar/imagen"
-      alt="Radar RMA10"
-    >
-
-    <div class="city">
-      ● Bahía Blanca
-    </div>
-
-    <div class="radarControls">
-      <button>＋</button>
-      <button>−</button>
-      <button>▶</button>
-    </div>
-
-  </div>
-
-  <div class="radarInfo">
-    <span id="updated">Actualizando...</span>
-    <span>RMA10 · SINARAME</span>
-  </div>
-
-</section>
-
-<section class="card stormCard">
-
-  <div class="title">
-
-    <div>
-      <small>TORMENTA 01 · SEGUIMIENTO</small>
-      <b>Movimiento actual</b>
-    </div>
-
-    <span class="risk">MODERADO</span>
-
-  </div>
-
-  <div class="stormStats">
-
-    <div>
-      <strong>↙</strong>
-      <small>Se desplaza</small>
-      <b>12 km/h</b>
-    </div>
-
-    <div>
-      <strong>28 km</strong>
-      <small>Distancia</small>
+    <div class="heroTop">
+      <span>AHORA</span>
       <b>Bahía Blanca</b>
     </div>
 
-    <div>
-      <strong>35–50 min</strong>
-      <small>Llegada estimada</small>
-      <b>Probable</b>
+    <div class="weather">
+
+      <strong id="temp">
+        24°
+      </strong>
+
+      <div>
+
+        <b id="condition">
+          Parcialmente nublado
+        </b>
+
+        <span>
+          Sensación 24° · Humedad 58%
+        </span>
+
+      </div>
+
     </div>
 
-  </div>
 
-  <div class="trend">
+    <div class="metrics">
 
-    <span>EVOLUCIÓN</span>
+      <div>
+        <small>Viento</small>
+        <b>12 km/h</b>
+      </div>
 
-    <b>↗ Se está intensificando</b>
+      <div>
+        <small>Presión</small>
+        <b>1012 hPa</b>
+      </div>
 
-    <i></i>
+      <div>
+        <small>Lluvia</small>
+        <b>0 mm</b>
+      </div>
 
-  </div>
-
-</section>
-
-<section class="card">
-
-  <div class="title">
-
-    <div>
-      <small>PRÓXIMOS MINUTOS</small>
-      <b>Evolución prevista</b>
     </div>
 
-    <span class="more">Ver más</span>
+  </section>
 
-  </div>
 
-  <div class="timeline">
+  <section class="alert">
 
-    <div>
-      <span>Ahora</span>
-      <i class="dot"></i>
-      <b>Detectada</b>
-    </div>
-
-    <div>
-      <span>+15 min</span>
-      <i class="dot"></i>
-      <b>Acercándose</b>
-    </div>
-
-    <div>
-      <span>+30 min</span>
-      <i class="dot"></i>
-      <b>Mayor intensidad</b>
+    <div class="alertIcon">
+      ϟ
     </div>
 
     <div>
-      <span>+45 min</span>
-      <i class="dot"></i>
-      <b>Llegada posible</b>
+
+      <small>
+        SEGUIMIENTO ACTIVO
+      </small>
+
+      <b>
+        Tormenta en seguimiento
+      </b>
+
+      <span>
+        Se detectó un núcleo al sudoeste.
+      </span>
+
     </div>
 
-  </div>
+    <strong>
+      →
+    </strong>
 
-  <div class="prediction">
-    Predicción entre frames ·
-    <b>confianza 72%</b>
-  </div>
+  </section>
 
-</section>
 
-<nav>
+  <section class="card">
 
-<a class="active">
-  ⌂
-  <small>Inicio</small>
-</a>
+    <div class="title">
 
-<a>
-  ◉
-  <small>Radar</small>
-</a>
+      <div>
 
-<a>
-  ϟ
-  <small>Tormentas</small>
-</a>
+        <small>
+          RADAR EN VIVO
+        </small>
 
-<a>
-  ☁
-  <small>Pronóstico</small>
-</a>
+        <b>
+          RMA10 · Bahía Blanca
+        </b>
 
-<a>
-  ☰
-  <small>Más</small>
-</a>
+      </div>
 
-</nav>
+      <span class="live">
+        ● EN VIVO
+      </span>
+
+    </div>
+
+
+    <div class="radar">
+
+      <img
+        id="radar"
+        src="/radar/imagen"
+        alt="Radar RMA10"
+      >
+
+      <div class="city">
+        ● Bahía Blanca
+      </div>
+
+
+      <div class="radarControls">
+
+        <button aria-label="Acercar">
+          ＋
+        </button>
+
+        <button aria-label="Alejar">
+          −
+        </button>
+
+        <button aria-label="Reproducir radar">
+          ▶
+        </button>
+
+      </div>
+
+    </div>
+
+
+    <div class="radarInfo">
+
+      <span id="updated">
+        Actualizando...
+      </span>
+
+      <span>
+        RMA10 · SINARAME
+      </span>
+
+    </div>
+
+  </section>
+
+
+  <section class="card stormCard">
+
+    <div class="title">
+
+      <div>
+
+        <small>
+          TORMENTA 01 · SEGUIMIENTO
+        </small>
+
+        <b>
+          Movimiento actual
+        </b>
+
+      </div>
+
+      <span class="risk">
+        MODERADO
+      </span>
+
+    </div>
+
+
+    <div class="stormStats">
+
+      <div>
+
+        <strong>
+          ↙
+        </strong>
+
+        <small>
+          Se desplaza
+        </small>
+
+        <b>
+          12 km/h
+        </b>
+
+      </div>
+
+
+      <div>
+
+        <strong>
+          28 km
+        </strong>
+
+        <small>
+          Distancia
+        </small>
+
+        <b>
+          Bahía Blanca
+        </b>
+
+      </div>
+
+
+      <div>
+
+        <strong>
+          35–50 min
+        </strong>
+
+        <small>
+          Llegada estimada
+        </small>
+
+        <b>
+          Probable
+        </b>
+
+      </div>
+
+    </div>
+
+
+    <div class="trend">
+
+      <span>
+        EVOLUCIÓN
+      </span>
+
+      <b>
+        ↗ Se está intensificando
+      </b>
+
+      <i></i>
+
+    </div>
+
+  </section>
+
+
+  <section class="card">
+
+    <div class="title">
+
+      <div>
+
+        <small>
+          PRÓXIMOS MINUTOS
+        </small>
+
+        <b>
+          Evolución prevista
+        </b>
+
+      </div>
+
+      <span class="more">
+        Ver más
+      </span>
+
+    </div>
+
+
+    <div class="timeline">
+
+      <div>
+
+        <span>
+          Ahora
+        </span>
+
+        <i class="dot"></i>
+
+        <b>
+          Detectada
+        </b>
+
+      </div>
+
+
+      <div>
+
+        <span>
+          +15 min
+        </span>
+
+        <i class="dot"></i>
+
+        <b>
+          Acercándose
+        </b>
+
+      </div>
+
+
+      <div>
+
+        <span>
+          +30 min
+        </span>
+
+        <i class="dot"></i>
+
+        <b>
+          Mayor intensidad
+        </b>
+
+      </div>
+
+
+      <div>
+
+        <span>
+          +45 min
+        </span>
+
+        <i class="dot"></i>
+
+        <b>
+          Llegada posible
+        </b>
+
+      </div>
+
+    </div>
+
+
+    <div class="prediction">
+
+      Predicción entre frames ·
+      <b>
+        confianza 72%
+      </b>
+
+    </div>
+
+  </section>
+
+
+  <nav>
+
+    <a class="active">
+      ⌂
+      <small>
+        Inicio
+      </small>
+    </a>
+
+    <a>
+      ◉
+      <small>
+        Radar
+      </small>
+    </a>
+
+    <a>
+      ϟ
+      <small>
+        Tormentas
+      </small>
+    </a>
+
+    <a>
+      ☁
+      <small>
+        Pronóstico
+      </small>
+    </a>
+
+    <a>
+      ☰
+      <small>
+        Más
+      </small>
+    </a>
+
+  </nav>
 
 </div>
 
+
+<script src="config.js"></script>
 <script src="app.js"></script>
 
 </body>
