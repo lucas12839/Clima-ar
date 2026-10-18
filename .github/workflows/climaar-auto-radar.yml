@@ -1,8 +1,6 @@
 name: ClimaAR Auto Radar
 
 on:
-  schedule:
-    - cron: "3-59/10 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -24,5 +22,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -e
-          gh workflow run probar-radar-smn.yml --repo "$GH_REPO" --ref main
+
+          gh workflow run probar-radar-smn.yml \
+            --repo "$GH_REPO" \
+            --ref main
+
           echo "Captura RMA10 solicitada correctamente."
