@@ -378,10 +378,8 @@ def health() -> dict[str, Any]:
 
     if status == "actualizado" and all(required.values()):
         overall = "ok"
-
     elif status == "retrasado":
         overall = "degraded"
-
     else:
         overall = "unavailable"
 
@@ -405,7 +403,6 @@ def health() -> dict[str, Any]:
 @app.get("/estado")
 def estado() -> dict[str, Any]:
     nowcast = get_nowcast()
-
     nc = nowcast.get("nowcast", {})
 
     if not isinstance(nc, dict):
@@ -462,7 +459,6 @@ def estado() -> dict[str, Any]:
 @app.get("/radar")
 def radar() -> dict[str, Any]:
     nowcast = get_nowcast()
-
     nc = nowcast.get("nowcast", {})
 
     if not isinstance(nc, dict):
@@ -488,3 +484,350 @@ def radar() -> dict[str, Any]:
         "intensidad": intensity_label(max_intensity(nowcast)),
         "sincronizacion": synchronized_frame_status(),
     }
+
+
+@app.get("/radar/imagen")
+def radar_imagen():
+    valid, reason = png_is_valid(ACTUAL_IMAGE)
+
+    if not valid:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "error": "imagen_radar_no_disponible",
+                "motivo": reason,
+                **radar_metadata(),
+            },
+        )
+
+    return FileResponse(
+        ACTUAL_IMAGE,
+        media_type="image/png",
+        filename="radar.png",
+    )
+
+
+@app.get("/secuencia")
+def secuencia() -> dict[str, Any]:
+    history = load_history_list()
+    frames = []
+
+    for timestamp, path in history:
+        valid, _ = png_is_valid(path)
+
+        if not valid:
+            continue
+
+        frames.append(
+            {
+                "timestamp": timestamp,
+                "imagen": f"/radar/historico/{timestamp}",
+            }
+        )
+
+    return {
+        "ok": True,
+        "cantidad": len(frames),
+        "frames": frames,
+        "frame_actual_utc": radar_timestamp(),
+        "estado_radar": radar_status(),
+    }
+
+
+@app.get("/radar/historico/{timestamp}")
+def radar_historico(timestamp: str):
+    if not timestamp.isdigit() or len(timestamp) != 14:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "ok": False,
+                "error": "timestamp_invalido",
+            },
+        )
+
+    path = HISTORY_DIR / f"{timestamp}.png"
+    valid, reason = png_is_valid(path)
+
+    if not valid:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "ok": False,
+                "error": "frame_no_disponible",
+                "motivo": reason,
+            },
+        )
+
+    return FileResponse(
+        path,
+        media_type="image/png",
+        filename=f"{timestamp}.png",
+    )
+
+
+@app.get("/nowcast")
+def nowcast() -> dict[str, Any]:
+    data = get_nowcast()
+
+    if not data:
+        return {
+            "ok": False,
+            "error": "nowcast_no_disponible",
+            **radar_metadata(),
+        }
+
+    return {
+        "ok": True,
+        **data,
+        **radar_metadata(),
+    }
+
+
+@app.get("/prediccion")
+def prediccion() -> dict[str, Any]:
+    data = read_json(PREDICTION_FILE)
+
+    if not data:
+        return {
+            "ok": False,
+            "error": "prediccion_no_disponible",
+            **radar_metadata(),
+        }
+
+    return {
+        "ok": True,
+        **data,
+        **radar_metadata(),
+    }
+
+
+@app.get("/prediccion/en-vivo")
+def prediccion_en_vivo() -> dict[str, Any]:
+    data = read_json(PREDICTION_FILE)
+    radar_ts = radar_timestamp()
+    radar_dt = parse_iso(radar_ts)
+
+    if not data:
+        return {
+            "ok": False,
+            "modo": "PREDICCION_ENTRE_FRAMES",
+            "error": "prediccion_no_disponible",
+            "frame_radar": radar_ts,
+            "nota": (
+                "No hay predicción entre frames disponible."
+            ),
+        }
+
+    frame_pred = (
+        data.get("frame_actual_utc")
+        or data.get("frame_radar")
+        or data.get("timestamp")
+    )
+
+    pred_dt = parse_iso(frame_pred)
+    edad_pred = None
+
+    if radar_dt and pred_dt:
+        edad_pred = (
+            radar_dt - pred_dt
+        ).total_seconds() / 60.0
+
+    if (
+        edad_pred is not None
+        and (
+            edad_pred < 0
+            or edad_pred > MAX_LIVE_PREDICTION_MINUTES
+        )
+    ):
+        return {
+            "ok": False,
+            "modo": "PREDICCION_ENTRE_FRAMES",
+            "error": "prediccion_fuera_de_ventana",
+            "frame_radar": radar_ts,
+            "frame_prediccion": frame_pred,
+            "edad_prediccion_minutos": round(
+                edad_pred,
+                2,
+            ),
+            "ventana_maxima_minutos": (
+                MAX_LIVE_PREDICTION_MINUTES
+            ),
+            "nota": (
+                "Esta salida no representa una nueva "
+                "observación radar."
+            ),
+        }
+
+    return {
+        "ok": True,
+        "modo": "PREDICCION_ENTRE_FRAMES",
+        "frame_radar": radar_ts,
+        "frame_prediccion": frame_pred,
+        "edad_prediccion_minutos": (
+            round(edad_pred, 2)
+            if edad_pred is not None
+            else None
+        ),
+        "ventana_maxima_minutos": (
+            MAX_LIVE_PREDICTION_MINUTES
+        ),
+        "es_observacion_radar": False,
+        "es_prediccion": True,
+        "nota": (
+            "Predicción entre frames basada en la "
+            "evolución estimada del radar. No representa "
+            "una nueva observación radar."
+        ),
+        "datos": data,
+    }
+
+
+@app.get("/tormenta")
+def tormenta() -> dict[str, Any]:
+    data = read_json(STORM_FILE)
+
+    if not data:
+        return {
+            "ok": False,
+            "error": "inteligencia_tormenta_no_disponible",
+            **radar_metadata(),
+        }
+
+    result = dict(data)
+    result["probabilidades_calibradas"] = False
+    result["tipo_probabilidades"] = "heuristicas_no_calibradas"
+    result["advertencia"] = (
+        "Las probabilidades del Storm Engine son "
+        "estimaciones heurísticas y no están calibradas "
+        "como probabilidades meteorológicas verificadas."
+    )
+    result["frame_radar"] = (
+        result.get("frame_radar")
+        or radar_timestamp()
+    )
+
+    return {
+        "ok": True,
+        "datos": result,
+        **radar_metadata(),
+    }
+
+
+@app.get("/modelo")
+def modelo() -> dict[str, Any]:
+    data = read_json(ML_PREDICTION_FILE)
+
+    if not data:
+        return {
+            "ok": False,
+            "error": "modelo_ml_no_disponible",
+            **radar_metadata(),
+        }
+
+    return {
+        "ok": bool(data.get("ok")),
+        "modelo": data.get("modelo", "rma10-v1"),
+        "frame_radar": data.get("frame_radar"),
+        "horizontes_minutos": data.get(
+            "horizontes_minutos",
+            [5, 10, 20, 30],
+        ),
+        "tracks_analizados": data.get("tracks_analizados"),
+        "predicciones": data.get("predicciones", []),
+        "calibracion": data.get("calibracion"),
+        **radar_metadata(),
+    }
+
+
+@app.get("/modelo/nowcast")
+def modelo_nowcast() -> dict[str, Any]:
+    ml = read_json(ML_PREDICTION_FILE)
+
+    if not ml:
+        return {
+            "ok": False,
+            "error": "modelo_ml_no_disponible",
+            **radar_metadata(),
+        }
+
+    predictions = ml.get("predicciones", [])
+
+    if not isinstance(predictions, list):
+        predictions = []
+
+    return {
+        "ok": bool(ml.get("ok")),
+        "modelo": ml.get("modelo", "rma10-v1"),
+        "frame_radar": ml.get("frame_radar"),
+        "tracks_analizados": ml.get(
+            "tracks_analizados",
+            len(predictions),
+        ),
+        "predicciones": predictions,
+        "horizontes_minutos": ml.get(
+            "horizontes_minutos",
+            [5, 10, 20, 30],
+        ),
+        "nota": (
+            "El modelo realiza predicción de evolución "
+            "de núcleos/rastros radar. No debe interpretarse "
+            "como predictor validado de tornado, granizo, "
+            "ráfagas o rotación."
+        ),
+        **radar_metadata(),
+    }
+
+
+@app.get("/inteligencia")
+def inteligencia() -> dict[str, Any]:
+    return result_payload()
+
+
+@app.get("/debug")
+def debug() -> dict[str, Any]:
+    files = {
+        "radar_timestamp": TIMESTAMP_FILE,
+        "radar_nowcast": NOWCAST_FILE,
+        "resultado_procesamiento": RESULTADO_FILE,
+        "decision": DECISION_FILE,
+        "storm_engine": STORM_FILE,
+        "meteorologia": METEO_FILE,
+        "prediccion_evolucion": PREDICTION_FILE,
+        "prediccion_ml": ML_PREDICTION_FILE,
+        "actual_png": ACTUAL_IMAGE,
+    }
+
+    estados = {}
+
+    for name, path in files.items():
+        estados[name] = {
+            "existe": path.exists(),
+            "ruta": str(path.relative_to(BASE_DIR)),
+        }
+
+        if path.exists():
+            try:
+                estados[name]["bytes"] = path.stat().st_size
+            except OSError:
+                estados[name]["bytes"] = None
+
+    return {
+        "app": "ClimaAR",
+        "version": VERSION,
+        "fuente_radar": FUENTE,
+        "radar": radar_metadata(),
+        "sincronizacion": synchronized_frame_status(),
+        "archivos": estados,
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8000")),
+        reload=False,
+    )
