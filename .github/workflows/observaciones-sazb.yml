@@ -8,17 +8,23 @@ on:
 permissions:
   contents: write
 
+# Debe coincidir con el workflow que escribe el estado RMA10 para evitar
+# dos pushes simultáneos sobre main.
 concurrency:
-  group: observaciones-sazb
-  cancel-in-progress: true
+  group: climaar-production-writes
+  cancel-in-progress: false
 
 jobs:
   observacion:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -33,9 +39,12 @@ jobs:
         continue-on-error: true
         run: python scripts/smn_observaciones.py
 
-      - name: Publicar evidencia
+      - name: Publicar evidencia con rebase y retry
         if: always()
+        shell: bash
         run: |
+          set -euo pipefail
+
           git config user.name "climaar-bot"
           git config user.email "bot@climaar.local"
 
@@ -47,7 +56,26 @@ jobs:
           fi
 
           git commit -m "obs: actualizar SAZB"
-          git push
+
+          for intento in 1 2 3; do
+            git fetch origin main
+            git rebase origin/main || {
+              git rebase --abort || true
+              echo "Rebase falló en intento $intento."
+              if [ "$intento" -eq 3 ]; then exit 1; fi
+              sleep 2
+              continue
+            }
+
+            if git push origin HEAD:main; then
+              echo "Push exitoso en intento $intento."
+              exit 0
+            fi
+
+            echo "Push falló en intento $intento."
+            if [ "$intento" -eq 3 ]; then exit 1; fi
+            sleep 2
+          done
 
       - name: Resultado
         if: steps.observacion.outcome == 'failure'
