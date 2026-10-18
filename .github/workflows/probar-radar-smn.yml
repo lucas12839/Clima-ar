@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -28,8 +29,10 @@ jobs:
       - name: Sincronizar main y preparar estado
         run: |
           set -e
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git fetch origin main
           git reset --hard origin/main
 
@@ -86,14 +89,270 @@ jobs:
             -exec cp -n {} data/radar/seguimiento/ \; \
             2>/dev/null || true
 
-          echo "Frames históricos: $(find data/radar/historico -maxdepth 1 -type f -name '*.png' | wc -l)"
+          echo "Frames históricos:"
+          find data/radar/historico \
+            -maxdepth 1 \
+            -type f \
+            -name '*.png' \
+            | wc -l
 
       - name: Instalar dependencias
         run: |
           set -e
+
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
           python -m playwright install --with-deps chromium
+
+      # ============================================================
+      # PUNTO 1 - NORMALIZACIÓN DEFINITIVA DEL HISTORIAL
+      # ============================================================
+      #
+      # Formato canónico:
+      #
+      #     YYYYMMDDHHMMSS.png
+      #
+      # También convierte automáticamente históricos anteriores:
+      #
+      #     YYYY-MM-DDTHH_MM_SS+00_00.png
+      #     YYYYMMDD_HHMMSS.png
+      #     radar_YYYYMMDDHHMMSS.png
+      #     radar_YYYYMMDD_HHMMSS.png
+      #
+      # ============================================================
+
+      - name: Normalizar nombres del historial RMA10
+        run: |
+          set -e
+
+          python - <<'PY'
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import re
+
+          carpetas = [
+              Path("data/radar/historico"),
+              Path("data/radar/historico_tracking_backup"),
+          ]
+
+          formatos = (
+              "%Y%m%d%H%M%S",
+              "%Y%m%d_%H%M%S",
+              "radar_%Y%m%d%H%M%S",
+              "radar_%Y%m%d_%H%M%S",
+          )
+
+          def parsear(stem):
+              texto = stem.strip()
+
+              # ----------------------------------------
+              # Formatos históricos conocidos
+              # ----------------------------------------
+
+              for formato in formatos:
+                  try:
+                      return datetime.strptime(
+                          texto,
+                          formato,
+                      ).replace(
+                          tzinfo=timezone.utc
+                      )
+                  except ValueError:
+                      pass
+
+              # ----------------------------------------
+              # Formato generado anteriormente:
+              #
+              # YYYY-MM-DDTHH_MM_SS+00_00
+              # ----------------------------------------
+
+              match = re.fullmatch(
+                  r"(\d{4}-\d{2}-\d{2})"
+                  r"T"
+                  r"(\d{2})_(\d{2})_(\d{2})"
+                  r"([+-])"
+                  r"(\d{2})_(\d{2})",
+                  texto,
+              )
+
+              if match:
+                  fecha, hh, mm, ss, signo, oh, om = match.groups()
+
+                  try:
+                      return datetime.fromisoformat(
+                          f"{fecha}T{hh}:{mm}:{ss}{signo}{oh}:{om}"
+                      ).astimezone(
+                          timezone.utc
+                      )
+                  except ValueError:
+                      pass
+
+              # ----------------------------------------
+              # Variante:
+              #
+              # YYYY-MM-DDTHH_MM_SSZ
+              # ----------------------------------------
+
+              match = re.fullmatch(
+                  r"(\d{4}-\d{2}-\d{2})"
+                  r"T"
+                  r"(\d{2})_(\d{2})_(\d{2})Z?",
+                  texto,
+              )
+
+              if match:
+                  fecha, hh, mm, ss = match.groups()
+
+                  try:
+                      return datetime.fromisoformat(
+                          f"{fecha}T{hh}:{mm}:{ss}+00:00"
+                      )
+                  except ValueError:
+                      pass
+
+              return None
+
+          total = 0
+          renombrados = 0
+          duplicados = 0
+          desconocidos = 0
+
+          for carpeta in carpetas:
+
+              if not carpeta.exists():
+                  continue
+
+              for path in sorted(
+                  carpeta.glob("*.png")
+              ):
+
+                  total += 1
+
+                  dt = parsear(
+                      path.stem
+                  )
+
+                  if dt is None:
+                      desconocidos += 1
+
+                      print(
+                          "ADVERTENCIA: nombre histórico "
+                          f"no reconocido: {path.name}"
+                      )
+
+                      continue
+
+                  nombre_canonico = (
+                      dt.strftime(
+                          "%Y%m%d%H%M%S"
+                      )
+                      + ".png"
+                  )
+
+                  destino = (
+                      path.with_name(
+                          nombre_canonico
+                      )
+                  )
+
+                  # Ya está normalizado.
+                  if path == destino:
+                      continue
+
+                  # Si ya existe el canónico,
+                  # conservamos el canónico y
+                  # eliminamos el duplicado.
+                  if destino.exists():
+
+                      path.unlink()
+
+                      duplicados += 1
+
+                  else:
+
+                      path.rename(
+                          destino
+                      )
+
+                      renombrados += 1
+
+          print(
+              f"Archivos revisados: {total}"
+          )
+
+          print(
+              f"Renombrados a formato canónico: "
+              f"{renombrados}"
+          )
+
+          print(
+              f"Duplicados eliminados: "
+              f"{duplicados}"
+          )
+
+          print(
+              f"Nombres no reconocidos: "
+              f"{desconocidos}"
+          )
+
+          # ------------------------------------------------
+          # IMPORTANTE:
+          #
+          # No continuamos silenciosamente si queda algún
+          # PNG con nombre que el sistema no puede interpretar.
+          # ------------------------------------------------
+
+          if desconocidos > 0:
+
+              raise SystemExit(
+                  "ERROR: existen archivos históricos "
+                  "con nombres no reconocidos."
+              )
+
+          # ------------------------------------------------
+          # Verificación final:
+          # todos los PNG deben quedar en formato canónico.
+          # ------------------------------------------------
+
+          for carpeta in carpetas:
+
+              if not carpeta.exists():
+                  continue
+
+              restantes = [
+                  p.name
+                  for p in carpeta.glob("*.png")
+                  if not re.fullmatch(
+                      r"\d{14}\.png",
+                      p.name
+                  )
+              ]
+
+              if restantes:
+
+                  raise SystemExit(
+                      "ERROR: quedaron nombres fuera "
+                      f"del formato canónico en {carpeta}: "
+                      f"{restantes[:10]}"
+                  )
+
+          print(
+              "Historial RMA10 normalizado correctamente."
+          )
+          PY
+
+          echo "Historial final:"
+          find data/radar/historico \
+            -maxdepth 1 \
+            -type f \
+            -name '*.png' \
+            | sort \
+            | tail -20
+
+      # ============================================================
+      # CAPTURA
+      # ============================================================
 
       - name: Capturar radar RMA10
         run: |
@@ -102,11 +361,20 @@ jobs:
           python scraper/capturar_radar_smn.py
 
           test -s data/radar/actual.png
-          cp data/radar/actual.png data/radar/latest.png
 
-          test -s data/radar/radar_timestamp.txt
+          cp \
+            data/radar/actual.png \
+            data/radar/latest.png
 
-          echo "Radar: $(cat data/radar/radar_timestamp.txt)"
+          test -s \
+            data/radar/radar_timestamp.txt
+
+          echo "Radar:"
+          cat data/radar/radar_timestamp.txt
+
+      # ============================================================
+      # FRAME NUEVO
+      # ============================================================
 
       - name: Determinar si existe frame nuevo
         id: frame
@@ -114,22 +382,39 @@ jobs:
         run: |
           set -e
 
-          NEW_TS="$(cat data/radar/radar_timestamp.txt)"
+          NEW_TS="$(
+            cat data/radar/radar_timestamp.txt
+          )"
+
           OLD_TS=""
 
           if [ -f data/radar/ultimo_radar_timestamp.txt ]; then
-            OLD_TS="$(cat data/radar/ultimo_radar_timestamp.txt)"
+            OLD_TS="$(
+              cat data/radar/ultimo_radar_timestamp.txt
+            )"
           fi
 
           echo "Anterior: ${OLD_TS:-ninguno}"
           echo "Nuevo: $NEW_TS"
 
-          if [ -n "$OLD_TS" ] && [ "$NEW_TS" = "$OLD_TS" ]; then
-            echo "new_frame=false" >> "$GITHUB_OUTPUT"
+          if [
+            -n "$OLD_TS"
+            ] &&
+            [ "$NEW_TS" = "$OLD_TS"
+          ]; then
+
+            echo "new_frame=false" \
+              >> "$GITHUB_OUTPUT"
+
             echo "No hay frame nuevo."
+
           else
-            echo "new_frame=true" >> "$GITHUB_OUTPUT"
+
+            echo "new_frame=true" \
+              >> "$GITHUB_OUTPUT"
+
             echo "Hay frame nuevo."
+
           fi
 
       - name: Verificar frame capturado
@@ -141,6 +426,10 @@ jobs:
           test -s data/radar/latest.png
           test -s data/radar/radar_timestamp.txt
 
+      # ============================================================
+      # CONTINUIDAD
+      # ============================================================
+
       - name: Verificar continuidad temporal
         id: continuidad
         if: steps.frame.outputs.new_frame == 'true'
@@ -148,136 +437,312 @@ jobs:
         run: |
           set -e
 
-          NEW_TS="$(cat data/radar/radar_timestamp.txt)"
+          NEW_TS="$(
+            cat data/radar/radar_timestamp.txt
+          )"
+
           OLD_TS=""
 
           if [ -f data/radar/ultimo_radar_timestamp.txt ]; then
-            OLD_TS="$(cat data/radar/ultimo_radar_timestamp.txt)"
+            OLD_TS="$(
+              cat data/radar/ultimo_radar_timestamp.txt
+            )"
           fi
 
           if [ -z "$OLD_TS" ]; then
+
             echo "Primer frame disponible."
-            echo "accepted=true" >> "$GITHUB_OUTPUT"
-            echo "intervalo_segundos=0" >> "$GITHUB_OUTPUT"
+
+            echo "accepted=true" \
+              >> "$GITHUB_OUTPUT"
+
+            echo "intervalo_segundos=0" \
+              >> "$GITHUB_OUTPUT"
+
             exit 0
+
           fi
 
-          NEW_EPOCH="$(date -u -d "$NEW_TS" +%s)"
-          OLD_EPOCH="$(date -u -d "$OLD_TS" +%s)"
+          NEW_EPOCH="$(
+            date -u \
+              -d "$NEW_TS" \
+              +%s
+          )"
 
-          INTERVALO=$((NEW_EPOCH - OLD_EPOCH))
+          OLD_EPOCH="$(
+            date -u \
+              -d "$OLD_TS" \
+              +%s
+          )"
 
-          echo "Intervalo temporal: ${INTERVALO}s"
+          INTERVALO=$(
+            (
+              NEW_EPOCH
+              - OLD_EPOCH
+            )
+          )
+
+          echo \
+            "Intervalo temporal: ${INTERVALO}s"
 
           if [ "$INTERVALO" -le 0 ]; then
-            echo "ERROR: timestamp no avanza."
-            echo "accepted=false" >> "$GITHUB_OUTPUT"
-            echo "intervalo_segundos=$INTERVALO" >> "$GITHUB_OUTPUT"
+
+            echo \
+              "ERROR: timestamp no avanza."
+
+            echo "accepted=false" \
+              >> "$GITHUB_OUTPUT"
+
+            echo \
+              "intervalo_segundos=$INTERVALO" \
+              >> "$GITHUB_OUTPUT"
 
             {
               echo "Frame descartado."
               echo "Anterior: $OLD_TS"
               echo "Nuevo: $NEW_TS"
               echo "Intervalo: $INTERVALO segundos"
-            } > data/radar/FRAME_DESCARTADO.txt
+            } > \
+              data/radar/FRAME_DESCARTADO.txt
 
             exit 1
           fi
+
+          # 200 minutos = 12000 segundos.
+          #
+          # Este límite solamente determina si el frame
+          # puede entrar al pipeline. Los algoritmos de
+          # seguimiento pueden aplicar sus propios criterios
+          # de frescura.
 
           if [ "$INTERVALO" -gt 12000 ]; then
-            echo "ERROR: salto temporal excesivo: ${INTERVALO}s"
-            echo "accepted=false" >> "$GITHUB_OUTPUT"
-            echo "intervalo_segundos=$INTERVALO" >> "$GITHUB_OUTPUT"
+
+            echo \
+              "ERROR: salto temporal excesivo: ${INTERVALO}s"
+
+            echo "accepted=false" \
+              >> "$GITHUB_OUTPUT"
+
+            echo \
+              "intervalo_segundos=$INTERVALO" \
+              >> "$GITHUB_OUTPUT"
 
             {
-              echo "Frame descartado por salto temporal."
+              echo \
+                "Frame descartado por salto temporal."
+
               echo "Anterior: $OLD_TS"
               echo "Nuevo: $NEW_TS"
-              echo "Intervalo: $INTERVALO segundos"
-            } > data/radar/FRAME_DESCARTADO.txt
+              echo \
+                "Intervalo: $INTERVALO segundos"
+            } > \
+              data/radar/FRAME_DESCARTADO.txt
 
             exit 1
           fi
 
-          echo "accepted=true" >> "$GITHUB_OUTPUT"
-          echo "intervalo_segundos=$INTERVALO" >> "$GITHUB_OUTPUT"
+          echo "accepted=true" \
+            >> "$GITHUB_OUTPUT"
 
-          echo "$NEW_TS" > data/radar/continuidad.txt
+          echo \
+            "intervalo_segundos=$INTERVALO" \
+            >> "$GITHUB_OUTPUT"
+
+          echo "$NEW_TS" \
+            > data/radar/continuidad.txt
+
+      # ============================================================
+      # GUARDAR TIMESTAMP ACEPTADO
+      # ============================================================
 
       - name: Guardar timestamp aceptado
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
-          cp data/radar/radar_timestamp.txt \
-             data/radar/ultimo_radar_timestamp.txt
+          set -e
+
+          cp \
+            data/radar/radar_timestamp.txt \
+            data/radar/ultimo_radar_timestamp.txt
+
+      # ============================================================
+      # MÁSCARA
+      # ============================================================
 
       - name: Generar máscara estática
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
           set -e
 
-          python scripts/generar_mascara_estatica.py
+          python \
+            scripts/generar_mascara_estatica.py
 
-          test -s data/radar/mascara_ecos_estaticos.json
-          test -s data/radar/mascara_ecos_estaticos.png
-          test -s data/radar/mascara_ecos_estaticos_confianza.png
+          test -s \
+            data/radar/mascara_ecos_estaticos.json
+
+          test -s \
+            data/radar/mascara_ecos_estaticos.png
+
+          test -s \
+            data/radar/mascara_ecos_estaticos_confianza.png
+
+      # ============================================================
+      # PROCESAMIENTO
+      # ============================================================
 
       - name: Procesar radar
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
           set -e
 
-          python scripts/procesador_radar.py
+          python \
+            scripts/procesador_radar.py
 
-          test -s data/radar/resultado_procesamiento.json
+          test -s \
+            data/radar/resultado_procesamiento.json
+
+      # ============================================================
+      # HISTORIAL
+      # ============================================================
+      #
+      # DESDE AHORA:
+      #
+      #     YYYYMMDDHHMMSS.png
+      #
+      # Esto elimina definitivamente el problema de sincronización
+      # entre workflow, máscara, tracking y API.
+      #
+      # ============================================================
 
       - name: Preparar historial continuo
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
           set -e
 
-          cp data/radar/actual.png \
-             "data/radar/historico/$(cat data/radar/radar_timestamp.txt | tr ': ' '__').png"
+          RADAR_TS="$(
+            cat data/radar/radar_timestamp.txt
+          )"
 
-          ls -lah data/radar/historico | tail -20
+          HISTORIAL_NOMBRE="$(
+            python - "$RADAR_TS" <<'PY'
+          import sys
+          from datetime import datetime, timezone
+
+          value = sys.argv[1]
+
+          dt = datetime.fromisoformat(
+              value.replace(
+                  "Z",
+                  "+00:00"
+              )
+          )
+
+          if dt.tzinfo is None:
+              dt = dt.replace(
+                  tzinfo=timezone.utc
+              )
+
+          dt = dt.astimezone(
+              timezone.utc
+          )
+
+          print(
+              dt.strftime(
+                  "%Y%m%d%H%M%S.png"
+              )
+          )
+          PY
+          )"
+
+          cp \
+            data/radar/actual.png \
+            "data/radar/historico/$HISTORIAL_NOMBRE"
+
+          test -s \
+            "data/radar/historico/$HISTORIAL_NOMBRE"
+
+          echo \
+            "Frame guardado como: $HISTORIAL_NOMBRE"
+
+          ls -lah \
+            data/radar/historico \
+            | tail -20
+
+      # ============================================================
+      # TRACKING
+      # ============================================================
 
       - name: Seguimiento temporal
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
           set -e
 
-          python seguimiento_temporal.py
+          python \
+            seguimiento_temporal.py
 
-          test -s data/radar/seguimiento/seguimiento_temporal.json
+          test -s \
+            data/radar/seguimiento/seguimiento_temporal.json
+
+      # ============================================================
+      # RESTAURAR ESTADO
+      # ============================================================
 
       - name: Restaurar estado de seguimiento
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
           set -e
 
-          if [ -f data/radar/seguimiento/estado.json ]; then
-            cp data/radar/seguimiento/estado.json \
-               .climaar/estado_rma10.json
+          if [
+            -f data/radar/seguimiento/estado.json
+          ]; then
+
+            cp \
+              data/radar/seguimiento/estado.json \
+              .climaar/estado_rma10.json
+
           fi
+
+      # ============================================================
+      # ML
+      # ============================================================
 
       - name: Predicción ML RMA10
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
           set -e
 
-          python scripts/prediccion_rma10_ml.py
+          python \
+            scripts/prediccion_rma10_ml.py
 
-          test -s data/radar/seguimiento/prediccion_evolucion.json
+          test -s \
+            data/radar/seguimiento/prediccion_evolucion.json
+
+      # ============================================================
+      # EVOLUCIÓN
+      # ============================================================
 
       - name: Evolución temporal
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
           set -e
 
-          if [ -f scripts/prediccion_evolucion.py ]; then
-            python scripts/prediccion_evolucion.py
+          if [
+            -f scripts/prediccion_evolucion.py
+          ]; then
+
+            python \
+              scripts/prediccion_evolucion.py
+
           else
-            echo "prediccion_evolucion.py no disponible; se conserva la salida ML existente."
+
+            echo \
+              "prediccion_evolucion.py no disponible; " \
+              "se conserva la salida ML existente."
+
           fi
+
+      # ============================================================
+      # RESUMEN
+      # ============================================================
 
       - name: Resumen
         if: always()
@@ -286,29 +751,53 @@ jobs:
           echo "CLIMAAR RMA10"
           echo "========================================"
 
-          if [ -f data/radar/radar_timestamp.txt ]; then
-            echo "Radar: $(cat data/radar/radar_timestamp.txt)"
+          if [
+            -f data/radar/radar_timestamp.txt
+          ]; then
+
+            echo \
+              "Radar: $(cat data/radar/radar_timestamp.txt)"
+
           fi
 
-          echo "Frame nuevo: ${{ steps.frame.outputs.new_frame }}"
-          echo "Continuidad: ${{ steps.continuidad.outputs.accepted }}"
-          echo "Intervalo: ${{ steps.continuidad.outputs.intervalo_segundos }}s"
+          echo \
+            "Frame nuevo: ${{ steps.frame.outputs.new_frame }}"
+
+          echo \
+            "Continuidad: ${{ steps.continuidad.outputs.accepted }}"
+
+          echo \
+            "Intervalo: ${{ steps.continuidad.outputs.intervalo_segundos }}s"
 
           echo "========================================"
+
+      # ============================================================
+      # ARTEFACTO
+      # ============================================================
 
       - name: Preparar artefacto
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
           set -e
 
-          mkdir -p /tmp/radar-rma10
+          mkdir -p \
+            /tmp/radar-rma10
 
-          cp -a data/radar/. /tmp/radar-rma10/
+          cp -a \
+            data/radar/. \
+            /tmp/radar-rma10/
 
-          if [ -f .climaar/estado_rma10.json ]; then
-            mkdir -p /tmp/radar-rma10/.climaar
-            cp .climaar/estado_rma10.json \
-               /tmp/radar-rma10/.climaar/
+          if [
+            -f .climaar/estado_rma10.json
+          ]; then
+
+            mkdir -p \
+              /tmp/radar-rma10/.climaar
+
+            cp \
+              .climaar/estado_rma10.json \
+              /tmp/radar-rma10/.climaar/
+
           fi
 
       - name: Subir artefacto RMA10
@@ -319,20 +808,35 @@ jobs:
           path: /tmp/radar-rma10
           retention-days: 7
 
+      # ============================================================
+      # GUARDAR ESTADO
+      # ============================================================
+
       - name: Guardar estado en repositorio
         if: steps.continuidad.outputs.accepted == 'true'
         run: |
           set -e
 
-          mkdir -p .climaar
+          mkdir -p \
+            .climaar
 
-          if [ -f data/radar/seguimiento/estado.json ]; then
-            cp data/radar/seguimiento/estado.json \
-               .climaar/estado_rma10.json
+          if [
+            -f data/radar/seguimiento/estado.json
+          ]; then
+
+            cp \
+              data/radar/seguimiento/estado.json \
+              .climaar/estado_rma10.json
+
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config \
+            user.name \
+            "github-actions[bot]"
+
+          git config \
+            user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
             data/radar/actual.png \
@@ -351,6 +855,7 @@ jobs:
             .climaar/estado_rma10.json
 
           git diff --cached --quiet || \
-            git commit -m "ClimaAR: actualizar RMA10"
+            git commit \
+              -m "ClimaAR: actualizar RMA10"
 
           git push
