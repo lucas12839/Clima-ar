@@ -197,7 +197,6 @@ jobs:
 
           # ============================================================
           # DATASET DECODED
-          # SOLO PARA COORDENADAS x/y
           # ============================================================
 
           ds = xr.open_dataset(
@@ -221,7 +220,7 @@ jobs:
                   )
 
           # ============================================================
-          # TCF RAW
+          # TCF
           # ============================================================
 
           tcf_var = ds_raw["TCF"]
@@ -243,8 +242,16 @@ jobs:
           )
 
           if fill_value is not None:
+              fill_value = int(fill_value)
+
+              if fill_value < 0 and np.issubdtype(
+                  tcf_var.dtype,
+                  np.unsignedinteger
+              ):
+                  fill_value += 65536
+
               raw_tcf[
-                  raw_tcf == float(fill_value)
+                  raw_tcf == fill_value
               ] = np.nan
 
           valid_range = attrs.get(
@@ -252,8 +259,26 @@ jobs:
           )
 
           if valid_range is not None:
-              vmin = float(valid_range[0])
-              vmax = float(valid_range[1])
+              vmin = int(valid_range[0])
+              vmax = int(valid_range[1])
+
+              # TCF es ushort.
+              # NOAA publica el limite superior 65530,
+              # pero algunos lectores lo muestran como -6.
+              if np.issubdtype(
+                  tcf_var.dtype,
+                  np.unsignedinteger
+              ):
+                  if vmin < 0:
+                      vmin += 65536
+
+                  if vmax < 0:
+                      vmax += 65536
+
+              if vmax < vmin:
+                  raise RuntimeError(
+                      f"valid_range TCF invalido: {valid_range}"
+                  )
 
               raw_tcf[
                   (raw_tcf < vmin)
@@ -287,6 +312,28 @@ jobs:
 
           tcf_percent = tcf * 100.0
 
+          print("")
+          print("========================================")
+          print("TCF DECODIFICADO")
+          print("========================================")
+          print("dtype:", tcf_var.dtype)
+          print("fill:", fill_value)
+          print("valid_range raw:", valid_range)
+          print("valid_range usado:", vmin, vmax)
+          print("scale_factor:", scale_factor)
+          print("add_offset:", add_offset)
+          print(
+              "pixeles TCF validos:",
+              int(np.isfinite(tcf_percent).sum())
+          )
+
+          if not np.any(
+              np.isfinite(tcf_percent)
+          ):
+              raise RuntimeError(
+                  "TCF no contiene ningun valor valido."
+              )
+
           # ============================================================
           # DQF
           # ============================================================
@@ -298,9 +345,6 @@ jobs:
                   {dqf_var.dims[0]: 0}
               )
 
-          # IMPORTANTE:
-          # Convertimos ANTES a entero con signo.
-          # DQF puede ser uint8 y no acepta -1.
           raw_dqf = np.asarray(
               dqf_var.values,
               dtype=np.int16
@@ -311,8 +355,13 @@ jobs:
           )
 
           if dqf_fill is not None:
+              dqf_fill = int(dqf_fill)
+
+              if dqf_fill < 0:
+                  dqf_fill += 256
+
               raw_dqf[
-                  raw_dqf == int(dqf_fill)
+                  raw_dqf == dqf_fill
               ] = -1
 
           dqf = raw_dqf
@@ -327,8 +376,28 @@ jobs:
               ~good_quality
           ] = np.nan
 
+          print(
+              "Pixeles DQF=0:",
+              int(
+                  np.count_nonzero(
+                      good_quality
+                  )
+              )
+          )
+
+          print(
+              "Pixeles TCF + DQF=0:",
+              int(
+                  np.count_nonzero(
+                      np.isfinite(
+                          tcf_quality
+                      )
+                  )
+              )
+          )
+
           # ============================================================
-          # COORDENADAS DECODIFICADAS
+          # COORDENADAS
           # ============================================================
 
           x = np.asarray(
@@ -358,22 +427,13 @@ jobs:
 
           print("")
           print("========================================")
-          print("COORDENADAS GOES DECODIFICADAS")
+          print("COORDENADAS GOES")
           print("========================================")
 
           print("x min:", float(np.min(x)))
           print("x max:", float(np.max(x)))
-          print(
-              "x centro:",
-              float(x[len(x) // 2])
-          )
-
           print("y min:", float(np.min(y)))
           print("y max:", float(np.max(y)))
-          print(
-              "y centro:",
-              float(y[len(y) // 2])
-          )
 
           # ============================================================
           # PROYECCION
@@ -484,10 +544,6 @@ jobs:
               )
           )
 
-          # ============================================================
-          # BUSQUEDA DEL PIXEL MAS CERCANO
-          # ============================================================
-
           ix = int(
               np.argmin(
                   np.abs(
@@ -524,24 +580,13 @@ jobs:
 
           print("Latitud:", LAT)
           print("Longitud:", LON)
-
           print("x objetivo:", x_angle)
           print("y objetivo:", y_angle)
-
           print("Indice x:", ix)
           print("Indice y:", iy)
-
           print("x real:", x_real)
           print("y real:", y_real)
-
-          print(
-              "Distancia grid:",
-              distancia_grid
-          )
-
-          # ============================================================
-          # VALIDACION DE INDICE
-          # ============================================================
+          print("Distancia grid:", distancia_grid)
 
           if ix <= 0 or ix >= len(x) - 1:
               raise RuntimeError(
@@ -557,7 +602,7 @@ jobs:
           # PIXEL EXACTO
           # ============================================================
 
-          punto_raw = tcf_quality[
+          punto_tcf = tcf_quality[
               iy,
               ix
           ]
@@ -576,7 +621,7 @@ jobs:
 
           print(
               "TCF:",
-              punto_raw,
+              punto_tcf,
               "%"
           )
 
@@ -657,10 +702,10 @@ jobs:
           )
 
           if np.isfinite(
-              punto_raw
+              punto_tcf
           ):
               nubosidad_punto = round(
-                  float(punto_raw),
+                  float(punto_tcf),
                   1
               )
           else:
@@ -672,16 +717,12 @@ jobs:
 
           if nubosidad_3x3 < 10:
               estado = "despejado"
-
           elif nubosidad_3x3 < 30:
               estado = "poco_nublado"
-
           elif nubosidad_3x3 < 60:
               estado = "parcialmente_nublado"
-
           elif nubosidad_3x3 < 85:
               estado = "muy_nublado"
-
           else:
               estado = "cubierto"
 
@@ -722,15 +763,9 @@ jobs:
               "latitud": LAT,
               "longitud": LON,
               "frame_goes_utc": frame_utc,
-              "nubosidad_total_porcentaje": (
-                  nubosidad_3x3
-              ),
-              "nubosidad_punto_porcentaje": (
-                  nubosidad_punto
-              ),
-              "nubosidad_local_3x3_porcentaje": (
-                  nubosidad_3x3
-              ),
+              "nubosidad_total_porcentaje": nubosidad_3x3,
+              "nubosidad_punto_porcentaje": nubosidad_punto,
+              "nubosidad_local_3x3_porcentaje": nubosidad_3x3,
               "estado_nubosidad": estado,
               "dqf_punto": punto_dqf,
               "pixeles_validos_3x3": valid_count,
@@ -774,17 +809,15 @@ jobs:
               )
 
           # ============================================================
-          # PNG DE CONTROL
+          # PNG CONTROL
           # ============================================================
 
           fig, ax = plt.subplots(
               figsize=(8, 8)
           )
 
-          mostrar = tcf_quality.copy()
-
           im = ax.imshow(
-              mostrar,
+              tcf_quality,
               origin="upper",
               cmap="gray",
               vmin=0,
@@ -895,7 +928,6 @@ jobs:
           )
 
           print("RESULTADO VALIDADO")
-
           print(
               "Nubosidad:",
               d[
@@ -903,23 +935,18 @@ jobs:
               ],
               "%"
           )
-
           print(
               "Pixel:",
               d["indice_x"],
               d["indice_y"]
           )
-
           print(
               "DQF:",
               d["dqf_punto"]
           )
-
           print(
               "Pixeles validos:",
-              d[
-                  "pixeles_validos_3x3"
-              ]
+              d["pixeles_validos_3x3"]
           )
           PY
 
