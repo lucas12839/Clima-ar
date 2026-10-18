@@ -11,6 +11,10 @@ function apiUrl(path) {
     return path;
   }
 
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
   return `${API_BASE_URL}${path}`;
 }
 
@@ -31,7 +35,6 @@ async function getJSON(path) {
 
 function numero(value, fallback = null) {
   const n = Number(value);
-
   return Number.isFinite(n) ? n : fallback;
 }
 
@@ -66,13 +69,10 @@ function actualizarRadar(data) {
   const edad = numero(metadata.frame_edad_minutos);
 
   if ($("#updated")) {
-    if (edad !== null) {
-      $("#updated").textContent =
-        `Actualizado hace ${Math.round(edad)} min`;
-    } else {
-      $("#updated").textContent =
-        "Sin datos suficientes";
-    }
+    $("#updated").textContent =
+      edad !== null
+        ? `Actualizado hace ${Math.round(edad)} min`
+        : "Sin datos suficientes";
   }
 
   const live = document.querySelector(".live");
@@ -114,7 +114,6 @@ function actualizarEstado(data) {
 
   if (weatherSpan) {
     const rocio = numero(data.punto_rocio);
-
     const partes = [];
 
     if (rocio !== null) {
@@ -131,7 +130,8 @@ function actualizarEstado(data) {
         : "Sin datos suficientes";
   }
 
-  const metricValues = document.querySelectorAll(".metrics b");
+  const metricValues =
+    document.querySelectorAll(".metrics b");
 
   if (metricValues.length >= 3) {
     metricValues[0].textContent =
@@ -150,7 +150,8 @@ function actualizarEstado(data) {
         : "--";
   }
 
-  const stormStats = document.querySelectorAll(".stormStats > div");
+  const stormStats =
+    document.querySelectorAll(".stormStats > div");
 
   if (stormStats.length >= 3) {
     const movementValue =
@@ -171,8 +172,7 @@ function actualizarEstado(data) {
     }
 
     if (distanceValue) {
-      distanceValue.textContent =
-        "—";
+      distanceValue.textContent = "—";
     }
 
     if (etaValue) {
@@ -201,9 +201,8 @@ function actualizarRadarEstado(data) {
   const risk = document.querySelector(".risk");
 
   if (risk) {
-    const intensity = numero(
-      data.intensidad_nivel_max
-    );
+    const intensity =
+      numero(data.intensidad_nivel_max);
 
     if (intensity === null) {
       risk.textContent = "SIN DATOS";
@@ -240,16 +239,115 @@ function actualizarRadarEstado(data) {
   }
 }
 
+function actualizarPrediccion(data) {
+  const prediction =
+    document.querySelector(".prediction");
+
+  if (!prediction || !data) {
+    return;
+  }
+
+  if (data.ok !== true) {
+    prediction.textContent =
+      "Predicción entre frames no disponible";
+    return;
+  }
+
+  const edad =
+    numero(data.edad_prediccion_minutos);
+
+  if (edad !== null) {
+    prediction.textContent =
+      `Predicción entre frames · ${Math.round(edad)} min`;
+  } else {
+    prediction.textContent =
+      "Predicción entre frames disponible";
+  }
+}
+
+function actualizarTormenta(data) {
+  if (!data || data.ok !== true) {
+    return;
+  }
+
+  const storm = data.datos;
+
+  if (!storm || typeof storm !== "object") {
+    return;
+  }
+
+  const prediction =
+    document.querySelector(".prediction");
+
+  if (
+    prediction &&
+    storm.tipo_probabilidades ===
+      "heuristicas_no_calibradas"
+  ) {
+    const actual =
+      prediction.textContent || "";
+
+    if (
+      actual === "Sin datos sincronizados suficientes" ||
+      actual === "Datos sincronizados · Radar / Nowcast / ML"
+    ) {
+      prediction.textContent =
+        "Probabilidades Storm Engine · heurísticas no calibradas";
+    }
+  }
+}
+
+function actualizarInteligencia(data) {
+  if (!data) {
+    return;
+  }
+
+  const prediction =
+    document.querySelector(".prediction");
+
+  if (!prediction) {
+    return;
+  }
+
+  const sync =
+    data.sincronizacion &&
+    data.sincronizacion.sincronizados === true;
+
+  if (!sync) {
+    return;
+  }
+
+  if (
+    prediction.textContent ===
+    "Sin datos sincronizados suficientes"
+  ) {
+    prediction.textContent =
+      "Datos sincronizados · Radar / Nowcast / ML";
+  }
+}
+
 async function cargarDatos() {
   try {
-    const [radar, estado] = await Promise.all([
+    const [
+      radar,
+      estado,
+      prediccion,
+      tormenta,
+      inteligencia
+    ] = await Promise.all([
       getJSON("/radar"),
-      getJSON("/estado")
+      getJSON("/estado"),
+      getJSON("/prediccion/en-vivo"),
+      getJSON("/tormenta"),
+      getJSON("/inteligencia")
     ]);
 
     actualizarRadar(radar);
     actualizarRadarEstado(radar);
     actualizarEstado(estado);
+    actualizarPrediccion(prediccion);
+    actualizarTormenta(tormenta);
+    actualizarInteligencia(inteligencia);
 
   } catch (error) {
     console.error("ClimaAR:", error);
@@ -259,10 +357,19 @@ async function cargarDatos() {
         "Sin datos suficientes";
     }
 
-    const live = document.querySelector(".live");
+    const live =
+      document.querySelector(".live");
 
     if (live) {
       live.textContent = "● SIN DATOS";
+    }
+
+    const prediction =
+      document.querySelector(".prediction");
+
+    if (prediction) {
+      prediction.textContent =
+        "Sin datos suficientes";
     }
   }
 }
