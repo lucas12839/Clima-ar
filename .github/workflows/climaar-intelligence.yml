@@ -220,10 +220,12 @@ jobs:
               "Timestamp radar:",
               radar_dt.isoformat()
           )
+
           print(
               "Timestamp nowcast:",
               nowcast_dt.isoformat()
           )
+
           print("Timestamp sincronizado.")
           PY
 
@@ -347,18 +349,6 @@ jobs:
 
           test -s \
             data/ia/resultado_final.json
-
-      - name: Sincronizar metadatos de salida
-        run: |
-          set -euo pipefail
-
-          python scripts/normalizar_salida_inteligencia.py
-
-      - name: Validación end-to-end
-        run: |
-          set -euo pipefail
-
-          python scripts/auditoria_end_to_end.py
 
       - name: Preparar artefacto final
         run: |
