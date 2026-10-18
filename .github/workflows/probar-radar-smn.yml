@@ -28,13 +28,25 @@ jobs:
       - name: Sincronizar main y preparar estado
         run: |
           set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git fetch origin main
           git reset --hard origin/main
-          mkdir -p data/radar/historico data/radar/seguimiento data/radar/procesado data/radar/prediccion data/radar/mascaras .climaar
+
+          mkdir -p \
+            data/radar/historico \
+            data/radar/seguimiento \
+            data/radar/procesado \
+            data/radar/prediccion \
+            data/radar/mascaras \
+            .climaar
+
           if [ -f .climaar/estado_rma10.json ]; then
-            cp .climaar/estado_rma10.json data/radar/seguimiento/estado.json
+            cp \
+              .climaar/estado_rma10.json \
+              data/radar/seguimiento/estado.json
           fi
 
       - name: Recuperar histórico desde artefactos
@@ -42,31 +54,63 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
           rm -rf /tmp/radar_artifacts
           mkdir -p /tmp/radar_artifacts
-          gh run list --workflow probar-radar-smn.yml --limit 20 --json databaseId,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId' > /tmp/radar_runs.txt || true
+
+          gh run list \
+            --workflow probar-radar-smn.yml \
+            --limit 20 \
+            --json databaseId,status,conclusion \
+            --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId' \
+            > /tmp/radar_runs.txt || true
+
           while read -r run_id; do
             [ -z "$run_id" ] && continue
-            gh run download "$run_id" -n radar-rma10 -D "/tmp/radar_artifacts/$run_id" 2>/dev/null || true
+
+            gh run download \
+              "$run_id" \
+              -n radar-rma10 \
+              -D "/tmp/radar_artifacts/$run_id" \
+              2>/dev/null || true
           done < /tmp/radar_runs.txt
-          find /tmp/radar_artifacts -type f -path '*/historico/*.png' -exec cp -n {} data/radar/historico/ \; 2>/dev/null || true
-          find /tmp/radar_artifacts -type f -name 'predicciones_pendientes.json' -exec cp -n {} data/radar/seguimiento/ \; 2>/dev/null || true
+
+          find /tmp/radar_artifacts \
+            -type f \
+            -path '*/historico/*.png' \
+            -exec cp -n {} data/radar/historico/ \; \
+            2>/dev/null || true
+
+          find /tmp/radar_artifacts \
+            -type f \
+            -name 'predicciones_pendientes.json' \
+            -exec cp -n {} data/radar/seguimiento/ \; \
+            2>/dev/null || true
+
           echo "Frames históricos: $(find data/radar/historico -maxdepth 1 -type f -name '*.png' | wc -l)"
 
       - name: Instalar dependencias
         run: |
           set -euo pipefail
+
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
           python -m playwright install --with-deps chromium
 
       - name: Capturar radar RMA10
         run: |
           set -euo pipefail
+
           python scraper/capturar_radar_smn.py
+
           test -s data/radar/actual.png
           test -s data/radar/radar_timestamp.txt
-          cp data/radar/actual.png data/radar/latest.png
+
+          cp \
+            data/radar/actual.png \
+            data/radar/latest.png
+
           python - <<'PY'
           from pathlib import Path
           from PIL import Image
@@ -74,19 +118,26 @@ jobs:
           path = Path("data/radar/actual.png")
 
           if path.stat().st_size <= 1024:
-              raise SystemExit("ERROR: PNG demasiado pequeño")
+              raise SystemExit(
+                  "ERROR: PNG demasiado pequeño"
+              )
 
           with Image.open(path) as image:
               if image.format != "PNG":
-                  raise SystemExit("ERROR: la captura no es PNG")
+                  raise SystemExit(
+                      "ERROR: la captura no es PNG"
+                  )
+
               image.verify()
 
           print("PNG válido")
           print(
               "Radar:",
-              Path("data/radar/radar_timestamp.txt")
-              .read_text(encoding="utf-8")
-              .strip()
+              Path(
+                  "data/radar/radar_timestamp.txt"
+              ).read_text(
+                  encoding="utf-8"
+              ).strip()
           )
           PY
 
@@ -96,20 +147,30 @@ jobs:
         run: |
           set -euo pipefail
 
-          python - <<'PY' >> "$GITHUB_OUTPUT"
+          python - <<'PY'
           from datetime import datetime, timezone
           from pathlib import Path
           import hashlib
+          import os
 
-          ts = Path("data/radar/radar_timestamp.txt").read_text(
+          ts = Path(
+              "data/radar/radar_timestamp.txt"
+          ).read_text(
               encoding="utf-8"
           ).strip()
 
-          text = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+          text = (
+              ts[:-1] + "+00:00"
+              if ts.endswith("Z")
+              else ts
+          )
+
           dt = datetime.fromisoformat(text)
 
           if dt.tzinfo is None:
-              raise SystemExit("ERROR: timestamp sin zona horaria")
+              raise SystemExit(
+                  "ERROR: timestamp sin zona horaria"
+              )
 
           dt = dt.astimezone(timezone.utc)
 
@@ -134,13 +195,17 @@ jobs:
           )
 
           old_ts = (
-              old_ts_path.read_text(encoding="utf-8").strip()
+              old_ts_path.read_text(
+                  encoding="utf-8"
+              ).strip()
               if old_ts_path.exists()
               else ""
           )
 
           current_hash = hashlib.sha256(
-              Path("data/radar/actual.png").read_bytes()
+              Path(
+                  "data/radar/actual.png"
+              ).read_bytes()
           ).hexdigest()
 
           old_hash_path = Path(
@@ -148,30 +213,61 @@ jobs:
           )
 
           old_hash = (
-              old_hash_path.read_text(encoding="utf-8").strip()
+              old_hash_path.read_text(
+                  encoding="utf-8"
+              ).strip()
               if old_hash_path.exists()
               else ""
           )
 
-          print(f"Timestamp anterior: {old_ts or 'ninguno'}")
-          print(f"Timestamp nuevo: {current_ts}")
-          print(f"Edad: {age:.2f} min")
-          print(f"SHA256: {current_hash}")
-
           if old_ts and current_ts == old_ts:
-              print("new_frame=false")
-              print("accepted=false")
-              print("motivo=timestamp_repetido")
+              new_frame = "false"
+              accepted = "false"
+              motivo = "timestamp_repetido"
 
           elif old_hash and current_hash == old_hash:
-              print("new_frame=false")
-              print("accepted=false")
-              print("motivo=imagen_repetida")
+              new_frame = "false"
+              accepted = "false"
+              motivo = "imagen_repetida"
 
           else:
-              print("new_frame=true")
-              print("accepted=true")
-              print("motivo=nuevo_frame")
+              new_frame = "true"
+              accepted = "true"
+              motivo = "nuevo_frame"
+
+          output_path = os.environ["GITHUB_OUTPUT"]
+
+          with open(
+              output_path,
+              "a",
+              encoding="utf-8"
+          ) as output:
+              output.write(
+                  f"new_frame={new_frame}\n"
+              )
+              output.write(
+                  f"accepted={accepted}\n"
+              )
+              output.write(
+                  f"motivo={motivo}\n"
+              )
+
+          print(
+              f"Timestamp anterior: "
+              f"{old_ts or 'ninguno'}"
+          )
+          print(
+              f"Timestamp nuevo: {current_ts}"
+          )
+          print(
+              f"Edad: {age:.2f} min"
+          )
+          print(
+              f"SHA256: {current_hash}"
+          )
+          print(
+              f"Resultado: {motivo}"
+          )
           PY
 
       - name: Detener limpiamente si no hay frame nuevo
@@ -189,7 +285,8 @@ jobs:
             data/radar/radar_timestamp.txt \
             data/radar/ultimo_radar_timestamp.txt
 
-          sha256sum data/radar/actual.png \
+          sha256sum \
+            data/radar/actual.png \
             | awk '{print $1}' \
             > data/radar/ultimo_radar_sha256.txt
 
@@ -204,9 +301,14 @@ jobs:
 
           python scripts/generar_mascara_estatica.py
 
-          test -s data/radar/mascara_ecos_estaticos.json
-          test -s data/radar/mascara_ecos_estaticos.png
-          test -s data/radar/mascara_ecos_estaticos_confianza.png
+          test -s \
+            data/radar/mascara_ecos_estaticos.json
+
+          test -s \
+            data/radar/mascara_ecos_estaticos.png
+
+          test -s \
+            data/radar/mascara_ecos_estaticos_confianza.png
 
       - name: Procesar radar
         if: steps.frame.outputs.accepted == 'true'
@@ -215,7 +317,8 @@ jobs:
 
           python scripts/procesador_radar.py
 
-          test -s data/radar/resultado_procesamiento.json
+          test -s \
+            data/radar/resultado_procesamiento.json
 
       - name: Guardar frame en historial
         if: steps.frame.outputs.accepted == 'true'
@@ -253,7 +356,8 @@ jobs:
             data/radar/actual.png \
             "data/radar/historico/$HISTORIAL_NOMBRE"
 
-          echo "Historial guardado: $HISTORIAL_NOMBRE"
+          echo \
+            "Historial guardado: $HISTORIAL_NOMBRE"
 
       - name: Seguimiento temporal
         if: steps.frame.outputs.accepted == 'true'
@@ -281,9 +385,6 @@ jobs:
           test -s \
             data/radar/seguimiento/prediccion_ml_rma10.json
 
-          test -s \
-            data/radar/seguimiento/prediccion_evolucion.json
-
       - name: Evolución temporal
         if: steps.frame.outputs.accepted == 'true'
         run: |
@@ -293,20 +394,26 @@ jobs:
             python scripts/prediccion_evolucion.py
           fi
 
+          test -s \
+            data/radar/seguimiento/prediccion_evolucion.json
+
       - name: Preparar artefacto
         if: steps.frame.outputs.accepted == 'true'
         run: |
           set -euo pipefail
 
           rm -rf /tmp/radar-rma10
-          mkdir -p /tmp/radar-rma10
+
+          mkdir -p \
+            /tmp/radar-rma10
 
           cp -a \
             data/radar/. \
             /tmp/radar-rma10/
 
           if [ -f .climaar/estado_rma10.json ]; then
-            mkdir -p /tmp/radar-rma10/.climaar
+            mkdir -p \
+              /tmp/radar-rma10/.climaar
 
             cp \
               .climaar/estado_rma10.json \
@@ -327,8 +434,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name \
+            "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
             data/radar/actual.png \
@@ -349,7 +459,8 @@ jobs:
 
           git diff --cached --quiet && exit 0
 
-          git commit -m "ClimaAR: actualizar RMA10"
+          git commit \
+            -m "ClimaAR: actualizar RMA10"
 
           for intento in 1 2 3; do
             git fetch origin main
@@ -366,7 +477,8 @@ jobs:
             }
 
             if git push origin HEAD:main; then
-              echo "Push exitoso en intento $intento"
+              echo \
+                "Push exitoso en intento $intento"
               exit 0
             fi
 
