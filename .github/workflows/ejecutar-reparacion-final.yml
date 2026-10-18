@@ -1,39 +1,33 @@
-name: Ejecutar reparacion final
+name: Auditoría ClimaAR (solo lectura)
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  reparar:
+  auditoria:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Ejecutar auditoria final
-        run: python auditoria_final_climaar.py
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Validar cambios
+      - name: Instalar dependencias
         run: |
-          python -m py_compile auditoria_final_climaar.py
-          python -m py_compile app.py
-          python -m py_compile scripts/prediccion_rma10_ml.py
-          python -m py_compile seguimiento_temporal.py
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Guardar cambios no workflow
+      - name: Auditar sin modificar producción
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add \
-            scripts/prediccion_rma10_ml.py \
-            seguimiento_temporal.py \
-            app.py
-
-          git diff --cached --quiet || git commit -m "ClimaAR: reparar motor RMA10"
-
-          git push
+          set -euo pipefail
+          python -m compileall -q .
+          python scripts/auditoria_end_to_end.py
