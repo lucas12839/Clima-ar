@@ -14,13 +14,29 @@ jobs:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Ejecutar reparacion
-        run: python reparacion_final_climaar.py
+      - name: Ejecutar auditoria final
+        run: python auditoria_final_climaar.py
+
+      - name: Validar cambios
+        run: |
+          python -m py_compile auditoria_final_climaar.py
+          python -m py_compile app.py
+          python -m py_compile scripts/prediccion_rma10_ml.py
+          python -m py_compile seguimiento_temporal.py
 
       - name: Guardar cambios
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app.py scripts/prediccion_rma10_ml.py
-          git diff --cached --quiet || git commit -m "ClimaAR: reparar sincronizacion ML y prediccion en vivo"
+
+          git add \
+            .github/workflows/climaar-auto-radar.yml \
+            .github/workflows/probar-radar-smn.yml \
+            .github/workflows/climaar-intelligence.yml \
+            scripts/prediccion_rma10_ml.py \
+            seguimiento_temporal.py \
+            app.py
+
+          git diff --cached --quiet || git commit -m "ClimaAR: auditoria y reparacion final"
+
           git push
