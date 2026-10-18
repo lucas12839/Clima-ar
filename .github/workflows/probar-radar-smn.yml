@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: radar-rma10
+  group: climaar-production-writes
   cancel-in-progress: false
 
 permissions:
@@ -16,7 +16,7 @@ permissions:
 jobs:
   radar:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -27,358 +27,203 @@ jobs:
 
       - name: Sincronizar main y preparar estado
         run: |
-          set -e
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git reset --hard origin/main
-
-          mkdir -p \
-            data/radar \
-            data/radar/historico \
-            data/radar/seguimiento \
-            data/radar/procesado \
-            data/radar/prediccion \
-            data/radar/mascaras \
-            .climaar
-
+          mkdir -p data/radar/historico data/radar/seguimiento data/radar/procesado data/radar/prediccion data/radar/mascaras .climaar
           if [ -f .climaar/estado_rma10.json ]; then
-            cp .climaar/estado_rma10.json \
-              data/radar/seguimiento/estado.json
+            cp .climaar/estado_rma10.json data/radar/seguimiento/estado.json
           fi
 
-      - name: Recuperar histórico desde ejecuciones anteriores
+      - name: Recuperar histórico desde artefactos
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -e
-
+          set -euo pipefail
           rm -rf /tmp/radar_artifacts
           mkdir -p /tmp/radar_artifacts
-
-          gh run list \
-            --workflow probar-radar-smn.yml \
-            --limit 20 \
-            --json databaseId,status,conclusion \
-            --jq '.[] |
-              select(.status == "completed" and .conclusion == "success") |
-              .databaseId' \
-            > /tmp/radar_runs.txt || true
-
+          gh run list --workflow probar-radar-smn.yml --limit 20 --json databaseId,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId' > /tmp/radar_runs.txt || true
           while read -r run_id; do
             [ -z "$run_id" ] && continue
-
-            gh run download "$run_id" \
-              -n radar-rma10 \
-              -D "/tmp/radar_artifacts/$run_id" \
-              2>/dev/null || true
+            gh run download "$run_id" -n radar-rma10 -D "/tmp/radar_artifacts/$run_id" 2>/dev/null || true
           done < /tmp/radar_runs.txt
-
-          find /tmp/radar_artifacts \
-            -type f \
-            -path '*/historico/*.png' \
-            -exec cp -n {} data/radar/historico/ \; \
-            2>/dev/null || true
-
-          find /tmp/radar_artifacts \
-            -type f \
-            -name 'predicciones_pendientes.json' \
-            -exec cp -n {} data/radar/seguimiento/ \; \
-            2>/dev/null || true
-
+          find /tmp/radar_artifacts -type f -path '*/historico/*.png' -exec cp -n {} data/radar/historico/ \; 2>/dev/null || true
+          find /tmp/radar_artifacts -type f -name 'predicciones_pendientes.json' -exec cp -n {} data/radar/seguimiento/ \; 2>/dev/null || true
           echo "Frames históricos: $(find data/radar/historico -maxdepth 1 -type f -name '*.png' | wc -l)"
-
-      - name: Normalizar nombres del historial RMA10
-        shell: bash
-        run: |
-          set -e
-
-          python - <<'PY2'
-          from pathlib import Path
-          from datetime import datetime, timezone
-          import re
-
-          HIST = Path("data/radar/historico")
-          HIST.mkdir(parents=True, exist_ok=True)
-
-          formatos = [
-              "%Y%m%d%H%M%S",
-              "%Y%m%d_%H%M%S",
-              "radar_%Y%m%d%H%M%S",
-              "radar_%Y%m%d_%H%M%S",
-              "%Y-%m-%dT%H_%M_%S+00_00",
-              "%Y-%m-%dT%H_%M_%SZ",
-          ]
-
-          def parsear(nombre):
-              base = nombre[:-4] if nombre.lower().endswith(".png") else nombre
-
-              for fmt in formatos:
-                  try:
-                      return datetime.strptime(
-                          base,
-                          fmt
-                      ).replace(
-                          tzinfo=timezone.utc
-                      )
-                  except ValueError:
-                      pass
-
-              m = re.fullmatch(
-                  r"(\d{4})(\d{2})(\d{2})(?:[_-]?)(\d{2})(\d{2})(\d{2})",
-                  base
-              )
-
-              if m:
-                  y, mo, d, h, mi, se = map(
-                      int,
-                      m.groups()
-                  )
-
-                  return datetime(
-                      y,
-                      mo,
-                      d,
-                      h,
-                      mi,
-                      se,
-                      tzinfo=timezone.utc
-                  )
-
-              return None
-
-          desconocidos = []
-          renombrados = 0
-          eliminados = 0
-
-          for archivo in sorted(HIST.glob("*.png")):
-              dt = parsear(archivo.name)
-
-              if dt is None:
-                  desconocidos.append(archivo.name)
-                  continue
-
-              destino = HIST / dt.strftime(
-                  "%Y%m%d%H%M%S.png"
-              )
-
-              if archivo == destino:
-                  continue
-
-              if destino.exists():
-                  archivo.unlink()
-                  eliminados += 1
-              else:
-                  archivo.rename(destino)
-                  renombrados += 1
-
-          if desconocidos:
-              print(
-                  "ERROR: nombres de historial no reconocidos:"
-              )
-
-              for nombre in desconocidos:
-                  print(f" - {nombre}")
-
-              raise SystemExit(1)
-
-          print(
-              f"Historial normalizado: "
-              f"{renombrados} renombrados, "
-              f"{eliminados} duplicados eliminados."
-          )
-
-          print(
-              f"Frames válidos: "
-              f"{len(list(HIST.glob('*.png')))}"
-          )
-          PY2
 
       - name: Instalar dependencias
         run: |
-          set -e
-
+          set -euo pipefail
           python -m pip install --upgrade pip
-
           pip install -r requirements.txt
-
           python -m playwright install --with-deps chromium
 
       - name: Capturar radar RMA10
         run: |
-          set -e
-
+          set -euo pipefail
           python scraper/capturar_radar_smn.py
-
           test -s data/radar/actual.png
-
-          cp data/radar/actual.png \
-             data/radar/latest.png
-
           test -s data/radar/radar_timestamp.txt
+          cp data/radar/actual.png data/radar/latest.png
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
 
-          echo "Radar: $(cat data/radar/radar_timestamp.txt)"
+          path = Path("data/radar/actual.png")
 
-      - name: Determinar si existe frame nuevo
+          if path.stat().st_size <= 1024:
+              raise SystemExit("ERROR: PNG demasiado pequeño")
+
+          with Image.open(path) as image:
+              if image.format != "PNG":
+                  raise SystemExit("ERROR: la captura no es PNG")
+              image.verify()
+
+          print("PNG válido")
+          print(
+              "Radar:",
+              Path("data/radar/radar_timestamp.txt")
+              .read_text(encoding="utf-8")
+              .strip()
+          )
+          PY
+
+      - name: Validar frame nuevo, fresco y no repetido
         id: frame
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          NEW_TS="$(cat data/radar/radar_timestamp.txt)"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import hashlib
 
-          OLD_TS=""
+          ts = Path("data/radar/radar_timestamp.txt").read_text(
+              encoding="utf-8"
+          ).strip()
 
-          if [ -f data/radar/ultimo_radar_timestamp.txt ]; then
-            OLD_TS="$(
-              cat data/radar/ultimo_radar_timestamp.txt
-            )"
-          fi
+          text = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+          dt = datetime.fromisoformat(text)
 
-          echo "Anterior: ${OLD_TS:-ninguno}"
-          echo "Nuevo: $NEW_TS"
+          if dt.tzinfo is None:
+              raise SystemExit("ERROR: timestamp sin zona horaria")
 
-          if [ -n "$OLD_TS" ] && [ "$NEW_TS" = "$OLD_TS" ]; then
-            echo "new_frame=false" >> "$GITHUB_OUTPUT"
-            echo "No hay frame nuevo."
-          else
-            echo "new_frame=true" >> "$GITHUB_OUTPUT"
-            echo "Hay frame nuevo."
-          fi
+          dt = dt.astimezone(timezone.utc)
 
-      - name: Verificar frame capturado
-        if: steps.frame.outputs.new_frame == 'true'
-        run: |
-          set -e
+          age = (
+              datetime.now(timezone.utc) - dt
+          ).total_seconds() / 60.0
 
-          test -s data/radar/actual.png
+          if age < -2:
+              raise SystemExit(
+                  f"ERROR: timestamp futuro: {age:.2f} min"
+              )
 
-          test -s data/radar/latest.png
+          if age > 45:
+              raise SystemExit(
+                  f"ERROR: radar demasiado viejo: {age:.2f} min"
+              )
 
-          test -s data/radar/radar_timestamp.txt
+          current_ts = ts
 
-      - name: Verificar continuidad temporal
-        id: continuidad
-        if: steps.frame.outputs.new_frame == 'true'
-        shell: bash
-        run: |
-          set -e
-
-          NEW_TS="$(cat data/radar/radar_timestamp.txt)"
-
-          OLD_TS=""
-
-          if [ -f data/radar/ultimo_radar_timestamp.txt ]; then
-            OLD_TS="$(
-              cat data/radar/ultimo_radar_timestamp.txt
-            )"
-          fi
-
-          if [ -z "$OLD_TS" ]; then
-            echo "Primer frame disponible."
-
-            echo "accepted=true" >> "$GITHUB_OUTPUT"
-
-            echo "intervalo_segundos=0" >> "$GITHUB_OUTPUT"
-
-            exit 0
-          fi
-
-          NEW_EPOCH="$(
-            date -u -d "$NEW_TS" +%s
-          )"
-
-          OLD_EPOCH="$(
-            date -u -d "$OLD_TS" +%s
-          )"
-
-          INTERVALO=$(
-            (
-              echo "$NEW_EPOCH - $OLD_EPOCH"
-            ) | bc
+          old_ts_path = Path(
+              "data/radar/ultimo_radar_timestamp.txt"
           )
 
-          echo "Intervalo temporal: ${INTERVALO}s"
+          old_ts = (
+              old_ts_path.read_text(encoding="utf-8").strip()
+              if old_ts_path.exists()
+              else ""
+          )
 
-          if [ "$INTERVALO" -le 0 ]; then
-            echo "ERROR: timestamp no avanza."
+          current_hash = hashlib.sha256(
+              Path("data/radar/actual.png").read_bytes()
+          ).hexdigest()
 
-            echo "accepted=false" >> "$GITHUB_OUTPUT"
+          old_hash_path = Path(
+              "data/radar/ultimo_radar_sha256.txt"
+          )
 
-            echo "intervalo_segundos=$INTERVALO" \
-              >> "$GITHUB_OUTPUT"
+          old_hash = (
+              old_hash_path.read_text(encoding="utf-8").strip()
+              if old_hash_path.exists()
+              else ""
+          )
 
-            {
-              echo "Frame descartado."
-              echo "Anterior: $OLD_TS"
-              echo "Nuevo: $NEW_TS"
-              echo "Intervalo: $INTERVALO segundos"
-            } > data/radar/FRAME_DESCARTADO.txt
+          print(f"Timestamp anterior: {old_ts or 'ninguno'}")
+          print(f"Timestamp nuevo: {current_ts}")
+          print(f"Edad: {age:.2f} min")
+          print(f"SHA256: {current_hash}")
 
-            exit 1
-          fi
+          if old_ts and current_ts == old_ts:
+              print("new_frame=false")
+              print("accepted=false")
+              print("motivo=timestamp_repetido")
 
-          if [ "$INTERVALO" -gt 12000 ]; then
-            echo "ERROR: salto temporal excesivo: ${INTERVALO}s"
+          elif old_hash and current_hash == old_hash:
+              print("new_frame=false")
+              print("accepted=false")
+              print("motivo=imagen_repetida")
 
-            echo "accepted=false" >> "$GITHUB_OUTPUT"
+          else:
+              print("new_frame=true")
+              print("accepted=true")
+              print("motivo=nuevo_frame")
+          PY
 
-            echo "intervalo_segundos=$INTERVALO" \
-              >> "$GITHUB_OUTPUT"
+      - name: Detener limpiamente si no hay frame nuevo
+        if: steps.frame.outputs.accepted != 'true'
+        run: |
+          echo "No se procesará un frame repetido."
+          exit 0
 
-            {
-              echo "Frame descartado por salto temporal."
-              echo "Anterior: $OLD_TS"
-              echo "Nuevo: $NEW_TS"
-              echo "Intervalo: $INTERVALO segundos"
-            } > data/radar/FRAME_DESCARTADO.txt
+      - name: Guardar timestamp y hash aceptados
+        if: steps.frame.outputs.accepted == 'true'
+        run: |
+          set -euo pipefail
 
-            exit 1
-          fi
+          cp \
+            data/radar/radar_timestamp.txt \
+            data/radar/ultimo_radar_timestamp.txt
 
-          echo "accepted=true" >> "$GITHUB_OUTPUT"
+          sha256sum data/radar/actual.png \
+            | awk '{print $1}' \
+            > data/radar/ultimo_radar_sha256.txt
 
-          echo "intervalo_segundos=$INTERVALO" \
-            >> "$GITHUB_OUTPUT"
-
-          echo "$NEW_TS" \
+          cat \
+            data/radar/radar_timestamp.txt \
             > data/radar/continuidad.txt
 
-      - name: Guardar timestamp aceptado
-        if: steps.continuidad.outputs.accepted == 'true'
-        run: |
-          cp data/radar/radar_timestamp.txt \
-             data/radar/ultimo_radar_timestamp.txt
-
       - name: Generar máscara estática
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: steps.frame.outputs.accepted == 'true'
         run: |
-          set -e
+          set -euo pipefail
 
           python scripts/generar_mascara_estatica.py
 
           test -s data/radar/mascara_ecos_estaticos.json
-
           test -s data/radar/mascara_ecos_estaticos.png
-
           test -s data/radar/mascara_ecos_estaticos_confianza.png
 
       - name: Procesar radar
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: steps.frame.outputs.accepted == 'true'
         run: |
-          set -e
+          set -euo pipefail
 
           python scripts/procesador_radar.py
 
           test -s data/radar/resultado_procesamiento.json
 
-      - name: Preparar historial continuo
-        if: steps.continuidad.outputs.accepted == 'true'
+      - name: Guardar frame en historial
+        if: steps.frame.outputs.accepted == 'true'
         run: |
-          set -e
+          set -euo pipefail
 
           HISTORIAL_NOMBRE="$(
-            python - <<'PY2'
+            python - <<'PY'
           from pathlib import Path
           from datetime import datetime, timezone
 
@@ -393,134 +238,104 @@ jobs:
           )
 
           if dt.tzinfo is None:
-              dt = dt.replace(
-                  tzinfo=timezone.utc
+              raise SystemExit(
+                  "timestamp sin zona horaria"
               )
 
           print(
-              dt.astimezone(
-                  timezone.utc
-              ).strftime(
-                  "%Y%m%d%H%M%S.png"
-              )
+              dt.astimezone(timezone.utc)
+              .strftime("%Y%m%d%H%M%S.png")
           )
-          PY2
+          PY
           )"
 
-          cp data/radar/actual.png \
-             "data/radar/historico/$HISTORIAL_NOMBRE"
+          cp \
+            data/radar/actual.png \
+            "data/radar/historico/$HISTORIAL_NOMBRE"
 
           echo "Historial guardado: $HISTORIAL_NOMBRE"
 
-          ls -lah data/radar/historico | tail -20
-
       - name: Seguimiento temporal
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: steps.frame.outputs.accepted == 'true'
         run: |
-          set -e
+          set -euo pipefail
 
           python seguimiento_temporal.py
 
           test -s \
             data/radar/seguimiento/seguimiento_temporal.json
 
-      - name: Restaurar estado de seguimiento
-        if: steps.continuidad.outputs.accepted == 'true'
-        run: |
-          set -e
-
           if [ -f data/radar/seguimiento/estado.json ]; then
-            cp data/radar/seguimiento/estado.json \
-               .climaar/estado_rma10.json
+            cp \
+              data/radar/seguimiento/estado.json \
+              .climaar/estado_rma10.json
           fi
 
       - name: Predicción ML RMA10
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: steps.frame.outputs.accepted == 'true'
         run: |
-          set -e
+          set -euo pipefail
 
           python scripts/prediccion_rma10_ml.py
+
+          test -s \
+            data/radar/seguimiento/prediccion_ml_rma10.json
 
           test -s \
             data/radar/seguimiento/prediccion_evolucion.json
 
       - name: Evolución temporal
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: steps.frame.outputs.accepted == 'true'
         run: |
-          set -e
+          set -euo pipefail
 
           if [ -f scripts/prediccion_evolucion.py ]; then
             python scripts/prediccion_evolucion.py
-          else
-            echo "prediccion_evolucion.py no disponible; se conserva la salida ML existente."
           fi
-
-      - name: Resumen
-        if: always()
-        run: |
-          echo "========================================"
-          echo "CLIMAAR RMA10"
-          echo "========================================"
-
-          if [ -f data/radar/radar_timestamp.txt ]; then
-            echo "Radar: $(cat data/radar/radar_timestamp.txt)"
-          fi
-
-          echo "Frame nuevo: ${{ steps.frame.outputs.new_frame }}"
-
-          echo "Continuidad: ${{ steps.continuidad.outputs.accepted }}"
-
-          echo "Intervalo: ${{ steps.continuidad.outputs.intervalo_segundos }}s"
-
-          echo "========================================"
 
       - name: Preparar artefacto
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: steps.frame.outputs.accepted == 'true'
         run: |
-          set -e
+          set -euo pipefail
 
+          rm -rf /tmp/radar-rma10
           mkdir -p /tmp/radar-rma10
 
-          cp -a data/radar/. \
+          cp -a \
+            data/radar/. \
             /tmp/radar-rma10/
 
           if [ -f .climaar/estado_rma10.json ]; then
             mkdir -p /tmp/radar-rma10/.climaar
 
-            cp .climaar/estado_rma10.json \
-               /tmp/radar-rma10/.climaar/
+            cp \
+              .climaar/estado_rma10.json \
+              /tmp/radar-rma10/.climaar/
           fi
 
       - name: Subir artefacto RMA10
-        if: steps.continuidad.outputs.accepted == 'true'
+        if: steps.frame.outputs.accepted == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: radar-rma10
           path: /tmp/radar-rma10
           retention-days: 7
 
-      - name: Guardar estado en repositorio
-        if: steps.continuidad.outputs.accepted == 'true'
+      - name: Guardar estado en repositorio con rebase y retry
+        if: steps.frame.outputs.accepted == 'true'
+        shell: bash
         run: |
-          set -e
-
-          mkdir -p .climaar
-
-          if [ -f data/radar/seguimiento/estado.json ]; then
-            cp data/radar/seguimiento/estado.json \
-               .climaar/estado_rma10.json
-          fi
+          set -euo pipefail
 
           git config user.name "github-actions[bot]"
-
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
             data/radar/actual.png \
             data/radar/latest.png \
             data/radar/radar_timestamp.txt \
             data/radar/ultimo_radar_timestamp.txt \
+            data/radar/ultimo_radar_sha256.txt \
             data/radar/continuidad.txt \
             data/radar/resultado_procesamiento.json \
             data/radar/mascara_ecos_estaticos.json \
@@ -532,7 +347,32 @@ jobs:
             data/radar/historico \
             .climaar/estado_rma10.json
 
-          git diff --cached --quiet || \
-            git commit -m "ClimaAR: actualizar RMA10"
+          git diff --cached --quiet && exit 0
 
-          git push
+          git commit -m "ClimaAR: actualizar RMA10"
+
+          for intento in 1 2 3; do
+            git fetch origin main
+
+            git rebase origin/main || {
+              git rebase --abort || true
+
+              if [ "$intento" -eq 3 ]; then
+                exit 1
+              fi
+
+              sleep 2
+              continue
+            }
+
+            if git push origin HEAD:main; then
+              echo "Push exitoso en intento $intento"
+              exit 0
+            fi
+
+            if [ "$intento" -eq 3 ]; then
+              exit 1
+            fi
+
+            sleep 2
+          done
