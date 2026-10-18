@@ -20,47 +20,50 @@ jobs:
           python -m pip install --upgrade pip
           pip install awscli xarray netCDF4 numpy matplotlib
 
-      - name: Descargar GOES-16 CCL actual
+      - name: Descargar GOES-19 CCL actual
         shell: bash
         run: |
           set -euo pipefail
 
           mkdir -p data/goes
 
-          YEAR=$(date -u +%Y)
-          DOY=$(date -u +%j)
-          HOUR=$(date -u +%H)
-
           FOUND=""
 
-          for OFFSET in 0 1 2 3; do
-            TARGET=$(date -u -d "-${OFFSET} hour" "+%Y %j %H")
-            Y=$(echo "$TARGET" | awk '{print $1}')
-            D=$(echo "$TARGET" | awk '{print $2}')
-            H=$(echo "$TARGET" | awk '{print $3}')
+          for OFFSET in 0 1 2 3 4 5 6; do
 
-            echo "Buscando GOES-16 CCL: $Y/$D/$H"
+            TARGET=$(date -u -d "-${OFFSET} hour" "+%Y %j %H")
+
+            YEAR=$(echo "$TARGET" | awk '{print $1}')
+            DOY=$(echo "$TARGET" | awk '{print $2}')
+            HOUR=$(echo "$TARGET" | awk '{print $3}')
+
+            echo "Buscando GOES-19 CCLF: ${YEAR}/${DOY}/${HOUR}"
 
             FILE=$(
               aws s3 ls \
-                "s3://noaa-goes16/ABI-L2-CCL/${Y}/${D}/${H}/" \
+                "s3://noaa-goes19/ABI-L2-CCLF/${YEAR}/${DOY}/${HOUR}/" \
                 --no-sign-request \
                 2>/dev/null \
                 | awk '{print $4}' \
-                | grep '^OR_ABI-L2-CCL' \
+                | grep '^OR_ABI-L2-CCLF' \
                 | sort \
                 | tail -1 \
                 || true
             )
 
             if [ -n "$FILE" ]; then
-              FOUND="s3://noaa-goes16/ABI-L2-CCL/${Y}/${D}/${H}/${FILE}"
-              echo "Encontrado: $FOUND"
+              FOUND="s3://noaa-goes19/ABI-L2-CCLF/${YEAR}/${DOY}/${HOUR}/${FILE}"
+              echo "Encontrado:"
+              echo "$FOUND"
               break
             fi
+
           done
 
-          test -n "$FOUND"
+          if [ -z "$FOUND" ]; then
+            echo "ERROR: no se encontró ningún archivo GOES-19 CCLF."
+            exit 1
+          fi
 
           aws s3 cp \
             "$FOUND" \
@@ -68,6 +71,46 @@ jobs:
             --no-sign-request
 
           test -s data/goes/goes_ccl.nc
+
+          echo "Archivo descargado correctamente."
+
+      - name: Inspeccionar producto GOES
+        run: |
+          python - <<'PY'
+          import xarray as xr
+
+          ds = xr.open_dataset("data/goes/goes_ccl.nc")
+
+          print("========================================")
+          print("GOES-19 CCLF")
+          print("========================================")
+          print("Variables:")
+
+          for name in ds.variables:
+              var = ds[name]
+              print(
+                  name,
+                  "| dims=", var.dims,
+                  "| shape=", var.shape,
+                  "| units=", var.attrs.get("units"),
+                  "| long_name=", var.attrs.get("long_name"),
+              )
+
+          print("========================================")
+          print("ATRIBUTOS")
+          print("========================================")
+
+          for key in [
+              "platform_ID",
+              "scene_id",
+              "spatial_resolution",
+              "time_coverage_start",
+              "time_coverage_end",
+          ]:
+              print(key, "=", ds.attrs.get(key))
+
+          ds.close()
+          PY
 
       - name: Procesar nubosidad Bahia Blanca
         run: |
@@ -89,115 +132,204 @@ jobs:
 
           ds = xr.open_dataset(ARCHIVO)
 
-          print("Variables disponibles:")
-          for name in ds.variables:
-              print(" -", name)
-
-          # Buscar variable de fracción nubosa total.
+          # Buscar automáticamente la variable de fracción
+          # nubosa total mediante nombre y metadatos.
           candidatos = [
               "total_cloud_fraction",
               "total_cloud_cover",
               "total_cloud_cover_fraction",
               "cloud_fraction",
-              "TCF",
+              "CLDTOT",
+              "TPW",
           ]
 
           cloud_var = None
 
           for name in candidatos:
               if name in ds.variables:
-                  cloud_var = name
-                  break
+                  attrs = ds[name].attrs
+                  text = (
+                      name
+                      + " "
+                      + str(attrs.get("long_name", ""))
+                      + " "
+                      + str(attrs.get("standard_name", ""))
+                  ).lower()
 
-          if cloud_var is None:
-              for name in ds.variables:
-                  low = name.lower()
                   if (
-                      "cloud" in low
-                      and ("total" in low or "fraction" in low)
-                      and name not in {
-                          "cloud_probability",
-                          "cloud_type",
-                      }
+                      "cloud" in text
+                      and (
+                          "total" in text
+                          or "fraction" in text
+                      )
+                  ):
+                      cloud_var = name
+                      break
+
+          # Segundo método: buscar cualquier variable
+          # cuyo long_name describa total cloud fraction.
+          if cloud_var is None:
+
+              for name in ds.variables:
+
+                  attrs = ds[name].attrs
+
+                  text = (
+                      name
+                      + " "
+                      + str(attrs.get("long_name", ""))
+                      + " "
+                      + str(attrs.get("standard_name", ""))
+                      + " "
+                      + str(attrs.get("description", ""))
+                  ).lower()
+
+                  if (
+                      "cloud" in text
+                      and "fraction" in text
+                      and "total" in text
                   ):
                       cloud_var = name
                       break
 
           if cloud_var is None:
+              print("")
+              print("NO SE ENCONTRO LA VARIABLE DE NUBOSIDAD.")
+              print("")
+              print("Variables disponibles:")
+              for name in ds.variables:
+                  print(
+                      name,
+                      ds[name].attrs.get("long_name", "")
+                  )
+
               raise RuntimeError(
-                  "No se encontró una variable de fracción nubosa total."
+                  "Producto CCLF sin variable de "
+                  "fraccion nubosa total reconocida."
               )
 
-          print("Variable nubosidad:", cloud_var)
+          print("Variable seleccionada:", cloud_var)
 
           data = ds[cloud_var]
 
-          # Quitar dimensiones de tiempo si existen.
+          # El CCLF debe ser una grilla 2D.
           while data.ndim > 2:
-              dim = data.dims[0]
-              data = data.isel({dim: 0})
+              data = data.isel({data.dims[0]: 0})
 
-          values = np.asarray(data.values, dtype=float)
+          values = np.asarray(
+              data.values,
+              dtype=float
+          )
 
-          # Reemplazar valores inválidos.
+          # Aplicar escala/offset si el producto los define.
+          scale = data.attrs.get(
+              "scale_factor",
+              1.0
+          )
+
+          offset = data.attrs.get(
+              "add_offset",
+              0.0
+          )
+
+          values = values * float(scale) + float(offset)
+
           values[~np.isfinite(values)] = np.nan
 
-          # Algunos productos pueden almacenar fracción como 0-1
-          # y otros como porcentaje.
           finite = values[np.isfinite(values)]
 
           if finite.size == 0:
               raise RuntimeError(
-                  "El producto no contiene valores válidos de nubosidad."
+                  "La variable no contiene valores válidos."
               )
 
-          vmax = float(np.nanpercentile(finite, 99))
+          # Convertir automáticamente a porcentaje.
+          maximum = float(
+              np.nanpercentile(finite, 99)
+          )
 
-          if vmax <= 1.5:
+          if maximum <= 1.5:
               values_percent = values * 100.0
           else:
               values_percent = values
 
-          values_percent = np.clip(values_percent, 0.0, 100.0)
+          values_percent = np.clip(
+              values_percent,
+              0.0,
+              100.0
+          )
 
-          # Coordenadas GOES.
-          x = np.asarray(ds["x"].values, dtype=float)
-          y = np.asarray(ds["y"].values, dtype=float)
+          if "x" not in ds.variables:
+              raise RuntimeError(
+                  "El producto no contiene coordenada x."
+              )
+
+          if "y" not in ds.variables:
+              raise RuntimeError(
+                  "El producto no contiene coordenada y."
+              )
+
+          x = np.asarray(
+              ds["x"].values,
+              dtype=float
+          )
+
+          y = np.asarray(
+              ds["y"].values,
+              dtype=float
+          )
 
           projection = ds["goes_imager_projection"]
 
-          req = float(projection.semi_major_axis)
-          rpol = float(projection.semi_minor_axis)
-          h = float(projection.perspective_point_height)
-          H = h + req
+          semi_major = float(
+              projection.semi_major_axis
+          )
+
+          semi_minor = float(
+              projection.semi_minor_axis
+          )
+
+          perspective_height = float(
+              projection.perspective_point_height
+          )
+
+          H = perspective_height + semi_major
 
           lon0 = math.radians(
-              float(projection.longitude_of_projection_origin)
-          )
-
-          lat_rad = math.radians(LAT)
-          lon_rad = math.radians(LON)
-
-          # Navegación GOES-R fija.
-          sin_lat = math.sin(lat_rad)
-          cos_lat = math.cos(lat_rad)
-
-          r_eq = req
-          r_pol = rpol
-
-          rc = r_eq / math.sqrt(
-              1.0
-              - (
-                  (r_eq * r_eq - r_pol * r_pol)
-                  / (r_eq * r_eq)
+              float(
+                  projection.longitude_of_projection_origin
               )
-              * sin_lat
-              * sin_lat
           )
 
-          sx = rc * cos_lat * math.cos(lon_rad - lon0)
-          sy = rc * cos_lat * math.sin(lon_rad - lon0)
-          sz = rc * sin_lat
+          lat = math.radians(LAT)
+          lon = math.radians(LON)
+
+          eccentricity2 = (
+              semi_major**2 - semi_minor**2
+          ) / semi_major**2
+
+          rc = (
+              semi_major
+              / math.sqrt(
+                  1.0
+                  - eccentricity2
+                  * math.sin(lat)**2
+              )
+          )
+
+          sx = (
+              rc
+              * math.cos(lat)
+              * math.cos(lon - lon0)
+          )
+
+          sy = (
+              rc
+              * math.cos(lat)
+              * math.sin(lon - lon0)
+          )
+
+          sz = rc * math.sin(lat)
 
           x_angle = math.atan2(
               -sy,
@@ -207,77 +339,168 @@ jobs:
           y_angle = math.atan2(
               sz,
               math.sqrt(
-                  (H - sx) ** 2
-                  + sy ** 2
+                  (H - sx)**2 + sy**2
               )
           )
 
-          ix = int(np.argmin(np.abs(x - x_angle)))
-          iy = int(np.argmin(np.abs(y - y_angle)))
+          ix = int(
+              np.argmin(
+                  np.abs(x - x_angle)
+              )
+          )
 
-          print("GOES x objetivo:", x_angle)
-          print("GOES y objetivo:", y_angle)
-          print("Índice X:", ix)
-          print("Índice Y:", iy)
+          iy = int(
+              np.argmin(
+                  np.abs(y - y_angle)
+              )
+          )
 
-          # Ventana alrededor de Bahía Blanca.
+          print("Bahía Blanca:")
+          print("  x:", x_angle)
+          print("  y:", y_angle)
+          print("  índice x:", ix)
+          print("  índice y:", iy)
+
+          # Ventana de aproximadamente 100 km
+          # alrededor de Bahía Blanca.
           radius = 5
 
-          y0 = max(0, iy - radius)
-          y1 = min(values_percent.shape[0], iy + radius + 1)
+          y0 = max(
+              0,
+              iy - radius
+          )
 
-          x0 = max(0, ix - radius)
-          x1 = min(values_percent.shape[1], ix + radius + 1)
+          y1 = min(
+              values_percent.shape[0],
+              iy + radius + 1
+          )
 
-          window = values_percent[y0:y1, x0:x1]
+          x0 = max(
+              0,
+              ix - radius
+          )
 
-          nubosidad = float(np.nanmean(window))
+          x1 = min(
+              values_percent.shape[1],
+              ix + radius + 1
+          )
+
+          window = values_percent[
+              y0:y1,
+              x0:x1
+          ]
+
+          nubosidad = float(
+              np.nanmean(window)
+          )
 
           if not np.isfinite(nubosidad):
               raise RuntimeError(
-                  "No se pudo calcular la nubosidad local."
+                  "No se pudo calcular nubosidad local."
               )
 
           nubosidad = round(
-              max(0.0, min(100.0, nubosidad)),
+              max(
+                  0.0,
+                  min(
+                      100.0,
+                      nubosidad
+                  )
+              ),
               1
           )
 
-          # Clasificación simple para la primera versión.
           if nubosidad < 10:
               estado = "despejado"
+
           elif nubosidad < 30:
               estado = "poco_nublado"
+
           elif nubosidad < 60:
               estado = "parcialmente_nublado"
+
           elif nubosidad < 85:
               estado = "muy_nublado"
+
           else:
               estado = "cubierto"
 
-          # Crear imagen de control.
-          fig, ax = plt.subplots(figsize=(8, 6))
+          frame_utc = (
+              ds.attrs.get(
+                  "time_coverage_end"
+              )
+              or ds.attrs.get(
+                  "time_coverage_start"
+              )
+          )
+
+          resultado = {
+              "ok": True,
+              "fuente": "GOES-19",
+              "producto": "ABI-L2-CCLF",
+              "descripcion": (
+                  "Cloud Cover Layers - Full Disk"
+              ),
+              "ciudad": "Bahía Blanca",
+              "latitud": LAT,
+              "longitud": LON,
+              "frame_goes_utc": frame_utc,
+              "nubosidad_total_porcentaje": nubosidad,
+              "estado_nubosidad": estado,
+              "resolucion_producto": (
+                  ds.attrs.get(
+                      "spatial_resolution"
+                  )
+              ),
+              "variable_utilizada": cloud_var,
+              "ventana_pixeles": {
+                  "x": [x0, x1],
+                  "y": [y0, y1],
+              },
+              "generado_utc": (
+                  datetime.now(
+                      timezone.utc
+                  ).isoformat()
+              ),
+          }
+
+          with open(
+              JSON_OUT,
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  resultado,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+
+          # Imagen de control.
+          fig, ax = plt.subplots(
+              figsize=(8, 6)
+          )
 
           image = ax.imshow(
               values_percent,
               origin="upper",
               cmap="gray",
               vmin=0,
-              vmax=100,
+              vmax=100
           )
 
           ax.scatter(
               [ix],
               [iy],
-              s=80,
+              s=100,
               facecolors="none",
               edgecolors="red",
-              linewidths=2,
+              linewidths=2
           )
 
           ax.set_title(
-              f"GOES-16 CCL - Bahía Blanca - "
-              f"Nubosidad {nubosidad:.1f}%"
+              "GOES-19 CCLF - Bahía Blanca\n"
+              f"Nubosidad total: {nubosidad:.1f}%"
           )
 
           ax.set_xlabel("X GOES")
@@ -286,74 +509,41 @@ jobs:
           fig.colorbar(
               image,
               ax=ax,
-              label="Fracción nubosa (%)",
+              label="Nubosidad (%)"
           )
 
           plt.tight_layout()
+
           plt.savefig(
               IMAGEN,
               dpi=120,
-              bbox_inches="tight",
+              bbox_inches="tight"
           )
+
           plt.close(fig)
 
-          # Tiempo del producto.
-          frame_utc = None
-
-          for attr in [
-              "time_coverage_end",
-              "time_coverage_start",
-          ]:
-              value = ds.attrs.get(attr)
-              if value:
-                  frame_utc = str(value)
-                  break
-
-          if frame_utc is None and "time" in ds.variables:
-              try:
-                  frame_value = ds["time"].values
-                  frame_utc = str(frame_value)
-              except Exception:
-                  frame_utc = None
-
-          resultado = {
-              "ok": True,
-              "fuente": "GOES-16",
-              "producto": "ABI-L2-CCL",
-              "descripcion": "Cloud Cover Layers",
-              "ciudad": "Bahía Blanca",
-              "latitud": LAT,
-              "longitud": LON,
-              "frame_goes_utc": frame_utc,
-              "nubosidad_total_porcentaje": nubosidad,
-              "estado_nubosidad": estado,
-              "ventana_pixeles": {
-                  "x": [x0, x1],
-                  "y": [y0, y1],
-              },
-              "variable_utilizada": cloud_var,
-              "generado_utc": datetime.now(
-                  timezone.utc
-              ).isoformat(),
-          }
-
-          with open(
-              JSON_OUT,
-              "w",
-              encoding="utf-8",
-          ) as f:
-              json.dump(
-                  resultado,
-                  f,
-                  ensure_ascii=False,
-                  indent=2,
-              )
-
-          print(json.dumps(
-              resultado,
-              ensure_ascii=False,
-              indent=2,
-          ))
+          print("")
+          print("================================")
+          print("RESULTADO GOES")
+          print("================================")
+          print(
+              "Nubosidad:",
+              nubosidad,
+              "%"
+          )
+          print(
+              "Estado:",
+              estado
+          )
+          print(
+              "Frame:",
+              frame_utc
+          )
+          print(
+              "Variable:",
+              cloud_var
+          )
+          print("================================")
 
           ds.close()
           PY
@@ -368,25 +558,43 @@ jobs:
 
           with open(
               "data/goes/nubosidad.json",
-              encoding="utf-8",
+              encoding="utf-8"
           ) as f:
               data = json.load(f)
 
           assert data["ok"] is True
-          assert data["producto"] == "ABI-L2-CCL"
+          assert data["fuente"] == "GOES-19"
+          assert data["producto"] == "ABI-L2-CCLF"
 
-          value = data["nubosidad_total_porcentaje"]
+          value = data[
+              "nubosidad_total_porcentaje"
+          ]
 
-          assert isinstance(value, (int, float))
+          assert isinstance(
+              value,
+              (int, float)
+          )
+
           assert 0 <= value <= 100
 
-          print("Nubosidad:", value, "%")
-          print("Estado:", data["estado_nubosidad"])
-          print("Frame GOES:", data["frame_goes_utc"])
-          print("RESULTADO GOES OK")
+          print("")
+          print("GOES OK")
+          print(
+              "Nubosidad:",
+              value,
+              "%"
+          )
+          print(
+              "Estado:",
+              data["estado_nubosidad"]
+          )
+          print(
+              "Frame:",
+              data["frame_goes_utc"]
+          )
           PY
 
-      - name: Guardar resultado de prueba
+      - name: Guardar resultado
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -394,8 +602,8 @@ jobs:
           git add data/goes
 
           if git diff --cached --quiet; then
-            echo "Sin cambios para guardar."
+            echo "Sin cambios."
           else
-            git commit -m "GOES: incorporar prueba de nubosidad"
+            git commit -m "GOES: prueba nubosidad Bahia Blanca"
             git push
           fi
