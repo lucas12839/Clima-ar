@@ -188,25 +188,55 @@ jobs:
           dqf_var = ds.variables["DQF"]
 
           # ============================================================
-          # NETCDF4 DECODIFICA AUTOMATICAMENTE
-          # MASK + SCALE
+          # ACTIVAR DECODIFICACION AUTOMATICA
           # ============================================================
 
           tcf_var.set_auto_maskandscale(True)
           dqf_var.set_auto_maskandscale(True)
 
-          tcf_data = np.asarray(
-              tcf_var[:],
-              dtype=np.float64
-          )
+          # Leer TCF
+          tcf_loaded = tcf_var[:]
 
-          dqf_data = np.asarray(
-              dqf_var[:]
-          )
+          # Leer DQF
+          dqf_loaded = dqf_var[:]
 
-          # El producto CCLF debe ser 2D.
+          # ============================================================
+          # TCF A FLOAT
+          # ============================================================
+
+          if np.ma.isMaskedArray(tcf_loaded):
+              tcf_data = np.asarray(
+                  tcf_loaded.filled(np.nan),
+                  dtype=np.float64
+              )
+          else:
+              tcf_data = np.asarray(
+                  tcf_loaded,
+                  dtype=np.float64
+              )
+
           while tcf_data.ndim > 2:
               tcf_data = tcf_data[0]
+
+          # ============================================================
+          # DQF A INT16 ANTES DE filled(-1)
+          # ============================================================
+
+          if np.ma.isMaskedArray(dqf_loaded):
+              dqf_data = np.ma.asarray(
+                  dqf_loaded,
+                  dtype=np.int16
+              ).filled(-1)
+
+              dqf_data = np.asarray(
+                  dqf_data,
+                  dtype=np.int16
+              )
+          else:
+              dqf_data = np.asarray(
+                  dqf_loaded,
+                  dtype=np.int16
+              )
 
           while dqf_data.ndim > 2:
               dqf_data = dqf_data[0]
@@ -223,31 +253,16 @@ jobs:
                   f"DQF no es 2D: ndim={dqf_data.ndim}"
               )
 
-          # ============================================================
-          # CONVERTIR MASCARAS A NaN
-          # ============================================================
-
-          if np.ma.isMaskedArray(tcf_var[:]):
-              tcf_raw_masked = tcf_var[:]
-              tcf_data = np.asarray(
-                  tcf_raw_masked.filled(np.nan),
-                  dtype=np.float64
+          if tcf_data.shape != dqf_data.shape:
+              ds.close()
+              raise RuntimeError(
+                  "TCF y DQF tienen dimensiones diferentes: "
+                  f"TCF={tcf_data.shape} "
+                  f"DQF={dqf_data.shape}"
               )
 
-              while tcf_data.ndim > 2:
-                  tcf_data = tcf_data[0]
-
-          if np.ma.isMaskedArray(dqf_var[:]):
-              dqf_raw_masked = dqf_var[:]
-              dqf_data = np.asarray(
-                  dqf_raw_masked.filled(-1)
-              )
-
-              while dqf_data.ndim > 2:
-                  dqf_data = dqf_data[0]
-
           # ============================================================
-          # DIAGNOSTICO REAL DEL TCF
+          # DIAGNOSTICO TCF
           # ============================================================
 
           finite_tcf = np.isfinite(tcf_data)
@@ -258,6 +273,7 @@ jobs:
           print("========================================")
 
           print("dtype:", tcf_data.dtype)
+
           print(
               "pixeles finitos:",
               int(np.count_nonzero(finite_tcf)),
@@ -270,38 +286,43 @@ jobs:
                   "TCF minimo:",
                   float(np.nanmin(tcf_data))
               )
+
               print(
                   "TCF maximo:",
                   float(np.nanmax(tcf_data))
               )
+
               print(
                   "TCF promedio:",
                   float(np.nanmean(tcf_data))
               )
 
-          # ============================================================
-          # TCF DEBE ESTAR ENTRE 0 Y 1
-          # ============================================================
-
-          tcf = tcf_data.copy()
-
-          # Si por alguna razón el producto llegó expresado
-          # directamente en porcentaje, convertirlo.
-          finite_values = tcf[np.isfinite(tcf)]
-
-          if finite_values.size == 0:
+          if not np.any(finite_tcf):
               ds.close()
               raise RuntimeError(
                   "TCF no contiene ningún valor finito."
               )
 
-          max_tcf = float(np.nanmax(tcf))
+          # ============================================================
+          # NORMALIZAR TCF
+          # ============================================================
+
+          tcf = tcf_data.copy()
+
+          finite_values = tcf[
+              np.isfinite(tcf)
+          ]
+
+          max_tcf = float(
+              np.nanmax(finite_values)
+          )
 
           if max_tcf > 1.0 and max_tcf <= 100.0:
               print(
                   "TCF detectado en porcentaje. "
                   "Convirtiendo a fraccion."
               )
+
               tcf = tcf / 100.0
 
           tcf[
@@ -311,14 +332,18 @@ jobs:
 
           tcf_percent = tcf * 100.0
 
-          print(
-              "TCF validos 0-100:",
-              int(np.count_nonzero(
+          valid_tcf_count = int(
+              np.count_nonzero(
                   np.isfinite(tcf_percent)
-              ))
+              )
           )
 
-          if not np.any(np.isfinite(tcf_percent)):
+          print(
+              "TCF validos 0-100:",
+              valid_tcf_count
+          )
+
+          if valid_tcf_count == 0:
               ds.close()
               raise RuntimeError(
                   "Después de decodificar, TCF no contiene "
@@ -360,12 +385,23 @@ jobs:
               ~good_quality
           ] = np.nan
 
+          valid_quality_count = int(
+              np.count_nonzero(
+                  np.isfinite(tcf_quality)
+              )
+          )
+
           print(
               "Pixeles TCF + DQF=0:",
-              int(np.count_nonzero(
-                  np.isfinite(tcf_quality)
-              ))
+              valid_quality_count
           )
+
+          if valid_quality_count == 0:
+              ds.close()
+              raise RuntimeError(
+                  "No existen pixeles TCF válidos "
+                  "con DQF=0 en todo el producto."
+              )
 
           # ============================================================
           # COORDENADAS
@@ -605,33 +641,42 @@ jobs:
               )
 
           nubosidad_3x3 = round(
-              float(np.mean(valid_pixels)),
+              float(
+                  np.mean(valid_pixels)
+              ),
               1
           )
 
           nubosidad_punto = (
-              round(punto_tcf, 1)
+              round(
+                  punto_tcf,
+                  1
+              )
               if np.isfinite(punto_tcf)
               else None
           )
 
           # ============================================================
-          # ESTADO
+          # ESTADO DE NUBOSIDAD
           # ============================================================
 
           if nubosidad_3x3 < 10:
               estado = "despejado"
+
           elif nubosidad_3x3 < 30:
               estado = "poco_nublado"
+
           elif nubosidad_3x3 < 60:
               estado = "parcialmente_nublado"
+
           elif nubosidad_3x3 < 85:
               estado = "muy_nublado"
+
           else:
               estado = "cubierto"
 
           # ============================================================
-          # TIMESTAMP
+          # TIMESTAMP GOES
           # ============================================================
 
           frame_utc = (
@@ -658,7 +703,7 @@ jobs:
           ).isoformat()
 
           # ============================================================
-          # RESULTADO
+          # RESULTADO JSON
           # ============================================================
 
           resultado = {
@@ -681,7 +726,7 @@ jobs:
                   "metodo": "DQF=0",
                   "pixeles_validos_3x3": valid_count,
                   "pixeles_totales_3x3": total_pixels,
-                  "dqf_punto": punto_dqf,
+                  "dqf_punto": punto_dqf
               },
               "ventana_pixeles": {
                   "x": [
@@ -691,9 +736,9 @@ jobs:
                   "y": [
                       int(y0),
                       int(y1 - 1)
-                  ],
+                  ]
               },
-              "generado_utc": generado,
+              "generado_utc": generado
           }
 
           with open(
@@ -808,12 +853,17 @@ jobs:
               "nubosidad_total_porcentaje"
           )
 
-          if not isinstance(valor, (int, float)):
+          if not isinstance(
+              valor,
+              (int, float)
+          ):
               raise SystemExit(
                   "ERROR: nubosidad no numerica"
               )
 
-          if not math.isfinite(float(valor)):
+          if not math.isfinite(
+              float(valor)
+          ):
               raise SystemExit(
                   "ERROR: nubosidad NaN/inf"
               )
@@ -840,22 +890,34 @@ jobs:
                   "ERROR: no hay pixeles validos"
               )
 
-          print("========================================")
+          print(
+              "========================================"
+          )
           print("GOES OK")
-          print("========================================")
+          print(
+              "========================================"
+          )
+
           print(
               "Nubosidad:",
               valor,
               "%"
           )
+
           print(
               "Estado:",
-              data.get("estado_nubosidad")
+              data.get(
+                  "estado_nubosidad"
+              )
           )
+
           print(
               "Frame:",
-              data.get("frame_goes_utc")
+              data.get(
+                  "frame_goes_utc"
+              )
           )
+
           print(
               "Pixeles validos:",
               validos
