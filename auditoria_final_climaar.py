@@ -117,30 +117,115 @@ def patch_radar_workflow(text: str) -> str:
     )
 
     # La persistencia final también exige continuidad aceptada.
-    text = replace_once(
-        text,
-        '''if: steps.frame.outputs.new_frame == 'true'\n        shell: bash\n        run: |\n\n          set -e\n\n          git config user.name''',
-        '''if: steps.continuidad.outputs.accepted == 'true'\n        shell: bash\n        run: |\n\n          set -e\n\n          git config user.name''',
-        "persistencia de estado RMA10",
+    persistence_marker = (
+        "      - name: Guardar estado en repositorio\n"
+        "        if: steps.frame.outputs.new_frame == 'true'"
+    )
+    if text.count(persistence_marker) != 1:
+        fail(
+            "persistencia de estado RMA10: "
+            "se esperaba exactamente 1 etapa de persistencia."
+        )
+    text = text.replace(
+        persistence_marker,
+        (
+            "      - name: Guardar estado en repositorio\n"
+            "        if: steps.continuidad.outputs.accepted == 'true'"
+        ),
+        1,
     )
 
     return text
 
 
 def patch_ml(text: str) -> str:
-    text = replace_once(
-        text,
-        '''    timestamp = (\n        read_radar_timestamp()\n        or resultado.get(\n            "imagen_procesada"\n        )\n    )\n\n    output = {\n''',
-        '''    timestamp = read_radar_timestamp()\n\n    if not timestamp:\n        raise SystemExit(\n            "No existe un timestamp real de RMA10. "\n            "No se generará una predicción ML sin frame radar válido."\n        )\n\n    output = {\n''',
-        "timestamp ML estricto",
+    # El repositorio puede traer la versión anterior (solo resultado_procesamiento)
+    # o una versión intermedia que ya intentaba leer el timestamp. En ambos casos
+    # forzamos una única fuente de verdad: radar_timestamp.txt.
+    current_timestamp = '''    timestamp = (
+        resultado.get(
+            "imagen_procesada"
+        )
     )
+'''
+    previous_timestamp = '''    timestamp = (
+        read_radar_timestamp()
+        or resultado.get(
+            "imagen_procesada"
+        )
+    )
+'''
+    replacement_timestamp = '''    timestamp_path = ROOT / "data/radar/radar_timestamp.txt"
 
-    text = replace_once(
-        text,
-        '''        "calibracion_probabilistica": {\n            "aplicada": calibrated_values > 0,\n            "metodo": "PLATT_SCALING_LOGIT",\n''',
-        '''        "calibracion_probabilistica": {\n            "aplicada": any(\n                bool(model_info.get("enabled"))\n                for model_info in probability_calibration["models"].values()\n                if isinstance(model_info, dict)\n            ),\n            "metodo": "PLATT_SCALING_LOGIT",\n''',
-        "estado de calibración ML",
-    )
+    if not timestamp_path.exists():
+        raise SystemExit(
+            "No existe un timestamp real de RMA10. "
+            "No se generará una predicción ML sin frame radar válido."
+        )
+
+    timestamp = timestamp_path.read_text(
+        encoding="utf-8"
+    ).strip()
+
+    if not timestamp:
+        raise SystemExit(
+            "El timestamp real de RMA10 está vacío. "
+            "No se generará una predicción ML sin frame radar válido."
+        )
+'''
+
+    if text.count(current_timestamp) == 1:
+        text = text.replace(
+            current_timestamp,
+            replacement_timestamp,
+            1,
+        )
+    elif text.count(previous_timestamp) == 1:
+        text = text.replace(
+            previous_timestamp,
+            replacement_timestamp,
+            1,
+        )
+    else:
+        fail(
+            "timestamp ML estricto: no se encontró una forma conocida "
+            "de construir frame_radar."
+        )
+
+    dynamic_calibration = '''        "calibracion_probabilistica": {
+            "aplicada": any(
+                bool(model_info.get("enabled"))
+                for model_info in probability_calibration["models"].values()
+                if isinstance(model_info, dict)
+            ),
+'''
+    current_true_calibration = '''        "calibracion_probabilistica": {
+            "aplicada": True,
+            "metodo": "PLATT_SCALING_LOGIT",
+'''
+    previous_value_calibration = '''        "calibracion_probabilistica": {
+            "aplicada": calibrated_values > 0,
+            "metodo": "PLATT_SCALING_LOGIT",
+'''
+
+    if text.count(dynamic_calibration) == 0:
+        if text.count(current_true_calibration) == 1:
+            text = text.replace(
+                current_true_calibration,
+                dynamic_calibration,
+                1,
+            )
+        elif text.count(previous_value_calibration) == 1:
+            text = text.replace(
+                previous_value_calibration,
+                dynamic_calibration,
+                1,
+            )
+        else:
+            fail(
+                "estado de calibración ML: bloque no reconocido."
+            )
+
     return text
 
 
