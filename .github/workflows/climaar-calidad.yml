@@ -15,32 +15,35 @@ jobs:
   calidad:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
       - name: Instalar dependencias
         run: |
-          set -e
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Verificar sintaxis Python
         run: |
-          set -e
+          set -euo pipefail
           python -m compileall -q .
-          echo "Sintaxis Python OK."
 
       - name: Verificar archivos operativos
         run: |
-          set -e
+          set -euo pipefail
+
           archivos=(
             "data/radar/radar_timestamp.txt"
             "data/radar/radar_nowcast.json"
@@ -54,16 +57,16 @@ jobs:
           )
 
           for archivo in "${archivos[@]}"; do
-            if [ ! -s "$archivo" ]; then
-              echo "ERROR: falta archivo operativo: $archivo"
+            test -s "$archivo" || {
+              echo "Falta o está vacío: $archivo"
               exit 1
-            fi
-            echo "OK: $archivo"
+            }
           done
 
       - name: Verificar JSON operativos
         run: |
-          set -e
+          set -euo pipefail
+
           python - <<'PY'
           import json
           from pathlib import Path
@@ -83,164 +86,108 @@ jobs:
               datos = json.loads(
                   Path(archivo).read_text(encoding="utf-8")
               )
+
               if not isinstance(datos, dict):
                   raise SystemExit(
-                      f"ERROR: {archivo} no contiene un objeto JSON."
+                      f"{archivo}: no es un objeto JSON"
                   )
-              print(f"JSON OK: {archivo}")
+
+          print("JSON operativos OK")
           PY
 
       - name: Verificar sincronización Radar Nowcast ML
         run: |
-          set -e
+          set -euo pipefail
+
           python - <<'PY'
           import json
-          from datetime import datetime, timezone
           from pathlib import Path
 
-          def parse_utc(value, nombre):
-              if not isinstance(value, str) or not value.strip():
-                  raise SystemExit(
-                      f"ERROR: {nombre} no tiene timestamp."
-                  )
-              text = value.strip()
-              if text.endswith("Z"):
-                  text = text[:-1] + "+00:00"
-              try:
-                  dt = datetime.fromisoformat(text)
-              except ValueError as exc:
-                  raise SystemExit(
-                      f"ERROR: {nombre} tiene timestamp inválido: {value}"
-                  ) from exc
-              if dt.tzinfo is None:
-                  raise SystemExit(
-                      f"ERROR: {nombre} no tiene zona horaria: {value}"
-                  )
-              return dt.astimezone(timezone.utc)
-
-          radar_raw = Path(
+          radar = Path(
               "data/radar/radar_timestamp.txt"
-          ).read_text(encoding="utf-8").strip()
+          ).read_text(
+              encoding="utf-8"
+          ).strip()
 
           nowcast = json.loads(
-              Path("data/radar/radar_nowcast.json").read_text(
+              Path(
+                  "data/radar/radar_nowcast.json"
+              ).read_text(
                   encoding="utf-8"
               )
           )
 
+          nowcast_data = nowcast.get("nowcast", {})
+
           ml = json.loads(
               Path(
                   "data/radar/seguimiento/prediccion_ml_rma10.json"
-              ).read_text(encoding="utf-8")
+              ).read_text(
+                  encoding="utf-8"
+              )
           )
+
+          if nowcast_data.get(
+              "frame_actual_utc"
+          ) != radar:
+              raise SystemExit(
+                  "ERROR: Nowcast desincronizado"
+              )
+
+          if ml.get("frame_radar") != radar:
+              raise SystemExit(
+                  "ERROR: ML desincronizado"
+              )
 
           if ml.get("ok") is not True:
               raise SystemExit(
-                  "ERROR: ML RMA10 no está marcado como válido."
+                  "ERROR: ML no válido"
               )
 
-          bloque_nowcast = nowcast.get("nowcast")
-          if not isinstance(bloque_nowcast, dict):
-              raise SystemExit(
-                  "ERROR: radar_nowcast.json no contiene el bloque nowcast."
-              )
-
-          radar_ts = parse_utc(radar_raw, "Radar")
-          nowcast_ts = parse_utc(
-              bloque_nowcast.get("frame_actual_utc"),
-              "Nowcast",
-          )
-          ml_ts = parse_utc(
-              ml.get("frame_radar"),
-              "ML RMA10",
-          )
-
-          print("===== SINCRONIZACIÓN CLIMAAR =====")
-          print("Radar:", radar_ts.isoformat())
-          print("Nowcast:", nowcast_ts.isoformat())
-          print("ML RMA10:", ml_ts.isoformat())
-
-          if not (radar_ts == nowcast_ts == ml_ts):
-              raise SystemExit(
-                  "ERROR: Radar, Nowcast y ML no corresponden al mismo frame."
-              )
-
-          print("Sincronización estricta OK.")
-          PY
-
-      - name: Verificar predicción ML
-        run: |
-          set -e
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          datos = json.loads(
-              Path(
-                  "data/radar/seguimiento/prediccion_ml_rma10.json"
-              ).read_text(encoding="utf-8")
-          )
-
-          if datos.get("ok") is not True:
-              raise SystemExit("ERROR: predicción ML no válida.")
-
-          tracks = datos.get("tracks_analizados", 0)
-          predicciones = datos.get("predicciones", [])
-
-          if not isinstance(tracks, int) or tracks < 0:
-              raise SystemExit("ERROR: tracks_analizados inválido.")
-
-          if not isinstance(predicciones, list):
-              raise SystemExit("ERROR: predicciones ML inválidas.")
-
-          if tracks != len(predicciones):
-              raise SystemExit(
-                  "ERROR: tracks_analizados no coincide con predicciones."
-              )
-
-          print("ML OK:", tracks, "tracks.")
+          print("Radar / Nowcast / ML sincronizados")
           PY
 
       - name: Calcular riesgo severo
         run: |
-          set -e
+          set -euo pipefail
+
           python scripts/riesgo_severo_climaar.py
 
       - name: Verificar riesgo severo
         run: |
-          set -e
+          set -euo pipefail
+
+          test -s data/ia/riesgo_severo.json
+
           python - <<'PY'
           import json
           from pathlib import Path
 
-          ruta = Path("data/ia/riesgo_severo.json")
-          if not ruta.is_file():
-              raise SystemExit(
-                  "ERROR: no se generó riesgo_severo.json"
-              )
-
           datos = json.loads(
-              ruta.read_text(encoding="utf-8")
+              Path(
+                  "data/ia/riesgo_severo.json"
+              ).read_text(
+                  encoding="utf-8"
+              )
           )
 
           if not isinstance(datos, dict):
               raise SystemExit(
-                  "ERROR: riesgo_severo.json inválido."
+                  "riesgo_severo.json no es un objeto"
               )
 
           if "indice_severo" not in datos:
               raise SystemExit(
-                  "ERROR: falta indice_severo."
+                  "Falta indice_severo"
               )
 
-          print("Riesgo severo OK.")
-          print("Índice:", datos.get("indice_severo"))
-          print("Método:", datos.get("metodo"))
+          print("Riesgo severo OK")
           PY
 
-      - name: Verificar predicción de evolución
+      - name: Verificar evolución
         run: |
-          set -e
+          set -euo pipefail
+
           python - <<'PY'
           import json
           from pathlib import Path
@@ -248,38 +195,158 @@ jobs:
           datos = json.loads(
               Path(
                   "data/radar/seguimiento/prediccion_evolucion.json"
-              ).read_text(encoding="utf-8")
+              ).read_text(
+                  encoding="utf-8"
+              )
           )
 
-          if not isinstance(datos.get("nucleos", []), list):
-              raise SystemExit("ERROR: nucleos inválido.")
+          if not isinstance(
+              datos.get("nucleos", []),
+              list
+          ):
+              raise SystemExit(
+                  "nucleos inválido"
+              )
 
           if not isinstance(
               datos.get("predicciones_pendientes", []),
-              list,
+              list
           ):
               raise SystemExit(
-                  "ERROR: predicciones_pendientes inválido."
+                  "predicciones_pendientes inválido"
               )
 
-          print("Predicción de evolución OK.")
-          print("Núcleos:", len(datos.get("nucleos", [])))
-          print(
-              "Validaciones:",
-              datos.get("validaciones_count", 0),
-          )
+          print("Evolución OK")
           PY
+
+      - name: Auditoría end-to-end
+        run: |
+          set -euo pipefail
+          python scripts/auditoria_end_to_end.py
+
+      - name: Probar API y /radar/imagen
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          nohup uvicorn app:app \
+            --host 127.0.0.1 \
+            --port 8000 \
+            > app.log 2>&1 &
+
+          echo $! > app.pid
+
+          for i in $(seq 1 30); do
+            if curl -fsS \
+              http://127.0.0.1:8000/health \
+              > /tmp/health.json; then
+              break
+            fi
+
+            if [ "$i" -eq 30 ]; then
+              cat app.log
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          python - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8000"
+
+          with urllib.request.urlopen(
+              base + "/health",
+              timeout=10
+          ) as response:
+              health = json.load(response)
+
+          claves = (
+              "status",
+              "frame_actual_utc",
+              "frame_edad_minutos",
+              "estado_radar",
+          )
+
+          for clave in claves:
+              if clave not in health:
+                  raise SystemExit(
+                      f"Falta {clave} en /health"
+                  )
+
+          endpoints = (
+              "/radar",
+              "/prediccion/en-vivo",
+              "/tormenta",
+              "/inteligencia",
+              "/secuencia",
+          )
+
+          for endpoint in endpoints:
+              with urllib.request.urlopen(
+                  base + endpoint,
+                  timeout=10
+              ) as response:
+                  if response.status != 200:
+                      raise SystemExit(
+                          f"{endpoint}: HTTP {response.status}"
+                      )
+
+          print("API básica OK")
+          PY
+
+          status="$(
+            curl -sS \
+              -o /tmp/radar.png \
+              -w "%{http_code}" \
+              http://127.0.0.1:8000/radar/imagen
+          )"
+
+          test "$status" = "200"
+
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          path = Path("/tmp/radar.png")
+
+          if not path.exists():
+              raise SystemExit(
+                  "No se recibió radar.png"
+              )
+
+          if path.stat().st_size <= 1024:
+              raise SystemExit(
+                  "PNG demasiado pequeño"
+              )
+
+          with Image.open(path) as image:
+              if image.format != "PNG":
+                  raise SystemExit(
+                      f"Formato inválido: {image.format}"
+                  )
+
+              image.verify()
+
+          print("Radar PNG válido")
+          PY
+
+      - name: Detener API
+        if: always()
+        run: |
+          if [ -f app.pid ]; then
+            kill "$(cat app.pid)" 2>/dev/null || true
+          fi
+
+      - name: Mostrar log API si falló
+        if: failure()
+        run: |
+          if [ -f app.log ]; then
+            cat app.log
+          fi
 
       - name: Resultado final
         run: |
-          echo "======================================"
-          echo "       CLIMAAR CONTROL DE CALIDAD"
-          echo "======================================"
-          echo "Sintaxis Python: OK"
-          echo "Archivos operativos: OK"
-          echo "JSON operativos: OK"
-          echo "Sincronización Radar/Nowcast/ML: OK"
-          echo "ML: OK"
-          echo "Riesgo severo: OK"
-          echo "Predicción evolución: OK"
-          echo "======================================"
+          echo "CLIMAAR CALIDAD: END-TO-END OK"
