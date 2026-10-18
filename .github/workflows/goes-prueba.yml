@@ -9,7 +9,7 @@ permissions:
 jobs:
   prueba-goes:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
 
@@ -21,7 +21,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install awscli h5py numpy matplotlib
 
-      - name: Descargar GOES-19 CCLF actual
+      - name: Descargar GOES-19 ACMF actual
         shell: bash
         run: |
           set -euo pipefail
@@ -38,22 +38,22 @@ jobs:
             DOY=$(echo "$TARGET" | awk '{print $2}')
             HOUR=$(echo "$TARGET" | awk '{print $3}')
 
-            echo "Buscando GOES-19 CCLF: ${YEAR}/${DOY}/${HOUR}"
+            echo "Buscando GOES-19 ACMF: ${YEAR}/${DOY}/${HOUR}"
 
             FILE=$(
               aws s3 ls \
-                "s3://noaa-goes19/ABI-L2-CCLF/${YEAR}/${DOY}/${HOUR}/" \
+                "s3://noaa-goes19/ABI-L2-ACMF/${YEAR}/${DOY}/${HOUR}/" \
                 --no-sign-request \
                 2>/dev/null \
                 | awk '{print $4}' \
-                | grep '^OR_ABI-L2-CCLF' \
+                | grep '^OR_ABI-L2-ACMF' \
                 | sort \
                 | tail -1 \
                 || true
             )
 
             if [ -n "$FILE" ]; then
-              FOUND="s3://noaa-goes19/ABI-L2-CCLF/${YEAR}/${DOY}/${HOUR}/${FILE}"
+              FOUND="s3://noaa-goes19/ABI-L2-ACMF/${YEAR}/${DOY}/${HOUR}/${FILE}"
               echo "Encontrado: $FOUND"
               break
             fi
@@ -61,7 +61,7 @@ jobs:
           done
 
           if [ -z "$FOUND" ]; then
-            echo "ERROR: no se encontró ningún GOES-19 CCLF."
+            echo "ERROR: no se encontró ningún GOES-19 ACMF."
             exit 1
           fi
 
@@ -70,22 +70,22 @@ jobs:
 
           aws s3 cp \
             "$FOUND" \
-            data/goes/goes_ccl.nc \
+            data/goes/goes_acm.nc \
             --no-sign-request
 
-          test -s data/goes/goes_ccl.nc
+          test -s data/goes/goes_acm.nc
 
-      - name: Inspeccionar estructura HDF5
+      - name: Inspeccionar estructura GOES
         run: |
           python - <<'PY'
           import h5py
 
-          path = "data/goes/goes_ccl.nc"
+          path = "data/goes/goes_acm.nc"
 
           with h5py.File(path, "r") as f:
 
               print("========================================")
-              print("ESTRUCTURA HDF5 GOES-19")
+              print("ESTRUCTURA GOES-19 ACMF")
               print("========================================")
 
               def mostrar(nombre, objeto):
@@ -99,6 +99,7 @@ jobs:
                       )
 
               f.visititems(mostrar)
+          PY
 
       - name: Procesar nubosidad Bahia Blanca
         run: |
@@ -111,18 +112,17 @@ jobs:
           import matplotlib.pyplot as plt
           import numpy as np
 
-          ARCHIVO = "data/goes/goes_ccl.nc"
+          ARCHIVO = "data/goes/goes_acm.nc"
           IMAGEN = "data/goes/nubosidad_bahia_blanca.png"
           JSON_OUT = "data/goes/nubosidad.json"
 
           LAT = -38.72
           LON = -62.27
 
-          # ============================================================
-          # FUNCIONES
-          # ============================================================
+          RADIO = 2
 
           def attr_value(obj, name, default=None):
+
               if name not in obj.attrs:
                   return default
 
@@ -135,8 +135,11 @@ jobs:
                   )
 
               if isinstance(value, np.ndarray):
+
                   if value.size == 1:
                       return value.reshape(-1)[0].item()
+
+                  return value
 
               if isinstance(value, np.generic):
                   return value.item()
@@ -144,127 +147,17 @@ jobs:
               return value
 
 
-          def convertir_unsigned(data, atributo):
-              texto = str(atributo).lower()
+          def decode_coord(ds):
 
-              if texto in (
-                  "true",
-                  "1",
-                  "yes"
-              ):
-                  if data.dtype.itemsize == 2:
-                      return data.astype(
-                          np.uint16
-                      )
-
-                  if data.dtype.itemsize == 1:
-                      return data.astype(
-                          np.uint8
-                      )
-
-                  if data.dtype.itemsize == 4:
-                      return data.astype(
-                          np.uint32
-                      )
-
-              return data
-
-
-          def normalizar_attr_entero(
-              value,
-              bits,
-              unsigned
-          ):
-              if value is None:
-                  return None
-
-              arr = np.asarray(
-                  value
-              ).reshape(-1)
-
-              salida = []
-
-              for v in arr:
-
-                  n = int(v)
-
-                  if unsigned and n < 0:
-                      n += 2 ** bits
-
-                  salida.append(n)
-
-              return salida
-
-
-          def decodificar_variable(
-              dataset,
-              nombre
-          ):
               raw = np.asarray(
-                  dataset[:]
-              )
-
-              unsigned = attr_value(
-                  dataset,
-                  "_Unsigned",
-                  False
-              )
-
-              raw = convertir_unsigned(
-                  raw,
-                  unsigned
-              )
-
-              bits = raw.dtype.itemsize * 8
-
-              fill = normalizar_attr_entero(
-                  attr_value(
-                      dataset,
-                      "_FillValue",
-                      None
-                  ),
-                  bits,
-                  str(unsigned).lower()
-                  in ("true", "1", "yes")
-              )
-
-              valid_range = normalizar_attr_entero(
-                  attr_value(
-                      dataset,
-                      "valid_range",
-                      None
-                  ),
-                  bits,
-                  str(unsigned).lower()
-                  in ("true", "1", "yes")
-              )
-
-              data = raw.astype(
+                  ds[:]
+              ).astype(
                   np.float64
               )
 
-              if fill:
-                  for valor in fill:
-                      data[
-                          raw == valor
-                      ] = np.nan
-
-              if valid_range and len(
-                  valid_range
-              ) >= 2:
-
-                  minimo = valid_range[0]
-                  maximo = valid_range[1]
-
-                  data[
-                      (raw < minimo)
-                      |
-                      (raw > maximo)
-                  ] = np.nan
-
               scale = float(
                   attr_value(
-                      dataset,
+                      ds,
                       "scale_factor",
                       1.0
                   )
@@ -272,32 +165,122 @@ jobs:
 
               offset = float(
                   attr_value(
-                      dataset,
+                      ds,
                       "add_offset",
                       0.0
                   )
               )
 
-              data = (
-                  data
-                  * scale
-                  + offset
-              )
-
               return (
-                  raw,
-                  data,
-                  fill,
-                  valid_range,
-                  scale,
-                  offset,
-                  unsigned
+                  raw * scale
+                  + offset
+              ).reshape(-1)
+
+
+          def limpiar_cloud_probability(ds):
+
+              raw = np.asarray(
+                  ds[:]
               )
 
+              while raw.ndim > 2:
+                  raw = raw[0]
 
-          # ============================================================
-          # ABRIR ARCHIVO CRUDO
-          # ============================================================
+              raw = raw.astype(
+                  np.int64
+              )
+
+              fill = attr_value(
+                  ds,
+                  "_FillValue",
+                  65535
+              )
+
+              try:
+                  fill = int(fill)
+              except Exception:
+                  fill = 65535
+
+              invalid = (
+                  raw == fill
+              )
+
+              invalid |= (
+                  raw < 0
+              )
+
+              invalid |= (
+                  raw > 65530
+              )
+
+              probability = (
+                  raw.astype(
+                      np.float64
+                  )
+                  * 1.5261e-5
+              )
+
+              probability[invalid] = np.nan
+
+              probability[
+                  (probability < 0.0)
+                  |
+                  (probability > 1.0)
+              ] = np.nan
+
+              return raw, probability
+
+
+          def limpiar_acm(ds):
+
+              raw = np.asarray(
+                  ds[:]
+              )
+
+              while raw.ndim > 2:
+                  raw = raw[0]
+
+              raw = raw.astype(
+                  np.int16
+              )
+
+              fill = attr_value(
+                  ds,
+                  "_FillValue",
+                  255
+              )
+
+              try:
+                  fill = int(fill)
+              except Exception:
+                  fill = 255
+
+              raw[
+                  raw == fill
+              ] = -1
+
+              raw[
+                  (raw < 0)
+                  |
+                  (raw > 3)
+              ] = -1
+
+              return raw
+
+
+          def limpiar_dqf(ds):
+
+              raw = np.asarray(
+                  ds[:]
+              )
+
+              while raw.ndim > 2:
+                  raw = raw[0]
+
+              return raw.astype(
+                  np.int16
+              )
+
 
           with h5py.File(
               ARCHIVO,
@@ -306,193 +289,164 @@ jobs:
 
               print("")
               print("========================================")
-              print("VARIABLES")
+              print("VARIABLES PRINCIPALES")
               print("========================================")
 
-              for nombre in [
-                  "TCF",
+              necesarias = [
+                  "ACM",
+                  "Cloud_Probabilities",
                   "DQF",
                   "x",
                   "y",
                   "goes_imager_projection"
-              ]:
+              ]
+
+              for nombre in necesarias:
+
                   if nombre not in f:
+
                       raise RuntimeError(
-                          f"No existe {nombre} en el NetCDF."
+                          f"No existe la variable {nombre}."
                       )
 
-              tcf_ds = f["TCF"]
+              acm_ds = f["ACM"]
+
+              probability_ds = f[
+                  "Cloud_Probabilities"
+              ]
+
               dqf_ds = f["DQF"]
+
               x_ds = f["x"]
+
               y_ds = f["y"]
-              proj = f[
+
+              projection = f[
                   "goes_imager_projection"
               ]
 
-              # ========================================================
-              # TCF RAW
-              # ========================================================
-
-              (
-                  tcf_raw,
-                  tcf,
-                  tcf_fill,
-                  tcf_valid_range,
-                  tcf_scale,
-                  tcf_offset,
-                  tcf_unsigned
-              ) = decodificar_variable(
-                  tcf_ds,
-                  "TCF"
-              )
-
-              while tcf.ndim > 2:
-                  tcf = tcf[0]
-
-              while tcf_raw.ndim > 2:
-                  tcf_raw = tcf_raw[0]
-
-              if tcf.ndim != 2:
-                  raise RuntimeError(
-                      f"TCF no es 2D: {tcf.ndim}"
-                  )
-
-              print("")
-              print("========================================")
-              print("TCF RAW REAL")
-              print("========================================")
-
               print(
-                  "dtype:",
-                  tcf_raw.dtype
+                  "ACM:",
+                  acm_ds.shape,
+                  acm_ds.dtype
               )
 
               print(
-                  "shape:",
-                  tcf_raw.shape
+                  "Cloud_Probabilities:",
+                  probability_ds.shape,
+                  probability_ds.dtype
               )
 
               print(
-                  "_Unsigned:",
-                  tcf_unsigned
+                  "DQF:",
+                  dqf_ds.shape,
+                  dqf_ds.dtype
               )
 
-              print(
-                  "_FillValue:",
-                  tcf_fill
-              )
+              # ======================================================
+              # ACM
+              # ======================================================
 
-              print(
-                  "valid_range:",
-                  tcf_valid_range
-              )
-
-              print(
-                  "scale_factor:",
-                  tcf_scale
-              )
-
-              print(
-                  "add_offset:",
-                  tcf_offset
-              )
-
-              print(
-                  "RAW minimo:",
-                  int(
-                      np.min(tcf_raw)
-                  )
-              )
-
-              print(
-                  "RAW maximo:",
-                  int(
-                      np.max(tcf_raw)
-                  )
-              )
-
-              # ========================================================
-              # TCF EN CIENCIA
-              # ========================================================
-
-              tcf[
-                  (tcf < 0.0)
-                  |
-                  (tcf > 1.0)
-              ] = np.nan
-
-              tcf_percent = (
-                  tcf * 100.0
-              )
-
-              valid_tcf = np.isfinite(
-                  tcf_percent
+              acm = limpiar_acm(
+                  acm_ds
               )
 
               print("")
               print("========================================")
-              print("TCF DECODIFICADO")
+              print("ACM")
               print("========================================")
+
+              valores_acm, cantidades_acm = np.unique(
+                  acm[acm >= 0],
+                  return_counts=True
+              )
+
+              print(
+                  "Distribucion ACM:"
+              )
+
+              for valor, cantidad in zip(
+                  valores_acm,
+                  cantidades_acm
+              ):
+
+                  print(
+                      int(valor),
+                      int(cantidad)
+                  )
+
+              # ======================================================
+              # CLOUD PROBABILITIES
+              # ======================================================
+
+              probability_raw, probability = (
+                  limpiar_cloud_probability(
+                      probability_ds
+                  )
+              )
+
+              print("")
+              print("========================================")
+              print("CLOUD PROBABILITIES")
+              print("========================================")
+
+              valid_probability = np.isfinite(
+                  probability
+              )
 
               print(
                   "Pixeles validos:",
                   int(
                       np.count_nonzero(
-                          valid_tcf
+                          valid_probability
                       )
                   ),
                   "/",
-                  tcf_percent.size
+                  probability.size
               )
 
               if not np.any(
-                  valid_tcf
+                  valid_probability
               ):
+
                   raise RuntimeError(
-                      "TCF no tiene ningún pixel válido "
-                      "después de lectura HDF5 cruda."
+                      "Cloud_Probabilities no contiene "
+                      "ningún pixel válido."
                   )
 
               print(
-                  "TCF minimo:",
+                  "Minimo:",
                   float(
                       np.nanmin(
-                          tcf_percent
+                          probability
                       )
                   )
               )
 
               print(
-                  "TCF maximo:",
+                  "Maximo:",
                   float(
                       np.nanmax(
-                          tcf_percent
+                          probability
                       )
                   )
               )
 
               print(
-                  "TCF promedio:",
+                  "Promedio:",
                   float(
                       np.nanmean(
-                          tcf_percent
+                          probability
                       )
                   )
               )
 
-              # ========================================================
-              # DQF RAW
-              # ========================================================
+              # ======================================================
+              # DQF
+              # ======================================================
 
-              dqf_raw = np.asarray(
-                  dqf_ds[:]
-              )
-
-              while dqf_raw.ndim > 2:
-                  dqf_raw = dqf_raw[0]
-
-              dqf = dqf_raw.astype(
-                  np.int16
+              dqf = limpiar_dqf(
+                  dqf_ds
               )
 
               print("")
@@ -501,150 +455,49 @@ jobs:
               print("========================================")
 
               print(
-                  "dtype:",
-                  dqf.dtype
-              )
-
-              print(
-                  "min:",
-                  int(
-                      np.min(dqf)
-                  )
-              )
-
-              print(
-                  "max:",
-                  int(
-                      np.max(dqf)
-                  )
-              )
-
-              good = (
-                  dqf == 0
-              )
-
-              print(
                   "DQF=0:",
                   int(
                       np.count_nonzero(
-                          good
+                          dqf == 0
                       )
                   ),
                   "/",
                   dqf.size
               )
 
-              # ========================================================
-              # COORDENADAS
-              # ========================================================
+              # ======================================================
+              # COORDENADAS GOES
+              # ======================================================
 
-              x_raw = np.asarray(
-                  x_ds[:]
+              x = decode_coord(
+                  x_ds
               )
 
-              y_raw = np.asarray(
-                  y_ds[:]
+              y = decode_coord(
+                  y_ds
               )
 
-              x_unsigned = attr_value(
-                  x_ds,
-                  "_Unsigned",
-                  False
-              )
-
-              y_unsigned = attr_value(
-                  y_ds,
-                  "_Unsigned",
-                  False
-              )
-
-              x_raw = convertir_unsigned(
-                  x_raw,
-                  x_unsigned
-              )
-
-              y_raw = convertir_unsigned(
-                  y_raw,
-                  y_unsigned
-              )
-
-              x_scale = float(
-                  attr_value(
-                      x_ds,
-                      "scale_factor",
-                      1.0
-                  )
-              )
-
-              x_offset = float(
-                  attr_value(
-                      x_ds,
-                      "add_offset",
-                      0.0
-                  )
-              )
-
-              y_scale = float(
-                  attr_value(
-                      y_ds,
-                      "scale_factor",
-                      1.0
-                  )
-              )
-
-              y_offset = float(
-                  attr_value(
-                      y_ds,
-                      "add_offset",
-                      0.0
-                  )
-              )
-
-              x = (
-                  x_raw.astype(
-                      np.float64
-                  )
-                  * x_scale
-                  + x_offset
-              )
-
-              y = (
-                  y_raw.astype(
-                      np.float64
-                  )
-                  * y_scale
-                  + y_offset
-              )
-
-              x = np.asarray(
-                  x
-              ).reshape(-1)
-
-              y = np.asarray(
-                  y
-              ).reshape(-1)
-
-              # ========================================================
-              # PROYECCION GOES
-              # ========================================================
+              # ======================================================
+              # PROYECCION
+              # ======================================================
 
               semi_major = float(
                   attr_value(
-                      proj,
+                      projection,
                       "semi_major_axis"
                   )
               )
 
               semi_minor = float(
                   attr_value(
-                      proj,
+                      projection,
                       "semi_minor_axis"
                   )
               )
 
               perspective_height = float(
                   attr_value(
-                      proj,
+                      projection,
                       "perspective_point_height"
                   )
               )
@@ -652,26 +505,27 @@ jobs:
               longitude_origin = math.radians(
                   float(
                       attr_value(
-                          proj,
+                          projection,
                           "longitude_of_projection_origin"
                       )
                   )
               )
 
               sweep_axis = attr_value(
-                  proj,
+                  projection,
                   "sweep_angle_axis",
                   "x"
               )
 
               if sweep_axis != "x":
+
                   raise RuntimeError(
                       f"sweep_angle_axis inesperado: {sweep_axis}"
                   )
 
-              # ========================================================
-              # LAT/LON -> GOES
-              # ========================================================
+              # ======================================================
+              # LAT/LON -> GOES FIXED GRID
+              # ======================================================
 
               H = (
                   perspective_height
@@ -717,8 +571,7 @@ jobs:
                   * cos_lat
                   * math.cos(
                       lon
-                      -
-                      longitude_origin
+                      - longitude_origin
                   )
               )
 
@@ -727,8 +580,7 @@ jobs:
                   * cos_lat
                   * math.sin(
                       lon
-                      -
-                      longitude_origin
+                      - longitude_origin
                   )
               )
 
@@ -753,7 +605,8 @@ jobs:
               ix = int(
                   np.argmin(
                       np.abs(
-                          x - x_angle
+                          x
+                          - x_angle
                       )
                   )
               )
@@ -761,7 +614,8 @@ jobs:
               iy = int(
                   np.argmin(
                       np.abs(
-                          y - y_angle
+                          y
+                          - y_angle
                       )
                   )
               )
@@ -770,6 +624,16 @@ jobs:
               print("========================================")
               print("BAHIA BLANCA")
               print("========================================")
+
+              print(
+                  "Latitud:",
+                  LAT
+              )
+
+              print(
+                  "Longitud:",
+                  LON
+              )
 
               print(
                   "Indice X:",
@@ -781,26 +645,33 @@ jobs:
                   iy
               )
 
-              # ========================================================
-              # DIAGNOSTICO RAW EN EL PIXEL
-              # ========================================================
+              # ======================================================
+              # PIXEL CENTRAL
+              # ======================================================
 
-              raw_pixel = int(
-                  tcf_raw[
+              probability_point = float(
+                  probability[
                       iy,
                       ix
                   ]
               )
 
-              decoded_pixel = float(
-                  tcf_percent[
+              acm_point = int(
+                  acm[
                       iy,
                       ix
                   ]
               )
 
-              dqf_pixel = int(
+              dqf_point = int(
                   dqf[
+                      iy,
+                      ix
+                  ]
+              )
+
+              raw_probability_point = int(
+                  probability_raw[
                       iy,
                       ix
                   ]
@@ -812,47 +683,67 @@ jobs:
               print("========================================")
 
               print(
-                  "TCF RAW:",
-                  raw_pixel
+                  "Cloud probability RAW:",
+                  raw_probability_point
               )
 
               print(
-                  "TCF DECODIFICADO:",
-                  decoded_pixel
+                  "Cloud probability:",
+                  probability_point
+              )
+
+              print(
+                  "Cloud probability %:",
+                  (
+                      probability_point
+                      * 100.0
+                      if np.isfinite(
+                          probability_point
+                      )
+                      else None
+                  )
+              )
+
+              print(
+                  "ACM:",
+                  acm_point
               )
 
               print(
                   "DQF:",
-                  dqf_pixel
+                  dqf_point
               )
 
-              # ========================================================
-              # VENTANA 3x3
-              # ========================================================
-
-              radius = 1
+              # ======================================================
+              # VENTANA LOCAL 5x5
+              # ======================================================
 
               y0 = max(
                   0,
-                  iy - radius
+                  iy - RADIO
               )
 
               y1 = min(
-                  tcf_percent.shape[0],
-                  iy + radius + 1
+                  probability.shape[0],
+                  iy + RADIO + 1
               )
 
               x0 = max(
                   0,
-                  ix - radius
+                  ix - RADIO
               )
 
               x1 = min(
-                  tcf_percent.shape[1],
-                  ix + radius + 1
+                  probability.shape[1],
+                  ix + RADIO + 1
               )
 
-              window_tcf = tcf_percent[
+              window_probability = probability[
+                  y0:y1,
+                  x0:x1
+              ]
+
+              window_acm = acm[
                   y0:y1,
                   x0:x1
               ]
@@ -862,9 +753,13 @@ jobs:
                   x0:x1
               ]
 
-              valid_window = (
+              # ======================================================
+              # VALIDACION
+              # ======================================================
+
+              valid_probability_window = (
                   np.isfinite(
-                      window_tcf
+                      window_probability
                   )
                   &
                   (
@@ -872,74 +767,139 @@ jobs:
                   )
               )
 
-              valores = window_tcf[
-                  valid_window
-              ]
+              probability_values = (
+                  window_probability[
+                      valid_probability_window
+                  ]
+              )
+
+              acm_valid = (
+                  window_acm[
+                      (window_acm >= 0)
+                      &
+                      (window_dqf == 0)
+                  ]
+              )
 
               print("")
               print("========================================")
-              print("VENTANA 3x3")
+              print("VENTANA LOCAL 5x5")
               print("========================================")
 
               print(
                   "Pixeles validos:",
                   int(
-                      valores.size
+                      probability_values.size
                   ),
                   "/",
                   int(
-                      window_tcf.size
+                      window_probability.size
                   )
               )
 
-              if valores.size == 0:
+              if probability_values.size == 0:
+
                   raise RuntimeError(
-                      "No hay TCF válido con DQF=0 "
-                      "en la ventana de Bahía Blanca."
+                      "No hay Cloud_Probabilities "
+                      "validos con DQF=0 en Bahia Blanca."
                   )
 
-              nubosidad = round(
+              # ======================================================
+              # PROBABILIDAD MEDIA
+              # ======================================================
+
+              cloud_probability_mean = (
                   float(
                       np.mean(
-                          valores
+                          probability_values
                       )
-                  ),
+                  )
+              )
+
+              cloud_probability_percent = round(
+                  cloud_probability_mean
+                  * 100.0,
                   1
               )
 
-              punto = (
-                  round(
-                      decoded_pixel,
+              # ======================================================
+              # ACM: FRACCION DE PIXELES NUBLADOS
+              #
+              # 0 = claro
+              # 1 = probablemente claro
+              # 2 = probablemente nublado
+              # 3 = nublado
+              # ======================================================
+
+              if acm_valid.size > 0:
+
+                  cloudy_pixels = int(
+                      np.count_nonzero(
+                          acm_valid >= 2
+                      )
+                  )
+
+                  probably_cloudy_pixels = int(
+                      np.count_nonzero(
+                          acm_valid == 2
+                      )
+                  )
+
+                  clear_pixels = int(
+                      np.count_nonzero(
+                          acm_valid <= 1
+                      )
+                  )
+
+                  cloudy_fraction = (
+                      cloudy_pixels
+                      /
+                      acm_valid.size
+                  )
+
+                  cloudy_fraction_percent = round(
+                      cloudy_fraction
+                      * 100.0,
                       1
                   )
-                  if np.isfinite(
-                      decoded_pixel
-                  )
-                  else None
-              )
 
-              # ========================================================
+              else:
+
+                  cloudy_pixels = 0
+
+                  probably_cloudy_pixels = 0
+
+                  clear_pixels = 0
+
+                  cloudy_fraction_percent = None
+
+              # ======================================================
               # ESTADO
-              # ========================================================
+              # ======================================================
 
-              if nubosidad < 10:
+              if cloud_probability_percent < 10:
+
                   estado = "despejado"
 
-              elif nubosidad < 30:
+              elif cloud_probability_percent < 30:
+
                   estado = "poco_nublado"
 
-              elif nubosidad < 60:
+              elif cloud_probability_percent < 60:
+
                   estado = "parcialmente_nublado"
 
-              elif nubosidad < 85:
+              elif cloud_probability_percent < 85:
+
                   estado = "muy_nublado"
 
               else:
+
                   estado = "cubierto"
 
-              # ========================================================
+              # ======================================================
               # TIMESTAMP
-              # ========================================================
+              # ======================================================
 
               frame_start = attr_value(
                   f,
@@ -959,66 +919,159 @@ jobs:
               )
 
               if frame_utc is None:
+
                   raise RuntimeError(
                       "GOES sin timestamp."
                   )
 
-              # ========================================================
-              # JSON
-              # ========================================================
+              # ======================================================
+              # RESULTADO
+              # ======================================================
 
               resultado = {
+
                   "ok": True,
+
                   "fuente": "GOES-19",
-                  "producto": "ABI-L2-CCLF",
+
+                  "producto": "ABI-L2-ACMF",
+
                   "descripcion": (
-                      "Cloud Cover Layers - Full Disk"
+                      "Clear Sky Mask / Cloud Probability "
+                      "- Full Disk"
                   ),
+
                   "ciudad": "Bahía Blanca",
+
                   "latitud": LAT,
+
                   "longitud": LON,
+
                   "frame_goes_utc": frame_utc,
-                  "nubosidad_total_porcentaje": nubosidad,
-                  "nubosidad_punto_porcentaje": punto,
+
+                  "nubosidad_total_porcentaje": (
+                      cloud_probability_percent
+                  ),
+
+                  "nubosidad_punto_porcentaje": (
+                      round(
+                          probability_point
+                          * 100.0,
+                          1
+                      )
+                      if np.isfinite(
+                          probability_point
+                      )
+                      else None
+                  ),
+
+                  "fraccion_pixeles_nublados_porcentaje": (
+                      cloudy_fraction_percent
+                  ),
+
                   "estado_nubosidad": estado,
-                  "resolucion_producto": "10.0km at nadir",
-                  "variable_utilizada": "TCF",
+
+                  "resolucion_producto": (
+                      "2.0km at nadir"
+                  ),
+
+                  "variable_utilizada": (
+                      "Cloud_Probabilities"
+                  ),
+
+                  "clasificacion_acm_punto": (
+                      acm_point
+                      if acm_point >= 0
+                      else None
+                  ),
+
                   "calidad": {
-                      "metodo": "HDF5 RAW + DQF=0",
-                      "pixeles_validos_3x3": int(
-                          valores.size
+
+                      "metodo": (
+                          "GOES-19 ACMF "
+                          "+ Cloud_Probabilities "
+                          "+ DQF=0"
                       ),
-                      "pixeles_totales_3x3": int(
-                          window_tcf.size
+
+                      "pixeles_validos_5x5": int(
+                          probability_values.size
                       ),
-                      "dqf_punto": dqf_pixel
+
+                      "pixeles_totales_5x5": int(
+                          window_probability.size
+                      ),
+
+                      "dqf_punto": dqf_point
+
                   },
+
                   "diagnostico": {
-                      "tcf_raw_punto": raw_pixel,
-                      "tcf_decodificado_punto": punto,
-                      "tcf_scale_factor": tcf_scale,
-                      "tcf_add_offset": tcf_offset
+
+                      "cloud_probability_raw_punto": (
+                          raw_probability_point
+                      ),
+
+                      "cloud_probability_punto": (
+                          round(
+                              probability_point,
+                              6
+                          )
+                          if np.isfinite(
+                              probability_point
+                          )
+                          else None
+                      ),
+
+                      "cloud_probability_media": (
+                          round(
+                              cloud_probability_mean,
+                              6
+                          )
+                      ),
+
+                      "acm_punto": (
+                          acm_point
+                      ),
+
+                      "pixeles_nublados_5x5": (
+                          cloudy_pixels
+                      ),
+
+                      "pixeles_probablemente_nublados_5x5": (
+                          probably_cloudy_pixels
+                      ),
+
+                      "pixeles_claros_5x5": (
+                          clear_pixels
+                      )
+
                   },
+
                   "ventana_pixeles": {
+
                       "x": [
                           int(x0),
                           int(x1 - 1)
                       ],
+
                       "y": [
                           int(y0),
                           int(y1 - 1)
                       ]
+
                   },
+
                   "generado_utc": (
                       datetime.now(
                           timezone.utc
                       ).isoformat()
                   )
+
               }
 
-              # ========================================================
+              # ======================================================
               # GUARDAR JSON
-              # ========================================================
+              # ======================================================
 
               with open(
                   JSON_OUT,
@@ -1033,16 +1086,21 @@ jobs:
                       indent=2
                   )
 
-              # ========================================================
-              # PNG
-              # ========================================================
+              # ======================================================
+              # IMAGEN
+              # ======================================================
+
+              imagen = (
+                  probability
+                  * 100.0
+              )
 
               plt.figure(
-                  figsize=(8, 8)
+                  figsize=(9, 9)
               )
 
               plt.imshow(
-                  tcf_percent,
+                  imagen,
                   origin="upper",
                   vmin=0,
                   vmax=100,
@@ -1052,16 +1110,37 @@ jobs:
               plt.scatter(
                   [ix],
                   [iy],
-                  s=100,
+                  s=120,
                   marker="x"
               )
 
-              plt.title(
-                  "GOES-19 CCLF - Nubosidad Bahia Blanca"
+              plt.xlim(
+                  max(0, ix - 100),
+                  min(
+                      probability.shape[1],
+                      ix + 100
+                  )
               )
 
-              plt.xlabel("X")
-              plt.ylabel("Y")
+              plt.ylim(
+                  min(
+                      probability.shape[0],
+                      iy + 100
+                  ),
+                  max(0, iy - 100)
+              )
+
+              plt.title(
+                  "GOES-19 Cloud Probability - Bahia Blanca"
+              )
+
+              plt.xlabel(
+                  "X"
+              )
+
+              plt.ylabel(
+                  "Y"
+              )
 
               plt.tight_layout()
 
@@ -1072,9 +1151,13 @@ jobs:
 
               plt.close()
 
+              # ======================================================
+              # RESULTADO FINAL
+              # ======================================================
+
               print("")
               print("========================================")
-              print("GOES-19 OK")
+              print("GOES-19 ACMF OK")
               print("========================================")
 
               print(
@@ -1084,6 +1167,7 @@ jobs:
                       indent=2
                   )
               )
+          PY
 
       - name: Verificar resultado
         run: |
@@ -1092,84 +1176,74 @@ jobs:
           import math
           from pathlib import Path
 
-          json_path = Path(
+          path = Path(
               "data/goes/nubosidad.json"
           )
 
-          png_path = Path(
-              "data/goes/nubosidad_bahia_blanca.png"
-          )
-
-          if not json_path.exists():
+          if not path.exists():
               raise SystemExit(
-                  "ERROR: falta nubosidad.json"
+                  "Falta nubosidad.json"
               )
 
-          if not png_path.exists():
-              raise SystemExit(
-                  "ERROR: falta imagen PNG"
+          data = json.loads(
+              path.read_text(
+                  encoding="utf-8"
               )
-
-          with open(
-              json_path,
-              encoding="utf-8"
-          ) as f:
-              data = json.load(f)
-
-          valor = data.get(
-              "nubosidad_total_porcentaje"
           )
 
           if data.get("ok") is not True:
               raise SystemExit(
-                  "ERROR: ok no es true"
+                  "nubosidad.json no tiene ok=true"
               )
 
-          if not isinstance(
-              valor,
-              (int, float)
+          if data.get("fuente") != "GOES-19":
+              raise SystemExit(
+                  "Fuente GOES incorrecta"
+              )
+
+          probability = data.get(
+              "nubosidad_total_porcentaje"
+          )
+
+          if (
+              probability is None
+              or not math.isfinite(
+                  float(probability)
+              )
           ):
               raise SystemExit(
-                  "ERROR: nubosidad no numerica"
+                  "Nubosidad inválida"
               )
 
-          if not math.isfinite(
-              float(valor)
+          if not (
+              0 <= float(probability) <= 100
           ):
               raise SystemExit(
-                  "ERROR: nubosidad NaN"
+                  "Nubosidad fuera de rango"
               )
 
-          if not 0 <= float(valor) <= 100:
-              raise SystemExit(
-                  "ERROR: nubosidad fuera de 0-100"
-              )
-
-          calidad = data.get(
+          quality = data.get(
               "calidad",
               {}
           )
 
-          validos = int(
-              calidad.get(
-                  "pixeles_validos_3x3",
+          if int(
+              quality.get(
+                  "pixeles_validos_5x5",
                   0
               )
-          )
-
-          if validos <= 0:
+          ) <= 0:
               raise SystemExit(
-                  "ERROR: no hay pixeles validos"
+                  "No hay pixeles válidos"
               )
 
-          print("")
-          print("========================================")
-          print("VERIFICACION OK")
-          print("========================================")
+          print(
+              "VERIFICACION GOES OK"
+          )
 
           print(
               "Nubosidad:",
-              valor,
+              probability,
               "%"
           )
 
@@ -1179,46 +1253,31 @@ jobs:
                   "estado_nubosidad"
               )
           )
+          PY
 
-          print(
-              "Frame:",
-              data.get(
-                  "frame_goes_utc"
-              )
-          )
-
-          print(
-              "Pixeles validos:",
-              validos
-          )
-
-          print(
-              "TCF RAW:",
-              data.get(
-                  "diagnostico",
-                  {}
-              ).get(
-                  "tcf_raw_punto"
-              )
-          )
+          test -s data/goes/nubosidad.json
+          test -s data/goes/nubosidad_bahia_blanca.png
+          test -s data/goes/goes_acm.nc
 
       - name: Guardar resultado
+        shell: bash
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add data/goes/goes_ccl.nc
-          git add data/goes/nubosidad.json
-          git add data/goes/nubosidad_bahia_blanca.png
+          git add \
+            data/goes/goes_acm.nc \
+            data/goes/nubosidad.json \
+            data/goes/nubosidad_bahia_blanca.png
 
           if git diff --cached --quiet; then
-            echo "No hay cambios."
+            echo "Sin cambios para guardar."
             exit 0
           fi
 
           git commit \
-            -m "Actualizar nubosidad GOES-19 Bahia Blanca"
+            -m "Actualizar nubosidad GOES-19 ACMF"
 
-          git pull --rebase origin main
-
-          git push origin HEAD:main
+          git push
