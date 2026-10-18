@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows: ["Probar Radar SMN"]
     types: [completed]
+
   workflow_dispatch:
 
 permissions:
@@ -14,13 +15,111 @@ concurrency:
   group: climaar-intelligence
   cancel-in-progress: false
 
+
 jobs:
-  intelligence:
+
+  verificar-radar:
+
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
 
     runs-on: ubuntu-latest
+
+    outputs:
+      ejecutar: ${{ steps.verificar.outputs.ejecutar }}
+      run_id: ${{ steps.verificar.outputs.run_id }}
+
+    steps:
+
+      - name: Verificar artefacto RMA10
+        id: verificar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+
+        run: |
+          set -e
+
+          RUN_ID=""
+
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+
+            echo "Run Radar recibido: $RUN_ID"
+
+            ARTIFACTO="$(gh api \
+              "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.name=="radar-rma10" and .expired==false) | .id' \
+              | head -n 1)"
+
+            if [ -n "$ARTIFACTO" ]; then
+              echo "Artefacto radar-rma10 encontrado."
+              echo "ID artefacto: $ARTIFACTO"
+
+              echo "ejecutar=true" >> "$GITHUB_OUTPUT"
+              echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "No existe radar-rma10 en este run."
+            echo "El Radar terminó correctamente pero no hubo frame nuevo."
+            echo "Intelligence no se ejecutará."
+
+            echo "ejecutar=false" >> "$GITHUB_OUTPUT"
+            echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+
+          echo "Ejecución manual de Intelligence."
+          echo "Buscando último Radar exitoso con artefacto..."
+
+          while read -r CANDIDATO; do
+
+            [ -z "$CANDIDATO" ] && continue
+
+            echo "Comprobando Radar: $CANDIDATO"
+
+            ARTIFACTO="$(gh api \
+              "repos/$GH_REPO/actions/runs/$CANDIDATO/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.name=="radar-rma10" and .expired==false) | .id' \
+              | head -n 1)"
+
+            if [ -n "$ARTIFACTO" ]; then
+              echo "Encontrado artefacto válido."
+              echo "Run seleccionado: $CANDIDATO"
+              echo "ID artefacto: $ARTIFACTO"
+
+              echo "ejecutar=true" >> "$GITHUB_OUTPUT"
+              echo "run_id=$CANDIDATO" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+          done < <(
+            gh run list \
+              --workflow probar-radar-smn.yml \
+              --status success \
+              --limit 20 \
+              --json databaseId \
+              --jq '.[].databaseId'
+          )
+
+
+          echo "No se encontró ningún Radar exitoso con artefacto radar-rma10."
+
+          echo "ejecutar=false" >> "$GITHUB_OUTPUT"
+          echo "run_id=" >> "$GITHUB_OUTPUT"
+
+
+  intelligence:
+
+    needs: verificar-radar
+
+    if: needs.verificar-radar.outputs.ejecutar == 'true'
+
+    runs-on: ubuntu-latest
+
     timeout-minutes: 12
 
     steps:
@@ -29,6 +128,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
 
       - name: Preparar directorios
         run: |
@@ -39,27 +139,14 @@ jobs:
           mkdir -p logs
           mkdir -p /tmp/radar-artifact
 
+
       - name: Obtener artefacto del radar
         env:
           GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ needs.verificar-radar.outputs.run_id }}
+
         run: |
           set -e
-
-          RUN_ID="${{ github.event.workflow_run.id }}"
-
-          if [ -z "$RUN_ID" ]; then
-            RUN_ID="$(gh run list \
-              --workflow probar-radar-smn.yml \
-              --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId')"
-          fi
-
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "ERROR: no se encontró una ejecución exitosa de Probar Radar SMN."
-            exit 1
-          fi
 
           echo "Run radar utilizado: $RUN_ID"
 
@@ -67,30 +154,50 @@ jobs:
             --name radar-rma10 \
             --dir /tmp/radar-artifact
 
+
           if [ -d /tmp/radar-artifact/data/radar ]; then
-            cp -a /tmp/radar-artifact/data/radar/. data/radar/
+
+            cp -a \
+              /tmp/radar-artifact/data/radar/. \
+              data/radar/
+
           else
-            cp -a /tmp/radar-artifact/. data/radar/ 2>/dev/null || true
+
+            cp -a \
+              /tmp/radar-artifact/. \
+              data/radar/ \
+              2>/dev/null || true
+
           fi
 
+
           test -s data/radar/resultado_procesamiento.json
+
           test -s data/radar/seguimiento/estado.json
+
           test -s data/radar/seguimiento/seguimiento_temporal.json
+
           test -s data/radar/seguimiento/prediccion_evolucion.json
+
           test -s data/radar/radar_timestamp.txt
+
 
       - name: Actualizar observación SAZB
         continue-on-error: true
+
         run: |
           python -m pip install requests
           python scripts/smn_observaciones.py || true
+
 
       - name: Dependencias de inteligencia
         run: |
           set -e
 
           python -m pip install --upgrade pip
+
           pip install -r requirements.txt
+
 
       - name: Conectar RMA10 con Storm Engine
         run: |
@@ -99,6 +206,7 @@ jobs:
           python scripts/adaptar_rma10_intelligence.py
 
           test -s data/radar/radar_nowcast.json
+
 
       - name: Georreferenciar RMA10
         run: |
@@ -109,6 +217,7 @@ jobs:
           test -s data/radar/radar_nowcast.json
 
           echo "Georreferenciación RMA10 completada."
+
 
       - name: Acumular dataset RMA10
         run: |
@@ -123,14 +232,18 @@ jobs:
           from pathlib import Path
           from collections import Counter
 
-          p = Path("data/radar/radar_features_rma10.csv")
+          p = Path(
+              "data/radar/radar_features_rma10.csv"
+          )
 
           with p.open(
               "r",
               encoding="utf-8",
               newline=""
           ) as f:
-              rows = list(csv.DictReader(f))
+              rows = list(
+                  csv.DictReader(f)
+              )
 
           if not rows:
               raise SystemExit(
@@ -138,12 +251,16 @@ jobs:
               )
 
           timestamps = [
-              r.get("frame_time", "").strip()
+              r.get(
+                  "frame_time",
+                  ""
+              ).strip()
               for r in rows
           ]
 
           timestamps_validos = [
-              x for x in timestamps
+              x
+              for x in timestamps
               if x
           ]
 
@@ -177,15 +294,19 @@ jobs:
           )
           PY
 
+
       - name: Ejecutar predicción ML RMA10
         run: |
           set -e
 
           python scripts/prediccion_rma10_ml.py
 
-          test -s data/radar/seguimiento/prediccion_ml_rma10.json
+          test -s \
+            data/radar/seguimiento/prediccion_ml_rma10.json
 
-          echo "Predicción ML RMA10 generada correctamente."
+          echo \
+            "Predicción ML RMA10 generada correctamente."
+
 
       - name: Verificar predicción ML RMA10
         run: |
@@ -228,7 +349,9 @@ jobs:
                   "ERROR: formato de predicciones ML inválido."
               )
 
-          if tracks != len(predicciones):
+          if tracks != len(
+              predicciones
+          ):
               raise SystemExit(
                   "ERROR: cantidad de tracks y predicciones no coincide."
               )
@@ -262,13 +385,16 @@ jobs:
           )
           PY
 
+
       - name: Fusionar meteorología
         run: |
           set -e
 
           python scripts/meteorologia_fusion.py
 
-          test -s data/ia/estado_meteorologico.json
+          test -s \
+            data/ia/estado_meteorologico.json
+
 
       - name: Ejecutar Storm Engine
         run: |
@@ -276,8 +402,12 @@ jobs:
 
           python scripts/tormenta_intelligence.py
 
-          test -s data/ia/inteligencia_tormenta.json
-          test -s data/ia/historial_inteligencia_tormenta.csv
+          test -s \
+            data/ia/inteligencia_tormenta.json
+
+          test -s \
+            data/ia/historial_inteligencia_tormenta.csv
+
 
       - name: Ejecutar motor de decisión integrado
         run: |
@@ -285,7 +415,9 @@ jobs:
 
           python scripts/motor_decision_climaar.py
 
-          test -s data/ia/resultado_final.json
+          test -s \
+            data/ia/resultado_final.json
+
 
       - name: Verificar sincronización final
         run: |
@@ -351,19 +483,27 @@ jobs:
           )
 
           if nowcast_ts:
-              radar_normalizado = radar_ts.replace(
-                  "Z",
-                  "+00:00"
+
+              radar_normalizado = (
+                  radar_ts.replace(
+                      "Z",
+                      "+00:00"
+                  )
               )
 
-              nowcast_normalizado = str(
-                  nowcast_ts
-              ).replace(
-                  "Z",
-                  "+00:00"
+              nowcast_normalizado = (
+                  str(
+                      nowcast_ts
+                  ).replace(
+                      "Z",
+                      "+00:00"
+                  )
               )
 
-              if radar_normalizado != nowcast_normalizado:
+              if (
+                  radar_normalizado
+                  != nowcast_normalizado
+              ):
                   print(
                       "AVISO: timestamp radar/nowcast diferente."
                   )
@@ -380,18 +520,23 @@ jobs:
 
           print(
               "Score integrado:",
-              motor.get("score_integrado")
+              motor.get(
+                  "score_integrado"
+              )
           )
 
           print(
               "Tracks ML:",
-              ml.get("tracks_analizados")
+              ml.get(
+                  "tracks_analizados"
+              )
           )
 
           print(
               "Sincronización final verificada."
           )
           PY
+
 
       - name: Sincronizar repositorio antes de persistir
         run: |
@@ -407,6 +552,7 @@ jobs:
             --rebase \
             --autostash \
             origin main
+
 
       - name: Persistir resultados
         run: |
@@ -440,30 +586,45 @@ jobs:
             -m "ClimaAR: integrar prediccion ML RMA10"
 
           for intento in 1 2 3; do
-            echo "Intento de push: $intento/3"
+
+            echo \
+              "Intento de push: $intento/3"
 
             if git push origin HEAD:main; then
-              echo "Push realizado correctamente."
+
+              echo \
+                "Push realizado correctamente."
+
               exit 0
+
             fi
 
             if [ "$intento" -lt 3 ]; then
-              echo "Push rechazado. Sincronizando nuevamente..."
+
+              echo \
+                "Push rechazado. Sincronizando nuevamente..."
 
               git pull \
                 --rebase \
                 --autostash \
                 origin main
+
             fi
+
           done
 
-          echo "ERROR: no se pudo realizar el push."
+          echo \
+            "ERROR: no se pudo realizar el push."
+
           exit 1
+
 
       - name: Publicar artefacto de resultado
         uses: actions/upload-artifact@v4
+
         with:
           name: climaar-resultado-final
+
           path: |
             data/radar/radar_nowcast.json
             data/radar/radar_features_rma10.csv
@@ -476,8 +637,10 @@ jobs:
             data/ia/resultado_final.json
             data/meteorologia/ambiente_futuro.json
             data/sazb/status.json
+
           if-no-files-found: warn
           retention-days: 30
+
 
       - name: Verificar resultado final
         run: |
