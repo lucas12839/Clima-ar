@@ -2212,43 +2212,26 @@ def procesar_frame_secuencia(
                 ],
         }
 
-    activos_previos = []
-    intervalos_por_track = {}
+    activos_previos = [
 
-    for track in estado["tracks"]:
+        track
 
-        if track.get("activo") is not True:
-            continue
+        for track in estado[
+            "tracks"
+        ]
 
-        track_ts = parse_iso(
-            track.get("ultimo_frame")
+        if (
+            track.get(
+                "activo"
+            ) is True
+
+            and
+
+            track.get(
+                "ultimo_frame"
+            ) == anterior_ts
         )
-
-        if track_ts is None:
-            continue
-
-        if track_ts > actual_dt:
-            continue
-
-        gap_minutos = (
-            actual_dt - track_ts
-        ).total_seconds() / 60.0
-
-        if gap_minutos <= 0:
-            continue
-
-        if gap_minutos > MAX_INTERVALO * (MAX_MISSED_FRAMES + 1):
-            continue
-
-        missed = entero(
-            track.get("missed_frames", 0)
-        )
-
-        if missed > MAX_MISSED_FRAMES:
-            continue
-
-        activos_previos.append(track)
-        intervalos_por_track[track["track_id"]] = gap_minutos
+    ]
 
     candidatos = []
 
@@ -2300,15 +2283,10 @@ def procesar_frame_secuencia(
             nucleos
         ):
 
-            intervalo_track = intervalos_por_track.get(
-                track["track_id"],
-                intervalo,
-            )
-
             comp = compatibilidad(
                 anterior,
                 actual,
-                intervalo_track,
+                intervalo,
                 track
             )
 
@@ -2438,16 +2416,11 @@ def procesar_frame_secuencia(
             ]
         ]
 
-        intervalo_track = intervalos_por_track.get(
-            track["track_id"],
-            intervalo,
-        )
-
         actualizar_track(
             track,
             nucleo,
             radar_ts,
-            intervalo_track,
+            intervalo,
             calidad
         )
 
@@ -2824,7 +2797,8 @@ def nucleos_desde_imagen(
 
         matriz, _, _ = (
             aplicar_mascara_func(
-                matriz
+                matriz,
+                ruta_actual=path
             )
         )
 
