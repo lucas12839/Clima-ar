@@ -98,14 +98,6 @@ def radar_timestamp() -> str | None:
     if value:
         return value
 
-    nowcast = read_json(NOWCAST_FILE) or {}
-    block = nowcast.get("nowcast")
-
-    if isinstance(block, dict):
-        value = block.get("frame_actual_utc")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
     return None
 
 
@@ -298,11 +290,15 @@ def synchronized_frame_status() -> dict[str, Any]:
 
     ml_ts = ml.get("frame_radar")
 
+    radar_dt = parse_iso(radar_ts)
+    nowcast_dt = parse_iso(nowcast_ts)
+    ml_dt = parse_iso(ml_ts)
+
     equal = bool(
-        radar_ts
-        and nowcast_ts
-        and ml_ts
-        and radar_ts == nowcast_ts == ml_ts
+        radar_dt is not None
+        and nowcast_dt is not None
+        and ml_dt is not None
+        and radar_dt == nowcast_dt == ml_dt
     )
 
     return {
