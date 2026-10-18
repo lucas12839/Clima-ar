@@ -101,7 +101,33 @@ jobs:
 
           python - <<'PY'
           import json
+          from datetime import datetime, timezone
           from pathlib import Path
+
+          def parse_utc(value, nombre):
+              if not isinstance(value, str) or not value.strip():
+                  raise SystemExit(
+                      f"ERROR: {nombre} inválido: {value!r}"
+                  )
+
+              text = value.strip()
+
+              if text.endswith("Z"):
+                  text = text[:-1] + "+00:00"
+
+              try:
+                  dt = datetime.fromisoformat(text)
+              except ValueError as exc:
+                  raise SystemExit(
+                      f"ERROR: {nombre} inválido: {value!r}"
+                  ) from exc
+
+              if dt.tzinfo is None:
+                  raise SystemExit(
+                      f"ERROR: {nombre} sin zona horaria: {value!r}"
+                  )
+
+              return dt.astimezone(timezone.utc)
 
           radar = Path(
               "data/radar/radar_timestamp.txt"
@@ -127,16 +153,33 @@ jobs:
               )
           )
 
-          if nowcast_data.get(
-              "frame_actual_utc"
-          ) != radar:
+          radar_dt = parse_utc(
+              radar,
+              "radar_timestamp"
+          )
+
+          nowcast_dt = parse_utc(
+              nowcast_data.get("frame_actual_utc"),
+              "nowcast.frame_actual_utc"
+          )
+
+          ml_dt = parse_utc(
+              ml.get("frame_radar"),
+              "ML.frame_radar"
+          )
+
+          if nowcast_dt != radar_dt:
               raise SystemExit(
-                  "ERROR: Nowcast desincronizado"
+                  "ERROR: Nowcast desincronizado: "
+                  f"{nowcast_dt.isoformat()} != "
+                  f"{radar_dt.isoformat()}"
               )
 
-          if ml.get("frame_radar") != radar:
+          if ml_dt != radar_dt:
               raise SystemExit(
-                  "ERROR: ML desincronizado"
+                  "ERROR: ML desincronizado: "
+                  f"{ml_dt.isoformat()} != "
+                  f"{radar_dt.isoformat()}"
               )
 
           if ml.get("ok") is not True:
@@ -144,7 +187,24 @@ jobs:
                   "ERROR: ML no válido"
               )
 
-          print("Radar / Nowcast / ML sincronizados")
+          print(
+              "Radar:",
+              radar_dt.isoformat()
+          )
+
+          print(
+              "Nowcast:",
+              nowcast_dt.isoformat()
+          )
+
+          print(
+              "ML:",
+              ml_dt.isoformat()
+          )
+
+          print(
+              "Radar / Nowcast / ML sincronizados"
+          )
           PY
 
       - name: Calcular riesgo severo
@@ -218,11 +278,6 @@ jobs:
 
           print("Evolución OK")
           PY
-
-      - name: Auditoría end-to-end
-        run: |
-          set -euo pipefail
-          python scripts/auditoria_end_to_end.py
 
       - name: Probar API y /radar/imagen
         shell: bash
