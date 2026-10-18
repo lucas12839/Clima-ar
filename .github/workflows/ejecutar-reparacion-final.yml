@@ -24,19 +24,16 @@ jobs:
           python -m py_compile scripts/prediccion_rma10_ml.py
           python -m py_compile seguimiento_temporal.py
 
-      - name: Guardar cambios
+      - name: Guardar cambios no workflow
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
-            .github/workflows/climaar-auto-radar.yml \
-            .github/workflows/probar-radar-smn.yml \
-            .github/workflows/climaar-intelligence.yml \
             scripts/prediccion_rma10_ml.py \
             seguimiento_temporal.py \
             app.py
 
-          git diff --cached --quiet || git commit -m "ClimaAR: auditoria y reparacion final"
+          git diff --cached --quiet || git commit -m "ClimaAR: reparar motor RMA10"
 
           git push
