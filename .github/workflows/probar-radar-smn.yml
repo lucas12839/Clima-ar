@@ -118,15 +118,11 @@ jobs:
           path = Path("data/radar/actual.png")
 
           if path.stat().st_size <= 1024:
-              raise SystemExit(
-                  "ERROR: PNG demasiado pequeño"
-              )
+              raise SystemExit("ERROR: PNG demasiado pequeño")
 
           with Image.open(path) as image:
               if image.format != "PNG":
-                  raise SystemExit(
-                      "ERROR: la captura no es PNG"
-                  )
+                  raise SystemExit("ERROR: la captura no es PNG")
 
               image.verify()
 
@@ -221,17 +217,14 @@ jobs:
           )
 
           if old_ts and current_ts == old_ts:
-              new_frame = "false"
               accepted = "false"
               motivo = "timestamp_repetido"
 
           elif old_hash and current_hash == old_hash:
-              new_frame = "false"
               accepted = "false"
               motivo = "imagen_repetida"
 
           else:
-              new_frame = "true"
               accepted = "true"
               motivo = "nuevo_frame"
 
@@ -242,9 +235,6 @@ jobs:
               "a",
               encoding="utf-8"
           ) as output:
-              output.write(
-                  f"new_frame={new_frame}\n"
-              )
               output.write(
                   f"accepted={accepted}\n"
               )
@@ -440,49 +430,74 @@ jobs:
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add \
-            data/radar/actual.png \
-            data/radar/latest.png \
-            data/radar/radar_timestamp.txt \
-            data/radar/ultimo_radar_timestamp.txt \
-            data/radar/ultimo_radar_sha256.txt \
-            data/radar/continuidad.txt \
-            data/radar/resultado_procesamiento.json \
-            data/radar/mascara_ecos_estaticos.json \
-            data/radar/mascara_ecos_estaticos.png \
-            data/radar/mascara_ecos_estaticos_confianza.png \
-            data/radar/seguimiento \
-            data/radar/prediccion \
-            data/radar/procesado \
-            data/radar/historico \
-            .climaar/estado_rma10.json
+          # Incluir TODOS los cambios generados por el procesamiento.
+          # El error anterior se producía porque había cambios
+          # modificados que no estaban incluidos en el git add.
+          git add -A data/radar .climaar
 
-          git diff --cached --quiet && exit 0
+          if git diff --cached --quiet; then
+            echo "No hay cambios para publicar."
+            exit 0
+          fi
 
           git commit \
             -m "ClimaAR: actualizar RMA10"
 
+          # Después del commit no deben quedar cambios locales.
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "ERROR: quedaron cambios sin confirmar después del commit."
+            git status --short
+            exit 1
+          fi
+
           for intento in 1 2 3; do
+            echo "Intento de sincronización: $intento"
+
             git fetch origin main
 
-            git rebase origin/main || {
-              git rebase --abort || true
+            # El checkout ya está limpio.
+            # Si otro workflow publicó mientras procesábamos,
+            # rebaseamos nuestro commit encima de main.
+            if git rebase origin/main; then
+              echo "Rebase correcto."
+            else
+              echo "Rebase falló."
+
+              git rebase --abort 2>/dev/null || true
+
+              if [ "$intento" -eq 3 ]; then
+                git status --short
+                exit 1
+              fi
+
+              git reset --hard HEAD
+              sleep 2
+              continue
+            fi
+
+            # Comprobar nuevamente que el rebase dejó el árbol limpio.
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+              echo "ERROR: el rebase dejó cambios locales."
+              git status --short
 
               if [ "$intento" -eq 3 ]; then
                 exit 1
               fi
 
+              git reset --hard HEAD
               sleep 2
               continue
-            }
+            fi
 
             if git push origin HEAD:main; then
-              echo \
-                "Push exitoso en intento $intento"
+              echo "Push exitoso en intento $intento."
               exit 0
             fi
 
+            echo "Push falló en intento $intento."
+
             if [ "$intento" -eq 3 ]; then
+              git status --short
               exit 1
             fi
 
