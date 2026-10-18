@@ -20,6 +20,7 @@ DECISION_FILE = BASE_DIR / "data" / "ia" / "resultado_final.json"
 STORM_FILE = BASE_DIR / "data" / "ia" / "inteligencia_tormenta.json"
 METEO_FILE = BASE_DIR / "data" / "ia" / "estado_meteorologico.json"
 PREDICTION_FILE = RADAR_DIR / "seguimiento" / "prediccion_evolucion.json"
+ML_PREDICTION_FILE = RADAR_DIR / "seguimiento" / "prediccion_ml_rma10.json"
 TIMESTAMP_FILE = RADAR_DIR / "radar_timestamp.txt"
 ACTUAL_IMAGE = RADAR_DIR / "actual.png"
 
@@ -679,6 +680,25 @@ def prediccion() -> dict[str, Any]:
             "fuente": FUENTE,
         }
     )
+
+
+@app.get("/prediccion/en-vivo")
+def prediccion_en_vivo() -> dict[str, Any]:
+    radar_ts = radar_timestamp()
+    age = frame_age_minutes(radar_ts)
+    ml = read_json(ML_PREDICTION_FILE) or {}
+
+    return {
+        "estado": "ok" if ml else "sin_datos",
+        "fuente_radar": FUENTE,
+        "radar": "RMA10",
+        "modo": "PREDICCION_IA_ENTRE_FRAMES",
+        "ultimo_radar_real_utc": radar_ts,
+        "ultimo_radar_edad_minutos": round(age, 2) if age is not None else None,
+        "actualizado_utc": datetime.now(timezone.utc).isoformat(),
+        "mensaje": "Predicción IA en curso · estimación entre datos de radar",
+        "prediccion": ml,
+    }
 
 
 @app.get("/tormenta")

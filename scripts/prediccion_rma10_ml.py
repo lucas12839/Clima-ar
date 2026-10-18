@@ -21,6 +21,7 @@ STATE_PATH = ROOT / "data/radar/seguimiento/estado.json"
 RESULTADO_PATH = ROOT / "data/radar/resultado_procesamiento.json"
 DATASET_PATH = ROOT / "data/radar/rma10_dataset_historico.csv"
 OUTPUT_PATH = ROOT / "data/radar/seguimiento/prediccion_ml_rma10.json"
+RADAR_TIMESTAMP_PATH = ROOT / "data/radar/radar_timestamp.txt"
 
 RADAR_DIAMETRO_KM = 240.0
 
@@ -433,6 +434,16 @@ def get_motion(track):
     )
 
 
+def read_radar_timestamp():
+    if not RADAR_TIMESTAMP_PATH.exists():
+        return None
+    try:
+        value = RADAR_TIMESTAMP_PATH.read_text(encoding="utf-8").strip()
+        return value or None
+    except Exception:
+        return None
+
+
 def get_probability(
     model,
     row,
@@ -767,21 +778,25 @@ def build_probability_calibration(
                 )
             )
 
+            ece_raw = expected_calibration_error(y_evaluation, raw_evaluation)
+            ece_calibrated = expected_calibration_error(y_evaluation, calibrated)
+
+            use_calibrated = (
+                len(y_evaluation) >= CALIBRATION_MIN_SAMPLES
+                and ece_raw is not None
+                and ece_calibrated is not None
+                and brier_calibrated <= brier_raw
+                and ece_calibrated <= ece_raw
+            )
+
             calibration[key] = {
-                "enabled": True,
+                "enabled": bool(use_calibrated),
                 "method": "PLATT_SCALING_LOGIT",
                 "samples": int(len(y)),
-                "positive_samples": int(
-                    y.sum()
-                ),
-                "a": round(
-                    a,
-                    10
-                ),
-                "b": round(
-                    b,
-                    10
-                ),
+                "positive_samples": int(y.sum()),
+                "a": round(a, 10),
+                "b": round(b, 10),
+                "selection": "CALIBRATED" if use_calibrated else "RAW",
             }
 
             metrics[key] = {
@@ -803,14 +818,9 @@ def build_probability_calibration(
                     brier_calibrated,
                     6
                 ),
-                "ece_raw": expected_calibration_error(
-                    y_evaluation,
-                    raw_evaluation,
-                ),
-                "ece_calibrated": expected_calibration_error(
-                    y_evaluation,
-                    calibrated,
-                ),
+                "ece_raw": ece_raw,
+                "ece_calibrated": ece_calibrated,
+                "selection": "CALIBRATED" if use_calibrated else "RAW",
             }
 
     return {
@@ -1175,7 +1185,8 @@ def main():
         )
 
     timestamp = (
-        resultado.get(
+        read_radar_timestamp()
+        or resultado.get(
             "imagen_procesada"
         )
     )
@@ -1207,7 +1218,7 @@ def main():
             list(HORIZONS),
 
         "calibracion_probabilistica": {
-            "aplicada": True,
+            "aplicada": calibrated_values > 0,
             "metodo": "PLATT_SCALING_LOGIT",
             "tracks_calibracion": probability_calibration[
                 "calibration_tracks"
