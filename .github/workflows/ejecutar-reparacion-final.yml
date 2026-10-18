@@ -1,0 +1,26 @@
+name: Ejecutar reparacion final
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  reparar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Ejecutar reparacion
+        run: python reparacion_final_climaar.py
+
+      - name: Guardar cambios
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py scripts/prediccion_rma10_ml.py
+          git diff --cached --quiet || git commit -m "ClimaAR: reparar sincronizacion ML y prediccion en vivo"
+          git push
