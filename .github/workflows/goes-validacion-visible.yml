@@ -27,6 +27,8 @@ jobs:
         env:
           AWS_DEFAULT_REGION: us-east-1
         run: |
+          set -e
+
           mkdir -p data/goes
 
           cat > /tmp/validar_goes.py <<'PY'
@@ -45,7 +47,6 @@ jobs:
 
           LAT = -38.72
           LON = -62.27
-
           BUCKET = "noaa-goes19"
 
           s3 = boto3.client(
@@ -70,23 +71,33 @@ jobs:
               except Exception:
                   return None
 
-          def list_files(prefix, contains):
-              paginator = s3.get_paginator("list_objects_v2")
+          def list_files(prefix, token):
               result = []
 
-              for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+              paginator = s3.get_paginator(
+                  "list_objects_v2"
+              )
+
+              for page in paginator.paginate(
+                  Bucket=BUCKET,
+                  Prefix=prefix
+              ):
                   for obj in page.get("Contents", []):
                       key = obj["Key"]
-                      if contains in key and key.endswith(".nc"):
+
+                      if (
+                          token in key
+                          and key.endswith(".nc")
+                      ):
                           result.append(key)
 
               return result
 
-          def buscar_archivo(producto, canal=None, horas=3):
+          def buscar(producto, token):
               ahora = now_utc()
               candidatos = []
 
-              for h in range(horas + 1):
+              for h in range(0, 4):
                   t = ahora - timedelta(hours=h)
 
                   prefix = (
@@ -96,71 +107,90 @@ jobs:
                       f"{t.hour:02d}/"
                   )
 
-                  if producto == "CMIPF":
-                      filtro = "M6C02_G19_"
-                  else:
-                      filtro = "M6_G19_"
+                  print("Buscando:", prefix)
 
-                  try:
-                      archivos = list_files(prefix, filtro)
-                  except Exception as e:
-                      print("Error listando", prefix, e)
-                      continue
+                  archivos = list_files(
+                      prefix,
+                      token
+                  )
 
                   for key in archivos:
                       ts = parse_goes_time(key)
+
                       if ts is None:
                           continue
 
-                      diferencia = abs((ahora - ts).total_seconds())
+                      edad = abs(
+                          (
+                              ahora - ts
+                          ).total_seconds()
+                      )
 
                       candidatos.append(
-                          (diferencia, ts, key)
+                          (edad, ts, key)
                       )
 
               if not candidatos:
                   raise RuntimeError(
-                      f"No se encontró producto GOES-{producto}"
+                      f"No se encontró {producto}"
                   )
 
-              candidatos.sort(key=lambda x: x[0])
+              candidatos.sort(
+                  key=lambda x: x[0]
+              )
 
-              diferencia, ts, key = candidatos[0]
+              edad, ts, key = candidatos[0]
 
-              print()
-              print("PRODUCTO:", producto)
-              print("ARCHIVO:", key)
-              print("FRAME:", ts.isoformat())
-              print("EDAD MINUTOS:", diferencia / 60.0)
+              print("Encontrado:", key)
+              print("Frame:", ts.isoformat())
+              print("Edad:", edad / 60.0, "min")
 
               return key, ts
 
-          def descargar(key, destino):
+          def descargar(key, path):
               print("Descargando:", key)
 
               s3.download_file(
                   BUCKET,
                   key,
-                  destino
+                  path
               )
 
-              if not os.path.exists(destino):
-                  raise RuntimeError("No se descargó " + key)
-
-              if os.path.getsize(destino) < 100000:
+              if not os.path.exists(path):
                   raise RuntimeError(
-                      f"Archivo sospechosamente pequeño: {destino}"
+                      f"No existe {path}"
+                  )
+
+              size = os.path.getsize(path)
+
+              print(
+                  "Archivo:",
+                  path,
+                  "bytes:",
+                  size
+              )
+
+              if size < 100000:
+                  raise RuntimeError(
+                      f"Archivo demasiado pequeño: {path}"
                   )
 
           def attr_float(obj, name, default=None):
-              value = obj.attrs.get(name, default)
+              value = obj.attrs.get(
+                  name,
+                  default
+              )
 
               if value is None:
                   return default
 
-              if isinstance(value, np.ndarray):
+              if isinstance(
+                  value,
+                  np.ndarray
+              ):
                   if value.size == 0:
                       return default
+
                   value = value.flat[0]
 
               try:
@@ -168,8 +198,20 @@ jobs:
               except Exception:
                   return default
 
-          def geolocate(x, y, h5):
-              proj = h5["goes_imager_projection"]
+          def geolocation_arrays(f):
+              x = np.asarray(
+                  f["x"][:],
+                  dtype=np.float64
+              )
+
+              y = np.asarray(
+                  f["y"][:],
+                  dtype=np.float64
+              )
+
+              proj = f[
+                  "goes_imager_projection"
+              ]
 
               H = attr_float(
                   proj,
@@ -183,87 +225,84 @@ jobs:
                   )
               )
 
-              r_eq = attr_float(
+              a = attr_float(
                   proj,
                   "semi_major_axis"
               )
 
-              r_pol = attr_float(
+              b = attr_float(
                   proj,
                   "semi_minor_axis"
               )
 
-              if None in (H, lon0, r_eq, r_pol):
+              if None in (
+                  H,
+                  a,
+                  b
+              ):
                   raise RuntimeError(
-                      "Metadatos de proyección incompletos"
+                      "Proyección GOES incompleta"
                   )
 
-              x = np.asarray(x, dtype=np.float64)
-              y = np.asarray(y, dtype=np.float64)
-
-              a = r_eq
-              b = r_pol
-              h = H
-
-              lambda_0 = lon0
-
-              e = math.sqrt(
-                  (a * a - b * b) / (a * a)
+              xx, yy = np.meshgrid(
+                  x,
+                  y
               )
 
-              sin_y = np.sin(y)
-              cos_y = np.cos(y)
-              cos_x = np.cos(x)
+              sinx = np.sin(xx)
+              cosx = np.cos(xx)
+              siny = np.sin(yy)
+              cosy = np.cos(yy)
 
-              a_var = (
-                  sin_y * sin_y
-                  + cos_y * cos_y
-                  * (
-                      cos_x * cos_x
-                      + (a * a / (b * b))
-                      * sin_x_safe(x) ** 2
-                  )
-              )
+              a2 = a * a
+              b2 = b * b
 
-              # Recalcular usando formulación estándar ABI
               sd = np.sqrt(
-                  (h * np.cos(y) * np.cos(x)) ** 2
-                  - (
+                  (
+                      H * cosy * cosx
+                  ) ** 2
+                  -
+                  (
+                      siny ** 2
+                      +
                       (
-                          np.sin(y) ** 2
-                          + (
-                              a * a
-                              / (b * b)
-                          )
-                          * np.cos(y) ** 2
-                          * np.sin(x) ** 2
+                          a2 / b2
                       )
-                      * (h * h - a * a)
+                      * cosy ** 2
+                      * sinx ** 2
+                  )
+                  * (
+                      H * H - a2
                   )
               )
 
               sn = (
-                  h
-                  * np.cos(y)
-                  * np.cos(x)
+                  H * cosy * cosx
                   - sd
               )
 
-              s1 = sn * np.cos(y) * np.cos(x)
-              s2 = -sn * np.sin(y)
-              s3 = sn * np.cos(y) * np.sin(x)
+              s1 = sn * cosy * cosx
+              s2 = -sn * siny
+              s3 = sn * cosy * sinx
 
               lat = np.arctan(
-                  (a * a / (b * b))
-                  * (s2 / np.sqrt(
-                      (h - s1) ** 2 + s3 ** 2
-                  ))
+                  (
+                      a2 / b2
+                  )
+                  * (
+                      s2 /
+                      np.sqrt(
+                          (H - s1) ** 2
+                          + s3 ** 2
+                      )
+                  )
               )
 
               lon = (
-                  lambda_0
+                  lon0
                   + np.arctan(
-                      s3 / (h - s1)
+                      s3 /
+                      (H - s1)
                   )
               )
 
@@ -272,42 +311,45 @@ jobs:
                   np.degrees(lon)
               )
 
-          def sin_x_safe(x):
-              return np.sin(x)
+          def nearest_pixel(f):
+              lat, lon = geolocation_arrays(f)
 
-          def nearest_pixel(h5):
-              x = h5["x"][:]
-              y = h5["y"][:]
-
-              lat_grid, lon_grid = geolocate(
-                  x[:, None],
-                  y[None, :],
-                  h5
-              )
-
-              distance = (
-                  (lat_grid - LAT) ** 2
-                  + (lon_grid - LON) ** 2
+              distancia = (
+                  (lat - LAT) ** 2
+                  +
+                  (lon - LON) ** 2
               )
 
               iy, ix = np.unravel_index(
-                  np.nanargmin(distance),
-                  distance.shape
+                  np.nanargmin(
+                      distancia
+                  ),
+                  distancia.shape
               )
 
-              return iy, ix, x, y
+              return int(iy), int(ix)
 
           def read_acmf(path):
-              with h5py.File(path, "r") as f:
-                  acm = f["ACM"][:]
-                  cloud = f["Cloud_Probabilities"][:]
-                  dqf = f["DQF"][:]
+              with h5py.File(
+                  path,
+                  "r"
+              ) as f:
 
-                  acm = np.asarray(acm)
-                  cloud = np.asarray(cloud)
-                  dqf = np.asarray(dqf)
+                  acm = np.asarray(
+                      f["ACM"][:]
+                  )
 
-                  iy, ix, x, y = nearest_pixel(f)
+                  cloud = np.asarray(
+                      f[
+                          "Cloud_Probabilities"
+                      ][:]
+                  )
+
+                  dqf = np.asarray(
+                      f["DQF"][:]
+                  )
+
+                  iy, ix = nearest_pixel(f)
 
                   raw_cloud = int(
                       cloud[iy, ix]
@@ -321,56 +363,64 @@ jobs:
                       dqf[iy, ix]
                   )
 
-                  cloud_scale = attr_float(
-                      f["Cloud_Probabilities"],
+                  scale = attr_float(
+                      f[
+                          "Cloud_Probabilities"
+                      ],
                       "scale_factor",
                       1.0
                   )
 
-                  cloud_offset = attr_float(
-                      f["Cloud_Probabilities"],
+                  offset = attr_float(
+                      f[
+                          "Cloud_Probabilities"
+                      ],
                       "add_offset",
                       0.0
                   )
 
-                  cloud_fill = attr_float(
-                      f["Cloud_Probabilities"],
+                  fill = attr_float(
+                      f[
+                          "Cloud_Probabilities"
+                      ],
                       "_FillValue",
                       65535
                   )
 
-                  cloud_value = (
-                      raw_cloud * cloud_scale
-                      + cloud_offset
-                  )
-
-                  if raw_cloud >= cloud_fill:
-                      cloud_value = None
-
-                  if (
-                      cloud_value is not None
-                      and (
-                          cloud_value < 0
-                          or cloud_value > 1
+                  if raw_cloud >= fill:
+                      probability = None
+                  else:
+                      probability = (
+                          raw_cloud * scale
+                          + offset
                       )
-                  ):
-                      cloud_value = None
+
+                      if not (
+                          0 <= probability <= 1
+                      ):
+                          probability = None
 
                   return {
-                      "acm": raw_acm,
-                      "cloud_probability": cloud_value,
-                      "cloud_probability_raw": raw_cloud,
-                      "dqf": raw_dqf,
+                      "clasificacion_acm":
+                          raw_acm,
+                      "cloud_probability":
+                          probability,
+                      "cloud_probability_raw":
+                          raw_cloud,
+                      "dqf":
+                          raw_dqf,
                       "pixel": {
-                          "x": int(ix),
-                          "y": int(iy)
-                      },
-                      "lat": LAT,
-                      "lon": LON
+                          "x": ix,
+                          "y": iy
+                      }
                   }
 
           def read_visible(path):
-              with h5py.File(path, "r") as f:
+              with h5py.File(
+                  path,
+                  "r"
+              ) as f:
+
                   cmi = np.asarray(
                       f["CMI"][:]
                   )
@@ -379,11 +429,30 @@ jobs:
                       f["DQF"][:]
                   )
 
-                  iy, ix, x, y = nearest_pixel(f)
+                  iy, ix = nearest_pixel(f)
 
-                  raw = int(
-                      cmi[iy, ix]
-                  )
+                  raw = cmi[iy, ix]
+
+                  if np.issubdtype(
+                      cmi.dtype,
+                      np.signedinteger
+                  ):
+                      raw = int(raw)
+
+                      unsigned = (
+                          str(
+                              f["CMI"].attrs.get(
+                                  "_Unsigned",
+                                  ""
+                              )
+                          ).lower()
+                          == "true"
+                      )
+
+                      if unsigned and raw < 0:
+                          raw += 65536
+                  else:
+                      raw = int(raw)
 
                   qf = int(
                       dqf[iy, ix]
@@ -404,108 +473,55 @@ jobs:
                   fill = attr_float(
                       f["CMI"],
                       "_FillValue",
-                      -1
+                      65535
                   )
 
-                  unsigned = str(
-                      f["CMI"].attrs.get(
-                          "_Unsigned",
-                          ""
-                      )
-                  ).lower() == "true"
-
-                  raw_unsigned = raw
-
-                  if unsigned and raw < 0:
-                      raw_unsigned = raw + 65536
-
-                  visible_value = (
-                      raw_unsigned * scale
+                  valor = (
+                      raw * scale
                       + offset
                   )
 
                   valido = (
-                      raw_unsigned != int(fill)
+                      raw != int(fill)
                       and qf == 0
                       and np.isfinite(
-                          visible_value
+                          valor
                       )
                   )
 
                   if not valido:
-                      visible_value = None
+                      valor = None
 
                   return {
-                      "cmi_raw": raw_unsigned,
-                      "reflectancia_factor": visible_value,
-                      "dqf": qf,
+                      "cmi_raw":
+                          raw,
+                      "reflectancia_factor":
+                          valor,
+                      "dqf":
+                          qf,
                       "pixel": {
-                          "x": int(ix),
-                          "y": int(iy)
-                      },
-                      "lat": LAT,
-                      "lon": LON
+                          "x": ix,
+                          "y": iy
+                      }
                   }
 
-          def estado_validacion(acm, visible):
-              if acm["dqf"] != 0:
-                  return "ACMF_CALIDAD_NO_OPTIMA"
-
-              if visible["reflectancia_factor"] is None:
-                  return "VISIBLE_NO_DISPONIBLE"
-
-              cloud = acm["cloud_probability"]
-
-              if cloud is None:
-                  return "ACMF_CLOUD_PROBABILITY_NO_VALIDA"
-
-              acm_cloudy = (
-                  acm["acm"] >= 3
-                  or cloud >= 0.75
-              )
-
-              acm_clear = (
-                  acm["acm"] == 0
-                  and cloud <= 0.25
-              )
-
-              # La reflectancia visible NO se convierte
-              # en porcentaje de nubosidad.
-              #
-              # Solo se registra como observacion independiente.
-              #
-              # Valores altos pueden aparecer por superficie,
-              # geometria solar, aerosoles, etc.; por eso no
-              # se inventa un umbral de nubosidad.
-
-              return (
-                  "ACMF_VALIDADO_CON_VISIBLE"
-                  if (acm_cloudy or acm_clear)
-                  else "ACMF_AMBIGUO_VISIBLE_DISPONIBLE"
-              )
-
-          acmf_key, acmf_time = buscar_archivo(
-              "ACMF"
+          acmf_key, acmf_time = buscar(
+              "ACMF",
+              "M6_G19_"
           )
 
-          cmip_key, cmip_time = buscar_archivo(
+          visible_key, visible_time = buscar(
               "CMIPF",
-              canal="C02"
+              "M6C02_G19_"
           )
 
-          diferencia_frames = abs(
-              (acmf_time - cmip_time).total_seconds()
+          acmf_path = (
+              "/tmp/acmf.nc"
           )
 
-          print()
-          print(
-              "Diferencia ACMF/Visible:",
-              diferencia_frames,
-              "segundos"
+          visible_path = (
+              "/tmp/visible_c02.nc"
           )
-
-          acmf_path = "/tmp/acmf.nc"
-          visible_path = "/tmp/visible_c02.nc"
 
           descargar(
               acmf_key,
@@ -513,7 +529,7 @@ jobs:
           )
 
           descargar(
-              cmip_key,
+              visible_key,
               visible_path
           )
 
@@ -525,68 +541,131 @@ jobs:
               visible_path
           )
 
-          estado = estado_validacion(
-              acmf,
-              visible
+          diferencia = abs(
+              (
+                  acmf_time
+                  - visible_time
+              ).total_seconds()
           )
+
+          if (
+              acmf["dqf"] != 0
+          ):
+              estado = (
+                  "ACMF_CALIDAD_NO_OPTIMA"
+              )
+
+          elif (
+              visible[
+                  "reflectancia_factor"
+              ] is None
+          ):
+              estado = (
+                  "VISIBLE_NO_DISPONIBLE"
+              )
+
+          elif (
+              acmf[
+                  "cloud_probability"
+              ] is None
+          ):
+              estado = (
+                  "ACMF_PROBABILIDAD_NO_VALIDA"
+              )
+
+          else:
+              estado = (
+                  "DATOS_VALIDOS_ACMF_VISIBLE"
+              )
 
           resultado = {
               "ok": True,
+
               "fuente": "GOES-19 NOAA",
+
               "ciudad": "Bahía Blanca",
+
               "latitud": LAT,
+
               "longitud": LON,
 
               "acmf": {
-                  "producto": "ABI-L2-ACMF",
-                  "frame_goes_utc": acmf_time.isoformat(),
-                  "archivo": acmf_key,
-                  "clasificacion_acm": acmf["acm"],
-                  "cloud_probability": acmf[
-                      "cloud_probability"
-                  ],
-                  "cloud_probability_raw": acmf[
-                      "cloud_probability_raw"
-                  ],
-                  "dqf": acmf["dqf"],
-                  "pixel": acmf["pixel"]
+                  "producto":
+                      "ABI-L2-ACMF",
+                  "frame_goes_utc":
+                      acmf_time.isoformat(),
+                  "archivo":
+                      acmf_key,
+                  "clasificacion_acm":
+                      acmf[
+                          "clasificacion_acm"
+                      ],
+                  "cloud_probability":
+                      acmf[
+                          "cloud_probability"
+                      ],
+                  "cloud_probability_raw":
+                      acmf[
+                          "cloud_probability_raw"
+                      ],
+                  "dqf":
+                      acmf["dqf"],
+                  "pixel":
+                      acmf["pixel"]
               },
 
               "visible": {
-                  "producto": "ABI-L2-CMIPF",
-                  "canal": "C02",
-                  "longitud_onda_um": 0.64,
-                  "frame_goes_utc": cmip_time.isoformat(),
-                  "archivo": cmip_key,
-                  "reflectancia_factor": visible[
-                      "reflectancia_factor"
-                  ],
-                  "cmi_raw": visible[
-                      "cmi_raw"
-                  ],
-                  "dqf": visible["dqf"],
-                  "pixel": visible["pixel"],
-                  "resolucion": "0.5 km"
+                  "producto":
+                      "ABI-L2-CMIPF",
+                  "canal":
+                      "C02",
+                  "longitud_onda_um":
+                      0.64,
+                  "resolucion":
+                      "0.5 km",
+                  "frame_goes_utc":
+                      visible_time.isoformat(),
+                  "archivo":
+                      visible_key,
+                  "reflectancia_factor":
+                      visible[
+                          "reflectancia_factor"
+                      ],
+                  "cmi_raw":
+                      visible[
+                          "cmi_raw"
+                      ],
+                  "dqf":
+                      visible["dqf"],
+                  "pixel":
+                      visible["pixel"]
               },
 
               "diferencia_frames_segundos":
-                  diferencia_frames,
+                  diferencia,
 
               "validacion": {
-                  "estado": estado,
-                  "metodo":
-                      "ACMF oficial + observacion independiente ABI Band 2",
-                  "porcentaje_visible_inventado": False,
-                  "porcentaje_acmf_modificado": False,
-                  "dato_acmf_modificado": False
+                  "estado":
+                      estado,
+                  "dato_acmf_modificado":
+                      False,
+                  "porcentaje_acmf_modificado":
+                      False,
+                  "porcentaje_visible_inventado":
+                      False
               },
 
               "generado_utc":
                   now_utc().isoformat()
           }
 
+          salida = (
+              "data/goes/"
+              "validacion_goes.json"
+          )
+
           with open(
-              "data/goes/validacion_goes.json",
+              salida,
               "w",
               encoding="utf-8"
           ) as f:
@@ -597,11 +676,12 @@ jobs:
                   ensure_ascii=False
               )
 
-          # Imagen diagnóstica de la ventana visible.
+          # Diagnóstico visible.
           with h5py.File(
               visible_path,
               "r"
           ) as f:
+
               cmi = np.asarray(
                   f["CMI"][:]
               )
@@ -618,12 +698,6 @@ jobs:
                   0.0
               )
 
-              fill = attr_float(
-                  f["CMI"],
-                  "_FillValue",
-                  -1
-              )
-
               raw = cmi.astype(
                   np.float64
               )
@@ -636,12 +710,28 @@ jobs:
               ).lower() == "true":
                   raw[raw < 0] += 65536
 
-              img = raw * scale + offset
+              img = (
+                  raw * scale
+                  + offset
+              )
 
-              img[raw == fill] = np.nan
+              fill = attr_float(
+                  f["CMI"],
+                  "_FillValue",
+                  65535
+              )
+
+              img[
+                  raw == fill
+              ] = np.nan
 
           plt.figure(
               figsize=(8, 8)
+          )
+
+          vmax = np.nanpercentile(
+              img,
+              99
           )
 
           plt.imshow(
@@ -649,10 +739,7 @@ jobs:
               cmap="gray",
               origin="upper",
               vmin=0,
-              vmax=np.nanpercentile(
-                  img,
-                  99
-              )
+              vmax=vmax
           )
 
           plt.title(
@@ -662,8 +749,13 @@ jobs:
 
           plt.axis("off")
 
+          png = (
+              "data/goes/"
+              "validacion_goes_bahia_blanca.png"
+          )
+
           plt.savefig(
-              "data/goes/validacion_goes_bahia_blanca.png",
+              png,
               dpi=150,
               bbox_inches="tight"
           )
@@ -671,46 +763,79 @@ jobs:
           plt.close()
 
           print()
-          print("======================================")
-          print("VALIDACION GOES-19")
-          print("======================================")
-          print(
-              "ACMF:",
-              acmf["cloud_probability"]
-          )
+          print("================================")
+          print("RESULTADO VALIDACION GOES")
+          print("================================")
           print(
               "ACM:",
-              acmf["acm"]
+              acmf[
+                  "clasificacion_acm"
+              ]
+          )
+          print(
+              "Cloud Probability:",
+              acmf[
+                  "cloud_probability"
+              ]
           )
           print(
               "ACMF DQF:",
               acmf["dqf"]
           )
           print(
-              "VISIBLE C02:",
-              visible["reflectancia_factor"]
+              "Visible C02:",
+              visible[
+                  "reflectancia_factor"
+              ]
           )
           print(
-              "VISIBLE DQF:",
+              "Visible DQF:",
               visible["dqf"]
           )
           print(
               "Diferencia:",
-              diferencia_frames,
+              diferencia,
               "segundos"
           )
           print(
               "ESTADO:",
               estado
           )
-          print("======================================")
+          print("================================")
 
-          PYTHONUNBUFFERED=1 python /tmp/validar_goes.py
+          print()
+          print("ARCHIVOS GENERADOS:")
+          print(
+              os.path.abspath(
+                  salida
+              )
+          )
+          print(
+              os.path.abspath(
+                  png
+              )
+          )
+          PY
 
-      - name: Validar archivos generados
+          python /tmp/validar_goes.py
+
+      - name: Verificar archivos generados
         run: |
+          echo "CONTENIDO data/goes:"
+          ls -lah data/goes || true
+
+          echo
+          echo "JSON:"
+          test -f data/goes/validacion_goes.json
           test -s data/goes/validacion_goes.json
+
+          echo
+          echo "PNG:"
+          test -f data/goes/validacion_goes_bahia_blanca.png
           test -s data/goes/validacion_goes_bahia_blanca.png
+
+          echo
+          echo "Validando JSON..."
 
           python - <<'PY'
           import json
@@ -722,12 +847,50 @@ jobs:
               d = json.load(f)
 
           assert d["ok"] is True
-          assert d["validacion"]["porcentaje_visible_inventado"] is False
-          assert d["validacion"]["porcentaje_acmf_modificado"] is False
-          assert d["validacion"]["dato_acmf_modificado"] is False
 
-          print("JSON DE VALIDACION OK")
-          print("ESTADO:", d["validacion"]["estado"])
+          assert (
+              d["validacion"][
+                  "dato_acmf_modificado"
+              ] is False
+          )
+
+          assert (
+              d["validacion"][
+                  "porcentaje_acmf_modificado"
+              ] is False
+          )
+
+          assert (
+              d["validacion"][
+                  "porcentaje_visible_inventado"
+              ] is False
+          )
+
+          print(
+              "VALIDACION JSON OK"
+          )
+
+          print(
+              "ESTADO:",
+              d["validacion"]["estado"]
+          )
+
+          print(
+              "ACM:",
+              d["acmf"]["clasificacion_acm"]
+          )
+
+          print(
+              "CLOUD PROBABILITY:",
+              d["acmf"]["cloud_probability"]
+          )
+
+          print(
+              "VISIBLE:",
+              d["visible"][
+                  "reflectancia_factor"
+              ]
+          )
           PY
 
       - name: Commit resultados
