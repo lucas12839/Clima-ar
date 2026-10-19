@@ -23,7 +23,6 @@ jobs:
         id: diagnostico
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
@@ -49,7 +48,7 @@ jobs:
               req = urllib.request.Request(
                   url,
                   headers={
-                      "User-Agent": "ClimaAR-Watchdog/2.0",
+                      "User-Agent": "ClimaAR-Watchdog/3.0",
                       "Cache-Control": "no-cache",
                       "Pragma": "no-cache",
                   },
@@ -76,10 +75,6 @@ jobs:
                   dt = dt.replace(tzinfo=timezone.utc)
 
               return dt.astimezone(timezone.utc)
-
-          # ==================================================
-          # CLIMAAR
-          # ==================================================
 
           clima_ts = None
 
@@ -131,10 +126,6 @@ jobs:
 
               sys.exit(0)
 
-          # ==================================================
-          # SINARAME
-          # ==================================================
-
           html = None
 
           for intento in range(3):
@@ -160,7 +151,6 @@ jobs:
               print(
                   "ERROR: no se pudo consultar SINARAME."
               )
-
               sys.exit(0)
 
           patrones = [
@@ -188,14 +178,9 @@ jobs:
 
           if not timestamps:
               print(
-                  "SINARAME no expuso un timestamp RMA10 "
-                  "detectable."
+                  "SINARAME no expuso un timestamp "
+                  "RMA10 detectable."
               )
-
-              print(
-                  "No se ejecutará ninguna acción."
-              )
-
               sys.exit(0)
 
           argentina = ZoneInfo(
@@ -212,7 +197,7 @@ jobs:
                   ).replace(
                       tzinfo=argentina,
                   ).astimezone(
-                      timezone.utc,
+                      timezone.utc
                   )
 
                   candidatos.append(
@@ -227,7 +212,6 @@ jobs:
                   "No se pudieron convertir "
                   "los timestamps RMA10."
               )
-
               sys.exit(0)
 
           source_dt, source_text = max(
@@ -235,9 +219,7 @@ jobs:
               key=lambda item: item[0],
           )
 
-          ahora = datetime.now(
-              timezone.utc
-          )
+          ahora = datetime.now(timezone.utc)
 
           diferencia = (
               source_dt - clima_ts
@@ -316,11 +298,6 @@ jobs:
                   "NUEVO FRAME DETECTADO EN SINARAME."
               )
 
-              print(
-                  "ClimaAR está atrasado:",
-                  f"{diferencia:.2f} minutos",
-              )
-
               with open(
                   "nuevo_frame.flag",
                   "w",
@@ -334,10 +311,6 @@ jobs:
                   "frame conocido de SINARAME."
               )
           PY
-
-      # =====================================================
-      # RADAR
-      # =====================================================
 
       - name: Comprobar Radar
         id: radar
@@ -391,9 +364,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "=========================================="
           echo "DISPARANDO PROBAR RADAR SMN"
-          echo "=========================================="
 
           gh workflow run \
             probar-radar-smn.yml \
@@ -409,10 +380,6 @@ jobs:
         run: |
           echo "Radar ya estaba ejecutándose."
           echo "No se lanza una segunda ejecución."
-
-      # =====================================================
-      # REPARACIÓN INTELLIGENCE
-      # =====================================================
 
       - name: Comprobar cadena Radar → Intelligence
         id: cadena
@@ -432,7 +399,7 @@ jobs:
               --workflow probar-radar-smn.yml \
               --status success \
               --limit 1 \
-              --json databaseId,completedAt \
+              --json databaseId,updatedAt \
               --jq '.[0]'
           )"
 
@@ -443,17 +410,17 @@ jobs:
           fi
 
           RADAR_ID="$(
-            echo "$RADAR_JSON" \
-              | jq -r '.databaseId'
+            echo "$RADAR_JSON" |
+              jq -r '.databaseId'
           )"
 
           RADAR_COMPLETED="$(
-            echo "$RADAR_JSON" \
-              | jq -r '.completedAt'
+            echo "$RADAR_JSON" |
+              jq -r '.updatedAt'
           )"
 
           echo "Último Radar exitoso: $RADAR_ID"
-          echo "Radar terminado: $RADAR_COMPLETED"
+          echo "Radar terminado/actualizado: $RADAR_COMPLETED"
 
           INTEL_ACTIVE="$(
             gh run list \
@@ -487,7 +454,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --workflow climaar-intelligence.yml \
               --limit 10 \
-              --json databaseId,status,conclusion,createdAt,completedAt \
+              --json databaseId,status,conclusion,createdAt,updatedAt \
               --jq '.[0]'
           )"
 
@@ -498,34 +465,34 @@ jobs:
           fi
 
           INTEL_STATUS="$(
-            echo "$INTEL_JSON" \
-              | jq -r '.status'
+            echo "$INTEL_JSON" |
+              jq -r '.status'
           )"
 
           INTEL_CONCLUSION="$(
-            echo "$INTEL_JSON" \
-              | jq -r '.conclusion // ""'
+            echo "$INTEL_JSON" |
+              jq -r '.conclusion // ""'
           )"
 
           INTEL_CREATED="$(
-            echo "$INTEL_JSON" \
-              | jq -r '.createdAt'
+            echo "$INTEL_JSON" |
+              jq -r '.createdAt'
           )"
 
-          INTEL_COMPLETED="$(
-            echo "$INTEL_JSON" \
-              | jq -r '.completedAt // ""'
+          INTEL_UPDATED="$(
+            echo "$INTEL_JSON" |
+              jq -r '.updatedAt'
           )"
 
           echo "Última Intelligence:"
           echo "  estado: $INTEL_STATUS"
           echo "  conclusión: $INTEL_CONCLUSION"
           echo "  creada: $INTEL_CREATED"
-          echo "  terminada: $INTEL_COMPLETED"
+          echo "  actualizada: $INTEL_UPDATED"
 
           export RADAR_COMPLETED
           export INTEL_CREATED
-          export INTEL_COMPLETED
+          export INTEL_UPDATED
           export INTEL_CONCLUSION
 
           python - <<'PY'
@@ -551,8 +518,8 @@ jobs:
               os.environ["INTEL_CREATED"]
           )
 
-          intel_completed = parse(
-              os.environ["INTEL_COMPLETED"]
+          intel_updated = parse(
+              os.environ["INTEL_UPDATED"]
           )
 
           conclusion = os.environ.get(
@@ -560,28 +527,16 @@ jobs:
               "",
           )
 
-          # Intelligence posterior al Radar:
-          # no hace falta repararla.
-          if intel_completed and intel_completed >= radar:
+          if intel_updated and intel_updated >= radar:
               if conclusion == "success":
                   print(
                       "OK: Intelligence posterior "
                       "al último Radar."
                   )
 
-                  with open(
-                      "cadena_ok.flag",
-                      "w",
-                  ) as f:
-                      f.write("true\n")
-
                   raise SystemExit(0)
 
-              # Si falló, dejamos un pequeño margen
-              # antes de reintentar.
-              ahora = datetime.now(
-                  timezone.utc
-              )
+              ahora = datetime.now(timezone.utc)
 
               minutos = (
                   ahora - intel_created
@@ -591,7 +546,6 @@ jobs:
                   print(
                       "Intelligence falló recientemente."
                   )
-
                   print(
                       "Se evita un bucle de reintentos."
                   )
@@ -611,10 +565,6 @@ jobs:
 
           echo "repair=true" >> "$GITHUB_OUTPUT"
 
-      # =====================================================
-      # DISPARAR INTELLIGENCE
-      # =====================================================
-
       - name: Reparar Intelligence automáticamente
         if: |
           steps.cadena.outputs.repair == 'true'
@@ -629,22 +579,14 @@ jobs:
             exit 0
           fi
 
-          echo "=========================================="
           echo "DISPARANDO CLIMAAR INTELLIGENCE CENTRAL"
-          echo "=========================================="
 
           gh workflow run \
             climaar-intelligence.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref main
 
-          echo ""
           echo "Intelligence disparada correctamente."
-          echo "El siguiente Watchdog verificará el resultado."
-
-      # =====================================================
-      # DIAGNÓSTICO
-      # =====================================================
 
       - name: Guardar diagnóstico
         if: always()
