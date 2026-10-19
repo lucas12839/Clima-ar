@@ -2,12 +2,18 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
+
   <meta
     name="viewport"
     content="width=device-width,initial-scale=1,viewport-fit=cover"
   >
 
-  <title>ClimaAR</title>
+  <meta
+    name="theme-color"
+    content="#071321"
+  >
+
+  <title>ClimaAR · Bahía Blanca</title>
 
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -16,403 +22,765 @@
 
 <div class="app">
 
-  <header>
+  <!-- ====================================================== -->
+  <!-- HEADER -->
+  <!-- ====================================================== -->
 
-    <button class="menu" aria-label="Menú">
-      ☰
+  <header class="topbar">
+
+    <button
+      id="menuButton"
+      class="iconButton"
+      type="button"
+      aria-label="Abrir menú"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 6h16M4 12h16M4 18h16"/>
+      </svg>
     </button>
 
-    <div class="logo">
-      Clima<span>AR</span>
+    <div class="brand">
+      <strong>Clima<span>AR</span></strong>
       <small>Bahía Blanca</small>
     </div>
 
-    <button class="bell" aria-label="Notificaciones">
-      ♧
+    <button
+      id="notificationButton"
+      class="iconButton"
+      type="button"
+      aria-label="Ver estado meteorológico"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>
+        <path d="M10 21h4"/>
+      </svg>
     </button>
 
   </header>
 
 
-  <section class="hero">
+  <!-- ====================================================== -->
+  <!-- INICIO -->
+  <!-- ====================================================== -->
 
-    <div class="heroTop">
-      <span>AHORA</span>
-      <b>Bahía Blanca</b>
-    </div>
+  <main>
 
-    <div class="weather">
+    <section
+      id="inicio"
+      class="section"
+      data-section="inicio"
+    >
 
-      <strong id="temp">
-        24°
-      </strong>
+      <div class="hero">
 
-      <div>
+        <div class="heroHeader">
+          <div>
+            <span class="eyebrow">AHORA</span>
+            <h1>Bahía Blanca</h1>
+          </div>
 
-        <b id="condition">
-          Parcialmente nublado
-        </b>
+          <span
+            id="globalStatus"
+            class="statusBadge statusUnknown"
+          >
+            CARGANDO
+          </span>
+        </div>
 
-        <span>
-          Sensación 24° · Humedad 58%
-        </span>
+        <div class="currentWeather">
 
-      </div>
+          <div
+            id="temp"
+            class="temperature"
+          >
+            —
+          </div>
 
-    </div>
+          <div class="currentDescription">
 
+            <strong id="condition">
+              Cargando datos
+            </strong>
 
-    <div class="metrics">
+            <span id="weatherSecondary">
+              Sin datos suficientes
+            </span>
 
-      <div>
-        <small>Viento</small>
-        <b>12 km/h</b>
-      </div>
+          </div>
 
-      <div>
-        <small>Presión</small>
-        <b>1012 hPa</b>
-      </div>
+        </div>
 
-      <div>
-        <small>Lluvia</small>
-        <b>0 mm</b>
-      </div>
+        <div class="metrics">
 
-    </div>
+          <div class="metric">
+            <span>Viento</span>
+            <strong id="wind">—</strong>
+          </div>
 
-  </section>
+          <div class="metric">
+            <span>Presión</span>
+            <strong id="pressure">—</strong>
+          </div>
 
+          <div class="metric">
+            <span>Lluvia</span>
+            <strong id="rain">—</strong>
+          </div>
 
-  <section class="alert">
-
-    <div class="alertIcon">
-      ϟ
-    </div>
-
-    <div>
-
-      <small>
-        SEGUIMIENTO ACTIVO
-      </small>
-
-      <b>
-        Tormenta en seguimiento
-      </b>
-
-      <span>
-        Se detectó un núcleo al sudoeste.
-      </span>
-
-    </div>
-
-    <strong>
-      →
-    </strong>
-
-  </section>
-
-
-  <section class="card">
-
-    <div class="title">
-
-      <div>
-
-        <small>
-          RADAR EN VIVO
-        </small>
-
-        <b>
-          RMA10 · Bahía Blanca
-        </b>
+        </div>
 
       </div>
 
-      <span class="live">
-        ● EN VIVO
-      </span>
 
-    </div>
+      <!-- ESTADO -->
 
-
-    <div class="radar">
-
-      <img
-        id="radar"
-        src="/radar/imagen"
-        alt="Radar RMA10"
+      <button
+        id="alertCard"
+        class="alertCard"
+        type="button"
       >
 
-      <div class="city">
-        ● Bahía Blanca
-      </div>
-
-
-      <div class="radarControls">
-
-        <button aria-label="Acercar">
-          ＋
-        </button>
-
-        <button aria-label="Alejar">
-          −
-        </button>
-
-        <button aria-label="Reproducir radar">
-          ▶
-        </button>
-
-      </div>
-
-    </div>
-
-
-    <div class="radarInfo">
-
-      <span id="updated">
-        Actualizando...
-      </span>
-
-      <span>
-        RMA10 · SINARAME
-      </span>
-
-    </div>
-
-  </section>
-
-
-  <section class="card stormCard">
-
-    <div class="title">
-
-      <div>
-
-        <small>
-          TORMENTA 01 · SEGUIMIENTO
-        </small>
-
-        <b>
-          Movimiento actual
-        </b>
-
-      </div>
-
-      <span class="risk">
-        MODERADO
-      </span>
-
-    </div>
-
-
-    <div class="stormStats">
-
-      <div>
-
-        <strong>
-          ↙
-        </strong>
-
-        <small>
-          Se desplaza
-        </small>
-
-        <b>
-          12 km/h
-        </b>
-
-      </div>
-
-
-      <div>
-
-        <strong>
-          28 km
-        </strong>
-
-        <small>
-          Distancia
-        </small>
-
-        <b>
-          Bahía Blanca
-        </b>
-
-      </div>
-
-
-      <div>
-
-        <strong>
-          35–50 min
-        </strong>
-
-        <small>
-          Llegada estimada
-        </small>
-
-        <b>
-          Probable
-        </b>
-
-      </div>
-
-    </div>
-
-
-    <div class="trend">
-
-      <span>
-        EVOLUCIÓN
-      </span>
-
-      <b>
-        ↗ Se está intensificando
-      </b>
-
-      <i></i>
-
-    </div>
-
-  </section>
-
-
-  <section class="card">
-
-    <div class="title">
-
-      <div>
-
-        <small>
-          PRÓXIMOS MINUTOS
-        </small>
-
-        <b>
-          Evolución prevista
-        </b>
-
-      </div>
-
-      <span class="more">
-        Ver más
-      </span>
-
-    </div>
-
-
-    <div class="timeline">
-
-      <div>
-
-        <span>
-          Ahora
+        <span
+          id="alertIcon"
+          class="alertIcon"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M13 2 4 14h7l-1 8 10-13h-7z"/>
+          </svg>
         </span>
 
-        <i class="dot"></i>
+        <span class="alertContent">
 
-        <b>
-          Detectada
-        </b>
+          <span
+            id="alertEyebrow"
+            class="eyebrow"
+          >
+            ESTADO CLIMAAR
+          </span>
 
-      </div>
+          <strong id="alertTitle">
+            Cargando estado
+          </strong>
 
+          <span id="alertDescription">
+            Esperando datos del radar.
+          </span>
 
-      <div>
-
-        <span>
-          +15 min
         </span>
 
-        <i class="dot"></i>
+        <svg
+          class="arrowIcon"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path d="m9 18 6-6-6-6"/>
+        </svg>
 
-        <b>
-          Acercándose
-        </b>
+      </button>
+
+
+      <!-- RESUMEN -->
+
+      <div class="sectionTitle">
+        <div>
+          <span class="eyebrow">RESUMEN</span>
+          <h2>Seguimiento actual</h2>
+        </div>
+      </div>
+
+      <div class="summaryGrid">
+
+        <div class="summaryCard">
+          <span>Radar</span>
+          <strong id="summaryRadar">—</strong>
+          <small id="summaryRadarAge">—</small>
+        </div>
+
+        <div class="summaryCard">
+          <span>Núcleos</span>
+          <strong id="summaryCores">—</strong>
+          <small>detectados</small>
+        </div>
+
+        <div class="summaryCard">
+          <span>Intensidad</span>
+          <strong id="summaryIntensity">—</strong>
+          <small>RMA10</small>
+        </div>
+
+        <div class="summaryCard">
+          <span>Sincronización</span>
+          <strong id="summarySync">—</strong>
+          <small>Radar / Nowcast / ML</small>
+        </div>
 
       </div>
 
+    </section>
 
-      <div>
 
-        <span>
-          +30 min
+    <!-- ==================================================== -->
+    <!-- RADAR -->
+    <!-- ==================================================== -->
+
+    <section
+      id="radar"
+      class="section"
+      data-section="radar"
+    >
+
+      <div class="sectionTitle">
+        <div>
+          <span class="eyebrow">RMA10 · SINARAME</span>
+          <h2>Radar</h2>
+        </div>
+
+        <span
+          id="radarStatus"
+          class="statusBadge statusUnknown"
+        >
+          —
         </span>
+      </div>
 
-        <i class="dot"></i>
 
-        <b>
-          Mayor intensidad
-        </b>
+      <div class="card radarCard">
+
+        <div class="cardHeader">
+
+          <div>
+            <span class="eyebrow">OBSERVACIÓN RADAR</span>
+            <strong>Bahía Blanca</strong>
+          </div>
+
+          <span
+            id="radarTimestamp"
+            class="smallValue"
+          >
+            —
+          </span>
+
+        </div>
+
+
+        <div
+          id="radarViewport"
+          class="radarViewport"
+        >
+
+          <img
+            id="radarImage"
+            src=""
+            alt="Radar RMA10 de Bahía Blanca"
+            draggable="false"
+          >
+
+          <div
+            id="radarLoading"
+            class="radarLoading"
+          >
+            Cargando radar…
+          </div>
+
+          <div class="radarOverlay">
+
+            <span class="radarSource">
+              RMA10
+            </span>
+
+            <span
+              id="zoomValue"
+              class="zoomValue"
+            >
+              1.0×
+            </span>
+
+          </div>
+
+          <div class="radarControls">
+
+            <button
+              id="zoomIn"
+              type="button"
+              aria-label="Acercar radar"
+            >
+              +
+            </button>
+
+            <button
+              id="zoomOut"
+              type="button"
+              aria-label="Alejar radar"
+            >
+              −
+            </button>
+
+            <button
+              id="radarReset"
+              type="button"
+              aria-label="Restablecer radar"
+            >
+              ↺
+            </button>
+
+            <button
+              id="radarPlay"
+              type="button"
+              aria-label="Reproducir secuencia"
+            >
+              ▶
+            </button>
+
+          </div>
+
+        </div>
+
+
+        <div class="radarFooter">
+
+          <div>
+            <span>Frame</span>
+            <strong id="radarFrame">—</strong>
+          </div>
+
+          <div>
+            <span>Antigüedad</span>
+            <strong id="radarAge">—</strong>
+          </div>
+
+          <div>
+            <span>Historial</span>
+            <strong id="radarHistory">—</strong>
+          </div>
+
+        </div>
 
       </div>
 
 
-      <div>
+      <div class="infoNote">
+        El radar mostrado es la observación RMA10 disponible. El zoom solamente cambia la visualización; no modifica los datos.
+      </div>
 
-        <span>
-          +45 min
-        </span>
+    </section>
 
-        <i class="dot"></i>
 
-        <b>
-          Llegada posible
-        </b>
+    <!-- ==================================================== -->
+    <!-- TORMENTAS -->
+    <!-- ==================================================== -->
+
+    <section
+      id="tormentas"
+      class="section"
+      data-section="tormentas"
+    >
+
+      <div class="sectionTitle">
+        <div>
+          <span class="eyebrow">DETECCIÓN</span>
+          <h2>Actividad</h2>
+        </div>
+      </div>
+
+
+      <div class="card stormCard">
+
+        <div class="cardHeader">
+
+          <div>
+            <span class="eyebrow">RADAR / NOWCAST</span>
+            <strong id="stormTitle">
+              Sin datos suficientes
+            </strong>
+          </div>
+
+          <span
+            id="stormRisk"
+            class="riskBadge"
+          >
+            —
+          </span>
+
+        </div>
+
+
+        <div class="stormMain">
+
+          <div class="stormIntensity">
+
+            <span>INTENSIDAD MÁXIMA</span>
+
+            <strong id="stormIntensity">
+              —
+            </strong>
+
+            <small id="stormIntensityLevel">
+              —
+            </small>
+
+          </div>
+
+          <div class="stormCores">
+
+            <strong id="stormCores">
+              —
+            </strong>
+
+            <span>núcleos detectados</span>
+
+          </div>
+
+        </div>
+
+
+        <div class="stormDetails">
+
+          <div>
+            <span>Movimiento</span>
+            <strong id="stormMovement">—</strong>
+          </div>
+
+          <div>
+            <span>Distancia</span>
+            <strong id="stormDistance">—</strong>
+          </div>
+
+          <div>
+            <span>ETA</span>
+            <strong id="stormEta">—</strong>
+          </div>
+
+          <div>
+            <span>Dirección</span>
+            <strong id="stormDirection">—</strong>
+          </div>
+
+        </div>
+
+
+        <div class="trendBox">
+
+          <span class="eyebrow">EVOLUCIÓN OBSERVADA</span>
+
+          <strong id="stormTrend">
+            —
+          </strong>
+
+          <small id="stormTrendDetail">
+            Sin datos suficientes
+          </small>
+
+        </div>
 
       </div>
 
-    </div>
+
+      <div class="card nucleiCard">
+
+        <div class="cardHeader">
+
+          <div>
+            <span class="eyebrow">SEGUIMIENTO</span>
+            <strong>Núcleos detectados</strong>
+          </div>
+
+          <span id="nucleiCount" class="smallValue">
+            —
+          </span>
+
+        </div>
+
+        <div id="nucleiList" class="nucleiList">
+          <div class="emptyState">
+            Esperando datos del radar.
+          </div>
+        </div>
+
+      </div>
 
 
-    <div class="prediction">
+      <div class="infoNote warningNote">
+        Las probabilidades del Storm Engine, cuando estén disponibles, son heurísticas y no equivalen a probabilidades meteorológicas científicamente calibradas.
+      </div>
 
-      Predicción entre frames ·
-      <b>
-        confianza 72%
-      </b>
-
-    </div>
-
-  </section>
+    </section>
 
 
-  <nav>
+    <!-- ==================================================== -->
+    <!-- PRONÓSTICO -->
+    <!-- ==================================================== -->
 
-    <a class="active">
-      ⌂
-      <small>
-        Inicio
-      </small>
-    </a>
+    <section
+      id="pronostico"
+      class="section"
+      data-section="pronostico"
+    >
 
-    <a>
-      ◉
-      <small>
-        Radar
-      </small>
-    </a>
+      <div class="sectionTitle">
+        <div>
+          <span class="eyebrow">ML · RMA10-V1</span>
+          <h2>Evolución próxima</h2>
+        </div>
+      </div>
 
-    <a>
-      ϟ
-      <small>
-        Tormentas
-      </small>
-    </a>
 
-    <a>
-      ☁
-      <small>
-        Pronóstico
-      </small>
-    </a>
+      <div class="card predictionCard">
 
-    <a>
-      ☰
-      <small>
-        Más
-      </small>
-    </a>
+        <div class="predictionHeader">
+
+          <div>
+            <span class="eyebrow">TRACK MÁS CERCANO</span>
+            <strong id="predictionTrack">
+              —
+            </strong>
+          </div>
+
+          <span
+            id="predictionDistance"
+            class="smallValue"
+          >
+            —
+          </span>
+
+        </div>
+
+
+        <div class="predictionGrid">
+
+          <div class="predictionItem">
+            <span>+5 min</span>
+            <strong id="pred5">—</strong>
+            <small>hacia Bahía</small>
+          </div>
+
+          <div class="predictionItem">
+            <span>+10 min</span>
+            <strong id="pred10">—</strong>
+            <small>hacia Bahía</small>
+          </div>
+
+          <div class="predictionItem">
+            <span>+20 min</span>
+            <strong id="pred20">—</strong>
+            <small>hacia Bahía</small>
+          </div>
+
+          <div class="predictionItem">
+            <span>+30 min</span>
+            <strong id="pred30">—</strong>
+            <small>hacia Bahía</small>
+          </div>
+
+        </div>
+
+
+        <div class="predictionMeta">
+
+          <div>
+            <span>Fortalecimiento +5</span>
+            <strong id="strength5">—</strong>
+          </div>
+
+          <div>
+            <span>Rumbo del track</span>
+            <strong id="trackBearing">—</strong>
+          </div>
+
+          <div>
+            <span>Frame ML</span>
+            <strong id="mlFrame">—</strong>
+          </div>
+
+        </div>
+
+
+        <div
+          id="predictionMode"
+          class="predictionMode"
+        >
+          Sin datos suficientes
+        </div>
+
+      </div>
+
+
+      <div class="infoNote">
+        La predicción ML representa una estimación del modelo para la evolución del track. No representa por sí sola una predicción de tornado, granizo, ráfagas o rotación.
+      </div>
+
+    </section>
+
+
+    <!-- ==================================================== -->
+    <!-- MÁS / ESTADO -->
+    <!-- ==================================================== -->
+
+    <section
+      id="mas"
+      class="section"
+      data-section="mas"
+    >
+
+      <div class="sectionTitle">
+        <div>
+          <span class="eyebrow">CLIMAAR</span>
+          <h2>Estado del sistema</h2>
+        </div>
+      </div>
+
+
+      <div class="card systemCard">
+
+        <div class="systemRow">
+          <span>Backend</span>
+          <strong id="backendStatus">—</strong>
+        </div>
+
+        <div class="systemRow">
+          <span>Radar</span>
+          <strong id="systemRadar">—</strong>
+        </div>
+
+        <div class="systemRow">
+          <span>Frame radar</span>
+          <strong id="systemRadarFrame">—</strong>
+        </div>
+
+        <div class="systemRow">
+          <span>Frame nowcast</span>
+          <strong id="systemNowcastFrame">—</strong>
+        </div>
+
+        <div class="systemRow">
+          <span>Frame ML</span>
+          <strong id="systemMlFrame">—</strong>
+        </div>
+
+        <div class="systemRow">
+          <span>Sincronización</span>
+          <strong id="systemSync">—</strong>
+        </div>
+
+      </div>
+
+
+      <div class="card sourceCard">
+
+        <div class="cardHeader">
+          <div>
+            <span class="eyebrow">FUENTES</span>
+            <strong>Datos utilizados</strong>
+          </div>
+        </div>
+
+        <div class="sourceList">
+
+          <div>
+            <strong>SINARAME · RMA10</strong>
+            <span>Radar meteorológico</span>
+          </div>
+
+          <div>
+            <strong>Open-Meteo</strong>
+            <span>Meteorología externa disponible</span>
+          </div>
+
+          <div>
+            <strong>ClimaAR ML</strong>
+            <span>Seguimiento y evolución de tracks</span>
+          </div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+
+  <!-- ====================================================== -->
+  <!-- NAVEGACIÓN -->
+  <!-- ====================================================== -->
+
+  <nav
+    id="bottomNav"
+    class="bottomNav"
+    aria-label="Navegación principal"
+  >
+
+    <button
+      class="navItem active"
+      type="button"
+      data-target="inicio"
+      aria-label="Inicio"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="m3 10 9-7 9 7"/>
+        <path d="M5 9v11h14V9"/>
+        <path d="M9 20v-6h6v6"/>
+      </svg>
+      <span>Inicio</span>
+    </button>
+
+
+    <button
+      class="navItem"
+      type="button"
+      data-target="radar"
+      aria-label="Radar"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="8"/>
+        <circle cx="12" cy="12" r="2"/>
+        <path d="M12 12 18 6"/>
+      </svg>
+      <span>Radar</span>
+    </button>
+
+
+    <button
+      class="navItem"
+      type="button"
+      data-target="tormentas"
+      aria-label="Tormentas"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M13 2 5 13h6l-1 9 9-13h-6z"/>
+      </svg>
+      <span>Actividad</span>
+    </button>
+
+
+    <button
+      class="navItem"
+      type="button"
+      data-target="pronostico"
+      aria-label="Pronóstico"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 18V9"/>
+        <path d="M10 18V5"/>
+        <path d="M16 18v-7"/>
+        <path d="M22 18V3"/>
+      </svg>
+      <span>Evolución</span>
+    </button>
+
+
+    <button
+      class="navItem"
+      type="button"
+      data-target="mas"
+      aria-label="Más"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="5" cy="12" r="1.5"/>
+        <circle cx="12" cy="12" r="1.5"/>
+        <circle cx="19" cy="12" r="1.5"/>
+      </svg>
+      <span>Más</span>
+    </button>
 
   </nav>
 
@@ -423,4 +791,4 @@
 <script src="app.js"></script>
 
 </body>
-</html>
+  </html>
