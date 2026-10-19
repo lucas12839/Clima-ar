@@ -11,7 +11,7 @@ concurrency:
 
 permissions:
   contents: write
-  actions: read
+  actions: write
 
 jobs:
   radar:
@@ -246,15 +246,19 @@ jobs:
               f"Timestamp anterior: "
               f"{old_ts or 'ninguno'}"
           )
+
           print(
               f"Timestamp nuevo: {current_ts}"
           )
+
           print(
               f"Edad: {age:.2f} min"
           )
+
           print(
               f"SHA256: {current_hash}"
           )
+
           print(
               f"Resultado: {motivo}"
           )
@@ -430,9 +434,6 @@ jobs:
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Incluir TODOS los cambios generados por el procesamiento.
-          # El error anterior se producía porque había cambios
-          # modificados que no estaban incluidos en el git add.
           git add -A data/radar .climaar
 
           if git diff --cached --quiet; then
@@ -443,7 +444,6 @@ jobs:
           git commit \
             -m "ClimaAR: actualizar RMA10"
 
-          # Después del commit no deben quedar cambios locales.
           if ! git diff --quiet || ! git diff --cached --quiet; then
             echo "ERROR: quedaron cambios sin confirmar después del commit."
             git status --short
@@ -455,9 +455,6 @@ jobs:
 
             git fetch origin main
 
-            # El checkout ya está limpio.
-            # Si otro workflow publicó mientras procesábamos,
-            # rebaseamos nuestro commit encima de main.
             if git rebase origin/main; then
               echo "Rebase correcto."
             else
@@ -475,7 +472,6 @@ jobs:
               continue
             fi
 
-            # Comprobar nuevamente que el rebase dejó el árbol limpio.
             if ! git diff --quiet || ! git diff --cached --quiet; then
               echo "ERROR: el rebase dejó cambios locales."
               git status --short
@@ -503,3 +499,21 @@ jobs:
 
             sleep 2
           done
+
+      - name: Lanzar Intelligence Central
+        if: steps.frame.outputs.accepted == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "DISPARANDO CLIMAAR INTELLIGENCE CENTRAL"
+
+          gh workflow run \
+            climaar-intelligence.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f radar_run_id="$GITHUB_RUN_ID"
+
+          echo "Intelligence disparada correctamente."
