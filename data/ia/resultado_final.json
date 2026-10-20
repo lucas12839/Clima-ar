@@ -1,16 +1,16 @@
 {
   "version": "ClimaAR-final-2.0",
-  "actualizado_utc": "2026-10-20T10:09:08.636704+00:00",
+  "actualizado_utc": "2026-10-20T10:22:03.984644+00:00",
   "fuente_radar": "RMA10",
   "motor_decision": {
-    "estado": "activa",
-    "score_integrado": 0.505,
+    "estado": "fuerte",
+    "score_integrado": 0.603,
     "actividad_radar": true,
     "componentes": {
       "radar_intensidad": 0.89,
-      "radar_movimiento": 0.5,
-      "ia": 0.644,
-      "ia_confianza": 0.89
+      "radar_movimiento": 0.0,
+      "ia": 0.855,
+      "ia_confianza": 0.9
     },
     "regla": "radar + movimiento + intensidad + IA; sin actividad radar la IA queda limitada"
   },
@@ -27,15 +27,15 @@
       "intensidad_escala": "RMA10_0_6",
       "dbz_max": null,
       "dbz_mean": null,
-      "distancia_km": 32.5,
+      "distancia_km": 8.74,
       "distancia_tipo": "georreferenciada_por_nucleo_validada",
       "fortalecimiento": "fortaleciendose",
       "cambio_area_pct": 3.3,
-      "velocidad_kmh": 20.86,
+      "velocidad_kmh": 3.56,
       "velocidad_pixeles_min": 0.3708,
       "direccion": 301.5467646935445,
-      "direccion_grados": 301.55,
-      "movimiento_hacia_bahia": false,
+      "direccion_grados": 166.91,
+      "movimiento_hacia_bahia": true,
       "movimiento_hacia_centro_dominio": false,
       "eta_minutos": null,
       "eta_minutos_aproximada_centro_dominio": null,
@@ -2853,7 +2853,9 @@
         "fortaleciendose": 19,
         "debilitandose": 21,
         "total_georreferenciados": 56,
-        "hacia_bahia": 6
+        "movimiento_valido": 48,
+        "hacia_bahia": 7,
+        "criterio_hacia_bahia": "RUMBO_DENTRO_DE_45_GRADOS_Y_COMPONENTE_POSITIVA"
       },
       "proyecciones": {},
       "georreferenciacion": {
@@ -2959,9 +2961,17 @@
             "dx_px": -9.48,
             "dy_px": -5.82,
             "velocidad_pixeles_min": 0.3708,
+            "vector_movimiento_px": 11.124,
+            "direccion_movimiento_grados": 301.55,
             "error_rumbo_bahia_grados": 74.2,
+            "componente_hacia_bahia_kmh": 5.68,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.95,
+            "distancia_proyectada_10min_km": 31.56,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 1
         },
@@ -3006,9 +3016,17 @@
             "dx_px": -3.81,
             "dy_px": 4.44,
             "velocidad_pixeles_min": 0.19502,
+            "vector_movimiento_px": 5.8506,
+            "direccion_movimiento_grados": 220.63,
             "error_rumbo_bahia_grados": 159.1,
+            "componente_hacia_bahia_kmh": -10.25,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 14.69,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 2
         },
@@ -3053,9 +3071,17 @@
             "dx_px": 0.92,
             "dy_px": -2.88,
             "velocidad_pixeles_min": 0.10078,
+            "vector_movimiento_px": 3.0234,
+            "direccion_movimiento_grados": 17.72,
             "error_rumbo_bahia_grados": 29.6,
+            "componente_hacia_bahia_kmh": 4.93,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 302.0
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 0.82,
+            "distancia_proyectada_10min_km": 27.72,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 3
         },
@@ -3100,9 +3126,17 @@
             "dx_px": 6.6,
             "dy_px": 3.3,
             "velocidad_pixeles_min": 0.24597,
+            "vector_movimiento_px": 7.379,
+            "direccion_movimiento_grados": 116.57,
             "error_rumbo_bahia_grados": 146.8,
+            "componente_hacia_bahia_kmh": -11.58,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 33.71,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 4
         },
@@ -3147,9 +3181,17 @@
             "dx_px": 2.99,
             "dy_px": 0.75,
             "velocidad_pixeles_min": 0.10275,
+            "vector_movimiento_px": 3.0826,
+            "direccion_movimiento_grados": 104.08,
             "error_rumbo_bahia_grados": 141.1,
+            "componente_hacia_bahia_kmh": -4.5,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 27.91,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 5
         },
@@ -3194,9 +3236,17 @@
             "dx_px": 2.27,
             "dy_px": 5.24,
             "velocidad_pixeles_min": 0.19035,
+            "vector_movimiento_px": 5.7106,
+            "direccion_movimiento_grados": 156.58,
             "error_rumbo_bahia_grados": 23.5,
+            "componente_hacia_bahia_kmh": 9.82,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 220.7
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 1.64,
+            "distancia_proyectada_10min_km": 37.76,
+            "eta_minutos": 240.7,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 6
         },
@@ -3241,9 +3291,17 @@
             "dx_px": -5.77,
             "dy_px": -0.7,
             "velocidad_pixeles_min": 0.19374,
+            "vector_movimiento_px": 5.8123,
+            "direccion_movimiento_grados": 276.92,
             "error_rumbo_bahia_grados": 91.7,
+            "componente_hacia_bahia_kmh": -0.33,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 20.5,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 7
         },
@@ -3288,9 +3346,17 @@
             "dx_px": -3.82,
             "dy_px": 1.21,
             "velocidad_pixeles_min": 0.13357,
+            "vector_movimiento_px": 4.0071,
+            "direccion_movimiento_grados": 252.42,
             "error_rumbo_bahia_grados": 125.7,
+            "componente_hacia_bahia_kmh": -4.38,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 34.7,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 8
         },
@@ -3335,9 +3401,17 @@
             "dx_px": -3.33,
             "dy_px": 7.83,
             "velocidad_pixeles_min": 0.28362,
+            "vector_movimiento_px": 8.5087,
+            "direccion_movimiento_grados": 203.04,
             "error_rumbo_bahia_grados": 2.1,
+            "componente_hacia_bahia_kmh": 15.94,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 215.6
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 2.66,
+            "distancia_proyectada_10min_km": 54.66,
+            "eta_minutos": 215.7,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 9
         },
@@ -3382,9 +3456,17 @@
             "dx_px": 13.49,
             "dy_px": 2.41,
             "velocidad_pixeles_min": 0.45679,
+            "vector_movimiento_px": 13.7036,
+            "direccion_movimiento_grados": 100.13,
             "error_rumbo_bahia_grados": 29.1,
+            "componente_hacia_bahia_kmh": 22.46,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 248.7
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 3.74,
+            "distancia_proyectada_10min_km": 102.76,
+            "eta_minutos": 284.6,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 10
         },
@@ -3429,9 +3511,17 @@
             "dx_px": 10.62,
             "dy_px": 5.74,
             "velocidad_pixeles_min": 0.4024,
+            "vector_movimiento_px": 12.072,
+            "direccion_movimiento_grados": 118.39,
             "error_rumbo_bahia_grados": 75.5,
+            "componente_hacia_bahia_kmh": 5.67,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.94,
+            "distancia_proyectada_10min_km": 132.81,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 11
         },
@@ -3476,9 +3566,17 @@
             "dx_px": -3.96,
             "dy_px": -3.99,
             "velocidad_pixeles_min": 0.18738,
+            "vector_movimiento_px": 5.6215,
+            "direccion_movimiento_grados": 315.22,
             "error_rumbo_bahia_grados": 164.4,
+            "componente_hacia_bahia_kmh": -10.15,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 25.56,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 12
         },
@@ -3523,9 +3621,17 @@
             "dx_px": 0.43,
             "dy_px": 1.85,
             "velocidad_pixeles_min": 0.06331,
+            "vector_movimiento_px": 1.8993,
+            "direccion_movimiento_grados": 166.91,
             "error_rumbo_bahia_grados": 1.7,
-            "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "componente_hacia_bahia_kmh": 3.56,
+            "movimiento_valido": true,
+            "movimiento_hacia_bahia": true,
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 0.59,
+            "distancia_proyectada_10min_km": 8.15,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 13
         },
@@ -3570,9 +3676,17 @@
             "dx_px": 6.56,
             "dy_px": -0.17,
             "velocidad_pixeles_min": 0.21874,
+            "vector_movimiento_px": 6.5622,
+            "direccion_movimiento_grados": 88.52,
             "error_rumbo_bahia_grados": 170.9,
+            "componente_hacia_bahia_kmh": -12.15,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 41.2,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 14
         },
@@ -3617,9 +3731,17 @@
             "dx_px": -37.01,
             "dy_px": 9.41,
             "velocidad_pixeles_min": 1.27292,
+            "vector_movimiento_px": 38.1875,
+            "direccion_movimiento_grados": 255.73,
             "error_rumbo_bahia_grados": 102.2,
+            "componente_hacia_bahia_kmh": -15.18,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 29.73,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 15
         },
@@ -3659,14 +3781,22 @@
             "rumbo_bahia_grados": 93.9
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 20.28,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 16
         },
@@ -3711,9 +3841,17 @@
             "dx_px": -6.53,
             "dy_px": 1.81,
             "velocidad_pixeles_min": 0.22587,
+            "vector_movimiento_px": 6.7762,
+            "direccion_movimiento_grados": 254.51,
             "error_rumbo_bahia_grados": 179.0,
+            "componente_hacia_bahia_kmh": -12.71,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 37.85,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 17
         },
@@ -3758,9 +3896,17 @@
             "dx_px": -27.25,
             "dy_px": 3.64,
             "velocidad_pixeles_min": 0.9164,
+            "vector_movimiento_px": 27.492,
+            "direccion_movimiento_grados": 262.39,
             "error_rumbo_bahia_grados": 86.2,
+            "componente_hacia_bahia_kmh": 3.42,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.57,
+            "distancia_proyectada_10min_km": 49.04,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 18
         },
@@ -3800,14 +3946,22 @@
             "rumbo_bahia_grados": 301.6
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 78.49,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 19
         },
@@ -3852,9 +4006,17 @@
             "dx_px": 11.97,
             "dy_px": 7.19,
             "velocidad_pixeles_min": 0.46545,
+            "vector_movimiento_px": 13.9634,
+            "direccion_movimiento_grados": 120.99,
             "error_rumbo_bahia_grados": 66.2,
+            "componente_hacia_bahia_kmh": 10.58,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 1.76,
+            "distancia_proyectada_10min_km": 129.64,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 20
         },
@@ -3899,9 +4061,17 @@
             "dx_px": -5.83,
             "dy_px": -5.21,
             "velocidad_pixeles_min": 0.26063,
+            "vector_movimiento_px": 7.8188,
+            "direccion_movimiento_grados": 311.79,
             "error_rumbo_bahia_grados": 83.8,
+            "componente_hacia_bahia_kmh": 1.58,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.26,
+            "distancia_proyectada_10min_km": 150.7,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 21
         },
@@ -3946,9 +4116,17 @@
             "dx_px": -18.04,
             "dy_px": -83.73,
             "velocidad_pixeles_min": 2.85505,
+            "vector_movimiento_px": 85.6514,
+            "direccion_movimiento_grados": 347.84,
             "error_rumbo_bahia_grados": 83.7,
+            "componente_hacia_bahia_kmh": 17.62,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 2.94,
+            "distancia_proyectada_10min_km": 118.37,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 22
         },
@@ -3988,14 +4166,22 @@
             "rumbo_bahia_grados": 88.4
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 99.09,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 23
         },
@@ -4040,9 +4226,17 @@
             "dx_px": -41.85,
             "dy_px": 19.97,
             "velocidad_pixeles_min": 1.54568,
+            "vector_movimiento_px": 46.3705,
+            "direccion_movimiento_grados": 244.49,
             "error_rumbo_bahia_grados": 132.3,
+            "componente_hacia_bahia_kmh": -58.47,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 54.06,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 24
         },
@@ -4087,9 +4281,17 @@
             "dx_px": 1.04,
             "dy_px": -0.81,
             "velocidad_pixeles_min": 0.04394,
+            "vector_movimiento_px": 1.3182,
+            "direccion_movimiento_grados": 52.09,
             "error_rumbo_bahia_grados": 54.7,
+            "componente_hacia_bahia_kmh": 1.43,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.24,
+            "distancia_proyectada_10min_km": 39.96,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 25
         },
@@ -4134,9 +4336,17 @@
             "dx_px": 10.93,
             "dy_px": 3.16,
             "velocidad_pixeles_min": 0.37925,
+            "vector_movimiento_px": 11.3776,
+            "direccion_movimiento_grados": 106.13,
             "error_rumbo_bahia_grados": 75.2,
+            "componente_hacia_bahia_kmh": 5.44,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.91,
+            "distancia_proyectada_10min_km": 163.85,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 26
         },
@@ -4181,9 +4391,17 @@
             "dx_px": 0.99,
             "dy_px": -0.29,
             "velocidad_pixeles_min": 0.03439,
+            "vector_movimiento_px": 1.0316,
+            "direccion_movimiento_grados": 73.67,
             "error_rumbo_bahia_grados": 114.5,
+            "componente_hacia_bahia_kmh": -0.8,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 91.96,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 27
         },
@@ -4228,9 +4446,17 @@
             "dx_px": -4.05,
             "dy_px": -1.71,
             "velocidad_pixeles_min": 0.14654,
+            "vector_movimiento_px": 4.3962,
+            "direccion_movimiento_grados": 292.89,
             "error_rumbo_bahia_grados": 70.8,
+            "componente_hacia_bahia_kmh": 2.71,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.45,
+            "distancia_proyectada_10min_km": 82.53,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 28
         },
@@ -4275,9 +4501,17 @@
             "dx_px": -0.58,
             "dy_px": -1.42,
             "velocidad_pixeles_min": 0.05113,
+            "vector_movimiento_px": 1.5339,
+            "direccion_movimiento_grados": 337.78,
             "error_rumbo_bahia_grados": 48.3,
+            "componente_hacia_bahia_kmh": 1.92,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.32,
+            "distancia_proyectada_10min_km": 60.47,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 29
         },
@@ -4322,9 +4556,17 @@
             "dx_px": 3.8,
             "dy_px": 5.17,
             "velocidad_pixeles_min": 0.21388,
+            "vector_movimiento_px": 6.4163,
+            "direccion_movimiento_grados": 143.68,
             "error_rumbo_bahia_grados": 78.6,
+            "componente_hacia_bahia_kmh": 2.37,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.39,
+            "distancia_proyectada_10min_km": 50.95,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 30
         },
@@ -4369,9 +4611,17 @@
             "dx_px": -8.42,
             "dy_px": -6.59,
             "velocidad_pixeles_min": 0.35641,
+            "vector_movimiento_px": 10.6923,
+            "direccion_movimiento_grados": 308.05,
             "error_rumbo_bahia_grados": 67.8,
+            "componente_hacia_bahia_kmh": 7.57,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 1.26,
+            "distancia_proyectada_10min_km": 57.71,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 31
         },
@@ -4416,9 +4666,17 @@
             "dx_px": 3.22,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.10733,
+            "vector_movimiento_px": 3.22,
+            "direccion_movimiento_grados": 90.0,
             "error_rumbo_bahia_grados": 108.8,
+            "componente_hacia_bahia_kmh": -1.95,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 74.44,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 32
         },
@@ -4463,9 +4721,17 @@
             "dx_px": 1.55,
             "dy_px": -0.9,
             "velocidad_pixeles_min": 0.05974,
+            "vector_movimiento_px": 1.7923,
+            "direccion_movimiento_grados": 59.86,
             "error_rumbo_bahia_grados": 120.3,
+            "componente_hacia_bahia_kmh": -1.7,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 34.43,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 33
         },
@@ -4510,9 +4776,17 @@
             "dx_px": -11.24,
             "dy_px": 4.46,
             "velocidad_pixeles_min": 0.40308,
+            "vector_movimiento_px": 12.0925,
+            "direccion_movimiento_grados": 248.36,
             "error_rumbo_bahia_grados": 55.6,
+            "componente_hacia_bahia_kmh": 12.81,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 2.14,
+            "distancia_proyectada_10min_km": 68.49,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 34
         },
@@ -4557,9 +4831,17 @@
             "dx_px": 0.67,
             "dy_px": 4.61,
             "velocidad_pixeles_min": 0.15528,
+            "vector_movimiento_px": 4.6584,
+            "direccion_movimiento_grados": 171.73,
             "error_rumbo_bahia_grados": 104.1,
+            "componente_hacia_bahia_kmh": -2.12,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 134.28,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 35
         },
@@ -4604,9 +4886,17 @@
             "dx_px": 0.05,
             "dy_px": 0.18,
             "velocidad_pixeles_min": 0.00623,
+            "vector_movimiento_px": 0.1868,
+            "direccion_movimiento_grados": 164.48,
             "error_rumbo_bahia_grados": 152.0,
+            "componente_hacia_bahia_kmh": -0.31,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 152.23,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 36
         },
@@ -4651,9 +4941,17 @@
             "dx_px": -107.41,
             "dy_px": -91.46,
             "velocidad_pixeles_min": 4.70246,
+            "vector_movimiento_px": 141.0739,
+            "direccion_movimiento_grados": 310.41,
             "error_rumbo_bahia_grados": 114.7,
+            "componente_hacia_bahia_kmh": -110.39,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 143.54,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 37
         },
@@ -4698,9 +4996,17 @@
             "dx_px": 5.89,
             "dy_px": 1.17,
             "velocidad_pixeles_min": 0.20017,
+            "vector_movimiento_px": 6.0051,
+            "direccion_movimiento_grados": 101.24,
             "error_rumbo_bahia_grados": 90.4,
+            "componente_hacia_bahia_kmh": -0.08,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 72.5,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 38
         },
@@ -4740,14 +5046,22 @@
             "rumbo_bahia_grados": 110.8
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 33.84,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 39
         },
@@ -4792,9 +5106,17 @@
             "dx_px": 6.36,
             "dy_px": 5.9,
             "velocidad_pixeles_min": 0.28917,
+            "vector_movimiento_px": 8.6752,
+            "direccion_movimiento_grados": 132.85,
             "error_rumbo_bahia_grados": 79.8,
+            "componente_hacia_bahia_kmh": 2.87,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.48,
+            "distancia_proyectada_10min_km": 117.16,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 40
         },
@@ -4839,9 +5161,17 @@
             "dx_px": 0.1,
             "dy_px": 1.18,
             "velocidad_pixeles_min": 0.03947,
+            "vector_movimiento_px": 1.1842,
+            "direccion_movimiento_grados": 175.16,
             "error_rumbo_bahia_grados": 76.7,
+            "componente_hacia_bahia_kmh": 0.51,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.09,
+            "distancia_proyectada_10min_km": 55.82,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 41
         },
@@ -4886,9 +5216,17 @@
             "dx_px": -0.16,
             "dy_px": -0.97,
             "velocidad_pixeles_min": 0.03277,
+            "vector_movimiento_px": 0.9831,
+            "direccion_movimiento_grados": 350.63,
             "error_rumbo_bahia_grados": 167.5,
+            "componente_hacia_bahia_kmh": -1.8,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 110.27,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 42
         },
@@ -4928,14 +5266,22 @@
             "rumbo_bahia_grados": 30.0
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 47.13,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 43
         },
@@ -4980,9 +5326,17 @@
             "dx_px": -8.75,
             "dy_px": -0.58,
             "velocidad_pixeles_min": 0.29231,
+            "vector_movimiento_px": 8.7692,
+            "direccion_movimiento_grados": 273.79,
             "error_rumbo_bahia_grados": 126.0,
+            "componente_hacia_bahia_kmh": -9.66,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 38.09,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 44
         },
@@ -5022,14 +5376,22 @@
             "rumbo_bahia_grados": 82.0
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 106.36,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 45
         },
@@ -5074,9 +5436,17 @@
             "dx_px": -1.71,
             "dy_px": -0.47,
             "velocidad_pixeles_min": 0.05911,
+            "vector_movimiento_px": 1.7734,
+            "direccion_movimiento_grados": 285.37,
             "error_rumbo_bahia_grados": 92.2,
+            "componente_hacia_bahia_kmh": -0.13,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 79.61,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 46
         },
@@ -5121,9 +5491,17 @@
             "dx_px": 47.44,
             "dy_px": -13.48,
             "velocidad_pixeles_min": 1.64393,
+            "vector_movimiento_px": 49.318,
+            "direccion_movimiento_grados": 74.14,
             "error_rumbo_bahia_grados": 155.4,
+            "componente_hacia_bahia_kmh": -84.05,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 101.34,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 47
         },
@@ -5168,9 +5546,17 @@
             "dx_px": -1.6,
             "dy_px": -14.7,
             "velocidad_pixeles_min": 0.49289,
+            "vector_movimiento_px": 14.7868,
+            "direccion_movimiento_grados": 353.79,
             "error_rumbo_bahia_grados": 163.5,
+            "componente_hacia_bahia_kmh": -26.58,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 102.1,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 48
         },
@@ -5215,9 +5601,17 @@
             "dx_px": -2.2,
             "dy_px": -14.32,
             "velocidad_pixeles_min": 0.48293,
+            "vector_movimiento_px": 14.488,
+            "direccion_movimiento_grados": 351.27,
             "error_rumbo_bahia_grados": 91.2,
+            "componente_hacia_bahia_kmh": -0.59,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 101.75,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 49
         },
@@ -5262,9 +5656,17 @@
             "dx_px": -55.75,
             "dy_px": 29.82,
             "velocidad_pixeles_min": 2.10747,
+            "vector_movimiento_px": 63.2242,
+            "direccion_movimiento_grados": 241.86,
             "error_rumbo_bahia_grados": 146.1,
+            "componente_hacia_bahia_kmh": -98.4,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 189.34,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 50
         },
@@ -5309,9 +5711,17 @@
             "dx_px": 5.25,
             "dy_px": -8.07,
             "velocidad_pixeles_min": 0.32091,
+            "vector_movimiento_px": 9.6274,
+            "direccion_movimiento_grados": 33.05,
             "error_rumbo_bahia_grados": 139.6,
+            "componente_hacia_bahia_kmh": -13.75,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 62.52,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 51
         },
@@ -5356,9 +5766,17 @@
             "dx_px": -1.89,
             "dy_px": 2.55,
             "velocidad_pixeles_min": 0.1058,
+            "vector_movimiento_px": 3.1741,
+            "direccion_movimiento_grados": 216.54,
             "error_rumbo_bahia_grados": 177.3,
+            "componente_hacia_bahia_kmh": -5.94,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 51.45,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 52
         },
@@ -5398,14 +5816,22 @@
             "rumbo_bahia_grados": 60.5
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 31.41,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 53
         },
@@ -5450,9 +5876,17 @@
             "dx_px": -18.33,
             "dy_px": -82.5,
             "velocidad_pixeles_min": 2.81706,
+            "vector_movimiento_px": 84.5118,
+            "direccion_movimiento_grados": 347.47,
             "error_rumbo_bahia_grados": 37.9,
+            "componente_hacia_bahia_kmh": 124.98,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 24.6
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 20.83,
+            "distancia_proyectada_10min_km": 44.13,
+            "eta_minutos": 31.2,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 54
         },
@@ -5497,9 +5931,17 @@
             "dx_px": -100.69,
             "dy_px": 21.5,
             "velocidad_pixeles_min": 3.43199,
+            "vector_movimiento_px": 102.9598,
+            "direccion_movimiento_grados": 257.95,
             "error_rumbo_bahia_grados": 1.7,
+            "componente_hacia_bahia_kmh": 192.96,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 3.1
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 9.91,
+            "distancia_proyectada_10min_km": 0.0,
+            "eta_minutos": 3.1,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 55
         },
@@ -5539,28 +5981,36 @@
             "rumbo_bahia_grados": 51.4
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 46.04,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 56
         }
       ],
-      "rumbo_bahia_grados": 227.3,
-      "error_rumbo_bahia_grados": 74.2,
+      "rumbo_bahia_grados": 165.2,
+      "error_rumbo_bahia_grados": 1.7,
       "bahia_blanca": {
         "latitud": -38.7196,
         "longitud": -62.2724,
-        "distancia_principal_km": 32.5,
-        "rumbo_desde_principal_grados": 227.3,
-        "movimiento_hacia_bahia": false,
+        "distancia_principal_km": 8.74,
+        "rumbo_desde_principal_grados": 165.2,
+        "movimiento_hacia_bahia": true,
         "eta_minutos": null,
-        "nucleo_principal_id": 87
+        "nucleo_principal_id": 101
       }
     },
     "intensidad": {
@@ -5638,11 +6088,11 @@
     "bahia_blanca": {
       "latitud": -38.7196,
       "longitud": -62.2724,
-      "distancia_principal_km": 32.5,
-      "rumbo_desde_principal_grados": 227.3,
-      "movimiento_hacia_bahia": false,
+      "distancia_principal_km": 8.74,
+      "rumbo_desde_principal_grados": 165.2,
+      "movimiento_hacia_bahia": true,
       "eta_minutos": null,
-      "nucleo_principal_id": 87
+      "nucleo_principal_id": 101
     }
   },
   "prediccion": {
@@ -5721,17 +6171,17 @@
   "inteligencia": {
     "version": "4.0.0",
     "motor": "ClimaAR Intelligence - Storm Engine Central",
-    "actualizado_utc": "2026-10-20T10:09:08.408367+00:00",
+    "actualizado_utc": "2026-10-20T10:22:03.786384+00:00",
     "ubicacion": {
       "ciudad": "Bahia Blanca",
       "latitud": -38.71,
       "longitud": -62.26
     },
-    "estado": "tormenta_con_lluvia",
-    "severidad": "verde",
+    "estado": "tormenta_convectiva_en_desarrollo",
+    "severidad": "amarillo",
     "probabilidades": {
-      "tormenta": 0.153,
-      "llegada_bahia": 0.044,
+      "tormenta": 0.599,
+      "llegada_bahia": 0.855,
       "fortalecimiento": 0.644,
       "debilitamiento": 0.356
     },
@@ -5741,7 +6191,7 @@
       "granizo": 0.2,
       "rayo": 0.21
     },
-    "indice_hibrido_severidad": 0.285,
+    "indice_hibrido_severidad": 0.406,
     "ia_v8": {
       "disponible": true,
       "probabilidad_impacto": 0.08
@@ -5764,7 +6214,7 @@
       "score_ambiente_compatible": 0.1
     },
     "eta_minutos": null,
-    "duracion_estimada_minutos": 126,
+    "duracion_estimada_minutos": 60,
     "radar": {
       "actualizado": "2026-10-20T09:30:00Z",
       "frame_actual_utc": "2026-10-20T09:30:00Z",
@@ -5776,15 +6226,15 @@
       "intensidad_escala": "RMA10_0_6",
       "dbz_max": null,
       "dbz_mean": null,
-      "distancia_km": 32.5,
+      "distancia_km": 8.74,
       "distancia_tipo": "georreferenciada_por_nucleo_validada",
       "fortalecimiento": "fortaleciendose",
       "cambio_area_pct": 3.3,
-      "velocidad_kmh": 20.86,
+      "velocidad_kmh": 3.56,
       "velocidad_pixeles_min": 0.3708,
       "direccion": 301.5467646935445,
-      "direccion_grados": 301.55,
-      "movimiento_hacia_bahia": false,
+      "direccion_grados": 166.91,
+      "movimiento_hacia_bahia": true,
       "movimiento_hacia_centro_dominio": false,
       "eta_minutos": null,
       "eta_minutos_aproximada_centro_dominio": null,
@@ -8602,7 +9052,9 @@
         "fortaleciendose": 19,
         "debilitandose": 21,
         "total_georreferenciados": 56,
-        "hacia_bahia": 6
+        "movimiento_valido": 48,
+        "hacia_bahia": 7,
+        "criterio_hacia_bahia": "RUMBO_DENTRO_DE_45_GRADOS_Y_COMPONENTE_POSITIVA"
       },
       "proyecciones": {},
       "georreferenciacion": {
@@ -8708,9 +9160,17 @@
             "dx_px": -9.48,
             "dy_px": -5.82,
             "velocidad_pixeles_min": 0.3708,
+            "vector_movimiento_px": 11.124,
+            "direccion_movimiento_grados": 301.55,
             "error_rumbo_bahia_grados": 74.2,
+            "componente_hacia_bahia_kmh": 5.68,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.95,
+            "distancia_proyectada_10min_km": 31.56,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 1
         },
@@ -8755,9 +9215,17 @@
             "dx_px": -3.81,
             "dy_px": 4.44,
             "velocidad_pixeles_min": 0.19502,
+            "vector_movimiento_px": 5.8506,
+            "direccion_movimiento_grados": 220.63,
             "error_rumbo_bahia_grados": 159.1,
+            "componente_hacia_bahia_kmh": -10.25,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 14.69,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 2
         },
@@ -8802,9 +9270,17 @@
             "dx_px": 0.92,
             "dy_px": -2.88,
             "velocidad_pixeles_min": 0.10078,
+            "vector_movimiento_px": 3.0234,
+            "direccion_movimiento_grados": 17.72,
             "error_rumbo_bahia_grados": 29.6,
+            "componente_hacia_bahia_kmh": 4.93,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 302.0
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 0.82,
+            "distancia_proyectada_10min_km": 27.72,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 3
         },
@@ -8849,9 +9325,17 @@
             "dx_px": 6.6,
             "dy_px": 3.3,
             "velocidad_pixeles_min": 0.24597,
+            "vector_movimiento_px": 7.379,
+            "direccion_movimiento_grados": 116.57,
             "error_rumbo_bahia_grados": 146.8,
+            "componente_hacia_bahia_kmh": -11.58,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 33.71,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 4
         },
@@ -8896,9 +9380,17 @@
             "dx_px": 2.99,
             "dy_px": 0.75,
             "velocidad_pixeles_min": 0.10275,
+            "vector_movimiento_px": 3.0826,
+            "direccion_movimiento_grados": 104.08,
             "error_rumbo_bahia_grados": 141.1,
+            "componente_hacia_bahia_kmh": -4.5,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 27.91,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 5
         },
@@ -8943,9 +9435,17 @@
             "dx_px": 2.27,
             "dy_px": 5.24,
             "velocidad_pixeles_min": 0.19035,
+            "vector_movimiento_px": 5.7106,
+            "direccion_movimiento_grados": 156.58,
             "error_rumbo_bahia_grados": 23.5,
+            "componente_hacia_bahia_kmh": 9.82,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 220.7
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 1.64,
+            "distancia_proyectada_10min_km": 37.76,
+            "eta_minutos": 240.7,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 6
         },
@@ -8990,9 +9490,17 @@
             "dx_px": -5.77,
             "dy_px": -0.7,
             "velocidad_pixeles_min": 0.19374,
+            "vector_movimiento_px": 5.8123,
+            "direccion_movimiento_grados": 276.92,
             "error_rumbo_bahia_grados": 91.7,
+            "componente_hacia_bahia_kmh": -0.33,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 20.5,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 7
         },
@@ -9037,9 +9545,17 @@
             "dx_px": -3.82,
             "dy_px": 1.21,
             "velocidad_pixeles_min": 0.13357,
+            "vector_movimiento_px": 4.0071,
+            "direccion_movimiento_grados": 252.42,
             "error_rumbo_bahia_grados": 125.7,
+            "componente_hacia_bahia_kmh": -4.38,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 34.7,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 8
         },
@@ -9084,9 +9600,17 @@
             "dx_px": -3.33,
             "dy_px": 7.83,
             "velocidad_pixeles_min": 0.28362,
+            "vector_movimiento_px": 8.5087,
+            "direccion_movimiento_grados": 203.04,
             "error_rumbo_bahia_grados": 2.1,
+            "componente_hacia_bahia_kmh": 15.94,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 215.6
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 2.66,
+            "distancia_proyectada_10min_km": 54.66,
+            "eta_minutos": 215.7,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 9
         },
@@ -9131,9 +9655,17 @@
             "dx_px": 13.49,
             "dy_px": 2.41,
             "velocidad_pixeles_min": 0.45679,
+            "vector_movimiento_px": 13.7036,
+            "direccion_movimiento_grados": 100.13,
             "error_rumbo_bahia_grados": 29.1,
+            "componente_hacia_bahia_kmh": 22.46,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 248.7
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 3.74,
+            "distancia_proyectada_10min_km": 102.76,
+            "eta_minutos": 284.6,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 10
         },
@@ -9178,9 +9710,17 @@
             "dx_px": 10.62,
             "dy_px": 5.74,
             "velocidad_pixeles_min": 0.4024,
+            "vector_movimiento_px": 12.072,
+            "direccion_movimiento_grados": 118.39,
             "error_rumbo_bahia_grados": 75.5,
+            "componente_hacia_bahia_kmh": 5.67,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.94,
+            "distancia_proyectada_10min_km": 132.81,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 11
         },
@@ -9225,9 +9765,17 @@
             "dx_px": -3.96,
             "dy_px": -3.99,
             "velocidad_pixeles_min": 0.18738,
+            "vector_movimiento_px": 5.6215,
+            "direccion_movimiento_grados": 315.22,
             "error_rumbo_bahia_grados": 164.4,
+            "componente_hacia_bahia_kmh": -10.15,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 25.56,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 12
         },
@@ -9272,9 +9820,17 @@
             "dx_px": 0.43,
             "dy_px": 1.85,
             "velocidad_pixeles_min": 0.06331,
+            "vector_movimiento_px": 1.8993,
+            "direccion_movimiento_grados": 166.91,
             "error_rumbo_bahia_grados": 1.7,
-            "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "componente_hacia_bahia_kmh": 3.56,
+            "movimiento_valido": true,
+            "movimiento_hacia_bahia": true,
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 0.59,
+            "distancia_proyectada_10min_km": 8.15,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 13
         },
@@ -9319,9 +9875,17 @@
             "dx_px": 6.56,
             "dy_px": -0.17,
             "velocidad_pixeles_min": 0.21874,
+            "vector_movimiento_px": 6.5622,
+            "direccion_movimiento_grados": 88.52,
             "error_rumbo_bahia_grados": 170.9,
+            "componente_hacia_bahia_kmh": -12.15,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 41.2,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 14
         },
@@ -9366,9 +9930,17 @@
             "dx_px": -37.01,
             "dy_px": 9.41,
             "velocidad_pixeles_min": 1.27292,
+            "vector_movimiento_px": 38.1875,
+            "direccion_movimiento_grados": 255.73,
             "error_rumbo_bahia_grados": 102.2,
+            "componente_hacia_bahia_kmh": -15.18,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 29.73,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 15
         },
@@ -9408,14 +9980,22 @@
             "rumbo_bahia_grados": 93.9
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 20.28,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 16
         },
@@ -9460,9 +10040,17 @@
             "dx_px": -6.53,
             "dy_px": 1.81,
             "velocidad_pixeles_min": 0.22587,
+            "vector_movimiento_px": 6.7762,
+            "direccion_movimiento_grados": 254.51,
             "error_rumbo_bahia_grados": 179.0,
+            "componente_hacia_bahia_kmh": -12.71,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 37.85,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 17
         },
@@ -9507,9 +10095,17 @@
             "dx_px": -27.25,
             "dy_px": 3.64,
             "velocidad_pixeles_min": 0.9164,
+            "vector_movimiento_px": 27.492,
+            "direccion_movimiento_grados": 262.39,
             "error_rumbo_bahia_grados": 86.2,
+            "componente_hacia_bahia_kmh": 3.42,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.57,
+            "distancia_proyectada_10min_km": 49.04,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 18
         },
@@ -9549,14 +10145,22 @@
             "rumbo_bahia_grados": 301.6
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 78.49,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 19
         },
@@ -9601,9 +10205,17 @@
             "dx_px": 11.97,
             "dy_px": 7.19,
             "velocidad_pixeles_min": 0.46545,
+            "vector_movimiento_px": 13.9634,
+            "direccion_movimiento_grados": 120.99,
             "error_rumbo_bahia_grados": 66.2,
+            "componente_hacia_bahia_kmh": 10.58,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 1.76,
+            "distancia_proyectada_10min_km": 129.64,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 20
         },
@@ -9648,9 +10260,17 @@
             "dx_px": -5.83,
             "dy_px": -5.21,
             "velocidad_pixeles_min": 0.26063,
+            "vector_movimiento_px": 7.8188,
+            "direccion_movimiento_grados": 311.79,
             "error_rumbo_bahia_grados": 83.8,
+            "componente_hacia_bahia_kmh": 1.58,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.26,
+            "distancia_proyectada_10min_km": 150.7,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 21
         },
@@ -9695,9 +10315,17 @@
             "dx_px": -18.04,
             "dy_px": -83.73,
             "velocidad_pixeles_min": 2.85505,
+            "vector_movimiento_px": 85.6514,
+            "direccion_movimiento_grados": 347.84,
             "error_rumbo_bahia_grados": 83.7,
+            "componente_hacia_bahia_kmh": 17.62,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 2.94,
+            "distancia_proyectada_10min_km": 118.37,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 22
         },
@@ -9737,14 +10365,22 @@
             "rumbo_bahia_grados": 88.4
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 99.09,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 23
         },
@@ -9789,9 +10425,17 @@
             "dx_px": -41.85,
             "dy_px": 19.97,
             "velocidad_pixeles_min": 1.54568,
+            "vector_movimiento_px": 46.3705,
+            "direccion_movimiento_grados": 244.49,
             "error_rumbo_bahia_grados": 132.3,
+            "componente_hacia_bahia_kmh": -58.47,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 54.06,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 24
         },
@@ -9836,9 +10480,17 @@
             "dx_px": 1.04,
             "dy_px": -0.81,
             "velocidad_pixeles_min": 0.04394,
+            "vector_movimiento_px": 1.3182,
+            "direccion_movimiento_grados": 52.09,
             "error_rumbo_bahia_grados": 54.7,
+            "componente_hacia_bahia_kmh": 1.43,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.24,
+            "distancia_proyectada_10min_km": 39.96,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 25
         },
@@ -9883,9 +10535,17 @@
             "dx_px": 10.93,
             "dy_px": 3.16,
             "velocidad_pixeles_min": 0.37925,
+            "vector_movimiento_px": 11.3776,
+            "direccion_movimiento_grados": 106.13,
             "error_rumbo_bahia_grados": 75.2,
+            "componente_hacia_bahia_kmh": 5.44,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.91,
+            "distancia_proyectada_10min_km": 163.85,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 26
         },
@@ -9930,9 +10590,17 @@
             "dx_px": 0.99,
             "dy_px": -0.29,
             "velocidad_pixeles_min": 0.03439,
+            "vector_movimiento_px": 1.0316,
+            "direccion_movimiento_grados": 73.67,
             "error_rumbo_bahia_grados": 114.5,
+            "componente_hacia_bahia_kmh": -0.8,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 91.96,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 27
         },
@@ -9977,9 +10645,17 @@
             "dx_px": -4.05,
             "dy_px": -1.71,
             "velocidad_pixeles_min": 0.14654,
+            "vector_movimiento_px": 4.3962,
+            "direccion_movimiento_grados": 292.89,
             "error_rumbo_bahia_grados": 70.8,
+            "componente_hacia_bahia_kmh": 2.71,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.45,
+            "distancia_proyectada_10min_km": 82.53,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 28
         },
@@ -10024,9 +10700,17 @@
             "dx_px": -0.58,
             "dy_px": -1.42,
             "velocidad_pixeles_min": 0.05113,
+            "vector_movimiento_px": 1.5339,
+            "direccion_movimiento_grados": 337.78,
             "error_rumbo_bahia_grados": 48.3,
+            "componente_hacia_bahia_kmh": 1.92,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.32,
+            "distancia_proyectada_10min_km": 60.47,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 29
         },
@@ -10071,9 +10755,17 @@
             "dx_px": 3.8,
             "dy_px": 5.17,
             "velocidad_pixeles_min": 0.21388,
+            "vector_movimiento_px": 6.4163,
+            "direccion_movimiento_grados": 143.68,
             "error_rumbo_bahia_grados": 78.6,
+            "componente_hacia_bahia_kmh": 2.37,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.39,
+            "distancia_proyectada_10min_km": 50.95,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 30
         },
@@ -10118,9 +10810,17 @@
             "dx_px": -8.42,
             "dy_px": -6.59,
             "velocidad_pixeles_min": 0.35641,
+            "vector_movimiento_px": 10.6923,
+            "direccion_movimiento_grados": 308.05,
             "error_rumbo_bahia_grados": 67.8,
+            "componente_hacia_bahia_kmh": 7.57,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 1.26,
+            "distancia_proyectada_10min_km": 57.71,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 31
         },
@@ -10165,9 +10865,17 @@
             "dx_px": 3.22,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.10733,
+            "vector_movimiento_px": 3.22,
+            "direccion_movimiento_grados": 90.0,
             "error_rumbo_bahia_grados": 108.8,
+            "componente_hacia_bahia_kmh": -1.95,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 74.44,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 32
         },
@@ -10212,9 +10920,17 @@
             "dx_px": 1.55,
             "dy_px": -0.9,
             "velocidad_pixeles_min": 0.05974,
+            "vector_movimiento_px": 1.7923,
+            "direccion_movimiento_grados": 59.86,
             "error_rumbo_bahia_grados": 120.3,
+            "componente_hacia_bahia_kmh": -1.7,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 34.43,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 33
         },
@@ -10259,9 +10975,17 @@
             "dx_px": -11.24,
             "dy_px": 4.46,
             "velocidad_pixeles_min": 0.40308,
+            "vector_movimiento_px": 12.0925,
+            "direccion_movimiento_grados": 248.36,
             "error_rumbo_bahia_grados": 55.6,
+            "componente_hacia_bahia_kmh": 12.81,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 2.14,
+            "distancia_proyectada_10min_km": 68.49,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 34
         },
@@ -10306,9 +11030,17 @@
             "dx_px": 0.67,
             "dy_px": 4.61,
             "velocidad_pixeles_min": 0.15528,
+            "vector_movimiento_px": 4.6584,
+            "direccion_movimiento_grados": 171.73,
             "error_rumbo_bahia_grados": 104.1,
+            "componente_hacia_bahia_kmh": -2.12,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 134.28,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 35
         },
@@ -10353,9 +11085,17 @@
             "dx_px": 0.05,
             "dy_px": 0.18,
             "velocidad_pixeles_min": 0.00623,
+            "vector_movimiento_px": 0.1868,
+            "direccion_movimiento_grados": 164.48,
             "error_rumbo_bahia_grados": 152.0,
+            "componente_hacia_bahia_kmh": -0.31,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 152.23,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 36
         },
@@ -10400,9 +11140,17 @@
             "dx_px": -107.41,
             "dy_px": -91.46,
             "velocidad_pixeles_min": 4.70246,
+            "vector_movimiento_px": 141.0739,
+            "direccion_movimiento_grados": 310.41,
             "error_rumbo_bahia_grados": 114.7,
+            "componente_hacia_bahia_kmh": -110.39,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 143.54,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 37
         },
@@ -10447,9 +11195,17 @@
             "dx_px": 5.89,
             "dy_px": 1.17,
             "velocidad_pixeles_min": 0.20017,
+            "vector_movimiento_px": 6.0051,
+            "direccion_movimiento_grados": 101.24,
             "error_rumbo_bahia_grados": 90.4,
+            "componente_hacia_bahia_kmh": -0.08,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 72.5,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 38
         },
@@ -10489,14 +11245,22 @@
             "rumbo_bahia_grados": 110.8
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 33.84,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 39
         },
@@ -10541,9 +11305,17 @@
             "dx_px": 6.36,
             "dy_px": 5.9,
             "velocidad_pixeles_min": 0.28917,
+            "vector_movimiento_px": 8.6752,
+            "direccion_movimiento_grados": 132.85,
             "error_rumbo_bahia_grados": 79.8,
+            "componente_hacia_bahia_kmh": 2.87,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.48,
+            "distancia_proyectada_10min_km": 117.16,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 40
         },
@@ -10588,9 +11360,17 @@
             "dx_px": 0.1,
             "dy_px": 1.18,
             "velocidad_pixeles_min": 0.03947,
+            "vector_movimiento_px": 1.1842,
+            "direccion_movimiento_grados": 175.16,
             "error_rumbo_bahia_grados": 76.7,
+            "componente_hacia_bahia_kmh": 0.51,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.09,
+            "distancia_proyectada_10min_km": 55.82,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 41
         },
@@ -10635,9 +11415,17 @@
             "dx_px": -0.16,
             "dy_px": -0.97,
             "velocidad_pixeles_min": 0.03277,
+            "vector_movimiento_px": 0.9831,
+            "direccion_movimiento_grados": 350.63,
             "error_rumbo_bahia_grados": 167.5,
+            "componente_hacia_bahia_kmh": -1.8,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 110.27,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 42
         },
@@ -10677,14 +11465,22 @@
             "rumbo_bahia_grados": 30.0
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 47.13,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 43
         },
@@ -10729,9 +11525,17 @@
             "dx_px": -8.75,
             "dy_px": -0.58,
             "velocidad_pixeles_min": 0.29231,
+            "vector_movimiento_px": 8.7692,
+            "direccion_movimiento_grados": 273.79,
             "error_rumbo_bahia_grados": 126.0,
+            "componente_hacia_bahia_kmh": -9.66,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 38.09,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 44
         },
@@ -10771,14 +11575,22 @@
             "rumbo_bahia_grados": 82.0
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 106.36,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 45
         },
@@ -10823,9 +11635,17 @@
             "dx_px": -1.71,
             "dy_px": -0.47,
             "velocidad_pixeles_min": 0.05911,
+            "vector_movimiento_px": 1.7734,
+            "direccion_movimiento_grados": 285.37,
             "error_rumbo_bahia_grados": 92.2,
+            "componente_hacia_bahia_kmh": -0.13,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 79.61,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 46
         },
@@ -10870,9 +11690,17 @@
             "dx_px": 47.44,
             "dy_px": -13.48,
             "velocidad_pixeles_min": 1.64393,
+            "vector_movimiento_px": 49.318,
+            "direccion_movimiento_grados": 74.14,
             "error_rumbo_bahia_grados": 155.4,
+            "componente_hacia_bahia_kmh": -84.05,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 101.34,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 47
         },
@@ -10917,9 +11745,17 @@
             "dx_px": -1.6,
             "dy_px": -14.7,
             "velocidad_pixeles_min": 0.49289,
+            "vector_movimiento_px": 14.7868,
+            "direccion_movimiento_grados": 353.79,
             "error_rumbo_bahia_grados": 163.5,
+            "componente_hacia_bahia_kmh": -26.58,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 102.1,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 48
         },
@@ -10964,9 +11800,17 @@
             "dx_px": -2.2,
             "dy_px": -14.32,
             "velocidad_pixeles_min": 0.48293,
+            "vector_movimiento_px": 14.488,
+            "direccion_movimiento_grados": 351.27,
             "error_rumbo_bahia_grados": 91.2,
+            "componente_hacia_bahia_kmh": -0.59,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 101.75,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 49
         },
@@ -11011,9 +11855,17 @@
             "dx_px": -55.75,
             "dy_px": 29.82,
             "velocidad_pixeles_min": 2.10747,
+            "vector_movimiento_px": 63.2242,
+            "direccion_movimiento_grados": 241.86,
             "error_rumbo_bahia_grados": 146.1,
+            "componente_hacia_bahia_kmh": -98.4,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 189.34,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 50
         },
@@ -11058,9 +11910,17 @@
             "dx_px": 5.25,
             "dy_px": -8.07,
             "velocidad_pixeles_min": 0.32091,
+            "vector_movimiento_px": 9.6274,
+            "direccion_movimiento_grados": 33.05,
             "error_rumbo_bahia_grados": 139.6,
+            "componente_hacia_bahia_kmh": -13.75,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 62.52,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 51
         },
@@ -11105,9 +11965,17 @@
             "dx_px": -1.89,
             "dy_px": 2.55,
             "velocidad_pixeles_min": 0.1058,
+            "vector_movimiento_px": 3.1741,
+            "direccion_movimiento_grados": 216.54,
             "error_rumbo_bahia_grados": 177.3,
+            "componente_hacia_bahia_kmh": -5.94,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 51.45,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 52
         },
@@ -11147,14 +12015,22 @@
             "rumbo_bahia_grados": 60.5
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 31.41,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 53
         },
@@ -11199,9 +12075,17 @@
             "dx_px": -18.33,
             "dy_px": -82.5,
             "velocidad_pixeles_min": 2.81706,
+            "vector_movimiento_px": 84.5118,
+            "direccion_movimiento_grados": 347.47,
             "error_rumbo_bahia_grados": 37.9,
+            "componente_hacia_bahia_kmh": 124.98,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 24.6
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 20.83,
+            "distancia_proyectada_10min_km": 44.13,
+            "eta_minutos": 31.2,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 54
         },
@@ -11246,9 +12130,17 @@
             "dx_px": -100.69,
             "dy_px": 21.5,
             "velocidad_pixeles_min": 3.43199,
+            "vector_movimiento_px": 102.9598,
+            "direccion_movimiento_grados": 257.95,
             "error_rumbo_bahia_grados": 1.7,
+            "componente_hacia_bahia_kmh": 192.96,
+            "movimiento_valido": true,
             "movimiento_hacia_bahia": true,
-            "eta_minutos": 3.1
+            "acercandose_a_bahia": true,
+            "reduccion_distancia_10min_km": 9.91,
+            "distancia_proyectada_10min_km": 0.0,
+            "eta_minutos": 3.1,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 55
         },
@@ -11288,28 +12180,36 @@
             "rumbo_bahia_grados": 51.4
           },
           "movimiento_bahia": {
-            "velocidad_kmh": null,
+            "velocidad_kmh": 0.0,
             "direccion_grados": null,
             "dx_px": 0.0,
             "dy_px": 0.0,
             "velocidad_pixeles_min": 0.0,
+            "vector_movimiento_px": 0.0,
+            "direccion_movimiento_grados": null,
             "error_rumbo_bahia_grados": null,
+            "componente_hacia_bahia_kmh": 0.0,
+            "movimiento_valido": false,
             "movimiento_hacia_bahia": false,
-            "eta_minutos": null
+            "acercandose_a_bahia": false,
+            "reduccion_distancia_10min_km": 0.0,
+            "distancia_proyectada_10min_km": 46.04,
+            "eta_minutos": null,
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
           },
           "indice_nucleo": 56
         }
       ],
-      "rumbo_bahia_grados": 227.3,
-      "error_rumbo_bahia_grados": 74.2,
+      "rumbo_bahia_grados": 165.2,
+      "error_rumbo_bahia_grados": 1.7,
       "bahia_blanca": {
         "latitud": -38.7196,
         "longitud": -62.2724,
-        "distancia_principal_km": 32.5,
-        "rumbo_desde_principal_grados": 227.3,
-        "movimiento_hacia_bahia": false,
+        "distancia_principal_km": 8.74,
+        "rumbo_desde_principal_grados": 165.2,
+        "movimiento_hacia_bahia": true,
         "eta_minutos": null,
-        "nucleo_principal_id": 87
+        "nucleo_principal_id": 101
       }
     },
     "ambiente": {
@@ -11349,17 +12249,17 @@
       "modelo_ecmwf_rafaga_10m_kmh": 25.9,
       "fuente_superficie_actual": "SAZB_AWC",
       "observacion_sazb_utc": "2026-10-20T10:00:00+00:00",
-      "observacion_sazb_edad_minutos": 7.8,
+      "observacion_sazb_edad_minutos": 21.1,
       "viento_actual_fuente": "SAZB_AWC",
       "viento_actual_kmh": 12.964,
       "direccion_viento_actual": 40.0,
-      "estado_observacion_actual": "observacion_reciente",
-      "observacion_sazb_fresca": true
+      "estado_observacion_actual": "ultima_observacion_disponible",
+      "observacion_sazb_fresca": false
     },
     "ambiente_en_trayectoria": {},
     "calidad_datos": 100.0,
-    "calidad_tracking": 0.548,
-    "confianza_modelo": 0.89,
+    "calidad_tracking": 0.648,
+    "confianza_modelo": 0.9,
     "limitaciones": [
       "El radar actual no aporta dBZ cuantitativo validado en este motor.",
       "No hay observacion directa de rayos integrada en esta etapa.",
@@ -11369,14 +12269,14 @@
     ],
     "razones": [
       "Existe actividad de precipitacion en el radar.",
-      "No se confirma movimiento hacia Bahia Blanca.",
+      "El movimiento estimado apunta hacia Bahia Blanca.",
       "El area radar esta aumentando.",
       "tendencia de fortalecimiento",
       "IA V8 impacto 3-6h: 8%.",
       "CAPE ECMWF: 0 J/kg.",
       "Rafaga prevista ECMWF: 25.9 km/h.",
-      "Indice hibrido de severidad: 28%.",
-      "Impacto inmediato estimado por radar: 4%.",
+      "Indice hibrido de severidad: 41%.",
+      "Impacto inmediato estimado por radar: 85%.",
       "Radar, evolucion, meteorologia, IA e historial se combinan en un unico Storm Engine.",
       "La estimacion no reemplaza avisos oficiales y requiere validacion continua."
     ]
@@ -11384,7 +12284,7 @@
   "meteorologia": {
     "version": "1.1.0",
     "motor": "ClimaAR Intelligence",
-    "actualizado_utc": "2026-10-20T10:09:07.034101+00:00",
+    "actualizado_utc": "2026-10-20T10:22:02.737071+00:00",
     "ubicacion": {
       "ciudad": "Bahia Blanca",
       "latitud": -38.71,
@@ -11407,13 +12307,13 @@
       "tiles_ok": true,
       "actividad": true,
       "area_px": 4345.0,
-      "distancia_km": 32.5,
+      "distancia_km": 8.74,
       "fortalecimiento": "fortaleciendose",
       "cambio_area_pct": 3.3,
-      "velocidad_kmh": 20.86,
+      "velocidad_kmh": 3.56,
       "direccion": 301.5467646935445,
-      "direccion_grados": 301.55,
-      "movimiento_hacia_bahia": false,
+      "direccion_grados": 166.91,
+      "movimiento_hacia_bahia": true,
       "eta_minutos": null,
       "proyecciones": {},
       "confianza_movimiento": 0.55,
@@ -12827,7 +13727,7 @@
       "fuente": "Aviation Weather Center",
       "estacion": "SAZB",
       "obsTime_utc": "2026-10-20T10:00:00+00:00",
-      "edad_minutos": 7.8,
+      "edad_minutos": 21.1,
       "temperatura_c": 9,
       "punto_rocio_c": 7,
       "viento_kt": 7,
@@ -12872,12 +13772,12 @@
       "modelo_ecmwf_rafaga_10m_kmh": 25.9,
       "fuente_superficie_actual": "SAZB_AWC",
       "observacion_sazb_utc": "2026-10-20T10:00:00+00:00",
-      "observacion_sazb_edad_minutos": 7.8,
+      "observacion_sazb_edad_minutos": 21.1,
       "viento_actual_fuente": "SAZB_AWC",
       "viento_actual_kmh": 12.964,
       "direccion_viento_actual": 40.0,
-      "estado_observacion_actual": "observacion_reciente",
-      "observacion_sazb_fresca": true
+      "estado_observacion_actual": "ultima_observacion_disponible",
+      "observacion_sazb_fresca": false
     },
     "ambiente_futuro": {
       "modelo": "ECMWF IFS HRES",
@@ -17695,8 +18595,8 @@
     "proxima_etapa": "Motor IA de evolucion, trayectoria, fortalecimiento, debilitamiento, ETA, duracion y peligros."
   },
   "resumen_operativo": {
-    "probabilidad_tormenta": 0.153,
-    "probabilidad_llegada_bahia": 0.044,
+    "probabilidad_tormenta": 0.599,
+    "probabilidad_llegada_bahia": 0.855,
     "probabilidad_fortalecimiento": 0.644,
     "probabilidad_debilitamiento": 0.356,
     "lluvia_fuerte": 0.47,
@@ -17704,6 +18604,6 @@
     "granizo": 0.2,
     "rayo": 0.21,
     "eta_minutos": null,
-    "distancia_km": 32.5
+    "distancia_km": 8.74
   }
 }
