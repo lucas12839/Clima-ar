@@ -20,7 +20,7 @@ jobs:
 
     steps:
 
-      - name: Diagnosticar antigüedad del radar
+      - name: Diagnosticar estado del radar
         id: diagnostico
         env:
           GH_TOKEN: ${{ github.token }}
@@ -28,8 +28,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          python - <<'PY'
-          import json
+          python -c '
           import os
           import time
           import urllib.request
@@ -41,106 +40,97 @@ jobs:
               "data/radar/radar_timestamp.txt"
           )
 
-          def obtener():
-              req = urllib.request.Request(
+          try:
+              request = urllib.request.Request(
                   URL + "?t=" + str(int(time.time())),
                   headers={
-                      "User-Agent": "ClimaAR-Watchdog/4.0",
+                      "User-Agent": "ClimaAR-Watchdog",
                       "Cache-Control": "no-cache",
                       "Pragma": "no-cache",
                   },
               )
 
               with urllib.request.urlopen(
-                  req,
+                  request,
                   timeout=20,
               ) as response:
-                  return response.read().decode(
+                  raw = response.read().decode(
                       "utf-8",
-                      errors="replace"
+                      errors="replace",
                   ).strip()
 
-          def parsear(value):
-              if value.endswith("Z"):
-                  value = value[:-1] + "+00:00"
+              if raw.endswith("Z"):
+                  raw = raw[:-1] + "+00:00"
 
-              dt = datetime.fromisoformat(value)
+              frame = datetime.fromisoformat(raw)
 
-              if dt.tzinfo is None:
-                  dt = dt.replace(
-                      tzinfo=timezone.utc
+              if frame.tzinfo is None:
+                  raise ValueError(
+                      "timestamp sin zona horaria"
                   )
 
-              return dt.astimezone(timezone.utc)
+              frame = frame.astimezone(timezone.utc)
 
-          try:
-              raw = obtener()
-              frame = parsear(raw)
               ahora = datetime.now(timezone.utc)
 
               edad = (
                   ahora - frame
               ).total_seconds() / 60.0
 
+              if edad < 0:
+                  print(
+                      f"ERROR: timestamp futuro: {edad:.2f} min"
+                  )
+                  necesita = True
+
+              else:
+                  necesita = edad > 12
+
               print("")
               print("==========================================")
               print("CLIMAAR WATCHDOG")
               print("==========================================")
-              print("Frame ClimaAR:", frame.isoformat())
-              print(f"Edad: {edad:.2f} minutos")
+              print(
+                  "Frame:",
+                  frame.isoformat()
+              )
+              print(
+                  f"Edad: {edad:.2f} minutos"
+              )
+              print(
+                  "Necesita Radar:",
+                  necesita
+              )
               print("==========================================")
-
-              with open(
-                  "diagnostico.json",
-                  "w",
-                  encoding="utf-8"
-              ) as f:
-                  json.dump(
-                      {
-                          "ok": True,
-                          "frame_climaar": frame.isoformat(),
-                          "edad_minutos": round(
-                              edad,
-                              2
-                          ),
-                      },
-                      f,
-                      indent=2,
-                      ensure_ascii=False
-                  )
-
-              # Si supera 12 minutos, necesitamos
-              # comprobar si el Radar necesita una
-              # nueva captura.
-              necesita_radar = edad > 12
 
               with open(
                   os.environ["GITHUB_OUTPUT"],
                   "a",
-                  encoding="utf-8"
+                  encoding="utf-8",
               ) as output:
                   output.write(
-                      f"necesita_radar={'true' if necesita_radar else 'false'}\n"
+                      "necesita_radar="
+                      + ("true" if necesita else "false")
+                      + "\n"
                   )
 
           except Exception as exc:
               print(
-                  "ERROR leyendo timestamp de ClimaAR:",
+                  "ERROR leyendo radar_timestamp.txt:",
                   exc
               )
 
-              # Ante una lectura imposible,
-              # intentar recuperar el radar.
               with open(
                   os.environ["GITHUB_OUTPUT"],
                   "a",
-                  encoding="utf-8"
+                  encoding="utf-8",
               ) as output:
                   output.write(
                       "necesita_radar=true\n"
                   )
+          '
 
-      - name: Comprobar si Radar ya está ejecutándose
+      - name: Comprobar Radar activo
         id: radar
         if: steps.diagnostico.outputs.necesita_radar == 'true'
         env:
@@ -149,7 +139,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          RUNNING="$(
+          activos="$(
             gh run list \
               --repo "$GITHUB_REPOSITORY" \
               --workflow probar-radar-smn.yml \
@@ -168,15 +158,15 @@ jobs:
               '
           )"
 
-          echo "Radar activo: $RUNNING"
+          echo "Ejecuciones Radar activas: $activos"
 
-          if [ "$RUNNING" -gt 0 ]; then
+          if [ "$activos" -gt 0 ]; then
             echo "running=true" >> "$GITHUB_OUTPUT"
           else
             echo "running=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Evitar ejecuciones demasiado seguidas
+      - name: Comprobar Radar recientemente terminado
         id: frecuencia
         if: |
           steps.diagnostico.outputs.necesita_radar == 'true' &&
@@ -187,13 +177,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          python - <<'PY'
+          python -c '
           import json
           import os
           import subprocess
           from datetime import datetime, timezone
 
-          raw = subprocess.check_output(
+          resultado = subprocess.check_output(
               [
                   "gh",
                   "run",
@@ -203,32 +193,36 @@ jobs:
                   "--workflow",
                   "probar-radar-smn.yml",
                   "--limit",
-                  "5",
+                  "10",
                   "--json",
-                  "status,updatedAt"
+                  "status,conclusion,updatedAt",
               ],
-              text=True
+              text=True,
           )
 
-          runs = json.loads(raw)
+          runs = json.loads(resultado)
 
           ahora = datetime.now(timezone.utc)
 
           reciente = False
 
           for run in runs:
+
               if run.get("status") != "completed":
                   continue
 
-              value = run.get("updatedAt")
+              if run.get("conclusion") != "success":
+                  continue
 
-              if not value:
+              actualizado = run.get("updatedAt")
+
+              if not actualizado:
                   continue
 
               dt = datetime.fromisoformat(
-                  value.replace(
+                  actualizado.replace(
                       "Z",
-                      "+00:00"
+                      "+00:00",
                   )
               )
 
@@ -237,8 +231,8 @@ jobs:
               ).total_seconds() / 60.0
 
               print(
-                  f"Último Radar terminado hace "
-                  f"{edad:.2f} min"
+                  f"Radar exitoso terminado hace "
+                  f"{edad:.2f} minutos"
               )
 
               if edad < 8:
@@ -248,14 +242,16 @@ jobs:
           with open(
               os.environ["GITHUB_OUTPUT"],
               "a",
-              encoding="utf-8"
+              encoding="utf-8",
           ) as output:
               output.write(
-                  f"reciente={'true' if reciente else 'false'}\n"
+                  "reciente="
+                  + ("true" if reciente else "false")
+                  + "\n"
               )
-          PY
+          '
 
-      - name: Lanzar Radar
+      - name: Lanzar Radar RMA10
         if: |
           steps.diagnostico.outputs.necesita_radar == 'true' &&
           steps.radar.outputs.running == 'false' &&
@@ -267,7 +263,7 @@ jobs:
           set -euo pipefail
 
           echo "=========================================="
-          echo "WATCHDOG: DISPARANDO RADAR"
+          echo "WATCHDOG: LANZANDO RADAR RMA10"
           echo "=========================================="
 
           gh workflow run \
@@ -275,27 +271,27 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --ref main
 
-          echo "Radar disparado correctamente."
+          echo "Radar solicitado correctamente."
 
-      - name: Radar ya estaba procesando
+      - name: Radar ya está ejecutándose
         if: |
           steps.diagnostico.outputs.necesita_radar == 'true' &&
           steps.radar.outputs.running == 'true'
         run: |
           echo "Radar ya está ejecutándose."
-          echo "No se lanza una segunda ejecución."
+          echo "No se inicia otra ejecución."
 
-      - name: Radar ejecutado recientemente
+      - name: Radar terminó recientemente
         if: |
           steps.diagnostico.outputs.necesita_radar == 'true' &&
           steps.radar.outputs.running == 'false' &&
           steps.frecuencia.outputs.reciente == 'true'
         run: |
           echo "Radar terminó hace menos de 8 minutos."
-          echo "Se espera la siguiente comprobación."
+          echo "No se inicia otra ejecución."
 
-      - name: Radar dentro del margen
+      - name: Radar operativo
         if: steps.diagnostico.outputs.necesita_radar == 'false'
         run: |
           echo "Radar dentro del margen operativo."
-          echo "No se dispara ninguna ejecución."
+          echo "No se requiere recuperación."
