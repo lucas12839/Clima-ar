@@ -746,19 +746,29 @@ function renderStorm() {
   const weather =
     state.weather || {};
 
+  const intelligenceRadar =
+    state.intelligence?.radar || {};
+
   setText(
     "#stormMovement",
     weather.movimiento ||
-    "Sin movimiento confirmado"
+    (intelligenceRadar.movimiento_hacia_bahia === true
+      ? "Movimiento hacia Bahía Blanca"
+      : "Sin movimiento confirmado")
   );
+
+  const distance =
+    number(intelligenceRadar.distancia_km);
 
   setText(
     "#stormDistance",
-    "Sin datos"
+    distance !== null
+      ? `${distance.toFixed(1)} km`
+      : "Sin datos"
   );
 
   const eta =
-    number(weather.eta_minutos);
+    number(intelligenceRadar.eta_minutos);
 
   setText(
     "#stormEta",
@@ -768,13 +778,12 @@ function renderStorm() {
   );
 
   const direction =
-    weather.viento_direccion;
+    number(intelligenceRadar.direccion_grados);
 
   setText(
     "#stormDirection",
-    direction !== null &&
-      direction !== undefined
-      ? `${Math.round(direction)}°`
+    direction !== null
+      ? `${direction.toFixed(1)}°`
       : "Sin datos"
   );
 
@@ -803,6 +812,13 @@ function renderStorm() {
         )[0][0];
   }
 
+  const intelligenceTrend =
+    intelligenceRadar.fortalecimiento;
+
+  if (intelligenceTrend) {
+    trend = intelligenceTrend;
+  }
+
   const trendMap = {
     fortaleciendose:
       "Se observan núcleos fortaleciéndose",
@@ -811,7 +827,13 @@ function renderStorm() {
       "Se observan núcleos debilitándose",
 
     estable:
-      "La evolución observada es estable"
+      "La evolución observada es estable",
+
+    fortaleciéndose:
+      "Se observan núcleos fortaleciéndose",
+
+    debilitándose:
+      "Se observan núcleos debilitándose"
   };
 
   setText(
@@ -824,7 +846,9 @@ function renderStorm() {
     "#stormTrendDetail",
     trends.length
       ? `${trends.length} tracks con tendencia disponible.`
-      : "Sin tendencia disponible."
+      : intelligenceTrend
+        ? "Tendencia tomada del motor de Inteligencia."
+        : "Sin tendencia disponible."
   );
 
   setText(
@@ -978,11 +1002,111 @@ function getPredictions(
 }
 
 
-function findNearestTrack(
+function findPrincipalThreatTrack(
   predictions
 ) {
   if (!predictions.length) {
     return null;
+  }
+
+  const intelligenceRadar =
+    state.intelligence?.radar || {};
+
+  const intelligenceNuclei =
+    Array.isArray(intelligenceRadar.nucleos)
+      ? intelligenceRadar.nucleos
+      : [];
+
+  const targetDirection =
+    number(intelligenceRadar.direccion_grados);
+
+  const intelligenceTracks =
+    intelligenceNuclei
+      .map(core => ({
+        trackId: core?.track_id,
+        direction: firstNumber(
+          core?.direction,
+          core?.direccion,
+          core?.movimiento?.direccion_grados
+        )
+      }))
+      .filter(
+        item =>
+          item.trackId !== undefined &&
+          item.trackId !== null
+      );
+
+  if (intelligenceTracks.length) {
+    const directMatch =
+      predictions.find(prediction =>
+        intelligenceTracks.some(
+          track =>
+            String(track.trackId) ===
+            String(prediction.track_id)
+        )
+      );
+
+    if (directMatch) {
+      if (targetDirection === null) {
+        return directMatch;
+      }
+
+      const candidates =
+        predictions.filter(prediction =>
+          intelligenceTracks.some(
+            track =>
+              String(track.trackId) ===
+              String(prediction.track_id)
+          )
+        );
+
+      const angularDistance = (a, b) => {
+        const diff =
+          Math.abs(a - b) % 360;
+        return Math.min(diff, 360 - diff);
+      };
+
+      const best =
+        candidates
+          .map(prediction => {
+            const track =
+              intelligenceTracks.find(
+                item =>
+                  String(item.trackId) ===
+                  String(prediction.track_id)
+              );
+
+            const predictionDirection =
+              firstNumber(
+                prediction.motion_bearing_deg,
+                track?.direction
+              );
+
+            return {
+              prediction,
+              directionError:
+                predictionDirection !== null
+                  ? angularDistance(
+                      predictionDirection,
+                      targetDirection
+                    )
+                  : 999,
+              distance:
+                number(prediction.distance_km) ??
+                999999
+            };
+          })
+          .sort(
+            (a, b) =>
+              a.directionError -
+              b.directionError ||
+              a.distance - b.distance
+          )[0];
+
+      if (best) {
+        return best.prediction;
+      }
+    }
   }
 
   return [...predictions]
@@ -1006,7 +1130,7 @@ function renderModel() {
     getPredictions(model);
 
   const nearest =
-    findNearestTrack(
+    findPrincipalThreatTrack(
       predictions
     );
 
@@ -1113,7 +1237,7 @@ function renderModel() {
 
   setText(
     "#predictionMode",
-    "Predicción ML del track más cercano · valores del modelo sin reinterpretarlos."
+    "Predicción ML del track principal de amenaza · valores del modelo sin reinterpretarlos."
   );
 }
 
