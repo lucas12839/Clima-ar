@@ -19,7 +19,8 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Diagnosticar SINARAME vs ClimaAR
+
+      - name: Diagnosticar antigüedad del radar
         id: diagnostico
         env:
           GH_TOKEN: ${{ github.token }}
@@ -29,26 +30,22 @@ jobs:
 
           python - <<'PY'
           import json
-          import re
-          import sys
+          import os
           import time
           import urllib.request
           from datetime import datetime, timezone
-          from zoneinfo import ZoneInfo
 
-          SOURCE_URL = "https://radares.hidricosargentina.gob.ar/"
-
-          GITHUB_TS_URL = (
+          URL = (
               "https://raw.githubusercontent.com/"
               "lucas12839/Clima-ar/main/"
               "data/radar/radar_timestamp.txt"
           )
 
-          def get(url, timeout=20):
+          def obtener():
               req = urllib.request.Request(
-                  url,
+                  URL + "?t=" + str(int(time.time())),
                   headers={
-                      "User-Agent": "ClimaAR-Watchdog/3.0",
+                      "User-Agent": "ClimaAR-Watchdog/4.0",
                       "Cache-Control": "no-cache",
                       "Pragma": "no-cache",
                   },
@@ -56,276 +53,101 @@ jobs:
 
               with urllib.request.urlopen(
                   req,
-                  timeout=timeout,
+                  timeout=20,
               ) as response:
-                  return response.read()
+                  return response.read().decode(
+                      "utf-8",
+                      errors="replace"
+                  ).strip()
 
-          def parse_iso(value):
-              if not value:
-                  return None
+          def parsear(value):
+              if value.endswith("Z"):
+                  value = value[:-1] + "+00:00"
 
-              text = value.strip()
-
-              if text.endswith("Z"):
-                  text = text[:-1] + "+00:00"
-
-              dt = datetime.fromisoformat(text)
+              dt = datetime.fromisoformat(value)
 
               if dt.tzinfo is None:
-                  dt = dt.replace(tzinfo=timezone.utc)
+                  dt = dt.replace(
+                      tzinfo=timezone.utc
+                  )
 
               return dt.astimezone(timezone.utc)
 
-          clima_ts = None
+          try:
+              raw = obtener()
+              frame = parsear(raw)
+              ahora = datetime.now(timezone.utc)
 
-          for intento in range(3):
-              try:
-                  url = (
-                      GITHUB_TS_URL
-                      + "?t="
-                      + str(int(time.time()))
-                  )
+              edad = (
+                  ahora - frame
+              ).total_seconds() / 60.0
 
-                  raw = get(url).decode(
-                      "utf-8",
-                      errors="replace",
-                  ).strip()
-
-                  clima_ts = parse_iso(raw)
-
-                  if clima_ts:
-                      break
-
-              except Exception as exc:
-                  print(
-                      f"Error leyendo ClimaAR "
-                      f"{intento + 1}/3: {exc}"
-                  )
-
-                  time.sleep(2)
-
-          if clima_ts is None:
-              print(
-                  "ERROR: no se pudo determinar "
-                  "el último frame de ClimaAR."
-              )
+              print("")
+              print("==========================================")
+              print("CLIMAAR WATCHDOG")
+              print("==========================================")
+              print("Frame ClimaAR:", frame.isoformat())
+              print(f"Edad: {edad:.2f} minutos")
+              print("==========================================")
 
               with open(
                   "diagnostico.json",
                   "w",
-                  encoding="utf-8",
+                  encoding="utf-8"
               ) as f:
                   json.dump(
                       {
-                          "ok": False,
-                          "motivo": "climaar_timestamp_no_disponible",
+                          "ok": True,
+                          "frame_climaar": frame.isoformat(),
+                          "edad_minutos": round(
+                              edad,
+                              2
+                          ),
                       },
                       f,
                       indent=2,
+                      ensure_ascii=False
                   )
 
-              sys.exit(0)
-
-          html = None
-
-          for intento in range(3):
-              try:
-                  html = get(
-                      SOURCE_URL
-                  ).decode(
-                      "utf-8",
-                      errors="replace",
-                  )
-
-                  break
-
-              except Exception as exc:
-                  print(
-                      f"Error leyendo SINARAME "
-                      f"{intento + 1}/3: {exc}"
-                  )
-
-                  time.sleep(2)
-
-          if not html:
-              print(
-                  "ERROR: no se pudo consultar SINARAME."
-              )
-              sys.exit(0)
-
-          patrones = [
-              r"/cache/RMA10/[^\"'<>\\s]+?(\\d{14})\\.png",
-              r"/cache/RMA10/(\\d{14})\\.png",
-              r"RMA10[^\"'<>\\s]*?(\\d{14})\\.png",
-          ]
-
-          timestamps = set()
-
-          for patron in patrones:
-              for match in re.findall(
-                  patron,
-                  html,
-                  flags=re.IGNORECASE,
-              ):
-                  if isinstance(match, tuple):
-                      match = match[-1]
-
-                  if re.fullmatch(
-                      r"\d{14}",
-                      match,
-                  ):
-                      timestamps.add(match)
-
-          if not timestamps:
-              print(
-                  "SINARAME no expuso un timestamp "
-                  "RMA10 detectable."
-              )
-              sys.exit(0)
-
-          argentina = ZoneInfo(
-              "America/Argentina/Buenos_Aires"
-          )
-
-          candidatos = []
-
-          for texto in timestamps:
-              try:
-                  dt = datetime.strptime(
-                      texto,
-                      "%Y%m%d%H%M%S",
-                  ).replace(
-                      tzinfo=argentina,
-                  ).astimezone(
-                      timezone.utc
-                  )
-
-                  candidatos.append(
-                      (dt, texto)
-                  )
-
-              except Exception:
-                  pass
-
-          if not candidatos:
-              print(
-                  "No se pudieron convertir "
-                  "los timestamps RMA10."
-              )
-              sys.exit(0)
-
-          source_dt, source_text = max(
-              candidatos,
-              key=lambda item: item[0],
-          )
-
-          ahora = datetime.now(timezone.utc)
-
-          diferencia = (
-              source_dt - clima_ts
-          ).total_seconds() / 60.0
-
-          edad_fuente = (
-              ahora - source_dt
-          ).total_seconds() / 60.0
-
-          edad_climaar = (
-              ahora - clima_ts
-          ).total_seconds() / 60.0
-
-          print("")
-          print("==========================================")
-          print("ClimaAR WATCHDOG")
-          print("==========================================")
-          print(
-              "SINARAME:",
-              source_dt.isoformat(),
-          )
-          print(
-              "ClimaAR :",
-              clima_ts.isoformat(),
-          )
-          print(
-              "Diferencia:",
-              f"{diferencia:.2f} minutos",
-          )
-          print(
-              "Edad SINARAME:",
-              f"{edad_fuente:.2f} minutos",
-          )
-          print(
-              "Edad ClimaAR:",
-              f"{edad_climaar:.2f} minutos",
-          )
-          print("==========================================")
-
-          resultado = {
-              "ok": True,
-              "sinarame": source_dt.isoformat(),
-              "climaar": clima_ts.isoformat(),
-              "diferencia_minutos": round(
-                  diferencia,
-                  2,
-              ),
-              "edad_sinarame_minutos": round(
-                  edad_fuente,
-                  2,
-              ),
-              "edad_climaar_minutos": round(
-                  edad_climaar,
-                  2,
-              ),
-              "frame_sinarame_nombre": source_text,
-              "accion_radar": "ninguna",
-              "accion_intelligence": "ninguna",
-          }
-
-          with open(
-              "diagnostico.json",
-              "w",
-              encoding="utf-8",
-          ) as f:
-              json.dump(
-                  resultado,
-                  f,
-                  indent=2,
-                  ensure_ascii=False,
-              )
-
-          if diferencia > 0:
-              print("")
-              print(
-                  "NUEVO FRAME DETECTADO EN SINARAME."
-              )
+              # Si supera 12 minutos, necesitamos
+              # comprobar si el Radar necesita una
+              # nueva captura.
+              necesita_radar = edad > 12
 
               with open(
-                  "nuevo_frame.flag",
-                  "w",
-              ) as f:
-                  f.write("true\n")
+                  os.environ["GITHUB_OUTPUT"],
+                  "a",
+                  encoding="utf-8"
+              ) as output:
+                  output.write(
+                      f"necesita_radar={'true' if necesita_radar else 'false'}\n"
+                  )
 
-          else:
-              print("")
+          except Exception as exc:
               print(
-                  "ClimaAR ya posee el último "
-                  "frame conocido de SINARAME."
+                  "ERROR leyendo timestamp de ClimaAR:",
+                  exc
               )
-          PY
 
-      - name: Comprobar Radar
+              # Ante una lectura imposible,
+              # intentar recuperar el radar.
+              with open(
+                  os.environ["GITHUB_OUTPUT"],
+                  "a",
+                  encoding="utf-8"
+              ) as output:
+                  output.write(
+                      "necesita_radar=true\n"
+                  )
+
+      - name: Comprobar si Radar ya está ejecutándose
         id: radar
-        if: steps.diagnostico.outcome == 'success'
+        if: steps.diagnostico.outputs.necesita_radar == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ ! -f nuevo_frame.flag ]; then
-            echo "No hay frame nuevo."
-            echo "running=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
 
           RUNNING="$(
             gh run list \
@@ -354,9 +176,10 @@ jobs:
             echo "running=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Lanzar Radar inmediatamente
+      - name: Evitar ejecuciones demasiado seguidas
+        id: frecuencia
         if: |
-          steps.diagnostico.outcome == 'success' &&
+          steps.diagnostico.outputs.necesita_radar == 'true' &&
           steps.radar.outputs.running == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -364,7 +187,88 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "DISPARANDO PROBAR RADAR SMN"
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from datetime import datetime, timezone
+
+          raw = subprocess.check_output(
+              [
+                  "gh",
+                  "run",
+                  "list",
+                  "--repo",
+                  os.environ["GITHUB_REPOSITORY"],
+                  "--workflow",
+                  "probar-radar-smn.yml",
+                  "--limit",
+                  "5",
+                  "--json",
+                  "status,updatedAt"
+              ],
+              text=True
+          )
+
+          runs = json.loads(raw)
+
+          ahora = datetime.now(timezone.utc)
+
+          reciente = False
+
+          for run in runs:
+              if run.get("status") != "completed":
+                  continue
+
+              value = run.get("updatedAt")
+
+              if not value:
+                  continue
+
+              dt = datetime.fromisoformat(
+                  value.replace(
+                      "Z",
+                      "+00:00"
+                  )
+              )
+
+              edad = (
+                  ahora - dt
+              ).total_seconds() / 60.0
+
+              print(
+                  f"Último Radar terminado hace "
+                  f"{edad:.2f} min"
+              )
+
+              if edad < 8:
+                  reciente = True
+                  break
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a",
+              encoding="utf-8"
+          ) as output:
+              output.write(
+                  f"reciente={'true' if reciente else 'false'}\n"
+              )
+          PY
+
+      - name: Lanzar Radar
+        if: |
+          steps.diagnostico.outputs.necesita_radar == 'true' &&
+          steps.radar.outputs.running == 'false' &&
+          steps.frecuencia.outputs.reciente == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "WATCHDOG: DISPARANDO RADAR"
+          echo "=========================================="
 
           gh workflow run \
             probar-radar-smn.yml \
@@ -375,227 +279,23 @@ jobs:
 
       - name: Radar ya estaba procesando
         if: |
-          steps.diagnostico.outcome == 'success' &&
+          steps.diagnostico.outputs.necesita_radar == 'true' &&
           steps.radar.outputs.running == 'true'
         run: |
-          echo "Radar ya estaba ejecutándose."
+          echo "Radar ya está ejecutándose."
           echo "No se lanza una segunda ejecución."
 
-      - name: Comprobar cadena Radar → Intelligence
-        id: cadena
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "AUDITORÍA RADAR → INTELLIGENCE"
-          echo "=========================================="
-
-          RADAR_JSON="$(
-            gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow probar-radar-smn.yml \
-              --status success \
-              --limit 1 \
-              --json databaseId,updatedAt \
-              --jq '.[0]'
-          )"
-
-          if [ -z "$RADAR_JSON" ] || [ "$RADAR_JSON" = "null" ]; then
-            echo "No hay Radar exitoso disponible."
-            echo "repair=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          RADAR_ID="$(
-            echo "$RADAR_JSON" |
-              jq -r '.databaseId'
-          )"
-
-          RADAR_COMPLETED="$(
-            echo "$RADAR_JSON" |
-              jq -r '.updatedAt'
-          )"
-
-          echo "Último Radar exitoso: $RADAR_ID"
-          echo "Radar terminado/actualizado: $RADAR_COMPLETED"
-
-          INTEL_ACTIVE="$(
-            gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow climaar-intelligence.yml \
-              --limit 20 \
-              --json status \
-              --jq '
-                [
-                  .[]
-                  | select(
-                      .status == "queued"
-                      or
-                      .status == "in_progress"
-                    )
-                ]
-                | length
-              '
-          )"
-
-          echo "Intelligence activa: $INTEL_ACTIVE"
-
-          if [ "$INTEL_ACTIVE" -gt 0 ]; then
-            echo "Intelligence ya está ejecutándose."
-            echo "repair=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          INTEL_JSON="$(
-            gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow climaar-intelligence.yml \
-              --limit 10 \
-              --json databaseId,status,conclusion,createdAt,updatedAt \
-              --jq '.[0]'
-          )"
-
-          if [ -z "$INTEL_JSON" ] || [ "$INTEL_JSON" = "null" ]; then
-            echo "Nunca se ejecutó Intelligence."
-            echo "repair=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          INTEL_STATUS="$(
-            echo "$INTEL_JSON" |
-              jq -r '.status'
-          )"
-
-          INTEL_CONCLUSION="$(
-            echo "$INTEL_JSON" |
-              jq -r '.conclusion // ""'
-          )"
-
-          INTEL_CREATED="$(
-            echo "$INTEL_JSON" |
-              jq -r '.createdAt'
-          )"
-
-          INTEL_UPDATED="$(
-            echo "$INTEL_JSON" |
-              jq -r '.updatedAt'
-          )"
-
-          echo "Última Intelligence:"
-          echo "  estado: $INTEL_STATUS"
-          echo "  conclusión: $INTEL_CONCLUSION"
-          echo "  creada: $INTEL_CREATED"
-          echo "  actualizada: $INTEL_UPDATED"
-
-          export RADAR_COMPLETED
-          export INTEL_CREATED
-          export INTEL_UPDATED
-          export INTEL_CONCLUSION
-
-          python - <<'PY'
-          import os
-          from datetime import datetime, timezone
-
-          def parse(value):
-              if not value:
-                  return None
-
-              if value.endswith("Z"):
-                  value = value[:-1] + "+00:00"
-
-              return datetime.fromisoformat(
-                  value
-              ).astimezone(timezone.utc)
-
-          radar = parse(
-              os.environ["RADAR_COMPLETED"]
-          )
-
-          intel_created = parse(
-              os.environ["INTEL_CREATED"]
-          )
-
-          intel_updated = parse(
-              os.environ["INTEL_UPDATED"]
-          )
-
-          conclusion = os.environ.get(
-              "INTEL_CONCLUSION",
-              "",
-          )
-
-          if intel_updated and intel_updated >= radar:
-              if conclusion == "success":
-                  print(
-                      "OK: Intelligence posterior "
-                      "al último Radar."
-                  )
-
-                  raise SystemExit(0)
-
-              ahora = datetime.now(timezone.utc)
-
-              minutos = (
-                  ahora - intel_created
-              ).total_seconds() / 60.0
-
-              if minutos < 15:
-                  print(
-                      "Intelligence falló recientemente."
-                  )
-                  print(
-                      "Se evita un bucle de reintentos."
-                  )
-
-                  raise SystemExit(0)
-
-          print(
-              "RADAR MÁS NUEVO QUE INTELLIGENCE."
-          )
-
-          with open(
-              "repair_intelligence.flag",
-              "w",
-          ) as f:
-              f.write("true\n")
-          PY
-
-          echo "repair=true" >> "$GITHUB_OUTPUT"
-
-      - name: Reparar Intelligence automáticamente
+      - name: Radar ejecutado recientemente
         if: |
-          steps.cadena.outputs.repair == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
+          steps.diagnostico.outputs.necesita_radar == 'true' &&
+          steps.radar.outputs.running == 'false' &&
+          steps.frecuencia.outputs.reciente == 'true'
         run: |
-          set -euo pipefail
+          echo "Radar terminó hace menos de 8 minutos."
+          echo "Se espera la siguiente comprobación."
 
-          if [ ! -f repair_intelligence.flag ]; then
-            echo "No hace falta reparar Intelligence."
-            exit 0
-          fi
-
-          echo "DISPARANDO CLIMAAR INTELLIGENCE CENTRAL"
-
-          gh workflow run \
-            climaar-intelligence.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref main
-
-          echo "Intelligence disparada correctamente."
-
-      - name: Guardar diagnóstico
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: climaar-watchdog
-          path: |
-            diagnostico.json
-            nuevo_frame.flag
-            repair_intelligence.flag
-            cadena_ok.flag
-          retention-days: 3
+      - name: Radar dentro del margen
+        if: steps.diagnostico.outputs.necesita_radar == 'false'
+        run: |
+          echo "Radar dentro del margen operativo."
+          echo "No se dispara ninguna ejecución."
