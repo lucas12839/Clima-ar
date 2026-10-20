@@ -1,14 +1,19 @@
+from __future__ import annotations
+
 import json
 import math
-from datetime import datetime, timezone, timedelta
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+BASE = Path(__file__).resolve().parents[1]
 
-RADAR_FILE = BASE_DIR / "data" / "radar" / "radar_nowcast.json"
+RADAR_FILE = BASE / "data" / "radar" / "radar_nowcast.json"
 EVOLUTION_FILE = (
-    BASE_DIR
+    BASE
     / "data"
     / "radar"
     / "seguimiento"
@@ -18,41 +23,14 @@ EVOLUTION_FILE = (
 RADAR_LAT = -38.7342
 RADAR_LON = -62.1654
 RADAR_RANGE_KM = 240.0
-EARTH_RADIUS_KM = 6371.0088
 
-HORIZONTES = (5, 10, 20, 30)
+DEFAULT_WIDTH = 512
+DEFAULT_HEIGHT = 512
 
-
-def finite(value, default=None):
-    try:
-        value = float(value)
-        return value if math.isfinite(value) else default
-    except Exception:
-        return default
+HORIZONS = (5, 10, 20, 30)
 
 
-def parse_dt(value):
-    if not value:
-        return None
-
-    try:
-        text = str(value).strip()
-
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-
-        dt = datetime.fromisoformat(text)
-
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-
-        return dt.astimezone(timezone.utc)
-
-    except Exception:
-        return None
-
-
-def load_json(path):
+def load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"No existe: {path}")
 
@@ -65,81 +43,243 @@ def load_json(path):
     return data
 
 
-def save_json_atomic(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
+def parse_datetime(value: Any) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(f"Timestamp inválido: {value!r}")
 
-    temp = path.with_suffix(path.suffix + ".tmp")
+    text = value.strip()
 
-    temp.write_text(
-        json.dumps(
-            data,
-            ensure_ascii=False,
-            indent=2,
-            allow_nan=False,
-        ),
-        encoding="utf-8",
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+
+    dt = datetime.fromisoformat(text)
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    return dt.astimezone(timezone.utc)
+
+
+def iso_utc(dt: datetime) -> str:
+    return (
+        dt.astimezone(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
     )
 
-    temp.replace(path)
+
+def haversine_km(
+    lat1: float,
+    lon1: float,
+    lat2: float,
+    lon2: float,
+) -> float:
+    earth_radius_km = 6371.0088
+
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(p1)
+        * math.cos(p2)
+        * math.sin(dlon / 2) ** 2
+    )
+
+    a = min(1.0, max(0.0, a))
+
+    return (
+        2
+        * earth_radius_km
+        * math.asin(math.sqrt(a))
+    )
 
 
-def destination_point(lat, lon, distance_km, bearing_deg):
-    lat1 = math.radians(lat)
-    lon1 = math.radians(lon)
-    bearing = math.radians(bearing_deg)
+def bearing_deg(
+    lat1: float,
+    lon1: float,
+    lat2: float,
+    lon2: float,
+) -> float:
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
 
-    angular_distance = distance_km / EARTH_RADIUS_KM
+    dlambda = math.radians(lon2 - lon1)
 
-    sin_lat2 = (
-        math.sin(lat1) * math.cos(angular_distance)
-        + math.cos(lat1)
+    y = math.sin(dlambda) * math.cos(phi2)
+
+    x = (
+        math.cos(phi1) * math.sin(phi2)
+        - math.sin(phi1)
+        * math.cos(phi2)
+        * math.cos(dlambda)
+    )
+
+    bearing = math.degrees(math.atan2(y, x))
+
+    return bearing % 360.0
+
+
+def destination_point(
+    lat: float,
+    lon: float,
+    distance_km: float,
+    bearing: float,
+) -> tuple[float, float]:
+    earth_radius_km = 6371.0088
+
+    angular_distance = (
+        distance_km / earth_radius_km
+    )
+
+    theta = math.radians(bearing)
+
+    phi1 = math.radians(lat)
+    lambda1 = math.radians(lon)
+
+    sin_phi2 = (
+        math.sin(phi1)
+        * math.cos(angular_distance)
+        + math.cos(phi1)
         * math.sin(angular_distance)
-        * math.cos(bearing)
+        * math.cos(theta)
     )
 
-    lat2 = math.asin(
-        max(-1.0, min(1.0, sin_lat2))
+    sin_phi2 = min(1.0, max(-1.0, sin_phi2))
+
+    phi2 = math.asin(sin_phi2)
+
+    y = (
+        math.sin(theta)
+        * math.sin(angular_distance)
+        * math.cos(phi1)
     )
 
-    lon2 = lon1 + math.atan2(
-        math.sin(bearing) * math.sin(angular_distance) * math.cos(lat1),
+    x = (
         math.cos(angular_distance)
-        - math.sin(lat1) * math.sin(lat2),
+        - math.sin(phi1) * math.sin(phi2)
+    )
+
+    lambda2 = (
+        lambda1
+        + math.atan2(y, x)
     )
 
     return (
-        math.degrees(lat2),
-        ((math.degrees(lon2) + 540.0) % 360.0) - 180.0,
+        math.degrees(phi2),
+        (
+            math.degrees(lambda2) + 540.0
+        ) % 360.0 - 180.0,
     )
 
 
-def pixel_to_latlon(x, y, width, height):
+def get_image_geometry(
+    radar_nowcast: dict[str, Any],
+) -> tuple[int, int, float, float]:
+    """
+    Obtiene dimensiones y centro geométrico.
+
+    El radar RMA10 utiliza una representación cuadrada
+    centrada en el radar y con alcance nominal de 240 km.
+    """
+
+    width = DEFAULT_WIDTH
+    height = DEFAULT_HEIGHT
+
+    image_info = radar_nowcast.get("imagen")
+
+    if isinstance(image_info, dict):
+        width = int(
+            image_info.get("ancho", width)
+        )
+        height = int(
+            image_info.get("alto", height)
+        )
+
     if width <= 0 or height <= 0:
-        raise ValueError("Dimensiones de imagen inválidas")
+        width = DEFAULT_WIDTH
+        height = DEFAULT_HEIGHT
 
     center_x = (width - 1) / 2.0
     center_y = (height - 1) / 2.0
 
-    radius_px = min(width, height) / 2.0
+    return (
+        width,
+        height,
+        center_x,
+        center_y,
+    )
 
-    dx = float(x) - center_x
-    dy = center_y - float(y)
 
-    distance_px = math.hypot(dx, dy)
+def pixel_to_latlon(
+    x: float,
+    y: float,
+    width: int,
+    height: int,
+    center_x: float,
+    center_y: float,
+) -> tuple[float, float, float, float]:
+    """
+    Convierte coordenadas de imagen RMA10 a lat/lon.
 
-    distance_km = (
-        distance_px / radius_px
-    ) * RADAR_RANGE_KM
+    Convención:
+      X positivo = Este
+      Y positivo hacia abajo en imagen
+      Norte = -Y
 
-    if distance_px <= 1e-9:
-        bearing = 0.0
-    else:
-        bearing = (
-            math.degrees(
-                math.atan2(dx, dy)
+    El radio geométrico corresponde a 240 km.
+    """
+
+    radius_px = min(
+        center_x,
+        center_y,
+        width - 1 - center_x,
+        height - 1 - center_y,
+    )
+
+    if radius_px <= 0:
+        raise ValueError(
+            "Geometría de imagen inválida."
+        )
+
+    east_km = (
+        (float(x) - center_x)
+        / radius_px
+        * RADAR_RANGE_KM
+    )
+
+    north_km = (
+        (center_y - float(y))
+        / radius_px
+        * RADAR_RANGE_KM
+    )
+
+    distance_km = math.hypot(
+        east_km,
+        north_km,
+    )
+
+    if distance_km == 0:
+        return (
+            RADAR_LAT,
+            RADAR_LON,
+            0.0,
+            0.0,
+        )
+
+    bearing = (
+        math.degrees(
+            math.atan2(
+                east_km,
+                north_km,
             )
-            + 360.0
-        ) % 360.0
+        )
+        % 360.0
+    )
 
     lat, lon = destination_point(
         RADAR_LAT,
@@ -156,306 +296,479 @@ def pixel_to_latlon(x, y, width, height):
     )
 
 
-def find_current_nucleus(nowcast, track_id):
-    nuclei = nowcast.get("nucleos", [])
+def get_principal_nucleus(
+    nowcast: dict[str, Any],
+) -> dict[str, Any] | None:
+    nuclei = nowcast.get("nucleos")
 
     if not isinstance(nuclei, list):
-        return None
+        nuclei = []
 
-    for nucleus in nuclei:
-        if not isinstance(nucleus, dict):
-            continue
-
-        if nucleus.get("track_id") == track_id:
-            return nucleus
-
-    return None
-
-
-def resolve_principal_track(nowcast, evolution):
     principal_id = nowcast.get(
         "nucleo_principal_id"
     )
 
-    current_nucleus = find_current_nucleus(
-        nowcast,
-        principal_id,
-    )
-
-    if current_nucleus:
-        track_id = current_nucleus.get(
-            "track_id"
-        )
-
-        if track_id is not None:
-            return track_id
-
-    nuclei = evolution.get("nucleos", [])
-
-    candidates = []
-
-    if isinstance(nuclei, list):
-        for item in nuclei:
-            if not isinstance(item, dict):
+    if principal_id is not None:
+        for nucleus in nuclei:
+            if not isinstance(nucleus, dict):
                 continue
 
-            if not item.get(
-                "pronostico_disponible",
-                False,
-            ):
-                continue
+            if nucleus.get("nucleo_id") == principal_id:
+                return nucleus
 
-            track_id = item.get("track_id")
+            if str(
+                nucleus.get("nucleo_id")
+            ) == str(principal_id):
+                return nucleus
 
-            confidence = finite(
-                item.get(
-                    "confianza_prediccion"
-                ),
-                0.0,
-            )
-
-            if track_id is not None:
-                candidates.append(
-                    (
-                        confidence,
-                        track_id,
-                    )
-                )
+    # Fallback: buscar núcleo con mayor intensidad/confianza.
+    candidates = [
+        nucleus
+        for nucleus in nuclei
+        if isinstance(nucleus, dict)
+        and nucleus.get("track_id") is not None
+    ]
 
     if not candidates:
         return None
 
-    candidates.sort(
-        reverse=True
+    return max(
+        candidates,
+        key=lambda item: (
+            float(
+                item.get(
+                    "intensidad_max",
+                    0,
+                )
+                or 0
+            ),
+            float(
+                item.get(
+                    "confianza",
+                    0,
+                )
+                or 0
+            ),
+            int(
+                item.get(
+                    "pixeles",
+                    0,
+                )
+                or 0
+            ),
+        ),
     )
 
-    return candidates[0][1]
 
-
-def find_prediction(evolution, track_id):
-    nuclei = evolution.get("nucleos", [])
+def get_principal_track(
+    nowcast: dict[str, Any],
+    evolution: dict[str, Any],
+) -> dict[str, Any]:
+    nuclei = evolution.get("nucleos")
 
     if not isinstance(nuclei, list):
+        nuclei = []
+
+    principal = get_principal_nucleus(
+        nowcast
+    )
+
+    if principal is not None:
+        principal_track_id = principal.get(
+            "track_id"
+        )
+
+        if principal_track_id is not None:
+            for track in nuclei:
+                if not isinstance(track, dict):
+                    continue
+
+                if track.get("track_id") == principal_track_id:
+                    return track
+
+                if str(
+                    track.get("track_id")
+                ) == str(principal_track_id):
+                    return track
+
+    # Fallback seguro: buscar predicción activa
+    # con mayor confianza.
+    active = [
+        track
+        for track in nuclei
+        if isinstance(track, dict)
+        and track.get("activo") is True
+        and track.get("pronostico_disponible") is True
+    ]
+
+    if not active:
+        active = [
+            track
+            for track in nuclei
+            if isinstance(track, dict)
+            and track.get("pronostico_disponible") is True
+        ]
+
+    if not active:
+        raise RuntimeError(
+            "No existe ninguna predicción de evolución disponible."
+        )
+
+    return max(
+        active,
+        key=lambda item: float(
+            item.get(
+                "confianza_prediccion",
+                0,
+            )
+            or 0
+        ),
+    )
+
+
+def get_horizon_prediction(
+    track: dict[str, Any],
+    horizon: int,
+) -> dict[str, Any] | None:
+    horizons = track.get("horizontes")
+
+    if not isinstance(horizons, list):
         return None
 
-    for item in nuclei:
+    for item in horizons:
         if not isinstance(item, dict):
             continue
 
-        if item.get("track_id") == track_id:
+        value = item.get(
+            "horizonte_minutos"
+        )
+
+        if value is None:
+            continue
+
+        try:
+            minutes = int(round(float(value)))
+        except (
+            TypeError,
+            ValueError,
+        ):
+            continue
+
+        if minutes == horizon:
             return item
 
     return None
 
 
-def main():
-    radar = load_json(RADAR_FILE)
-    evolution = load_json(EVOLUTION_FILE)
+def finite_number(
+    value: Any,
+) -> bool:
+    try:
+        number = float(value)
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return False
+
+    return math.isfinite(number)
+
+
+def build_projection(
+    prediction: dict[str, Any],
+    horizon: int,
+    radar_timestamp: datetime,
+    width: int,
+    height: int,
+    center_x: float,
+    center_y: float,
+    track: dict[str, Any],
+) -> dict[str, Any]:
+    x = prediction.get("x_estimado")
+    y = prediction.get("y_estimado")
+
+    if not finite_number(x) or not finite_number(y):
+        raise ValueError(
+            f"Proyección {horizon} min "
+            "sin coordenadas X/Y válidas."
+        )
+
+    x = float(x)
+    y = float(y)
+
+    (
+        lat,
+        lon,
+        distance_km,
+        bearing,
+    ) = pixel_to_latlon(
+        x,
+        y,
+        width,
+        height,
+        center_x,
+        center_y,
+    )
+
+    timestamp = (
+        radar_timestamp
+        + timedelta(minutes=horizon)
+    )
+
+    projection = {
+        "minutos": horizon,
+        "timestamp_utc": iso_utc(timestamp),
+        "x": round(x, 3),
+        "y": round(y, 3),
+        "latitud": round(lat, 6),
+        "longitud": round(lon, 6),
+        "distancia_radar_km": round(
+            distance_km,
+            3,
+        ),
+        "rumbo_radar_grados": round(
+            bearing,
+            2,
+        ),
+        "track_id": track.get(
+            "track_id"
+        ),
+        "incertidumbre_pixeles": (
+            prediction.get(
+                "incertidumbre_pixeles"
+            )
+        ),
+        "confianza_prediccion": (
+            prediction.get(
+                "confianza_prediccion"
+            )
+        ),
+        "direccion_estimada": (
+            prediction.get(
+                "direccion_estimada"
+            )
+        ),
+        "velocidad_estimada_pixeles_min": (
+            prediction.get(
+                "velocidad_estimada_pixeles_min"
+            )
+        ),
+        "rumbo_estimado_grados": (
+            prediction.get(
+                "rumbo_estimado_grados"
+            )
+        ),
+        "calibracion_muestras": (
+            prediction.get(
+                "calibracion_muestras"
+            )
+        ),
+        "correccion_bias_x_pixeles": (
+            prediction.get(
+                "correccion_bias_x_pixeles"
+            )
+        ),
+        "correccion_bias_y_pixeles": (
+            prediction.get(
+                "correccion_bias_y_pixeles"
+            )
+        ),
+    }
+
+    return projection
+
+
+def atomic_write_json(
+    path: Path,
+    data: dict[str, Any],
+) -> None:
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+        text=True,
+    )
+
+    try:
+        with os.fdopen(
+            fd,
+            "w",
+            encoding="utf-8",
+        ) as fh:
+            json.dump(
+                data,
+                fh,
+                ensure_ascii=False,
+                indent=2,
+            )
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+
+        os.replace(
+            temp_name,
+            path,
+        )
+
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def main() -> None:
+    radar = load_json(
+        RADAR_FILE
+    )
+
+    evolution = load_json(
+        EVOLUTION_FILE
+    )
 
     nowcast = radar.get("nowcast")
 
     if not isinstance(nowcast, dict):
         raise RuntimeError(
-            "radar_nowcast.json no contiene nowcast"
+            "radar_nowcast.json no contiene un bloque nowcast válido."
         )
 
-    radar_timestamp = parse_dt(
-        nowcast.get("frame_actual_utc")
-        or evolution.get("radar_timestamp")
-        or radar.get("actualizado")
+    radar_timestamp_value = nowcast.get(
+        "frame_actual_utc"
     )
 
-    if radar_timestamp is None:
-        raise RuntimeError(
-            "No se pudo determinar el timestamp real del radar"
+    if not radar_timestamp_value:
+        radar_timestamp_value = radar.get(
+            "actualizado"
         )
 
-    image = radar.get("imagen", {})
-
-    width = int(
-        finite(
-            image.get("ancho"),
-            512,
+    if not radar_timestamp_value:
+        radar_timestamp_value = evolution.get(
+            "radar_timestamp"
         )
+
+    radar_timestamp = parse_datetime(
+        radar_timestamp_value
     )
 
-    height = int(
-        finite(
-            image.get("alto"),
-            512,
-        )
+    evolution_timestamp = evolution.get(
+        "radar_timestamp"
     )
 
-    track_id = resolve_principal_track(
+    if evolution_timestamp:
+        evolution_dt = parse_datetime(
+            evolution_timestamp
+        )
+
+        delta_seconds = abs(
+            (
+                evolution_dt
+                - radar_timestamp
+            ).total_seconds()
+        )
+
+        if delta_seconds > 1:
+            raise RuntimeError(
+                "Timestamp desincronizado entre "
+                "radar_nowcast y prediccion_evolucion: "
+                f"{radar_timestamp.isoformat()} vs "
+                f"{evolution_dt.isoformat()}"
+            )
+
+    width, height, center_x, center_y = (
+        get_image_geometry(nowcast)
+    )
+
+    track = get_principal_track(
         nowcast,
         evolution,
     )
 
-    if track_id is None:
-        raise RuntimeError(
-            "No se pudo determinar el track principal"
+    projections: dict[str, Any] = {}
+
+    for horizon in HORIZONS:
+        prediction = get_horizon_prediction(
+            track,
+            horizon,
         )
 
-    prediction = find_prediction(
-        evolution,
-        track_id,
-    )
-
-    if prediction is None:
-        raise RuntimeError(
-            f"No existe predicción para track_id={track_id}"
-        )
-
-    horizons = prediction.get(
-        "horizontes"
-    )
-
-    if not isinstance(horizons, list):
-        raise RuntimeError(
-            "La predicción no contiene horizontes"
-        )
-
-    projections = {}
-
-    for horizon in HORIZONTES:
-        selected = None
-
-        for item in horizons:
-            if not isinstance(item, dict):
-                continue
-
-            minutes = int(
-                finite(
-                    item.get(
-                        "horizonte_minutos"
-                    ),
-                    -1,
-                )
+        if prediction is None:
+            raise RuntimeError(
+                "No existe predicción para "
+                f"{horizon} minutos en track "
+                f"{track.get('track_id')}."
             )
 
-            if minutes == horizon:
-                selected = item
-                break
-
-        if selected is None:
-            continue
-
-        x = finite(
-            selected.get("x_estimado")
+        projection = build_projection(
+            prediction=prediction,
+            horizon=horizon,
+            radar_timestamp=radar_timestamp,
+            width=width,
+            height=height,
+            center_x=center_x,
+            center_y=center_y,
+            track=track,
         )
 
-        y = finite(
-            selected.get("y_estimado")
-        )
-
-        if x is None or y is None:
-            continue
-
-        (
-            lat,
-            lon,
-            distance_km,
-            bearing,
-        ) = pixel_to_latlon(
-            x,
-            y,
-            width,
-            height,
-        )
-
-        timestamp = (
-            radar_timestamp
-            + timedelta(minutes=horizon)
-        )
-
-        projections[str(horizon)] = {
-            "minutos": horizon,
-            "timestamp_utc": timestamp.isoformat(),
-            "x": round(x, 3),
-            "y": round(y, 3),
-            "latitud": round(lat, 6),
-            "longitud": round(lon, 6),
-            "distancia_radar_km": round(
-                distance_km,
-                3,
-            ),
-            "rumbo_radar_grados": round(
-                bearing,
-                2,
-            ),
-            "track_id": track_id,
-            "incertidumbre_pixeles": finite(
-                selected.get(
-                    "incertidumbre_pixeles"
-                )
-            ),
-            "confianza_prediccion": finite(
-                selected.get(
-                    "confianza_prediccion"
-                )
-            ),
-            "direccion_estimada": selected.get(
-                "direccion_estimada"
-            ),
-        }
-
-    if not projections:
-        raise RuntimeError(
-            "No se pudo generar ninguna proyección"
-        )
+        projections[str(horizon)] = projection
 
     nowcast["proyecciones"] = projections
 
-    nowcast[
-        "proyecciones_metadata"
-    ] = {
-        "fuente": "prediccion_evolucion.json",
-        "track_id_principal": track_id,
-        "radar_timestamp_utc": radar_timestamp.isoformat(),
-        "horizontes_generados": [
-            int(key)
-            for key in sorted(
-                projections,
-                key=lambda value: int(value),
-            )
-        ],
+    nowcast["proyecciones_metadata"] = {
+        "fuente": "prediccion_evolucion",
+        "track_id": track.get(
+            "track_id"
+        ),
+        "radar_timestamp_utc": iso_utc(
+            radar_timestamp
+        ),
         "geometria": {
-            "radar_lat": RADAR_LAT,
-            "radar_lon": RADAR_LON,
+            "ancho": width,
+            "alto": height,
+            "centro_x": center_x,
+            "centro_y": center_y,
+            "radar_latitud": RADAR_LAT,
+            "radar_longitud": RADAR_LON,
             "alcance_km": RADAR_RANGE_KM,
-            "imagen_ancho": width,
-            "imagen_alto": height,
         },
+        "horizontes_minutos": list(
+            HORIZONS
+        ),
     }
 
     radar["nowcast"] = nowcast
 
-    save_json_atomic(
+    atomic_write_json(
         RADAR_FILE,
         radar,
     )
 
     print(
         "OK: proyecciones "
-        f"{'/'.join(projections.keys())} "
-        f"generadas para track {track_id}"
+        "5/10/20/30 generadas "
+        f"para track {track.get('track_id')}"
     )
 
-    for key in sorted(
-        projections,
-        key=lambda value: int(value),
-    ):
-        item = projections[key]
+    for horizon in HORIZONS:
+        projection = projections[
+            str(horizon)
+        ]
 
         print(
-            f"{key} min -> "
-            f"{item['timestamp_utc']} | "
-            f"{item['latitud']}, "
-            f"{item['longitud']}"
+            f"{horizon:>2} min -> "
+            f"{projection['timestamp_utc']} | "
+            f"x={projection['x']} "
+            f"y={projection['y']} | "
+            f"lat={projection['latitud']} "
+            f"lon={projection['longitud']}"
         )
-
-    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
