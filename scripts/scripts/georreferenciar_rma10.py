@@ -35,6 +35,9 @@ EARTH_RADIUS_KM = 6371.0088
 
 TOWARD_BAHIA_MAX_ERROR_DEG = 45.0
 MIN_SPEED_KMH_FOR_ETA = 5.0
+MAX_SPEED_KMH_FOR_ETA = 120.0
+MAX_VECTOR_PX_PER_MIN_FOR_ETA = 2.56
+MAX_ETA_MINUTES = 24.0 * 60.0
 
 
 def finite(value, default=None):
@@ -471,15 +474,33 @@ def process_nucleus(nucleo, index, width, height):
         distance_bahia - approaching_distance_10min,
     )
 
+    # ETA solo se calcula cuando el movimiento es direccionalmente valido
+    # y la velocidad es fisicamente plausible para el seguimiento de un
+    # nucleo radar. Velocidades extremas suelen indicar un mal match entre
+    # frames y no deben generar un ETA falso.
+    speed_plausible_for_eta = bool(
+        MIN_SPEED_KMH_FOR_ETA <= speed_kmh <= MAX_SPEED_KMH_FOR_ETA
+        and movement["velocidad_pixeles_min"] <= MAX_VECTOR_PX_PER_MIN_FOR_ETA
+    )
+
     eta = None
-    if (
-        moving_toward
-        and component_toward >= MIN_SPEED_KMH_FOR_ETA
-    ):
-        eta = round(
-            distance_bahia / component_toward * 60.0,
-            1,
-        )
+    eta_valida = False
+    motivo_eta = "SIN_MOVIMIENTO_HACIA_BAHIA"
+
+    if not moving_toward:
+        motivo_eta = "SIN_MOVIMIENTO_HACIA_BAHIA"
+    elif not speed_plausible_for_eta:
+        motivo_eta = "VELOCIDAD_NO_PLAUSIBLE_PARA_ETA"
+    elif component_toward < MIN_SPEED_KMH_FOR_ETA:
+        motivo_eta = "COMPONENTE_INSUFICIENTE"
+    else:
+        eta_calculada = distance_bahia / component_toward * 60.0
+        if 0.0 < eta_calculada <= MAX_ETA_MINUTES:
+            eta = round(eta_calculada, 1)
+            eta_valida = True
+            motivo_eta = "ETA_VALIDADA"
+        else:
+            motivo_eta = "ETA_FUERA_DE_RANGO"
 
     item = dict(nucleo)
 
@@ -525,8 +546,14 @@ def process_nucleus(nucleo, index, width, height):
             2,
         ),
         "eta_minutos": eta,
+        "eta_valida": eta_valida,
+        "velocidad_plausible_para_eta": speed_plausible_for_eta,
+        "motivo_eta": motivo_eta,
         "criterio_direccion": (
             "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+        ),
+        "criterio_eta": (
+            "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
         ),
     }
 
@@ -635,7 +662,36 @@ def main():
         ) is True
     )
 
-    if not principal_hacia_bahia and approaching:
+    eta_candidates = [
+        item
+        for item in approaching
+        if item.get("movimiento_bahia", {}).get("eta_valida") is True
+    ]
+
+    if principal_hacia_bahia and principal_item is not None:
+        principal_eta_valida = (
+            principal_item.get("movimiento_bahia", {}).get("eta_valida")
+            is True
+        )
+        if not principal_eta_valida and eta_candidates:
+            principal_item = min(
+                eta_candidates,
+                key=lambda item: finite(
+                    item.get("movimiento_bahia", {}).get("eta_minutos"),
+                    float("inf"),
+                ),
+            )
+    elif eta_candidates:
+        # Para ETA, priorizar el nucleo con llegada estimada mas proxima,
+        # no simplemente el que este fisicamente mas cerca en este instante.
+        principal_item = min(
+            eta_candidates,
+            key=lambda item: finite(
+                item.get("movimiento_bahia", {}).get("eta_minutos"),
+                float("inf"),
+            ),
+        )
+    elif approaching:
         principal_item = min(
             approaching,
             key=lambda item: finite(
@@ -711,6 +767,10 @@ def main():
         "hacia_bahia": len(approaching),
         "criterio_hacia_bahia": (
             "RUMBO_DENTRO_DE_45_GRADOS_Y_COMPONENTE_POSITIVA"
+        ),
+        "eta_validos": len(eta_candidates),
+        "criterio_eta": (
+            "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
         ),
     }
 
