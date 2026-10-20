@@ -1052,110 +1052,53 @@ def detectar_nucleos(
     return nucleos
 
 
+def _region_nucleo(nucleo, shape):
+
+    x = int(round(nucleo["x"]))
+    y = int(round(nucleo["y"]))
+    ancho = max(int(nucleo["ancho"]), 1)
+    alto = max(int(nucleo["alto"]), 1)
+
+    h, w = shape
+    x1 = max(0, x - ancho // 2)
+    x2 = min(w, x + ancho // 2 + 1)
+    y1 = max(0, y - alto // 2)
+    y2 = min(h, y + alto // 2 + 1)
+    return y1, y2, x1, x2
+
+
 def analizar_mascara(
     nucleo,
-    mascara
+    mascara,
+    evidencia_temporal=None
 ):
 
     if mascara is None:
-
-        return (
-            "DINAMICO",
-            0.70
-        )
+        return ("DINAMICO", 0.70)
 
     try:
-
-        x = int(
-            round(
-                nucleo["x"]
-            )
-        )
-
-        y = int(
-            round(
-                nucleo["y"]
-            )
-        )
-
-        ancho = max(
-            int(
-                nucleo["ancho"]
-            ),
-            1
-        )
-
-        alto = max(
-            int(
-                nucleo["alto"]
-            ),
-            1
-        )
-
-        h, w = mascara.shape
-
-        x1 = max(
-            0,
-            x - ancho // 2
-        )
-
-        x2 = min(
-            w,
-            x + ancho // 2 + 1
-        )
-
-        y1 = max(
-            0,
-            y - alto // 2
-        )
-
-        y2 = min(
-            h,
-            y + alto // 2 + 1
-        )
-
-        region = mascara[
-            y1:y2,
-            x1:x2
-        ]
+        y1, y2, x1, x2 = _region_nucleo(nucleo, mascara.shape)
+        region = mascara[y1:y2, x1:x2]
 
         if region.size == 0:
+            return ("DINAMICO", 0.70)
 
-            return (
-                "DINAMICO",
-                0.70
-            )
-
-        porcentaje = float(
-            np.mean(
-                region
-            )
-        )
+        porcentaje = float(np.mean(region))
 
         if porcentaje >= 0.70:
-            return (
-                "CAMBIO",
-                0.70
-            )
+            if evidencia_temporal is not None:
+                evidencia = evidencia_temporal[y1:y2, x1:x2]
+                if evidencia.size and float(np.mean(evidencia)) >= 0.15:
+                    return ("CAMBIO", 0.78)
+            return ("ECO_ESTATICO", 0.95)
 
         if porcentaje >= 0.40:
+            return ("CAMBIO", 0.65)
 
-            return (
-                "CAMBIO",
-                0.65
-            )
-
-        return (
-            "DINAMICO",
-            0.75
-        )
+        return ("DINAMICO", 0.75)
 
     except Exception:
-
-        return (
-            "DINAMICO",
-            0.50
-        )
+        return ("DINAMICO", 0.50)
 
 
 def calcular_confianza(
@@ -1282,42 +1225,78 @@ def main():
         )
     )
 
-    nucleos = detectar_nucleos(
+    mascara = cargar_mascara()
+    evidencia_temporal, _ = _mascara_temporal_dinamica(
+        matriz_original,
+        mascara,
+        ruta_actual=ACTUAL
+    )
+
+    # La matriz limpia alimenta la cadena operativa.
+    # El frame original se usa solo para conservar/contabilizar
+    # ecos estaticos internamente.
+    nucleos_operativos = detectar_nucleos(
         matriz_dinamica
     )
 
-    mascara = cargar_mascara()
+    nucleos_candidatos_estaticos = detectar_nucleos(
+        matriz_original
+    )
 
-    for nucleo in nucleos:
+    nucleos_estaticos = []
 
+    for nucleo in nucleos_candidatos_estaticos:
         estado, confianza_base = analizar_mascara(
             nucleo,
-            mascara
+            mascara,
+            evidencia_temporal
         )
-
-        nucleo[
-            "estado"
-        ] = estado
-
-        nucleo[
-            "confianza"
-        ] = calcular_confianza(
+        nucleo["estado"] = estado
+        nucleo["confianza"] = calcular_confianza(
             nucleo,
             estado,
             confianza_base
         )
+        if estado == "ECO_ESTATICO":
+            nucleos_estaticos.append(nucleo)
 
-    nucleos_dinamicos = [
+    nucleos_dinamicos = []
 
-        nucleo
+    for nucleo in nucleos_operativos:
+        estado, confianza_base = analizar_mascara(
+            nucleo,
+            mascara,
+            evidencia_temporal
+        )
 
-        for nucleo in nucleos
+        if estado == "ECO_ESTATICO":
+            nucleos_estaticos.append(nucleo)
+            continue
 
-        if nucleo.get(
-            "estado"
-        ) != "ECO_ESTATICO"
+        nucleo["estado"] = estado
+        nucleo["confianza"] = calcular_confianza(
+            nucleo,
+            estado,
+            confianza_base
+        )
+        nucleos_dinamicos.append(nucleo)
 
-    ]
+    nucleos_estaticos.sort(
+        key=lambda n: (
+            -n.get("pixeles", 0),
+            -n.get("intensidad", 0)
+        )
+    )
+
+    nucleos_dinamicos.sort(
+        key=lambda n: (
+            -n.get("pixeles", 0),
+            -n.get("intensidad", 0)
+        )
+    )
+
+    # Este es el unico conjunto que pasa a tracking/ML/Intelligence.
+    nucleos = nucleos_dinamicos
 
     estado_general = calcular_estado_general(
         nucleos_dinamicos
@@ -1362,19 +1341,16 @@ def main():
             pixeles_dinamicos,
 
         "nucleos_estaticos_excluidos":
-            sum(
-                1
-                for n in nucleos
-                if n.get(
-                    "estado"
-                ) == "ECO_ESTATICO"
-            ),
+            len(nucleos_estaticos),
 
         "nucleos_detectados":
-            len(nucleos),
+            len(nucleos_dinamicos) + len(nucleos_estaticos),
 
         "nucleos_dinamicos":
             len(nucleos_dinamicos),
+
+        "nucleos_estaticos":
+            nucleos_estaticos,
 
         "estado_general":
             estado_general,
