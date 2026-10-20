@@ -604,7 +604,6 @@ def fusionar_actual_ecmwf_sazb(actual, sazb):
         )
         return resultado
 
-    # Guardamos siempre el valor modelado para comparacion.
     resultado["modelo_ecmwf_viento_10m_kmh"] = finite(
         actual.get("wind_speed_10m")
     )
@@ -615,22 +614,21 @@ def fusionar_actual_ecmwf_sazb(actual, sazb):
         actual.get("wind_gusts_10m")
     )
 
-    # Temperatura observada.
     temperatura = finite(sazb.get("temperatura_c"))
+
     if temperatura is not None:
         resultado["temperature_2m"] = temperatura
 
-    # Punto de rocio observado.
     punto_rocio = finite(sazb.get("punto_rocio_c"))
+
     if punto_rocio is not None:
         resultado["dew_point_2m"] = punto_rocio
 
-    # Presion observada.
     presion = finite(sazb.get("presion_hpa"))
+
     if presion is not None:
         resultado["pressure_msl"] = presion
 
-    # Viento observado SAZB: kt -> km/h.
     viento_kt = finite(sazb.get("viento_kt"))
     viento_kmh = None
 
@@ -678,9 +676,14 @@ def calcular_calidad(radar, sazb, ambiente):
         ]
     )
 
+    tiles_ok = radar.get("tiles_ok")
+
     radar_ok = (
         radar.get("disponible", False)
-        and radar.get("tiles_ok") == 9
+        and (
+            tiles_ok is True
+            or tiles_ok == 9
+        )
     )
 
     sazb_ok = sazb.get("disponible", False)
