@@ -19,6 +19,7 @@ concurrency:
 jobs:
   verificar-radar:
     runs-on: ubuntu-latest
+
     outputs:
       ejecutar: ${{ steps.verificar.outputs.ejecutar }}
       run_id: ${{ steps.verificar.outputs.run_id }}
@@ -166,6 +167,169 @@ jobs:
           python scripts/adaptar_rma10_intelligence.py
 
           test -s data/radar/radar_nowcast.json
+
+      - name: Georreferenciar núcleos RMA10
+        run: |
+          set -euo pipefail
+
+          test -s data/radar/radar_nowcast.json
+          test -s data/radar/actual.png
+
+          python scripts/scripts/georreferenciar_rma10.py
+
+          test -s data/radar/radar_nowcast.json
+
+      - name: Validar georreferenciación RMA10
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import json
+          import math
+          from pathlib import Path
+
+          path = Path("data/radar/radar_nowcast.json")
+
+          if not path.is_file():
+              raise SystemExit(
+                  "ERROR: no existe data/radar/radar_nowcast.json"
+              )
+
+          data = json.loads(
+              path.read_text(encoding="utf-8")
+          )
+
+          nowcast = data.get("nowcast")
+
+          if not isinstance(nowcast, dict):
+              raise SystemExit(
+                  "ERROR: falta el objeto nowcast"
+              )
+
+          nuclei = nowcast.get("nucleos")
+
+          if not isinstance(nuclei, list):
+              raise SystemExit(
+                  "ERROR: nowcast.nucleos no es una lista"
+              )
+
+          geo = nowcast.get(
+              "nucleos_georreferenciados"
+          )
+
+          if not isinstance(geo, list):
+              raise SystemExit(
+                  "ERROR: falta nowcast.nucleos_georreferenciados"
+              )
+
+          if len(geo) != len(nuclei):
+              raise SystemExit(
+                  "ERROR: cantidad de núcleos georreferenciados "
+                  f"({len(geo)}) distinta de núcleos detectados "
+                  f"({len(nuclei)})"
+              )
+
+          resumen = nowcast.get(
+              "georreferenciacion"
+          )
+
+          if not isinstance(resumen, dict):
+              raise SystemExit(
+                  "ERROR: falta nowcast.georreferenciacion"
+              )
+
+          if resumen.get("disponible") is not True:
+              raise SystemExit(
+                  "ERROR: georreferenciación marcada como no disponible"
+              )
+
+          if resumen.get("estado") != "VALIDADA_OPERATIVAMENTE":
+              raise SystemExit(
+                  "ERROR: estado de georreferenciación inválido: "
+                  f"{resumen.get('estado')!r}"
+              )
+
+          for index, item in enumerate(geo, start=1):
+
+              if not isinstance(item, dict):
+                  raise SystemExit(
+                      f"ERROR: núcleo georreferenciado #{index} inválido"
+                  )
+
+              referencia = item.get(
+                  "georreferencia"
+              )
+
+              if not isinstance(referencia, dict):
+                  raise SystemExit(
+                      f"ERROR: falta georreferencia "
+                      f"en núcleo #{index}"
+                  )
+
+              lat = referencia.get(
+                  "latitud"
+              )
+
+              lon = referencia.get(
+                  "longitud"
+              )
+
+              if not isinstance(
+                  lat,
+                  (int, float)
+              ):
+                  raise SystemExit(
+                      f"ERROR: latitud inválida "
+                      f"en núcleo #{index}"
+                  )
+
+              if not isinstance(
+                  lon,
+                  (int, float)
+              ):
+                  raise SystemExit(
+                      f"ERROR: longitud inválida "
+                      f"en núcleo #{index}"
+                  )
+
+              if not math.isfinite(lat):
+                  raise SystemExit(
+                      f"ERROR: latitud no finita "
+                      f"en núcleo #{index}"
+                  )
+
+              if not math.isfinite(lon):
+                  raise SystemExit(
+                      f"ERROR: longitud no finita "
+                      f"en núcleo #{index}"
+                  )
+
+              if not -90 <= lat <= 90:
+                  raise SystemExit(
+                      f"ERROR: latitud fuera de rango "
+                      f"en núcleo #{index}: {lat}"
+                  )
+
+              if not -180 <= lon <= 180:
+                  raise SystemExit(
+                      f"ERROR: longitud fuera de rango "
+                      f"en núcleo #{index}: {lon}"
+                  )
+
+          print(
+              f"OK: {len(geo)} / {len(nuclei)} "
+              "núcleos georreferenciados"
+          )
+
+          print(
+              "Estado:",
+              resumen.get("estado")
+          )
+
+          print(
+              "Georreferenciación validada correctamente."
+          )
+          PY
 
       - name: Validar timestamp del nowcast
         run: |
@@ -317,7 +481,9 @@ jobs:
 
               return dt.astimezone(timezone.utc)
 
-          if normalize(d.get("frame_radar")) != normalize(radar):
+          if normalize(
+              d.get("frame_radar")
+          ) != normalize(radar):
               raise SystemExit(
                   "ERROR: ML desincronizado"
               )
