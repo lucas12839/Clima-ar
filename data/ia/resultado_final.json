@@ -1,15 +1,15 @@
 {
   "version": "ClimaAR-final-2.0",
-  "actualizado_utc": "2026-10-20T10:22:03.984644+00:00",
+  "actualizado_utc": "2026-10-20T10:33:20.620203+00:00",
   "fuente_radar": "RMA10",
   "motor_decision": {
     "estado": "fuerte",
-    "score_integrado": 0.603,
+    "score_integrado": 0.679,
     "actividad_radar": true,
     "componentes": {
       "radar_intensidad": 0.89,
-      "radar_movimiento": 0.0,
-      "ia": 0.855,
+      "radar_movimiento": 0.55,
+      "ia": 0.768,
       "ia_confianza": 0.9
     },
     "regla": "radar + movimiento + intensidad + IA; sin actividad radar la IA queda limitada"
@@ -27,17 +27,17 @@
       "intensidad_escala": "RMA10_0_6",
       "dbz_max": null,
       "dbz_mean": null,
-      "distancia_km": 8.74,
+      "distancia_km": 57.31,
       "distancia_tipo": "georreferenciada_por_nucleo_validada",
       "fortalecimiento": "fortaleciendose",
       "cambio_area_pct": 3.3,
-      "velocidad_kmh": 3.56,
+      "velocidad_kmh": 15.95,
       "velocidad_pixeles_min": 0.3708,
       "direccion": 301.5467646935445,
-      "direccion_grados": 166.91,
+      "direccion_grados": 203.04,
       "movimiento_hacia_bahia": true,
       "movimiento_hacia_centro_dominio": false,
-      "eta_minutos": null,
+      "eta_minutos": 215.7,
       "eta_minutos_aproximada_centro_dominio": null,
       "confianza_movimiento": 0.55,
       "estado": "actividad_detectada",
@@ -2855,7 +2855,9 @@
         "total_georreferenciados": 56,
         "movimiento_valido": 48,
         "hacia_bahia": 7,
-        "criterio_hacia_bahia": "RUMBO_DENTRO_DE_45_GRADOS_Y_COMPONENTE_POSITIVA"
+        "criterio_hacia_bahia": "RUMBO_DENTRO_DE_45_GRADOS_Y_COMPONENTE_POSITIVA",
+        "eta_validos": 3,
+        "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
       },
       "proyecciones": {},
       "georreferenciacion": {
@@ -2971,7 +2973,11 @@
             "reduccion_distancia_10min_km": 0.95,
             "distancia_proyectada_10min_km": 31.56,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 1
         },
@@ -3026,7 +3032,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 14.69,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 2
         },
@@ -3081,7 +3091,11 @@
             "reduccion_distancia_10min_km": 0.82,
             "distancia_proyectada_10min_km": 27.72,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "COMPONENTE_INSUFICIENTE",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 3
         },
@@ -3136,7 +3150,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 33.71,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 4
         },
@@ -3191,7 +3209,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 27.91,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 5
         },
@@ -3246,7 +3268,11 @@
             "reduccion_distancia_10min_km": 1.64,
             "distancia_proyectada_10min_km": 37.76,
             "eta_minutos": 240.7,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": true,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "ETA_VALIDADA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 6
         },
@@ -3301,7 +3327,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 20.5,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 7
         },
@@ -3356,7 +3386,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 34.7,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 8
         },
@@ -3411,7 +3445,11 @@
             "reduccion_distancia_10min_km": 2.66,
             "distancia_proyectada_10min_km": 54.66,
             "eta_minutos": 215.7,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": true,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "ETA_VALIDADA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 9
         },
@@ -3466,7 +3504,11 @@
             "reduccion_distancia_10min_km": 3.74,
             "distancia_proyectada_10min_km": 102.76,
             "eta_minutos": 284.6,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": true,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "ETA_VALIDADA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 10
         },
@@ -3521,7 +3563,11 @@
             "reduccion_distancia_10min_km": 0.94,
             "distancia_proyectada_10min_km": 132.81,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 11
         },
@@ -3576,7 +3622,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 25.56,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 12
         },
@@ -3631,7 +3681,11 @@
             "reduccion_distancia_10min_km": 0.59,
             "distancia_proyectada_10min_km": 8.15,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "VELOCIDAD_NO_PLAUSIBLE_PARA_ETA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 13
         },
@@ -3686,7 +3740,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 41.2,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 14
         },
@@ -3741,7 +3799,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 29.73,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 15
         },
@@ -3796,7 +3858,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 20.28,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 16
         },
@@ -3851,7 +3917,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 37.85,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 17
         },
@@ -3906,7 +3976,11 @@
             "reduccion_distancia_10min_km": 0.57,
             "distancia_proyectada_10min_km": 49.04,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 18
         },
@@ -3961,7 +4035,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 78.49,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 19
         },
@@ -4016,7 +4094,11 @@
             "reduccion_distancia_10min_km": 1.76,
             "distancia_proyectada_10min_km": 129.64,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 20
         },
@@ -4071,7 +4153,11 @@
             "reduccion_distancia_10min_km": 0.26,
             "distancia_proyectada_10min_km": 150.7,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 21
         },
@@ -4126,7 +4212,11 @@
             "reduccion_distancia_10min_km": 2.94,
             "distancia_proyectada_10min_km": 118.37,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 22
         },
@@ -4181,7 +4271,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 99.09,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 23
         },
@@ -4236,7 +4330,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 54.06,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 24
         },
@@ -4291,7 +4389,11 @@
             "reduccion_distancia_10min_km": 0.24,
             "distancia_proyectada_10min_km": 39.96,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 25
         },
@@ -4346,7 +4448,11 @@
             "reduccion_distancia_10min_km": 0.91,
             "distancia_proyectada_10min_km": 163.85,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 26
         },
@@ -4401,7 +4507,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 91.96,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 27
         },
@@ -4456,7 +4566,11 @@
             "reduccion_distancia_10min_km": 0.45,
             "distancia_proyectada_10min_km": 82.53,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 28
         },
@@ -4511,7 +4625,11 @@
             "reduccion_distancia_10min_km": 0.32,
             "distancia_proyectada_10min_km": 60.47,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 29
         },
@@ -4566,7 +4684,11 @@
             "reduccion_distancia_10min_km": 0.39,
             "distancia_proyectada_10min_km": 50.95,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 30
         },
@@ -4621,7 +4743,11 @@
             "reduccion_distancia_10min_km": 1.26,
             "distancia_proyectada_10min_km": 57.71,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 31
         },
@@ -4676,7 +4802,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 74.44,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 32
         },
@@ -4731,7 +4861,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 34.43,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 33
         },
@@ -4786,7 +4920,11 @@
             "reduccion_distancia_10min_km": 2.14,
             "distancia_proyectada_10min_km": 68.49,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 34
         },
@@ -4841,7 +4979,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 134.28,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 35
         },
@@ -4896,7 +5038,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 152.23,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 36
         },
@@ -4951,7 +5097,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 143.54,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 37
         },
@@ -5006,7 +5156,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 72.5,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 38
         },
@@ -5061,7 +5215,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 33.84,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 39
         },
@@ -5116,7 +5274,11 @@
             "reduccion_distancia_10min_km": 0.48,
             "distancia_proyectada_10min_km": 117.16,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 40
         },
@@ -5171,7 +5333,11 @@
             "reduccion_distancia_10min_km": 0.09,
             "distancia_proyectada_10min_km": 55.82,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 41
         },
@@ -5226,7 +5392,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 110.27,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 42
         },
@@ -5281,7 +5451,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 47.13,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 43
         },
@@ -5336,7 +5510,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 38.09,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 44
         },
@@ -5391,7 +5569,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 106.36,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 45
         },
@@ -5446,7 +5628,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 79.61,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 46
         },
@@ -5501,7 +5687,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 101.34,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 47
         },
@@ -5556,7 +5746,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 102.1,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 48
         },
@@ -5611,7 +5805,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 101.75,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 49
         },
@@ -5666,7 +5864,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 189.34,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 50
         },
@@ -5721,7 +5923,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 62.52,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 51
         },
@@ -5776,7 +5982,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 51.45,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 52
         },
@@ -5831,7 +6041,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 31.41,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 53
         },
@@ -5885,8 +6099,12 @@
             "acercandose_a_bahia": true,
             "reduccion_distancia_10min_km": 20.83,
             "distancia_proyectada_10min_km": 44.13,
-            "eta_minutos": 31.2,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_minutos": null,
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "VELOCIDAD_NO_PLAUSIBLE_PARA_ETA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 54
         },
@@ -5940,8 +6158,12 @@
             "acercandose_a_bahia": true,
             "reduccion_distancia_10min_km": 9.91,
             "distancia_proyectada_10min_km": 0.0,
-            "eta_minutos": 3.1,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_minutos": null,
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "VELOCIDAD_NO_PLAUSIBLE_PARA_ETA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 55
         },
@@ -5996,21 +6218,25 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 46.04,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 56
         }
       ],
-      "rumbo_bahia_grados": 165.2,
-      "error_rumbo_bahia_grados": 1.7,
+      "rumbo_bahia_grados": 205.1,
+      "error_rumbo_bahia_grados": 2.1,
       "bahia_blanca": {
         "latitud": -38.7196,
         "longitud": -62.2724,
-        "distancia_principal_km": 8.74,
-        "rumbo_desde_principal_grados": 165.2,
+        "distancia_principal_km": 57.31,
+        "rumbo_desde_principal_grados": 205.1,
         "movimiento_hacia_bahia": true,
-        "eta_minutos": null,
-        "nucleo_principal_id": 101
+        "eta_minutos": 215.7,
+        "nucleo_principal_id": 104
       }
     },
     "intensidad": {
@@ -6088,11 +6314,11 @@
     "bahia_blanca": {
       "latitud": -38.7196,
       "longitud": -62.2724,
-      "distancia_principal_km": 8.74,
-      "rumbo_desde_principal_grados": 165.2,
+      "distancia_principal_km": 57.31,
+      "rumbo_desde_principal_grados": 205.1,
       "movimiento_hacia_bahia": true,
-      "eta_minutos": null,
-      "nucleo_principal_id": 101
+      "eta_minutos": 215.7,
+      "nucleo_principal_id": 104
     }
   },
   "prediccion": {
@@ -6171,17 +6397,17 @@
   "inteligencia": {
     "version": "4.0.0",
     "motor": "ClimaAR Intelligence - Storm Engine Central",
-    "actualizado_utc": "2026-10-20T10:22:03.786384+00:00",
+    "actualizado_utc": "2026-10-20T10:33:20.408124+00:00",
     "ubicacion": {
       "ciudad": "Bahia Blanca",
       "latitud": -38.71,
       "longitud": -62.26
     },
-    "estado": "tormenta_convectiva_en_desarrollo",
+    "estado": "tormenta_con_lluvia",
     "severidad": "amarillo",
     "probabilidades": {
-      "tormenta": 0.599,
-      "llegada_bahia": 0.855,
+      "tormenta": 0.551,
+      "llegada_bahia": 0.768,
       "fortalecimiento": 0.644,
       "debilitamiento": 0.356
     },
@@ -6191,10 +6417,10 @@
       "granizo": 0.2,
       "rayo": 0.21
     },
-    "indice_hibrido_severidad": 0.406,
+    "indice_hibrido_severidad": 0.393,
     "ia_v8": {
       "disponible": true,
-      "probabilidad_impacto": 0.08
+      "probabilidad_impacto": 0.079
     },
     "referencia_historica": {
       "eventos": [
@@ -6213,8 +6439,8 @@
       ],
       "score_ambiente_compatible": 0.1
     },
-    "eta_minutos": null,
-    "duracion_estimada_minutos": 60,
+    "eta_minutos": 215.7,
+    "duracion_estimada_minutos": 180,
     "radar": {
       "actualizado": "2026-10-20T09:30:00Z",
       "frame_actual_utc": "2026-10-20T09:30:00Z",
@@ -6226,17 +6452,17 @@
       "intensidad_escala": "RMA10_0_6",
       "dbz_max": null,
       "dbz_mean": null,
-      "distancia_km": 8.74,
+      "distancia_km": 57.31,
       "distancia_tipo": "georreferenciada_por_nucleo_validada",
       "fortalecimiento": "fortaleciendose",
       "cambio_area_pct": 3.3,
-      "velocidad_kmh": 3.56,
+      "velocidad_kmh": 15.95,
       "velocidad_pixeles_min": 0.3708,
       "direccion": 301.5467646935445,
-      "direccion_grados": 166.91,
+      "direccion_grados": 203.04,
       "movimiento_hacia_bahia": true,
       "movimiento_hacia_centro_dominio": false,
-      "eta_minutos": null,
+      "eta_minutos": 215.7,
       "eta_minutos_aproximada_centro_dominio": null,
       "confianza_movimiento": 0.55,
       "estado": "actividad_detectada",
@@ -9054,7 +9280,9 @@
         "total_georreferenciados": 56,
         "movimiento_valido": 48,
         "hacia_bahia": 7,
-        "criterio_hacia_bahia": "RUMBO_DENTRO_DE_45_GRADOS_Y_COMPONENTE_POSITIVA"
+        "criterio_hacia_bahia": "RUMBO_DENTRO_DE_45_GRADOS_Y_COMPONENTE_POSITIVA",
+        "eta_validos": 3,
+        "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
       },
       "proyecciones": {},
       "georreferenciacion": {
@@ -9170,7 +9398,11 @@
             "reduccion_distancia_10min_km": 0.95,
             "distancia_proyectada_10min_km": 31.56,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 1
         },
@@ -9225,7 +9457,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 14.69,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 2
         },
@@ -9280,7 +9516,11 @@
             "reduccion_distancia_10min_km": 0.82,
             "distancia_proyectada_10min_km": 27.72,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "COMPONENTE_INSUFICIENTE",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 3
         },
@@ -9335,7 +9575,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 33.71,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 4
         },
@@ -9390,7 +9634,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 27.91,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 5
         },
@@ -9445,7 +9693,11 @@
             "reduccion_distancia_10min_km": 1.64,
             "distancia_proyectada_10min_km": 37.76,
             "eta_minutos": 240.7,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": true,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "ETA_VALIDADA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 6
         },
@@ -9500,7 +9752,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 20.5,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 7
         },
@@ -9555,7 +9811,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 34.7,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 8
         },
@@ -9610,7 +9870,11 @@
             "reduccion_distancia_10min_km": 2.66,
             "distancia_proyectada_10min_km": 54.66,
             "eta_minutos": 215.7,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": true,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "ETA_VALIDADA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 9
         },
@@ -9665,7 +9929,11 @@
             "reduccion_distancia_10min_km": 3.74,
             "distancia_proyectada_10min_km": 102.76,
             "eta_minutos": 284.6,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": true,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "ETA_VALIDADA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 10
         },
@@ -9720,7 +9988,11 @@
             "reduccion_distancia_10min_km": 0.94,
             "distancia_proyectada_10min_km": 132.81,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 11
         },
@@ -9775,7 +10047,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 25.56,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 12
         },
@@ -9830,7 +10106,11 @@
             "reduccion_distancia_10min_km": 0.59,
             "distancia_proyectada_10min_km": 8.15,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "VELOCIDAD_NO_PLAUSIBLE_PARA_ETA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 13
         },
@@ -9885,7 +10165,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 41.2,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 14
         },
@@ -9940,7 +10224,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 29.73,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 15
         },
@@ -9995,7 +10283,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 20.28,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 16
         },
@@ -10050,7 +10342,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 37.85,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 17
         },
@@ -10105,7 +10401,11 @@
             "reduccion_distancia_10min_km": 0.57,
             "distancia_proyectada_10min_km": 49.04,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 18
         },
@@ -10160,7 +10460,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 78.49,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 19
         },
@@ -10215,7 +10519,11 @@
             "reduccion_distancia_10min_km": 1.76,
             "distancia_proyectada_10min_km": 129.64,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 20
         },
@@ -10270,7 +10578,11 @@
             "reduccion_distancia_10min_km": 0.26,
             "distancia_proyectada_10min_km": 150.7,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 21
         },
@@ -10325,7 +10637,11 @@
             "reduccion_distancia_10min_km": 2.94,
             "distancia_proyectada_10min_km": 118.37,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 22
         },
@@ -10380,7 +10696,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 99.09,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 23
         },
@@ -10435,7 +10755,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 54.06,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 24
         },
@@ -10490,7 +10814,11 @@
             "reduccion_distancia_10min_km": 0.24,
             "distancia_proyectada_10min_km": 39.96,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 25
         },
@@ -10545,7 +10873,11 @@
             "reduccion_distancia_10min_km": 0.91,
             "distancia_proyectada_10min_km": 163.85,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 26
         },
@@ -10600,7 +10932,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 91.96,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 27
         },
@@ -10655,7 +10991,11 @@
             "reduccion_distancia_10min_km": 0.45,
             "distancia_proyectada_10min_km": 82.53,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 28
         },
@@ -10710,7 +11050,11 @@
             "reduccion_distancia_10min_km": 0.32,
             "distancia_proyectada_10min_km": 60.47,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 29
         },
@@ -10765,7 +11109,11 @@
             "reduccion_distancia_10min_km": 0.39,
             "distancia_proyectada_10min_km": 50.95,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 30
         },
@@ -10820,7 +11168,11 @@
             "reduccion_distancia_10min_km": 1.26,
             "distancia_proyectada_10min_km": 57.71,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 31
         },
@@ -10875,7 +11227,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 74.44,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 32
         },
@@ -10930,7 +11286,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 34.43,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 33
         },
@@ -10985,7 +11345,11 @@
             "reduccion_distancia_10min_km": 2.14,
             "distancia_proyectada_10min_km": 68.49,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 34
         },
@@ -11040,7 +11404,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 134.28,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 35
         },
@@ -11095,7 +11463,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 152.23,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 36
         },
@@ -11150,7 +11522,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 143.54,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 37
         },
@@ -11205,7 +11581,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 72.5,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 38
         },
@@ -11260,7 +11640,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 33.84,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 39
         },
@@ -11315,7 +11699,11 @@
             "reduccion_distancia_10min_km": 0.48,
             "distancia_proyectada_10min_km": 117.16,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 40
         },
@@ -11370,7 +11758,11 @@
             "reduccion_distancia_10min_km": 0.09,
             "distancia_proyectada_10min_km": 55.82,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 41
         },
@@ -11425,7 +11817,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 110.27,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 42
         },
@@ -11480,7 +11876,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 47.13,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 43
         },
@@ -11535,7 +11935,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 38.09,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 44
         },
@@ -11590,7 +11994,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 106.36,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 45
         },
@@ -11645,7 +12053,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 79.61,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 46
         },
@@ -11700,7 +12112,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 101.34,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 47
         },
@@ -11755,7 +12171,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 102.1,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 48
         },
@@ -11810,7 +12230,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 101.75,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 49
         },
@@ -11865,7 +12289,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 189.34,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 50
         },
@@ -11920,7 +12348,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 62.52,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 51
         },
@@ -11975,7 +12407,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 51.45,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": true,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 52
         },
@@ -12030,7 +12466,11 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 31.41,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 53
         },
@@ -12084,8 +12524,12 @@
             "acercandose_a_bahia": true,
             "reduccion_distancia_10min_km": 20.83,
             "distancia_proyectada_10min_km": 44.13,
-            "eta_minutos": 31.2,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_minutos": null,
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "VELOCIDAD_NO_PLAUSIBLE_PARA_ETA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 54
         },
@@ -12139,8 +12583,12 @@
             "acercandose_a_bahia": true,
             "reduccion_distancia_10min_km": 9.91,
             "distancia_proyectada_10min_km": 0.0,
-            "eta_minutos": 3.1,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_minutos": null,
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "VELOCIDAD_NO_PLAUSIBLE_PARA_ETA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 55
         },
@@ -12195,61 +12643,65 @@
             "reduccion_distancia_10min_km": 0.0,
             "distancia_proyectada_10min_km": 46.04,
             "eta_minutos": null,
-            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA"
+            "eta_valida": false,
+            "velocidad_plausible_para_eta": false,
+            "motivo_eta": "SIN_MOVIMIENTO_HACIA_BAHIA",
+            "criterio_direccion": "CONO_45_GRADOS_Y_COMPONENTE_POSITIVA",
+            "criterio_eta": "5<=velocidad<=120_KMH_Y_VELOCIDAD_PIXEL<=2.56_PX_MIN"
           },
           "indice_nucleo": 56
         }
       ],
-      "rumbo_bahia_grados": 165.2,
-      "error_rumbo_bahia_grados": 1.7,
+      "rumbo_bahia_grados": 205.1,
+      "error_rumbo_bahia_grados": 2.1,
       "bahia_blanca": {
         "latitud": -38.7196,
         "longitud": -62.2724,
-        "distancia_principal_km": 8.74,
-        "rumbo_desde_principal_grados": 165.2,
+        "distancia_principal_km": 57.31,
+        "rumbo_desde_principal_grados": 205.1,
         "movimiento_hacia_bahia": true,
-        "eta_minutos": null,
-        "nucleo_principal_id": 101
+        "eta_minutos": 215.7,
+        "nucleo_principal_id": 104
       }
     },
     "ambiente": {
-      "tiempo_utc": "2026-10-20T10:00",
+      "tiempo_utc": "2026-10-20T11:00",
       "punto": "BB_CENTRO",
       "latitud": -38.71,
       "longitud": -62.26,
       "temperature_2m": 9.0,
-      "relative_humidity_2m": 72.0,
+      "relative_humidity_2m": 69.0,
       "dew_point_2m": 7.0,
       "pressure_msl": 1018.0,
-      "surface_pressure": 1014.1,
+      "surface_pressure": 1014.3,
       "precipitation": 0.0,
       "rain": 0.0,
       "showers": 0.0,
-      "cloud_cover": 12.0,
-      "cloud_cover_low": 14.0,
-      "cloud_cover_mid": 20.0,
-      "cloud_cover_high": 25.0,
+      "cloud_cover": 33.0,
+      "cloud_cover_low": 12.0,
+      "cloud_cover_mid": 15.0,
+      "cloud_cover_high": 73.0,
       "visibility": null,
       "wind_speed_10m": 12.964,
       "wind_direction_10m": 40.0,
       "wind_gusts_10m": 25.9,
-      "wind_speed_100m": 25.3,
-      "wind_direction_100m": 26.0,
+      "wind_speed_100m": 21.1,
+      "wind_direction_100m": 30.0,
       "wind_speed_200m": null,
       "wind_direction_200m": null,
       "cape": 0.0,
       "convective_inhibition": null,
-      "vapour_pressure_deficit": 0.37,
+      "vapour_pressure_deficit": 0.46,
       "boundary_layer_height": null,
-      "total_column_integrated_water_vapour": 21.6,
+      "total_column_integrated_water_vapour": 21.8,
       "freezing_level_height": null,
       "lightning_density": null,
-      "modelo_ecmwf_viento_10m_kmh": 13.5,
-      "modelo_ecmwf_direccion_10m": 34.0,
+      "modelo_ecmwf_viento_10m_kmh": 12.6,
+      "modelo_ecmwf_direccion_10m": 37.0,
       "modelo_ecmwf_rafaga_10m_kmh": 25.9,
       "fuente_superficie_actual": "SAZB_AWC",
       "observacion_sazb_utc": "2026-10-20T10:00:00+00:00",
-      "observacion_sazb_edad_minutos": 21.1,
+      "observacion_sazb_edad_minutos": 32.4,
       "viento_actual_fuente": "SAZB_AWC",
       "viento_actual_kmh": 12.964,
       "direccion_viento_actual": 40.0,
@@ -12258,7 +12710,7 @@
     },
     "ambiente_en_trayectoria": {},
     "calidad_datos": 100.0,
-    "calidad_tracking": 0.648,
+    "calidad_tracking": 0.748,
     "confianza_modelo": 0.9,
     "limitaciones": [
       "El radar actual no aporta dBZ cuantitativo validado en este motor.",
@@ -12275,8 +12727,8 @@
       "IA V8 impacto 3-6h: 8%.",
       "CAPE ECMWF: 0 J/kg.",
       "Rafaga prevista ECMWF: 25.9 km/h.",
-      "Indice hibrido de severidad: 41%.",
-      "Impacto inmediato estimado por radar: 85%.",
+      "Indice hibrido de severidad: 39%.",
+      "Impacto inmediato estimado por radar: 77%.",
       "Radar, evolucion, meteorologia, IA e historial se combinan en un unico Storm Engine.",
       "La estimacion no reemplaza avisos oficiales y requiere validacion continua."
     ]
@@ -12284,7 +12736,7 @@
   "meteorologia": {
     "version": "1.1.0",
     "motor": "ClimaAR Intelligence",
-    "actualizado_utc": "2026-10-20T10:22:02.737071+00:00",
+    "actualizado_utc": "2026-10-20T10:33:19.319322+00:00",
     "ubicacion": {
       "ciudad": "Bahia Blanca",
       "latitud": -38.71,
@@ -12307,14 +12759,14 @@
       "tiles_ok": true,
       "actividad": true,
       "area_px": 4345.0,
-      "distancia_km": 8.74,
+      "distancia_km": 57.31,
       "fortalecimiento": "fortaleciendose",
       "cambio_area_pct": 3.3,
-      "velocidad_kmh": 3.56,
+      "velocidad_kmh": 15.95,
       "direccion": 301.5467646935445,
-      "direccion_grados": 166.91,
+      "direccion_grados": 203.04,
       "movimiento_hacia_bahia": true,
-      "eta_minutos": null,
+      "eta_minutos": 215.7,
       "proyecciones": {},
       "confianza_movimiento": 0.55,
       "nucleos": [
@@ -13727,7 +14179,7 @@
       "fuente": "Aviation Weather Center",
       "estacion": "SAZB",
       "obsTime_utc": "2026-10-20T10:00:00+00:00",
-      "edad_minutos": 21.1,
+      "edad_minutos": 32.4,
       "temperatura_c": 9,
       "punto_rocio_c": 7,
       "viento_kt": 7,
@@ -13736,43 +14188,43 @@
       "visibilidad_millas": "6+"
     },
     "ambiente_actual": {
-      "tiempo_utc": "2026-10-20T10:00",
+      "tiempo_utc": "2026-10-20T11:00",
       "punto": "BB_CENTRO",
       "latitud": -38.71,
       "longitud": -62.26,
       "temperature_2m": 9.0,
-      "relative_humidity_2m": 72.0,
+      "relative_humidity_2m": 69.0,
       "dew_point_2m": 7.0,
       "pressure_msl": 1018.0,
-      "surface_pressure": 1014.1,
+      "surface_pressure": 1014.3,
       "precipitation": 0.0,
       "rain": 0.0,
       "showers": 0.0,
-      "cloud_cover": 12.0,
-      "cloud_cover_low": 14.0,
-      "cloud_cover_mid": 20.0,
-      "cloud_cover_high": 25.0,
+      "cloud_cover": 33.0,
+      "cloud_cover_low": 12.0,
+      "cloud_cover_mid": 15.0,
+      "cloud_cover_high": 73.0,
       "visibility": null,
       "wind_speed_10m": 12.964,
       "wind_direction_10m": 40.0,
       "wind_gusts_10m": 25.9,
-      "wind_speed_100m": 25.3,
-      "wind_direction_100m": 26.0,
+      "wind_speed_100m": 21.1,
+      "wind_direction_100m": 30.0,
       "wind_speed_200m": null,
       "wind_direction_200m": null,
       "cape": 0.0,
       "convective_inhibition": null,
-      "vapour_pressure_deficit": 0.37,
+      "vapour_pressure_deficit": 0.46,
       "boundary_layer_height": null,
-      "total_column_integrated_water_vapour": 21.6,
+      "total_column_integrated_water_vapour": 21.8,
       "freezing_level_height": null,
       "lightning_density": null,
-      "modelo_ecmwf_viento_10m_kmh": 13.5,
-      "modelo_ecmwf_direccion_10m": 34.0,
+      "modelo_ecmwf_viento_10m_kmh": 12.6,
+      "modelo_ecmwf_direccion_10m": 37.0,
       "modelo_ecmwf_rafaga_10m_kmh": 25.9,
       "fuente_superficie_actual": "SAZB_AWC",
       "observacion_sazb_utc": "2026-10-20T10:00:00+00:00",
-      "observacion_sazb_edad_minutos": 21.1,
+      "observacion_sazb_edad_minutos": 32.4,
       "viento_actual_fuente": "SAZB_AWC",
       "viento_actual_kmh": 12.964,
       "direccion_viento_actual": 40.0,
@@ -18595,15 +19047,15 @@
     "proxima_etapa": "Motor IA de evolucion, trayectoria, fortalecimiento, debilitamiento, ETA, duracion y peligros."
   },
   "resumen_operativo": {
-    "probabilidad_tormenta": 0.599,
-    "probabilidad_llegada_bahia": 0.855,
+    "probabilidad_tormenta": 0.551,
+    "probabilidad_llegada_bahia": 0.768,
     "probabilidad_fortalecimiento": 0.644,
     "probabilidad_debilitamiento": 0.356,
     "lluvia_fuerte": 0.47,
     "viento_fuerte": 0.36,
     "granizo": 0.2,
     "rayo": 0.21,
-    "eta_minutos": null,
-    "distancia_km": 8.74
+    "eta_minutos": 215.7,
+    "distancia_km": 57.31
   }
 }
