@@ -22,17 +22,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: main
 
       - name: Sincronizar main y preparar estado
+        shell: bash
         run: |
           set -euo pipefail
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git fetch origin main
+          git fetch --no-tags --depth=1 origin main
           git reset --hard origin/main
 
           mkdir -p \
@@ -49,9 +50,10 @@ jobs:
               data/radar/seguimiento/estado.json
           fi
 
-      - name: Recuperar histórico desde artefactos
+      - name: Recuperar histórico desde el último artefacto válido
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -62,43 +64,55 @@ jobs:
             --workflow probar-radar-smn.yml \
             --limit 20 \
             --json databaseId,status,conclusion \
-            --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId' \
-            > /tmp/radar_runs.txt || true
+            --jq '
+              .[]
+              | select(.status == "completed" and .conclusion == "success")
+              | .databaseId
+            ' \
+            | head -n 1 \
+            > /tmp/radar_run_id.txt
 
-          while read -r run_id; do
-            [ -z "$run_id" ] && continue
+          RUN_ID="$(cat /tmp/radar_run_id.txt || true)"
+
+          if [ -n "$RUN_ID" ]; then
+            echo "Recuperando artefacto del run: $RUN_ID"
 
             gh run download \
-              "$run_id" \
+              "$RUN_ID" \
               -n radar-rma10 \
-              -D "/tmp/radar_artifacts/$run_id" \
+              -D /tmp/radar_artifacts \
               2>/dev/null || true
-          done < /tmp/radar_runs.txt
+          else
+            echo "No existe un run exitoso anterior."
+          fi
 
-          find /tmp/radar_artifacts \
-            -type f \
-            -path '*/historico/*.png' \
-            -exec cp -n {} data/radar/historico/ \; \
-            2>/dev/null || true
+          if [ -d /tmp/radar_artifacts ]; then
+            find /tmp/radar_artifacts \
+              -type f \
+              -path '*/historico/*.png' \
+              -exec cp -n {} data/radar/historico/ \; \
+              2>/dev/null || true
 
-          find /tmp/radar_artifacts \
-            -type f \
-            -name 'predicciones_pendientes.json' \
-            -exec cp -n {} data/radar/seguimiento/ \; \
-            2>/dev/null || true
+            find /tmp/radar_artifacts \
+              -type f \
+              -name 'predicciones_pendientes.json' \
+              -exec cp {} data/radar/seguimiento/ \; \
+              2>/dev/null || true
+          fi
 
           echo "Frames históricos: $(find data/radar/historico -maxdepth 1 -type f -name '*.png' | wc -l)"
 
       - name: Instalar dependencias
+        shell: bash
         run: |
           set -euo pipefail
 
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
           python -m playwright install --with-deps chromium
 
       - name: Capturar radar RMA10
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -126,15 +140,19 @@ jobs:
 
               image.verify()
 
+          timestamp = Path(
+              "data/radar/radar_timestamp.txt"
+          ).read_text(
+              encoding="utf-8"
+          ).strip()
+
+          if not timestamp:
+              raise SystemExit(
+                  "ERROR: timestamp del radar vacío"
+              )
+
           print("PNG válido")
-          print(
-              "Radar:",
-              Path(
-                  "data/radar/radar_timestamp.txt"
-              ).read_text(
-                  encoding="utf-8"
-              ).strip()
-          )
+          print("Radar:", timestamp)
           PY
 
       - name: Validar frame nuevo, fresco y no repetido
@@ -149,11 +167,18 @@ jobs:
           import hashlib
           import os
 
-          ts = Path(
+          timestamp_path = Path(
               "data/radar/radar_timestamp.txt"
-          ).read_text(
+          )
+
+          ts = timestamp_path.read_text(
               encoding="utf-8"
           ).strip()
+
+          if not ts:
+              raise SystemExit(
+                  "ERROR: timestamp vacío"
+              )
 
           text = (
               ts[:-1] + "+00:00"
@@ -161,7 +186,12 @@ jobs:
               else ts
           )
 
-          dt = datetime.fromisoformat(text)
+          try:
+              dt = datetime.fromisoformat(text)
+          except ValueError as exc:
+              raise SystemExit(
+                  f"ERROR: timestamp inválido: {ts}"
+              ) from exc
 
           if dt.tzinfo is None:
               raise SystemExit(
@@ -184,7 +214,11 @@ jobs:
                   f"ERROR: radar demasiado viejo: {age:.2f} min"
               )
 
-          current_ts = ts
+          current_hash = hashlib.sha256(
+              Path(
+                  "data/radar/actual.png"
+              ).read_bytes()
+          ).hexdigest()
 
           old_ts_path = Path(
               "data/radar/ultimo_radar_timestamp.txt"
@@ -198,12 +232,6 @@ jobs:
               else ""
           )
 
-          current_hash = hashlib.sha256(
-              Path(
-                  "data/radar/actual.png"
-              ).read_bytes()
-          ).hexdigest()
-
           old_hash_path = Path(
               "data/radar/ultimo_radar_sha256.txt"
           )
@@ -216,7 +244,7 @@ jobs:
               else ""
           )
 
-          if old_ts and current_ts == old_ts:
+          if old_ts and ts == old_ts:
               accepted = "false"
               motivo = "timestamp_repetido"
 
@@ -228,10 +256,8 @@ jobs:
               accepted = "true"
               motivo = "nuevo_frame"
 
-          output_path = os.environ["GITHUB_OUTPUT"]
-
           with open(
-              output_path,
+              os.environ["GITHUB_OUTPUT"],
               "a",
               encoding="utf-8"
           ) as output:
@@ -248,7 +274,7 @@ jobs:
           )
 
           print(
-              f"Timestamp nuevo: {current_ts}"
+              f"Timestamp nuevo: {ts}"
           )
 
           print(
@@ -266,12 +292,14 @@ jobs:
 
       - name: Detener limpiamente si no hay frame nuevo
         if: steps.frame.outputs.accepted != 'true'
+        shell: bash
         run: |
+          set -euo pipefail
           echo "No se procesará un frame repetido."
-          exit 0
 
       - name: Guardar timestamp y hash aceptados
         if: steps.frame.outputs.accepted == 'true'
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -284,38 +312,35 @@ jobs:
             | awk '{print $1}' \
             > data/radar/ultimo_radar_sha256.txt
 
-          cat \
+          cp \
             data/radar/radar_timestamp.txt \
-            > data/radar/continuidad.txt
+            data/radar/continuidad.txt
 
       - name: Generar máscara estática
         if: steps.frame.outputs.accepted == 'true'
+        shell: bash
         run: |
           set -euo pipefail
 
           python scripts/generar_mascara_estatica.py
 
-          test -s \
-            data/radar/mascara_ecos_estaticos.json
-
-          test -s \
-            data/radar/mascara_ecos_estaticos.png
-
-          test -s \
-            data/radar/mascara_ecos_estaticos_confianza.png
+          test -s data/radar/mascara_ecos_estaticos.json
+          test -s data/radar/mascara_ecos_estaticos.png
+          test -s data/radar/mascara_ecos_estaticos_confianza.png
 
       - name: Procesar radar
         if: steps.frame.outputs.accepted == 'true'
+        shell: bash
         run: |
           set -euo pipefail
 
           python scripts/procesador_radar.py
 
-          test -s \
-            data/radar/resultado_procesamiento.json
+          test -s data/radar/resultado_procesamiento.json
 
       - name: Guardar frame en historial
         if: steps.frame.outputs.accepted == 'true'
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -330,9 +355,13 @@ jobs:
               encoding="utf-8"
           ).strip()
 
-          dt = datetime.fromisoformat(
-              ts.replace("Z", "+00:00")
+          text = (
+              ts[:-1] + "+00:00"
+              if ts.endswith("Z")
+              else ts
           )
+
+          dt = datetime.fromisoformat(text)
 
           if dt.tzinfo is None:
               raise SystemExit(
@@ -355,165 +384,6 @@ jobs:
 
       - name: Seguimiento temporal
         if: steps.frame.outputs.accepted == 'true'
-        run: |
-          set -euo pipefail
-
-          python seguimiento_temporal.py
-
-          test -s \
-            data/radar/seguimiento/seguimiento_temporal.json
-
-          if [ -f data/radar/seguimiento/estado.json ]; then
-            cp \
-              data/radar/seguimiento/estado.json \
-              .climaar/estado_rma10.json
-          fi
-
-      - name: Predicción ML RMA10
-        if: steps.frame.outputs.accepted == 'true'
-        run: |
-          set -euo pipefail
-
-          python scripts/prediccion_rma10_ml.py
-
-          test -s \
-            data/radar/seguimiento/prediccion_ml_rma10.json
-
-      - name: Evolución temporal
-        if: steps.frame.outputs.accepted == 'true'
-        run: |
-          set -euo pipefail
-
-          if [ -f scripts/prediccion_evolucion.py ]; then
-            python scripts/prediccion_evolucion.py
-          fi
-
-          test -s \
-            data/radar/seguimiento/prediccion_evolucion.json
-
-      - name: Preparar artefacto
-        if: steps.frame.outputs.accepted == 'true'
-        run: |
-          set -euo pipefail
-
-          rm -rf /tmp/radar-rma10
-
-          mkdir -p \
-            /tmp/radar-rma10
-
-          cp -a \
-            data/radar/. \
-            /tmp/radar-rma10/
-
-          if [ -f .climaar/estado_rma10.json ]; then
-            mkdir -p \
-              /tmp/radar-rma10/.climaar
-
-            cp \
-              .climaar/estado_rma10.json \
-              /tmp/radar-rma10/.climaar/
-          fi
-
-      - name: Subir artefacto RMA10
-        if: steps.frame.outputs.accepted == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: radar-rma10
-          path: /tmp/radar-rma10
-          retention-days: 7
-
-      - name: Guardar estado en repositorio con rebase y retry
-        if: steps.frame.outputs.accepted == 'true'
         shell: bash
         run: |
-          set -euo pipefail
-
-          git config user.name \
-            "github-actions[bot]"
-
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A data/radar .climaar
-
-          if git diff --cached --quiet; then
-            echo "No hay cambios para publicar."
-            exit 0
-          fi
-
-          git commit \
-            -m "ClimaAR: actualizar RMA10"
-
-          if ! git diff --quiet || ! git diff --cached --quiet; then
-            echo "ERROR: quedaron cambios sin confirmar después del commit."
-            git status --short
-            exit 1
-          fi
-
-          for intento in 1 2 3; do
-            echo "Intento de sincronización: $intento"
-
-            git fetch origin main
-
-            if git rebase origin/main; then
-              echo "Rebase correcto."
-            else
-              echo "Rebase falló."
-
-              git rebase --abort 2>/dev/null || true
-
-              if [ "$intento" -eq 3 ]; then
-                git status --short
-                exit 1
-              fi
-
-              git reset --hard HEAD
-              sleep 2
-              continue
-            fi
-
-            if ! git diff --quiet || ! git diff --cached --quiet; then
-              echo "ERROR: el rebase dejó cambios locales."
-              git status --short
-
-              if [ "$intento" -eq 3 ]; then
-                exit 1
-              fi
-
-              git reset --hard HEAD
-              sleep 2
-              continue
-            fi
-
-            if git push origin HEAD:main; then
-              echo "Push exitoso en intento $intento."
-              exit 0
-            fi
-
-            echo "Push falló en intento $intento."
-
-            if [ "$intento" -eq 3 ]; then
-              git status --short
-              exit 1
-            fi
-
-            sleep 2
-          done
-
-      - name: Lanzar Intelligence Central
-        if: steps.frame.outputs.accepted == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "DISPARANDO CLIMAAR INTELLIGENCE CENTRAL"
-
-          gh workflow run \
-            climaar-intelligence.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref main \
-            -f radar_run_id="$GITHUB_RUN_ID"
-
-          echo "Intelligence disparada correctamente."
+          set
