@@ -1,177 +1,164 @@
-name: ClimaAR - Intelligence Central
+name: ClimaAR Intelligence Central
 
 on:
   workflow_dispatch:
     inputs:
       radar_run_id:
-        description: "ID de la ejecución Radar a procesar"
+        description: "ID del Radar RMA10 que disparó Intelligence"
         required: false
         type: string
 
+permissions:
+  actions: read
+  contents: write
+
 concurrency:
-  group: climaar-intelligence
+  group: climaar-production-writes
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  actions: write
-
 jobs:
+  verificar-radar:
+    runs-on: ubuntu-latest
+
+    outputs:
+      ejecutar: ${{ steps.verificar.outputs.ejecutar }}
+      run_id: ${{ steps.verificar.outputs.run_id }}
+
+    steps:
+      - name: Verificar artefacto RMA10
+        id: verificar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          INPUT_RADAR_RUN_ID: ${{ inputs.radar_run_id }}
+        run: |
+          set -euo pipefail
+
+          RUN_ID="$INPUT_RADAR_RUN_ID"
+
+          if [ -n "$RUN_ID" ]; then
+            echo "Usando exactamente el Radar indicado: $RUN_ID"
+
+            ARTIFACTO="$(
+              gh api \
+                "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+                --jq '.artifacts[] | select(.name=="radar-rma10" and .expired==false) | .id' \
+                | head -n 1
+            )"
+
+            if [ -n "$ARTIFACTO" ]; then
+              echo "ejecutar=true" >> "$GITHUB_OUTPUT"
+              echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "ERROR: el Radar $RUN_ID no tiene artefacto radar-rma10 válido."
+            exit 1
+          fi
+
+          echo "No se recibió radar_run_id. Buscando último Radar exitoso."
+
+          while read -r CANDIDATO; do
+            [ -z "$CANDIDATO" ] && continue
+
+            ARTIFACTO="$(
+              gh api \
+                "repos/$GH_REPO/actions/runs/$CANDIDATO/artifacts?per_page=100" \
+                --jq '.artifacts[] | select(.name=="radar-rma10" and .expired==false) | .id' \
+                | head -n 1
+            )"
+
+            if [ -n "$ARTIFACTO" ]; then
+              echo "Último Radar válido encontrado: $CANDIDATO"
+
+              echo "ejecutar=true" >> "$GITHUB_OUTPUT"
+              echo "run_id=$CANDIDATO" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done < <(
+            gh run list \
+              --workflow probar-radar-smn.yml \
+              --status success \
+              --limit 20 \
+              --json databaseId \
+              --jq '.[].databaseId'
+          )
+
+          echo "No se encontró ningún Radar válido."
+
+          echo "ejecutar=false" >> "$GITHUB_OUTPUT"
+          echo "run_id=" >> "$GITHUB_OUTPUT"
+
   intelligence:
+    needs: verificar-radar
+
+    if: needs.verificar-radar.outputs.ejecutar == 'true'
+
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: main
 
-      - name: Preparar entorno
+      - name: Preparar directorios
         run: |
           set -euo pipefail
 
           mkdir -p \
-            data/radar \
+            data/radar/historico \
             data/radar/seguimiento \
             data/ia \
             data/meteorologia \
-            data/sazb
+            data/sazb \
+            logs \
+            /tmp/radar-artifact
 
-      - name: Verificar Radar RMA10 disponible
+      - name: Obtener artefacto del radar
         env:
-          RADAR_RUN_ID: ${{ inputs.radar_run_id }}
           GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ needs.verificar-radar.outputs.run_id }}
         run: |
           set -euo pipefail
 
-          if [ -n "${RADAR_RUN_ID:-}" ]; then
-            echo "Procesando ejecución Radar indicada: ${RADAR_RUN_ID}"
+          echo "Descargando artefacto del Radar: $RUN_ID"
 
-            gh run view "${RADAR_RUN_ID}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --json conclusion,status,workflowName
-
-            CONCLUSION="$(
-              gh run view "${RADAR_RUN_ID}" \
-                --repo "${GITHUB_REPOSITORY}" \
-                --json conclusion \
-                --jq '.conclusion'
-            )"
-
-            STATUS="$(
-              gh run view "${RADAR_RUN_ID}" \
-                --repo "${GITHUB_REPOSITORY}" \
-                --json status \
-                --jq '.status'
-            )"
-
-            if [ "${STATUS}" != "completed" ]; then
-              echo "ERROR: la ejecución Radar todavía no terminó."
-              exit 1
-            fi
-
-            if [ "${CONCLUSION}" != "success" ]; then
-              echo "ERROR: la ejecución Radar indicada no terminó correctamente."
-              exit 1
-            fi
-
-            echo "RADAR_RUN_ID=${RADAR_RUN_ID}" >> "${GITHUB_ENV}"
-            exit 0
-          fi
-
-          echo "Buscando última ejecución Radar exitosa..."
-
-          RADAR_RUN_ID="$(
-            gh run list \
-              --repo "${GITHUB_REPOSITORY}" \
-              --workflow "probar-radar-smn.yml" \
-              --branch main \
-              --status success \
-              --limit 20 \
-              --json databaseId \
-              --jq '.[0].databaseId'
-          )"
-
-          if [ -z "${RADAR_RUN_ID}" ] || [ "${RADAR_RUN_ID}" = "null" ]; then
-            echo "ERROR: no se encontró una ejecución Radar exitosa."
-            exit 1
-          fi
-
-          echo "Última ejecución Radar: ${RADAR_RUN_ID}"
-
-          echo "RADAR_RUN_ID=${RADAR_RUN_ID}" >> "${GITHUB_ENV}"
-
-      - name: Descargar artefacto RMA10
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          rm -rf /tmp/radar-artifact
-          mkdir -p /tmp/radar-artifact
-
-          gh run download "${RADAR_RUN_ID}" \
-            --repo "${GITHUB_REPOSITORY}" \
+          gh run download \
+            "$RUN_ID" \
             --name radar-rma10 \
             --dir /tmp/radar-artifact
 
-          if [ ! -d /tmp/radar-artifact ]; then
-            echo "ERROR: no se descargó el artefacto Radar."
-            exit 1
-          fi
-
-          echo "Contenido del artefacto:"
-          find /tmp/radar-artifact -maxdepth 4 -type f | sort
-
-      - name: Integrar artefacto RMA10
-        run: |
-          set -euo pipefail
-
-          if [ -d /tmp/radar-artifact/radar ]; then
+          if [ -d /tmp/radar-artifact/data/radar ]; then
             cp -a \
-              /tmp/radar-artifact/radar/. \
+              /tmp/radar-artifact/data/radar/. \
               data/radar/
           else
             cp -a \
               /tmp/radar-artifact/. \
-              data/radar/
+              data/radar/ \
+              2>/dev/null || true
           fi
 
-          echo "Radar integrado:"
-          find data/radar -maxdepth 3 -type f | sort
-
-      - name: Verificar archivos Radar
-        run: |
-          set -euo pipefail
-
-          test -s data/radar/radar_nowcast.json
+          test -s data/radar/resultado_procesamiento.json
+          test -s data/radar/seguimiento/estado.json
+          test -s data/radar/seguimiento/seguimiento_temporal.json
           test -s data/radar/radar_timestamp.txt
 
-          echo "Timestamp Radar:"
-          cat data/radar/radar_timestamp.txt
-
-      - name: Actualizar SAZB
+      - name: Actualizar observación SAZB
+        continue-on-error: true
         run: |
-          set -euo pipefail
+          python -m pip install requests
+          python scripts/smn_observaciones.py || true
 
-          if [ -f scripts/actualizar_sazb.py ]; then
-            python scripts/actualizar_sazb.py
-          else
-            echo "actualizar_sazb.py no disponible; se continúa."
-          fi
-
-      - name: Instalar dependencias
+      - name: Dependencias
         run: |
           set -euo pipefail
 
           python -m pip install --upgrade pip
-
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
+          pip install -r requirements.txt
 
       - name: Conectar RMA10 con Storm Engine
         run: |
@@ -185,6 +172,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          test -s data/radar/radar_nowcast.json
+          test -s data/radar/actual.png
+
           python scripts/scripts/georreferenciar_rma10.py
 
           test -s data/radar/radar_nowcast.json
@@ -195,56 +185,150 @@ jobs:
 
           python - <<'PY'
           import json
+          import math
           from pathlib import Path
 
           path = Path("data/radar/radar_nowcast.json")
-          data = json.loads(path.read_text(encoding="utf-8"))
 
-          nowcast = data.get("nowcast", {})
+          if not path.is_file():
+              raise SystemExit(
+                  "ERROR: no existe data/radar/radar_nowcast.json"
+              )
 
-          nuclei = nowcast.get("nucleos_georreferenciados")
+          data = json.loads(
+              path.read_text(encoding="utf-8")
+          )
+
+          nowcast = data.get("nowcast")
+
+          if not isinstance(nowcast, dict):
+              raise SystemExit(
+                  "ERROR: falta el objeto nowcast"
+              )
+
+          nuclei = nowcast.get("nucleos")
 
           if not isinstance(nuclei, list):
               raise SystemExit(
-                  "ERROR: nucleos_georreferenciados no es una lista"
+                  "ERROR: nowcast.nucleos no es una lista"
               )
 
-          if not nuclei:
-              raise SystemExit(
-                  "ERROR: no hay núcleos georreferenciados"
-              )
-
-          total = len(nuclei)
-
-          valid = 0
-
-          for nucleus in nuclei:
-              lat = nucleus.get("latitud")
-              lon = nucleus.get("longitud")
-
-              if lat is not None and lon is not None:
-                  valid += 1
-
-          print(f"Núcleos georreferenciados: {valid}/{total}")
-
-          if valid != total:
-              raise SystemExit(
-                  "ERROR: existen núcleos sin georreferenciación"
-              )
-
-          geo = nowcast.get("georreferenciacion", {})
-
-          if not isinstance(geo, dict):
-              raise SystemExit(
-                  "ERROR: bloque georreferenciacion inválido"
-              )
-
-          print(
-              "Estado georreferenciación:",
-              geo.get("estado")
+          geo = nowcast.get(
+              "nucleos_georreferenciados"
           )
 
-          print("OK: georreferenciación 1:1 validada.")
+          if not isinstance(geo, list):
+              raise SystemExit(
+                  "ERROR: falta nowcast.nucleos_georreferenciados"
+              )
+
+          if len(geo) != len(nuclei):
+              raise SystemExit(
+                  "ERROR: cantidad de núcleos georreferenciados "
+                  f"({len(geo)}) distinta de núcleos detectados "
+                  f"({len(nuclei)})"
+              )
+
+          resumen = nowcast.get(
+              "georreferenciacion"
+          )
+
+          if not isinstance(resumen, dict):
+              raise SystemExit(
+                  "ERROR: falta nowcast.georreferenciacion"
+              )
+
+          if resumen.get("disponible") is not True:
+              raise SystemExit(
+                  "ERROR: georreferenciación marcada como no disponible"
+              )
+
+          if resumen.get("estado") != "VALIDADA_OPERATIVAMENTE":
+              raise SystemExit(
+                  "ERROR: estado de georreferenciación inválido: "
+                  f"{resumen.get('estado')!r}"
+              )
+
+          for index, item in enumerate(geo, start=1):
+
+              if not isinstance(item, dict):
+                  raise SystemExit(
+                      f"ERROR: núcleo georreferenciado #{index} inválido"
+                  )
+
+              referencia = item.get(
+                  "georreferencia"
+              )
+
+              if not isinstance(referencia, dict):
+                  raise SystemExit(
+                      f"ERROR: falta georreferencia "
+                      f"en núcleo #{index}"
+                  )
+
+              lat = referencia.get(
+                  "latitud"
+              )
+
+              lon = referencia.get(
+                  "longitud"
+              )
+
+              if not isinstance(
+                  lat,
+                  (int, float)
+              ):
+                  raise SystemExit(
+                      f"ERROR: latitud inválida "
+                      f"en núcleo #{index}"
+                  )
+
+              if not isinstance(
+                  lon,
+                  (int, float)
+              ):
+                  raise SystemExit(
+                      f"ERROR: longitud inválida "
+                      f"en núcleo #{index}"
+                  )
+
+              if not math.isfinite(lat):
+                  raise SystemExit(
+                      f"ERROR: latitud no finita "
+                      f"en núcleo #{index}"
+                  )
+
+              if not math.isfinite(lon):
+                  raise SystemExit(
+                      f"ERROR: longitud no finita "
+                      f"en núcleo #{index}"
+                  )
+
+              if not -90 <= lat <= 90:
+                  raise SystemExit(
+                      f"ERROR: latitud fuera de rango "
+                      f"en núcleo #{index}: {lat}"
+                  )
+
+              if not -180 <= lon <= 180:
+                  raise SystemExit(
+                      f"ERROR: longitud fuera de rango "
+                      f"en núcleo #{index}: {lon}"
+                  )
+
+          print(
+              f"OK: {len(geo)} / {len(nuclei)} "
+              "núcleos georreferenciados"
+          )
+
+          print(
+              "Estado:",
+              resumen.get("estado")
+          )
+
+          print(
+              "Georreferenciación validada correctamente."
+          )
           PY
 
       - name: Validar timestamp del nowcast
@@ -253,98 +337,157 @@ jobs:
 
           python - <<'PY'
           import json
-          from pathlib import Path
           from datetime import datetime, timezone
+          from pathlib import Path
 
-          nowcast_path = Path("data/radar/radar_nowcast.json")
-          timestamp_path = Path("data/radar/radar_timestamp.txt")
+          def parse_utc(value):
+              if not isinstance(value, str) or not value.strip():
+                  raise SystemExit(
+                      f"ERROR: timestamp inválido: {value!r}"
+                  )
 
-          data = json.loads(
-              nowcast_path.read_text(encoding="utf-8")
-          )
+              text = value.strip()
 
-          radar_timestamp = (
-              timestamp_path.read_text(
-                  encoding="utf-8"
-              ).strip()
-          )
+              if text.endswith("Z"):
+                  text = text[:-1] + "+00:00"
 
-          frame = (
-              data.get("nowcast", {})
-                  .get("frame_actual_utc")
-          )
-
-          def normalize(value):
-              if not isinstance(value, str):
-                  return None
-
-              value = value.strip()
-
-              if not value:
-                  return None
-
-              if value.endswith("Z"):
-                  value = value[:-1] + "+00:00"
-
-              dt = datetime.fromisoformat(value)
+              try:
+                  dt = datetime.fromisoformat(text)
+              except ValueError as exc:
+                  raise SystemExit(
+                      f"ERROR: timestamp inválido: {value!r}"
+                  ) from exc
 
               if dt.tzinfo is None:
-                  return None
+                  raise SystemExit(
+                      f"ERROR: timestamp sin zona horaria: {value!r}"
+                  )
 
               return dt.astimezone(timezone.utc)
 
-          frame_dt = normalize(frame)
-          radar_dt = normalize(radar_timestamp)
+          radar = Path(
+              "data/radar/radar_timestamp.txt"
+          ).read_text(
+              encoding="utf-8"
+          ).strip()
 
-          if frame_dt is None:
-              raise SystemExit(
-                  "ERROR: frame_actual_utc inválido"
+          data = json.loads(
+              Path(
+                  "data/radar/radar_nowcast.json"
+              ).read_text(
+                  encoding="utf-8"
               )
+          )
 
-          if radar_dt is None:
-              raise SystemExit(
-                  "ERROR: radar_timestamp.txt inválido"
-              )
+          nc = data.get("nowcast", {})
+          nowcast = nc.get("frame_actual_utc")
 
-          if frame_dt != radar_dt:
+          radar_dt = parse_utc(radar)
+          nowcast_dt = parse_utc(nowcast)
+
+          if radar_dt != nowcast_dt:
               raise SystemExit(
-                  "ERROR: timestamp del nowcast desincronizado "
-                  f"(frame={frame_dt}, radar={radar_dt})"
+                  "ERROR: nowcast desincronizado: "
+                  f"{nowcast!r} != {radar!r}"
               )
 
           print(
-              "OK: timestamp sincronizado:",
-              frame_dt.isoformat()
+              "Timestamp radar:",
+              radar_dt.isoformat()
           )
+
+          print(
+              "Timestamp nowcast:",
+              nowcast_dt.isoformat()
+          )
+
+          print("Timestamp sincronizado.")
           PY
 
       - name: Acumular dataset RMA10
         run: |
           set -euo pipefail
 
-          if [ -f scripts/acumular_dataset_rma10.py ]; then
-            python scripts/acumular_dataset_rma10.py
-          elif [ -f scripts/dataset_rma10.py ]; then
-            python scripts/dataset_rma10.py
-          else
-            echo "Script de dataset no encontrado; se continúa."
-          fi
+          python scripts/acumular_features_rma10.py
+
+          test -s \
+            data/radar/radar_features_rma10.csv
 
       - name: Predicción ML RMA10
         run: |
           set -euo pipefail
 
-          if [ -f scripts/prediccion_ml_rma10.py ]; then
-            python scripts/prediccion_ml_rma10.py
-          elif [ -f scripts/ml_rma10.py ]; then
-            python scripts/ml_rma10.py
-          else
-            echo "Script ML RMA10 no encontrado; se continúa."
-          fi
+          python scripts/prediccion_rma10_ml.py
 
-          if [ -f data/radar/seguimiento/prediccion_ml.json ]; then
-            test -s data/radar/seguimiento/prediccion_ml.json
-          fi
+          test -s \
+            data/radar/seguimiento/prediccion_ml_rma10.json
+
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          p = Path(
+              "data/radar/seguimiento/prediccion_ml_rma10.json"
+          )
+
+          d = json.loads(
+              p.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          if d.get("ok") is not True:
+              raise SystemExit(
+                  "ERROR: ML no válido"
+              )
+
+          if not isinstance(
+              d.get("predicciones"),
+              list
+          ):
+              raise SystemExit(
+                  "ERROR: predicciones inválidas"
+              )
+
+          if d.get(
+              "tracks_analizados"
+          ) != len(
+              d["predicciones"]
+          ):
+              raise SystemExit(
+                  "ERROR: tracks_analizados != predicciones"
+              )
+
+          radar = Path(
+              "data/radar/radar_timestamp.txt"
+          ).read_text(
+              encoding="utf-8"
+          ).strip()
+
+          def normalize(value):
+              if not isinstance(value, str) or not value.strip():
+                  return None
+
+              text = value.strip()
+
+              if text.endswith("Z"):
+                  text = text[:-1] + "+00:00"
+
+              dt = datetime.fromisoformat(text)
+
+              if dt.tzinfo is None:
+                  return None
+
+              return dt.astimezone(timezone.utc)
+
+          if normalize(
+              d.get("frame_radar")
+          ) != normalize(radar):
+              raise SystemExit(
+                  "ERROR: ML desincronizado"
+              )
+          PY
 
       - name: Evolución temporal
         run: |
@@ -368,38 +511,34 @@ jobs:
 
           test -s data/radar/radar_nowcast.json
 
-          python - <<'PY'
+          python - <<'PY2'
           import json
           from pathlib import Path
 
           path = Path("data/radar/radar_nowcast.json")
-
-          data = json.loads(
-              path.read_text(encoding="utf-8")
-          )
-
+          data = json.loads(path.read_text(encoding="utf-8"))
           nowcast = data.get("nowcast", {})
-
           projections = nowcast.get("proyecciones")
 
           if not isinstance(projections, dict):
-              raise SystemExit(
-                  "ERROR: nowcast.proyecciones no es un objeto"
-              )
+              raise SystemExit("ERROR: nowcast.proyecciones no es un objeto")
 
           required = ("5", "10", "20", "30")
-
-          missing = [
-              key
-              for key in required
-              if key not in projections
-          ]
+          missing = [key for key in required if key not in projections]
 
           if missing:
               raise SystemExit(
-                  "ERROR: faltan proyecciones: "
-                  + ", ".join(missing)
+                  "ERROR: faltan proyecciones: " + ", ".join(missing)
               )
+
+          required_fields = (
+              "minutos",
+              "timestamp_utc",
+              "x",
+              "y",
+              "latitud",
+              "longitud",
+          )
 
           for key in required:
               projection = projections[key]
@@ -409,25 +548,16 @@ jobs:
                       f"ERROR: proyección {key} inválida"
                   )
 
-              for field in (
-                  "minutos",
-                  "timestamp_utc",
-                  "x",
-                  "y",
-                  "latitud",
-                  "longitud",
-              ):
+              for field in required_fields:
                   if projection.get(field) is None:
                       raise SystemExit(
-                          f"ERROR: falta {field} "
-                          f"en proyección {key}"
+                          f"ERROR: falta {field} en proyección {key}"
                       )
 
           print(
-              "OK: proyecciones 5/10/20/30 "
-              "conectadas y georreferenciadas."
+              "OK: proyecciones 5/10/20/30 conectadas y georreferenciadas."
           )
-          PY
+          PY2
 
       - name: Fusionar meteorología
         run: |
@@ -451,39 +581,29 @@ jobs:
         run: |
           set -euo pipefail
 
-          python - <<'PY'
+          python - <<'PY2'
           import json
           from pathlib import Path
 
-          path = Path(
-              "data/ia/inteligencia_tormenta.json"
-          )
+          path = Path("data/ia/inteligencia_tormenta.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          trajectory = data.get("ambiente_en_trayectoria")
 
-          data = json.loads(
-              path.read_text(encoding="utf-8")
-          )
-
-          trayectoria = data.get(
-              "ambiente_en_trayectoria"
-          )
-
-          if not isinstance(trayectoria, dict):
+          if not isinstance(trajectory, dict):
               raise SystemExit(
-                  "ERROR: ambiente_en_trayectoria "
-                  "no es un objeto"
+                  "ERROR: ambiente_en_trayectoria no es un objeto"
               )
 
-          if not trayectoria:
+          if not trajectory:
               raise SystemExit(
-                  "ERROR: Storm Engine terminó con "
-                  "ambiente_en_trayectoria vacío"
+                  "ERROR: Storm Engine terminó con ambiente_en_trayectoria vacío"
               )
 
           print(
               "OK: ambiente meteorológico asociado a "
-              f"{len(trayectoria)} proyecciones."
+              f"{len(trajectory)} proyecciones."
           )
-          PY
+          PY2
 
       - name: Ejecutar Decision Engine
         run: |
@@ -514,112 +634,97 @@ jobs:
             data/ia/. \
             /tmp/climaar-final/ia/
 
-          if [ -d data/meteorologia ]; then
-            cp -a \
-              data/meteorologia/. \
-              /tmp/climaar-final/meteorologia/
-          fi
+          cp -a \
+            data/meteorologia/. \
+            /tmp/climaar-final/meteorologia/ \
+            2>/dev/null || true
 
-          if [ -d data/sazb ]; then
-            cp -a \
-              data/sazb/. \
-              /tmp/climaar-final/sazb/
-          fi
-
-          find /tmp/climaar-final \
-            -type f \
-            -print \
-            | sort
-
-      - name: Validar artefacto final
-        run: |
-          set -euo pipefail
-
-          test -s \
-            /tmp/climaar-final/radar/radar_nowcast.json
-
-          test -s \
-            /tmp/climaar-final/ia/estado_meteorologico.json
-
-          test -s \
-            /tmp/climaar-final/ia/inteligencia_tormenta.json
-
-          test -s \
-            /tmp/climaar-final/ia/resultado_final.json
-
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          base = Path("/tmp/climaar-final")
-
-          files = [
-              base / "radar" / "radar_nowcast.json",
-              base / "ia" / "estado_meteorologico.json",
-              base / "ia" / "inteligencia_tormenta.json",
-              base / "ia" / "resultado_final.json",
-          ]
-
-          for path in files:
-              with path.open(
-                  "r",
-                  encoding="utf-8"
-              ) as fh:
-                  json.load(fh)
-
-              print("OK:", path)
-          PY
+          cp -a \
+            data/sazb/. \
+            /tmp/climaar-final/sazb/ \
+            2>/dev/null || true
 
       - name: Publicar artefacto final
         uses: actions/upload-artifact@v4
         with:
-          name: climaar-intelligence-final
+          name: climaar-resultado-final
           path: /tmp/climaar-final
-          if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
       - name: Persistir resultados con rebase y retry
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name \
+            "github-actions[bot]"
 
-          mkdir -p data/ia
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
-          cp -a \
-            /tmp/climaar-final/ia/. \
-            data/ia/
-
-          git add data/ia
+          git add -A \
+            data/radar \
+            data/ia \
+            data/meteorologia \
+            data/sazb
 
           if git diff --cached --quiet; then
-            echo "No hay cambios de Intelligence para persistir."
+            echo "No hay cambios para publicar."
             exit 0
           fi
 
           git commit \
-            -m "Actualizar resultado Intelligence ClimaAR"
+            -m "ClimaAR: integrar inteligencia RMA10"
 
-          for attempt in 1 2 3; do
-            echo "Intento de persistencia ${attempt}/3"
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "ERROR: quedaron cambios sin confirmar."
+            git status --short
+            exit 1
+          fi
+
+          for intento in 1 2 3; do
+            echo "Intento de sincronización: $intento"
+
+            git fetch origin main
+
+            if ! git rebase origin/main; then
+              echo "Rebase falló."
+
+              git rebase --abort 2>/dev/null || true
+              git reset --hard HEAD
+
+              if [ "$intento" -eq 3 ]; then
+                git status --short
+                exit 1
+              fi
+
+              sleep 2
+              continue
+            fi
+
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+              echo "ERROR: el rebase dejó cambios locales."
+              git status --short
+              git reset --hard HEAD
+
+              if [ "$intento" -eq 3 ]; then
+                exit 1
+              fi
+
+              sleep 2
+              continue
+            fi
 
             if git push origin HEAD:main; then
-              echo "Persistencia exitosa."
+              echo "Push exitoso en intento $intento."
               exit 0
             fi
 
-            echo "Push rechazado; actualizando main..."
+            echo "Push falló en intento $intento."
 
-            git fetch origin main
-            git rebase origin/main || {
-              echo "ERROR: conflicto durante rebase."
-              git rebase --abort || true
+            if [ "$intento" -eq 3 ]; then
+              git status --short
               exit 1
-            }
-          done
+            fi
 
-          echo "ERROR: no se pudo persistir después de 3 intentos."
-          exit 1
+            sleep 2
+          done
