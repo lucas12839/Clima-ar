@@ -36,18 +36,10 @@ jobs:
           git fetch --no-tags --depth=1 origin main
           git reset --hard origin/main
 
-          mkdir -p \
-            data/radar/historico \
-            data/radar/seguimiento \
-            data/radar/procesado \
-            data/radar/prediccion \
-            data/radar/mascaras \
-            .climaar
+          mkdir -p             data/radar/historico             data/radar/seguimiento             data/radar/procesado             data/radar/prediccion             data/radar/mascaras             .climaar
 
           if [ -f .climaar/estado_rma10.json ]; then
-            cp \
-              .climaar/estado_rma10.json \
-              data/radar/seguimiento/estado.json
+            cp               .climaar/estado_rma10.json               data/radar/seguimiento/estado.json
           fi
 
       - name: Recuperar histórico desde el último artefacto válido
@@ -60,44 +52,26 @@ jobs:
           rm -rf /tmp/radar_artifacts
           mkdir -p /tmp/radar_artifacts
 
-          gh run list \
-            --workflow probar-radar-smn.yml \
-            --limit 20 \
-            --json databaseId,status,conclusion \
-            --jq '
+          gh run list             --workflow probar-radar-smn.yml             --limit 20             --json databaseId,status,conclusion             --jq '
               .[]
               | select(.status == "completed" and .conclusion == "success")
               | .databaseId
-            ' \
-            | head -n 1 \
-            > /tmp/radar_run_id.txt
+            '             | head -n 1             > /tmp/radar_run_id.txt
 
           RUN_ID="$(cat /tmp/radar_run_id.txt || true)"
 
           if [ -n "$RUN_ID" ]; then
             echo "Recuperando artefacto del run: $RUN_ID"
 
-            gh run download \
-              "$RUN_ID" \
-              -n radar-rma10 \
-              -D /tmp/radar_artifacts \
-              2>/dev/null || true
+            gh run download               "$RUN_ID"               -n radar-rma10               -D /tmp/radar_artifacts               2>/dev/null || true
           else
             echo "No existe un run exitoso anterior."
           fi
 
           if [ -d /tmp/radar_artifacts ]; then
-            find /tmp/radar_artifacts \
-              -type f \
-              -path '*/historico/*.png' \
-              -exec cp -n {} data/radar/historico/ \; \
-              2>/dev/null || true
+            find /tmp/radar_artifacts               -type f               -path '*/historico/*.png'               -exec cp -n {} data/radar/historico/ \;               2>/dev/null || true
 
-            find /tmp/radar_artifacts \
-              -type f \
-              -name 'predicciones_pendientes.json' \
-              -exec cp {} data/radar/seguimiento/ \; \
-              2>/dev/null || true
+            find /tmp/radar_artifacts               -type f               -name 'predicciones_pendientes.json'               -exec cp {} data/radar/seguimiento/ \;               2>/dev/null || true
           fi
 
           echo "Frames históricos: $(find data/radar/historico -maxdepth 1 -type f -name '*.png' | wc -l)"
@@ -122,9 +96,7 @@ jobs:
           test -s data/radar/actual.png
           test -s data/radar/radar_timestamp.txt
 
-          cp \
-            data/radar/actual.png \
-            data/radar/latest.png
+          cp             data/radar/actual.png             data/radar/latest.png
 
           python - <<'PY'
           from pathlib import Path
@@ -138,19 +110,14 @@ jobs:
           with Image.open(path) as image:
               if image.format != "PNG":
                   raise SystemExit("ERROR: la captura no es PNG")
-
               image.verify()
 
           timestamp = Path(
               "data/radar/radar_timestamp.txt"
-          ).read_text(
-              encoding="utf-8"
-          ).strip()
+          ).read_text(encoding="utf-8").strip()
 
           if not timestamp:
-              raise SystemExit(
-                  "ERROR: timestamp del radar vacío"
-              )
+              raise SystemExit("ERROR: timestamp del radar vacío")
 
           print("PNG válido")
           print("Radar:", timestamp)
@@ -168,24 +135,13 @@ jobs:
           import hashlib
           import os
 
-          timestamp_path = Path(
-              "data/radar/radar_timestamp.txt"
-          )
-
-          ts = timestamp_path.read_text(
-              encoding="utf-8"
-          ).strip()
+          timestamp_path = Path("data/radar/radar_timestamp.txt")
+          ts = timestamp_path.read_text(encoding="utf-8").strip()
 
           if not ts:
-              raise SystemExit(
-                  "ERROR: timestamp vacío"
-              )
+              raise SystemExit("ERROR: timestamp vacío")
 
-          text = (
-              ts[:-1] + "+00:00"
-              if ts.endswith("Z")
-              else ts
-          )
+          text = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
 
           try:
               dt = datetime.fromisoformat(text)
@@ -195,52 +151,32 @@ jobs:
               ) from exc
 
           if dt.tzinfo is None:
-              raise SystemExit(
-                  "ERROR: timestamp sin zona horaria"
-              )
+              raise SystemExit("ERROR: timestamp sin zona horaria")
 
           dt = dt.astimezone(timezone.utc)
 
-          age = (
-              datetime.now(timezone.utc) - dt
-          ).total_seconds() / 60.0
+          age = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
 
           if age < -2:
-              raise SystemExit(
-                  f"ERROR: timestamp futuro: {age:.2f} min"
-              )
+              raise SystemExit(f"ERROR: timestamp futuro: {age:.2f} min")
 
           if age > 45:
-              raise SystemExit(
-                  f"ERROR: radar demasiado viejo: {age:.2f} min"
-              )
+              raise SystemExit(f"ERROR: radar demasiado viejo: {age:.2f} min")
 
           current_hash = hashlib.sha256(
-              Path(
-                  "data/radar/actual.png"
-              ).read_bytes()
+              Path("data/radar/actual.png").read_bytes()
           ).hexdigest()
 
-          old_ts_path = Path(
-              "data/radar/ultimo_radar_timestamp.txt"
-          )
-
+          old_ts_path = Path("data/radar/ultimo_radar_timestamp.txt")
           old_ts = (
-              old_ts_path.read_text(
-                  encoding="utf-8"
-              ).strip()
+              old_ts_path.read_text(encoding="utf-8").strip()
               if old_ts_path.exists()
               else ""
           )
 
-          old_hash_path = Path(
-              "data/radar/ultimo_radar_sha256.txt"
-          )
-
+          old_hash_path = Path("data/radar/ultimo_radar_sha256.txt")
           old_hash = (
-              old_hash_path.read_text(
-                  encoding="utf-8"
-              ).strip()
+              old_hash_path.read_text(encoding="utf-8").strip()
               if old_hash_path.exists()
               else ""
           )
@@ -248,11 +184,9 @@ jobs:
           if old_ts and ts == old_ts:
               accepted = "false"
               motivo = "timestamp_repetido"
-
           elif old_hash and current_hash == old_hash:
               accepted = "false"
               motivo = "imagen_repetida"
-
           else:
               accepted = "true"
               motivo = "nuevo_frame"
@@ -262,33 +196,14 @@ jobs:
               "a",
               encoding="utf-8"
           ) as output:
-              output.write(
-                  f"accepted={accepted}\n"
-              )
-              output.write(
-                  f"motivo={motivo}\n"
-              )
+              output.write(f"accepted={accepted}\n")
+              output.write(f"motivo={motivo}\n")
 
-          print(
-              f"Timestamp anterior: "
-              f"{old_ts or 'ninguno'}"
-          )
-
-          print(
-              f"Timestamp nuevo: {ts}"
-          )
-
-          print(
-              f"Edad: {age:.2f} min"
-          )
-
-          print(
-              f"SHA256: {current_hash}"
-          )
-
-          print(
-              f"Resultado: {motivo}"
-          )
+          print(f"Timestamp anterior: {old_ts or 'ninguno'}")
+          print(f"Timestamp nuevo: {ts}")
+          print(f"Edad: {age:.2f} min")
+          print(f"SHA256: {current_hash}")
+          print(f"Resultado: {motivo}")
           PY
 
       - name: Detener limpiamente si no hay frame nuevo
@@ -304,18 +219,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          cp \
-            data/radar/radar_timestamp.txt \
-            data/radar/ultimo_radar_timestamp.txt
+          cp             data/radar/radar_timestamp.txt             data/radar/ultimo_radar_timestamp.txt
 
-          sha256sum \
-            data/radar/actual.png \
-            | awk '{print $1}' \
-            > data/radar/ultimo_radar_sha256.txt
+          sha256sum             data/radar/actual.png             | awk '{print $1}'             > data/radar/ultimo_radar_sha256.txt
 
-          cp \
-            data/radar/radar_timestamp.txt \
-            data/radar/continuidad.txt
+          cp             data/radar/radar_timestamp.txt             data/radar/continuidad.txt
 
       - name: Generar máscara estática
         if: steps.frame.outputs.accepted == 'true'
@@ -352,22 +260,13 @@ jobs:
 
           ts = Path(
               "data/radar/radar_timestamp.txt"
-          ).read_text(
-              encoding="utf-8"
-          ).strip()
+          ).read_text(encoding="utf-8").strip()
 
-          text = (
-              ts[:-1] + "+00:00"
-              if ts.endswith("Z")
-              else ts
-          )
-
+          text = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
           dt = datetime.fromisoformat(text)
 
           if dt.tzinfo is None:
-              raise SystemExit(
-                  "timestamp sin zona horaria"
-              )
+              raise SystemExit("timestamp sin zona horaria")
 
           print(
               dt.astimezone(timezone.utc)
@@ -376,28 +275,22 @@ jobs:
           PY
           )"
 
-          cp \
-            data/radar/actual.png \
-            "data/radar/historico/$HISTORIAL_NOMBRE"
+          cp             data/radar/actual.png             "data/radar/historico/$HISTORIAL_NOMBRE"
 
-          echo \
-            "Historial guardado: $HISTORIAL_NOMBRE"
+          echo "Historial guardado: $HISTORIAL_NOMBRE"
 
-      - name: Seguimiento temporal BLOQUE 2
+      - name: Seguimiento temporal
         if: steps.frame.outputs.accepted == 'true'
         shell: bash
         run: |
           set -euo pipefail
 
-          python seguimiento_temporal_bloque2.py
+          python seguimiento_temporal.py
 
-          test -s \
-            data/radar/seguimiento/seguimiento_temporal.json
+          test -s             data/radar/seguimiento/seguimiento_temporal.json
 
           if [ -f data/radar/seguimiento/estado.json ]; then
-            cp \
-              data/radar/seguimiento/estado.json \
-              .climaar/estado_rma10.json
+            cp               data/radar/seguimiento/estado.json               .climaar/estado_rma10.json
           fi
 
       - name: Predicción ML RMA10
@@ -408,8 +301,7 @@ jobs:
 
           python scripts/prediccion_rma10_ml.py
 
-          test -s \
-            data/radar/seguimiento/prediccion_ml_rma10.json
+          test -s             data/radar/seguimiento/prediccion_ml_rma10.json
 
       - name: Evolución temporal
         if: steps.frame.outputs.accepted == 'true'
@@ -421,8 +313,7 @@ jobs:
             python scripts/prediccion_evolucion.py
           fi
 
-          test -s \
-            data/radar/seguimiento/prediccion_evolucion.json
+          test -s             data/radar/seguimiento/prediccion_evolucion.json
 
       - name: Preparar artefacto
         if: steps.frame.outputs.accepted == 'true'
@@ -432,20 +323,14 @@ jobs:
 
           rm -rf /tmp/radar-rma10
 
-          mkdir -p \
-            /tmp/radar-rma10
+          mkdir -p             /tmp/radar-rma10
 
-          cp -a \
-            data/radar/. \
-            /tmp/radar-rma10/
+          cp -a             data/radar/.             /tmp/radar-rma10/
 
           if [ -f .climaar/estado_rma10.json ]; then
-            mkdir -p \
-              /tmp/radar-rma10/.climaar
+            mkdir -p               /tmp/radar-rma10/.climaar
 
-            cp \
-              .climaar/estado_rma10.json \
-              /tmp/radar-rma10/.climaar/
+            cp               .climaar/estado_rma10.json               /tmp/radar-rma10/.climaar/
           fi
 
       - name: Subir artefacto RMA10
@@ -462,11 +347,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          git config user.name \
-            "github-actions[bot]"
+          git config user.name             "github-actions[bot]"
 
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email             "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -A data/radar .climaar
 
@@ -475,8 +358,7 @@ jobs:
             exit 0
           fi
 
-          git commit \
-            -m "ClimaAR: actualizar RMA10"
+          git commit             -m "ClimaAR: actualizar RMA10"
 
           if ! git diff --quiet || ! git diff --cached --quiet; then
             echo "ERROR: quedaron cambios sin confirmar después del commit."
@@ -544,10 +426,6 @@ jobs:
 
           echo "DISPARANDO CLIMAAR INTELLIGENCE CENTRAL"
 
-          gh workflow run \
-            climaar-intelligence.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref main \
-            -f radar_run_id="$GITHUB_RUN_ID"
+          gh workflow run             climaar-intelligence.yml             --repo "$GITHUB_REPOSITORY"             --ref main             -f radar_run_id="$GITHUB_RUN_ID"
 
           echo "Intelligence disparada correctamente."
