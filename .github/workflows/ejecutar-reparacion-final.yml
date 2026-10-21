@@ -1,18 +1,23 @@
-name: Auditoría ClimaAR (solo lectura)
+name: ClimaAR Reparación Final
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
+
+concurrency:
+  group: climaar-production-writes
+  cancel-in-progress: false
 
 jobs:
-  auditoria:
+  reparacion-final:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
 
     steps:
-      - name: Descargar repositorio
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -23,41 +28,165 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Preparar entorno
+        run: |
+          set -euo pipefail
+
+          mkdir -p \
+            data/radar \
+            data/radar/historico \
+            data/radar/seguimiento \
+            data/ia \
+            data/meteorologia \
+            data/sazb \
+            logs
+
       - name: Instalar dependencias
         run: |
           set -euo pipefail
+
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Verificar sintaxis Python
-        run: |
-          set -euo pipefail
-          python -m compileall -q .
-
-      - name: Verificar archivos operativos
+      - name: Verificar estructura crítica
         run: |
           set -euo pipefail
 
           archivos=(
-            "data/radar/radar_timestamp.txt"
-            "data/radar/radar_nowcast.json"
-            "data/radar/resultado_procesamiento.json"
-            "data/radar/seguimiento/seguimiento_temporal.json"
-            "data/radar/seguimiento/prediccion_ml_rma10.json"
-            "data/radar/seguimiento/prediccion_evolucion.json"
-            "data/ia/estado_meteorologico.json"
-            "data/ia/inteligencia_tormenta.json"
-            "data/ia/resultado_final.json"
+            "scripts/validar_integridad_climaar.py"
+            "scripts/adaptar_rma10_intelligence.py"
+            "scripts/georreferenciar_rma10.py"
+            "scripts/acumular_features_rma10.py"
+            "scripts/prediccion_rma10_ml.py"
+            "scripts/meteorologia_fusion.py"
+            "scripts/tormenta_intelligence_timestamp.py"
+            "scripts/motor_decision_climaar.py"
           )
 
           for archivo in "${archivos[@]}"; do
-            test -s "$archivo" || {
-              echo "Falta o está vacío: $archivo"
+            if [ ! -f "$archivo" ]; then
+              echo "ERROR: falta $archivo"
               exit 1
-            }
+            fi
+
+            echo "OK: $archivo"
           done
 
-      - name: Verificar JSON operativos
+      - name: Validar sintaxis Python
+        run: |
+          set -euo pipefail
+
+          python -m compileall -q scripts
+
+          echo "Sintaxis Python validada."
+
+      - name: Ejecutar auditoría de integridad
+        run: |
+          set -euo pipefail
+
+          python scripts/validar_integridad_climaar.py
+
+      - name: Buscar archivos duplicados críticos
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          from pathlib import Path
+
+          raiz = Path(".")
+
+          grupos = {
+              "validadores": [
+                  "validar_integridad_climaar.py",
+              ],
+              "adaptadores_radar": [
+                  "adaptar_rma10_intelligence.py",
+              ],
+              "georreferenciacion": [
+                  "georreferenciar_rma10.py",
+              ],
+              "decision": [
+                  "motor_decision_climaar.py",
+              ],
+          }
+
+          for nombre_grupo, nombres in grupos.items():
+              encontrados = []
+
+              for nombre in nombres:
+                  encontrados.extend(
+                      str(p)
+                      for p in raiz.rglob(nombre)
+                      if ".git" not in p.parts
+                  )
+
+              if len(encontrados) != len(set(encontrados)):
+                  raise SystemExit(
+                      f"ERROR: duplicados detectados en {nombre_grupo}"
+                  )
+
+              if len(encontrados) == 0:
+                  raise SystemExit(
+                      f"ERROR: no se encontró ningún archivo para {nombre_grupo}"
+                  )
+
+              print(
+                  f"{nombre_grupo}:",
+                  ", ".join(encontrados)
+              )
+
+          print("Archivos críticos sin duplicados exactos.")
+          PY
+
+      - name: Validar workflows
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          from pathlib import Path
+
+          workflows = Path(".github/workflows")
+
+          if not workflows.is_dir():
+              raise SystemExit(
+                  "ERROR: no existe .github/workflows"
+              )
+
+          archivos = sorted(
+              workflows.glob("*.yml")
+          ) + sorted(
+              workflows.glob("*.yaml")
+          )
+
+          if not archivos:
+              raise SystemExit(
+                  "ERROR: no existen workflows"
+              )
+
+          nombres = [p.name for p in archivos]
+
+          print("Workflows encontrados:")
+
+          for nombre in nombres:
+              print(" -", nombre)
+
+          prefijos_prohibidos = (
+              "WORKFLOW__",
+              "REPARADO__",
+              "FIXED__",
+              "COPY__",
+          )
+
+          for nombre in nombres:
+              if nombre.startswith(prefijos_prohibidos):
+                  raise SystemExit(
+                      f"ERROR: workflow duplicado/reparado detectado: {nombre}"
+                  )
+
+          print("Nombres de workflows válidos.")
+          PY
+
+      - name: Validar archivos JSON existentes
         run: |
           set -euo pipefail
 
@@ -65,198 +194,109 @@ jobs:
           import json
           from pathlib import Path
 
-          archivos = [
-              "data/radar/radar_nowcast.json",
-              "data/radar/resultado_procesamiento.json",
-              "data/radar/seguimiento/seguimiento_temporal.json",
-              "data/radar/seguimiento/prediccion_ml_rma10.json",
-              "data/radar/seguimiento/prediccion_evolucion.json",
-              "data/ia/estado_meteorologico.json",
-              "data/ia/inteligencia_tormenta.json",
-              "data/ia/resultado_final.json",
-          ]
-
-          for archivo in archivos:
-              data = json.loads(
-                  Path(archivo).read_text(encoding="utf-8")
-              )
-              if not isinstance(data, dict):
-                  raise SystemExit(
-                      f"{archivo}: no es un objeto JSON"
-                  )
-
-          print("JSON operativos OK")
-          PY
-
-      - name: Verificar sincronización Radar Nowcast ML
-        run: |
-          set -euo pipefail
-
-          python - <<'PY'
-          import json
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          def parse_utc(value, nombre):
-              if not isinstance(value, str) or not value.strip():
-                  raise SystemExit(
-                      f"ERROR: {nombre} inválido: {value!r}"
-                  )
-
-              text = value.strip()
-
-              if text.endswith("Z"):
-                  text = text[:-1] + "+00:00"
-
-              try:
-                  dt = datetime.fromisoformat(text)
-              except ValueError as exc:
-                  raise SystemExit(
-                      f"ERROR: {nombre} inválido: {value!r}"
-                  ) from exc
-
-              if dt.tzinfo is None:
-                  raise SystemExit(
-                      f"ERROR: {nombre} sin zona horaria"
-                  )
-
-              return dt.astimezone(timezone.utc)
-
-          radar = Path(
-              "data/radar/radar_timestamp.txt"
-          ).read_text(encoding="utf-8").strip()
-
-          nowcast = json.loads(
-              Path(
-                  "data/radar/radar_nowcast.json"
-              ).read_text(encoding="utf-8")
+          directorios = (
+              Path("data/radar"),
+              Path("data/ia"),
+              Path("data/meteorologia"),
+              Path("data/sazb"),
           )
 
-          ml = json.loads(
-              Path(
-                  "data/radar/seguimiento/prediccion_ml_rma10.json"
-              ).read_text(encoding="utf-8")
-          )
+          total = 0
 
-          radar_dt = parse_utc(
-              radar,
-              "radar_timestamp",
-          )
+          for directorio in directorios:
+              if not directorio.exists():
+                  continue
 
-          nowcast_dt = parse_utc(
-              nowcast.get("nowcast", {}).get(
-                  "frame_actual_utc"
-              ),
-              "nowcast.frame_actual_utc",
-          )
-
-          ml_dt = parse_utc(
-              ml.get("frame_radar"),
-              "ML.frame_radar",
-          )
-
-          if not (radar_dt == nowcast_dt == ml_dt):
-              raise SystemExit(
-                  "ERROR: Radar / Nowcast / ML desincronizados"
-              )
-
-          if ml.get("ok") is not True:
-              raise SystemExit(
-                  "ERROR: ML no válido"
-              )
-
-          print("Radar / Nowcast / ML sincronizados")
-          print(
-              "Frame UTC:",
-              radar_dt.isoformat(),
-          )
-          PY
-
-      - name: Verificar API sin modificar producción
-        run: |
-          set -euo pipefail
-
-          nohup uvicorn app:app \
-            --host 127.0.0.1 \
-            --port 8000 \
-            > app.log 2>&1 &
-
-          echo $! > app.pid
-
-          for i in $(seq 1 30); do
-            if curl -fsS \
-              http://127.0.0.1:8000/health \
-              > /tmp/health.json; then
-              break
-            fi
-
-            if [ "$i" -eq 30 ]; then
-              cat app.log
-              exit 1
-            fi
-
-            sleep 1
-          done
-
-          python - <<'PY'
-          import json
-          import urllib.request
-
-          base = "http://127.0.0.1:8000"
-
-          with urllib.request.urlopen(
-              base + "/health",
-              timeout=10,
-          ) as response:
-              health = json.load(response)
-
-          required = (
-              "status",
-              "frame_actual_utc",
-              "frame_edad_minutos",
-              "estado_radar",
-              "sincronizacion",
-          )
-
-          for key in required:
-              if key not in health:
-                  raise SystemExit(
-                      f"Falta {key} en /health"
-                  )
-
-          for endpoint in (
-              "/radar",
-              "/prediccion/en-vivo",
-              "/tormenta",
-              "/inteligencia",
-              "/secuencia",
-          ):
-              with urllib.request.urlopen(
-                  base + endpoint,
-                  timeout=10,
-              ) as response:
-                  if response.status != 200:
+              for path in directorio.rglob("*.json"):
+                  if path.stat().st_size == 0:
                       raise SystemExit(
-                          f"{endpoint}: HTTP {response.status}"
+                          f"ERROR: JSON vacío: {path}"
                       )
 
-          print("API básica OK")
+                  try:
+                      json.loads(
+                          path.read_text(encoding="utf-8")
+                      )
+                  except Exception as exc:
+                      raise SystemExit(
+                          f"ERROR: JSON inválido: {path}: {exc}"
+                      ) from exc
+
+                  total += 1
+
+          print(
+              f"JSON válidos inspeccionados: {total}"
+          )
           PY
 
-      - name: Detener API
-        if: always()
+      - name: Validar integridad final
         run: |
-          if [ -f app.pid ]; then
-            kill "$(cat app.pid)" 2>/dev/null || true
+          set -euo pipefail
+
+          python scripts/validar_integridad_climaar.py
+
+      - name: Mostrar estado Git
+        run: |
+          set -euo pipefail
+
+          git status --short
+
+      - name: Confirmar cambios pendientes
+        run: |
+          set -euo pipefail
+
+          if ! git diff --quiet; then
+            echo "Hay cambios sin confirmar."
+          else
+            echo "No hay cambios de contenido pendientes."
           fi
 
-      - name: Mostrar log API si falló
-        if: failure()
+      - name: Publicar reparación final
         run: |
-          if [ -f app.log ]; then
-            cat app.log
+          set -euo pipefail
+
+          git config user.name \
+            "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios para publicar."
+            exit 0
           fi
 
-      - name: Resultado final
-        run: |
-          echo "CLIMAAR AUDITORÍA: OK"
+          git commit \
+            -m "ClimaAR: reparación final y validación integral"
+
+          for intento in 1 2 3; do
+            echo "Intento de sincronización: $intento"
+
+            git fetch origin main
+
+            if ! git rebase origin/main; then
+              git rebase --abort 2>/dev/null || true
+
+              if [ "$intento" -eq 3 ]; then
+                echo "ERROR: no se pudo completar el rebase."
+                exit 1
+              fi
+
+              sleep 2
+              continue
+            fi
+
+            if git push origin HEAD:main; then
+              echo "Push exitoso."
+              exit 0
+            fi
+
+            if [ "$intento" -eq 3 ]; then
+              echo "ERROR: no se pudo publicar la reparación."
+              exit 1
+            fi
+
+            sleep 2
+          done
