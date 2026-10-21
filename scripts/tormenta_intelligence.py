@@ -714,7 +714,7 @@ def movement_quality(nowcast):
     )
 
 
-def impact_probability(nowcast):
+def impact_signal(nowcast):
 
     if not nowcast.get(
         "actividad"
@@ -778,7 +778,7 @@ def impact_probability(nowcast):
     )
 
 
-def strengthening_probability(
+def strengthening_signal(
     nowcast,
     env,
 ):
@@ -926,7 +926,7 @@ def historical_score(env):
     ), reasons
 
 
-def hazard_probabilities(
+def hazard_signals(
     nowcast,
     env,
 ):
@@ -1632,12 +1632,12 @@ def main():
         )
     )
 
-    impact = impact_probability(
+    impact = impact_signal(
         nowcast
     )
 
     strengthening = (
-        strengthening_probability(
+        strengthening_signal(
             nowcast,
             environment,
         )
@@ -1651,7 +1651,7 @@ def main():
         )
     )
 
-    hazards = hazard_probabilities(
+    hazards = hazard_signals(
         nowcast,
         environment,
     )
@@ -1675,9 +1675,7 @@ def main():
         + 0.22 * ai_score
         + 0.18 * historical
         + 0.15 * impact
-        + 0.10 * max(
-            hazards.values()
-        )
+        + 0.10 * max(hazards.values(), default=0.0)
         + 0.05 * (
             strengthening
             if strengthening is not None
@@ -1903,61 +1901,58 @@ def main():
         "severidad":
             severity_level,
 
+        "probabilidades_calibradas": False,
+
         "probabilidades": {
+            "tormenta": None,
+            "llegada_bahia": None,
+            "fortalecimiento": None,
+            "debilitamiento": None,
+            "lluvia_fuerte": None,
+            "viento_fuerte": None,
+            "granizo": None,
+            "rayo": None,
+            "impacto": None,
+        },
 
-            "tormenta":
-                round(
-                    clamp(
-                        0.55 * (
-                            impact
-                        )
-                        + 0.25 * (
-                            ai_score
-                        )
-                        + 0.20 * (
-                            radar_score
-                        )
-                    ),
-                    3,
+        "indices_heuristicos": {
+            "tormenta": round(
+                clamp(
+                    0.55 * impact
+                    + 0.25 * ai_score
+                    + 0.20 * radar_score
                 ),
-
-            "llegada_bahia":
-                round(
-                    impact,
-                    3,
-                ),
-
-            "fortalecimiento":
-                (
-                    round(
-                        strengthening,
-                        3,
-                    )
-                    if strengthening
-                    is not None
-                    else None
-                ),
-
-            "debilitamiento":
-                (
-                    round(
-                        weakening,
-                        3,
-                    )
-                    if weakening
-                    is not None
-                    else None
-                ),
+                3,
+            ),
+            "llegada_bahia": round(impact, 3),
+            "fortalecimiento": (
+                round(strengthening, 3)
+                if strengthening is not None
+                else None
+            ),
+            "debilitamiento": (
+                round(weakening, 3)
+                if weakening is not None
+                else None
+            ),
+            "impacto": round(impact, 3),
+            "peligros": {
+                key: round(value, 3)
+                for key, value in hazards.items()
+            },
+            "indice_hibrido_severidad": round(hybrid_score, 3),
+            "fuente_componente_ia": (
+                "modelo_impacto_v8_no_calibrado"
+                if ai is not None
+                else "heuristica_ambiental"
+            ),
         },
 
         "peligros": {
-            key:
-                round(
-                    value,
-                    3,
-                )
-            for key, value
-            in hazards.items()
+            "lluvia_fuerte": None,
+            "viento_fuerte": None,
+            "granizo": None,
+            "rayo": None,
         },
 
         "indice_hibrido_severidad":
@@ -1971,6 +1966,9 @@ def main():
                 ai is not None,
 
             "probabilidad_impacto":
+                None,
+
+            "score_impacto":
                 (
                     round(
                         ai,
@@ -2101,12 +2099,12 @@ def main():
     )
 
     print(
-        "Probabilidad tormenta: "
-        f"{result['probabilidades']['tormenta']:.0%}"
+        "Índice heurístico tormenta: "
+        f"{result['indices_heuristicos']['tormenta']:.0%}"
     )
 
     print(
-        f"Impacto Bahia Blanca: {impact:.0%}"
+        f"Índice heurístico de impacto: {impact:.0%}"
     )
 
     print(

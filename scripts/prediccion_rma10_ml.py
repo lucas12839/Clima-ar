@@ -873,6 +873,19 @@ def apply_probability_calibration(
     )
 
 
+def get_calibrated_probability(
+    probability,
+    calibration,
+):
+    if not isinstance(calibration, dict) or calibration.get("enabled") is not True:
+        return None
+
+    return apply_probability_calibration(
+        probability,
+        calibration,
+    )
+
+
 def main():
 
     if not MODEL_PATH.exists():
@@ -1100,25 +1113,29 @@ def main():
                     )
                 )
 
-                calibrated_probability = (
-                    apply_probability_calibration(
+                calibration = probability_calibration[
+                    "models"
+                ].get(
+                    key,
+                    {},
+                )
+
+                calibrated_value = (
+                    get_calibrated_probability(
                         raw_probability,
-                        probability_calibration[
-                            "models"
-                        ].get(
-                            key,
-                            {},
-                        ),
+                        calibration,
                     )
                 )
 
-                if calibrated_probability != raw_probability:
-                    calibrated_values += 1
+                if calibrated_value is None:
+                    targets[target] = None
+                    continue
 
+                calibrated_values += 1
                 targets[
                     target
                 ] = round(
-                    calibrated_probability
+                    calibrated_value
                     * 100.0,
                     1
                 )
@@ -1202,6 +1219,20 @@ def main():
             "No se generará una predicción ML sin frame radar válido."
         )
 
+    available_calibrations = {
+        key: probability_calibration["models"].get(key, {})
+        for key, model in models.items()
+        if model is not None
+    }
+    calibrated_count = sum(
+        calibration.get("enabled") is True
+        for calibration in available_calibrations.values()
+    )
+    all_available_calibrated = (
+        bool(available_calibrations)
+        and calibrated_count == len(available_calibrations)
+    )
+
     output = {
         "ok": True,
 
@@ -1229,11 +1260,17 @@ def main():
             list(HORIZONS),
 
         "calibracion_probabilistica": {
-            "aplicada": any(
-                bool(model_info.get("enabled"))
-                for model_info in probability_calibration["models"].values()
-                if isinstance(model_info, dict)
-            ),
+            "aplicada": all_available_calibrated,
+            "parcialmente_aplicada": calibrated_count > 0
+            and not all_available_calibrated,
+            "por_modelo": {
+                key: {
+                    "aplicada": calibration.get("enabled") is True,
+                    "motivo": calibration.get("reason"),
+                    "muestras": calibration.get("samples"),
+                }
+                for key, calibration in available_calibrations.items()
+            },
             "tracks_calibracion": probability_calibration[
                 "calibration_tracks"
             ],
@@ -1275,7 +1312,9 @@ def main():
                     str(
                         OUTPUT_PATH
                     ),
-                "calibracion_probabilistica": True,
+                "calibracion_probabilistica": all_available_calibrated,
+                "calibracion_parcial": calibrated_count > 0
+                and not all_available_calibrated,
                 "tracks_calibracion": probability_calibration[
                     "calibration_tracks"
                 ],

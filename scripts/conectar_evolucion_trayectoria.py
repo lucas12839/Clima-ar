@@ -405,10 +405,14 @@ def select_principal_track(
             f"{principal_id} no existe en prediccion_evolucion.json."
         )
 
-    if track.get("pronostico_disponible") is not True:
+    if (
+        track.get("pronostico_disponible") is not True
+        and track.get("motivo") != "SIN_MOVIMIENTO_VALIDO"
+    ):
         raise RuntimeError(
             "ERROR: el principal "
-            f"{principal_id} no tiene predicción de evolución disponible."
+            f"{principal_id} tiene un estado de evolución no reconocido: "
+            f"{track.get('motivo')}."
         )
 
     return track, "tracking_principal"
@@ -731,31 +735,36 @@ def main() -> None:
 
     projections: dict[str, Any] = {}
 
-    for horizon in HORIZONS:
-        prediction = get_horizon_prediction(
-            track,
-            horizon,
-        )
+    forecast_available = (
+        track.get("pronostico_disponible") is True
+    )
 
-        if prediction is None:
-            raise RuntimeError(
-                f"No existe predicción para "
-                f"{horizon} minutos en track "
-                f"{track_id}."
+    if forecast_available:
+        for horizon in HORIZONS:
+            prediction = get_horizon_prediction(
+                track,
+                horizon,
             )
 
-        projections[
-            str(horizon)
-        ] = build_projection(
-            prediction=prediction,
-            horizon=horizon,
-            radar_timestamp=radar_timestamp,
-            width=width,
-            height=height,
-            center_x=center_x,
-            center_y=center_y,
-            track=track,
-        )
+            if prediction is None:
+                raise RuntimeError(
+                    f"No existe predicción para "
+                    f"{horizon} minutos en track "
+                    f"{track_id}."
+                )
+
+            projections[
+                str(horizon)
+            ] = build_projection(
+                prediction=prediction,
+                horizon=horizon,
+                radar_timestamp=radar_timestamp,
+                width=width,
+                height=height,
+                center_x=center_x,
+                center_y=center_y,
+                track=track,
+            )
 
     # El mismo principal de Tracking atraviesa toda la trayectoria.
     if str(track_id) != str(nowcast.get("nucleo_principal_id")):
@@ -784,6 +793,12 @@ def main() -> None:
         "track_id": track_id,
         "selection_source": (
             selection_source
+        ),
+        "pronostico_disponible": forecast_available,
+        "motivo_no_disponible": (
+            None
+            if forecast_available
+            else track.get("motivo")
         ),
         "radar_principal_track_id": (
             get_radar_principal_track_id(
@@ -826,19 +841,20 @@ def main() -> None:
     # Verificación interna adicional:
     # las cuatro proyecciones deben pertenecer
     # al mismo track seleccionado.
-    for horizon in HORIZONS:
-        projection = projections[
-            str(horizon)
-        ]
+    if forecast_available:
+        for horizon in HORIZONS:
+            projection = projections[
+                str(horizon)
+            ]
 
-        if str(
-            projection.get("track_id")
-        ) != str(track_id):
-            raise RuntimeError(
-                "Inconsistencia interna: "
-                f"proyección {horizon} no pertenece "
-                f"al track seleccionado {track_id}."
-            )
+            if str(
+                projection.get("track_id")
+            ) != str(track_id):
+                raise RuntimeError(
+                    "Inconsistencia interna: "
+                    f"proyección {horizon} no pertenece "
+                    f"al track seleccionado {track_id}."
+                )
 
     print(
         "OK: trayectoria sincronizada con "
@@ -863,19 +879,24 @@ def main() -> None:
         ),
     )
 
-    for horizon in HORIZONS:
-        projection = projections[
-            str(horizon)
-        ]
+    if forecast_available:
+        for horizon in HORIZONS:
+            projection = projections[
+                str(horizon)
+            ]
 
+            print(
+                f"{horizon:>2} min -> "
+                f"track={projection['track_id']} | "
+                f"{projection['timestamp_utc']} | "
+                f"x={projection['x']} "
+                f"y={projection['y']} | "
+                f"lat={projection['latitud']} "
+                f"lon={projection['longitud']}"
+            )
+    else:
         print(
-            f"{horizon:>2} min -> "
-            f"track={projection['track_id']} | "
-            f"{projection['timestamp_utc']} | "
-            f"x={projection['x']} "
-            f"y={projection['y']} | "
-            f"lat={projection['latitud']} "
-            f"lon={projection['longitud']}"
+            f"Sin proyecciones: {track.get('motivo')}"
         )
 
 

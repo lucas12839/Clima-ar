@@ -162,16 +162,17 @@ def prediction_summary(pred):
 
 
 def intelligence_score(intel):
-    probs = intel.get("probabilidades", {})
-    hazards = intel.get("peligros", {})
-    if not isinstance(probs, dict):
-        probs = {}
+    indices = intel.get("indices_heuristicos", {})
+    hazards = indices.get("peligros", {})
+    if not isinstance(indices, dict):
+        indices = {}
     if not isinstance(hazards, dict):
         hazards = {}
     candidates = [
-        probs.get("tormenta"),
-        probs.get("llegada_bahia"),
-        probs.get("fortalecimiento"),
+        indices.get("tormenta"),
+        indices.get("llegada_bahia"),
+        indices.get("fortalecimiento"),
+        indices.get("indice_hibrido_severidad"),
     ] + list(hazards.values())
     vals = [finite(x) for x in candidates if finite(x) is not None]
     return max(vals) if vals else 0.0
@@ -205,27 +206,27 @@ def main():
     else:
         movement = raw_movement if moving_to_bahia else min(raw_movement, 0.5)
 
-    probs = intel.get("probabilidades", {})
-    hazards = intel.get("peligros", {})
-    if not isinstance(probs, dict):
-        probs = {}
-    if not isinstance(hazards, dict):
-        hazards = {}
+    indices = intel.get("indices_heuristicos", {})
+    hazard_signals = indices.get("peligros", {})
+    if not isinstance(indices, dict):
+        indices = {}
+    if not isinstance(hazard_signals, dict):
+        hazard_signals = {}
 
-    storm_prob = clamp(probs.get("tormenta", 0.0))
-    arrival = clamp(probs.get("llegada_bahia", 0.0))
+    storm_signal = clamp(indices.get("tormenta", 0.0))
+    arrival_signal = clamp(indices.get("llegada_bahia", 0.0))
 
     # Estado operativo: describe actividad/evolución. NO es severidad meteorológica.
     if radar_activity:
         operational_score = (
-            0.30 * storm_prob
+            0.30 * storm_signal
             + 0.25 * intensity["score"]
             + 0.20 * movement
             + 0.25 * ia_score
         )
     else:
         operational_score = min(
-            0.15 * storm_prob + 0.10 * intensity["score"] + 0.75 * ia_score,
+            0.15 * storm_signal + 0.10 * intensity["score"] + 0.75 * ia_score,
             0.35,
         )
 
@@ -298,7 +299,9 @@ def main():
             "componentes": {
                 "radar_intensidad": intensity["score"],
                 "radar_movimiento": movement,
+                "indice_inteligencia": round(ia_score, 3),
                 "ia": round(ia_score, 3),
+                "ia_tipo_salida": "indice_heuristico",
                 "ia_confianza": model_conf,
             },
             "regla": (
@@ -330,15 +333,25 @@ def main():
         "prediccion": prediction_summary(pred),
         "inteligencia": intel,
         "meteorologia": meteo,
+        "senales_heuristicas": {
+            "tormenta": storm_signal,
+            "llegada_bahia": arrival_signal,
+            "fortalecimiento": finite(indices.get("fortalecimiento")),
+            "debilitamiento": finite(indices.get("debilitamiento")),
+            "lluvia_fuerte": finite(hazard_signals.get("lluvia_fuerte")),
+            "viento_fuerte": finite(hazard_signals.get("viento_fuerte")),
+            "granizo": finite(hazard_signals.get("granizo")),
+            "rayo": finite(hazard_signals.get("rayo")),
+        },
         "resumen_operativo": {
-            "probabilidad_tormenta": finite(probs.get("tormenta"), 0.0),
-            "probabilidad_llegada_bahia": finite(probs.get("llegada_bahia"), arrival),
-            "probabilidad_fortalecimiento": finite(probs.get("fortalecimiento")),
-            "probabilidad_debilitamiento": finite(probs.get("debilitamiento")),
-            "lluvia_fuerte": finite(hazards.get("lluvia_fuerte")),
-            "viento_fuerte": finite(hazards.get("viento_fuerte")),
-            "granizo": finite(hazards.get("granizo")),
-            "rayo": finite(hazards.get("rayo")),
+            "probabilidad_tormenta": None,
+            "probabilidad_llegada_bahia": None,
+            "probabilidad_fortalecimiento": None,
+            "probabilidad_debilitamiento": None,
+            "lluvia_fuerte": None,
+            "viento_fuerte": None,
+            "granizo": None,
+            "rayo": None,
             "eta_minutos": first_number(
                 nowcast.get("eta_minutos"),
                 bahia.get("eta_minutos"),
