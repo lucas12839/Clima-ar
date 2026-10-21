@@ -263,12 +263,27 @@ def main():
     if not isinstance(bahia, dict):
         bahia = {}
 
-    principal_id = first_number(
-        nowcast.get("nucleo_principal_id"),
-        bahia.get("nucleo_principal_id"),
-    )
-    if principal_id is not None:
-        principal_id = int(principal_id)
+    principal_raw = nowcast.get("nucleo_principal_id")
+    bahia_principal_raw = bahia.get("nucleo_principal_id")
+
+    if (
+        principal_raw is not None
+        and bahia_principal_raw is not None
+        and str(principal_raw) != str(bahia_principal_raw)
+    ):
+        raise RuntimeError(
+            "ERROR: Decision Engine recibió principales inconsistentes: "
+            f"nowcast={principal_raw} bahia={bahia_principal_raw}"
+        )
+
+    principal_id = first_number(principal_raw)
+
+    if principal_id is None:
+        raise RuntimeError(
+            "ERROR: Decision Engine no recibió un principal operativo."
+        )
+
+    principal_id = int(principal_id)
 
     result = {
         "version": VERSION,
