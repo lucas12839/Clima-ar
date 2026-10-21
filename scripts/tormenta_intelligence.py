@@ -1965,6 +1965,9 @@ def main():
             "disponible":
                 ai is not None,
 
+            "probabilidad_impacto":
+                None,
+
             "score_impacto":
                 (
                     round(

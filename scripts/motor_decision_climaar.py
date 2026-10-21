@@ -300,6 +300,8 @@ def main():
                 "radar_intensidad": intensity["score"],
                 "radar_movimiento": movement,
                 "indice_inteligencia": round(ia_score, 3),
+                "ia": round(ia_score, 3),
+                "ia_tipo_salida": "indice_heuristico",
                 "ia_confianza": model_conf,
             },
             "regla": (
@@ -342,6 +344,14 @@ def main():
             "rayo": finite(hazard_signals.get("rayo")),
         },
         "resumen_operativo": {
+            "probabilidad_tormenta": None,
+            "probabilidad_llegada_bahia": None,
+            "probabilidad_fortalecimiento": None,
+            "probabilidad_debilitamiento": None,
+            "lluvia_fuerte": None,
+            "viento_fuerte": None,
+            "granizo": None,
+            "rayo": None,
             "eta_minutos": first_number(
                 nowcast.get("eta_minutos"),
                 bahia.get("eta_minutos"),
