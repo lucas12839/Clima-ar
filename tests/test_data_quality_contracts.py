@@ -1,5 +1,9 @@
+import json
+import shutil
 import unittest
-from datetime import datetime, timezone
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -8,7 +12,299 @@ from app import sanitize_ml_probabilities, sanitize_storm_probabilities
 from scripts.motor_decision_climaar import intelligence_score
 from scripts.prediccion_rma10_ml import get_calibrated_probability
 from scripts import procesador_radar
+from scripts import conectar_evolucion_trayectoria as evolution_connector
+from scripts import validar_integridad_climaar as integrity_validator
+from scripts.prediccion_evolucion import predict_track
 from scripts.tormenta_intelligence_timestamp import temporal_interpolation
+from scraper import capturar_radar_smn
+
+
+class EvolutionGapTests(unittest.TestCase):
+    def test_short_gap_keeps_motion_forecast(self):
+        start = datetime(2026, 10, 21, 19, 0, tzinfo=timezone.utc)
+        track = {
+            "track_id": 1,
+            "historial": [
+                {"timestamp": start.isoformat(), "x": 10, "y": 20},
+                {
+                    "timestamp": (start + timedelta(minutes=10)).isoformat(),
+                    "x": 20,
+                    "y": 25,
+                },
+            ],
+        }
+
+        prediction, _ = predict_track(track)
+
+        self.assertTrue(prediction["pronostico_disponible"])
+        self.assertEqual(prediction["max_gap_temporal_minutos"], 10)
+        self.assertEqual(
+            [item["horizonte_minutos"] for item in prediction["horizontes"]],
+            [5, 10, 20, 30],
+        )
+
+    def test_long_but_supported_gap_degrades_confidence(self):
+        start = datetime(2026, 10, 21, 19, 0, tzinfo=timezone.utc)
+
+        def prediction_for_gap(gap):
+            return predict_track(
+                {
+                    "track_id": 1,
+                    "historial": [
+                        {"timestamp": start.isoformat(), "x": 10, "y": 20},
+                        {
+                            "timestamp": (
+                                start + timedelta(minutes=gap)
+                            ).isoformat(),
+                            "x": 20,
+                            "y": 25,
+                        },
+                    ],
+                }
+            )[0]
+
+        short_gap = prediction_for_gap(10)
+        long_gap = prediction_for_gap(120)
+
+        self.assertTrue(long_gap["pronostico_disponible"])
+        self.assertEqual(long_gap["max_gap_temporal_minutos"], 120)
+        self.assertLess(
+            long_gap["confianza_prediccion"],
+            short_gap["confianza_prediccion"],
+        )
+        self.assertGreater(
+            long_gap["horizontes"][0]["incertidumbre_pixeles"],
+            short_gap["horizontes"][0]["incertidumbre_pixeles"],
+        )
+
+    def test_gap_beyond_supported_interval_does_not_invent_motion(self):
+        start = datetime(2026, 10, 21, 19, 0, tzinfo=timezone.utc)
+        prediction, _ = predict_track(
+            {
+                "track_id": 1,
+                "historial": [
+                    {"timestamp": start.isoformat(), "x": 10, "y": 20},
+                    {
+                        "timestamp": (start + timedelta(minutes=181)).isoformat(),
+                        "x": 20,
+                        "y": 25,
+                    },
+                ],
+            }
+        )
+
+        self.assertFalse(prediction["pronostico_disponible"])
+        self.assertEqual(prediction["motivo"], "SIN_MOVIMIENTO_VALIDO")
+
+
+class RadarFrameSelectionTests(unittest.TestCase):
+    def test_selects_a_newer_frame(self):
+        last_frame = datetime(2026, 10, 21, 19, 30, tzinfo=timezone.utc)
+        with patch.object(
+            capturar_radar_smn,
+            "timestamp_persistido",
+            return_value=last_frame,
+        ):
+            selected = capturar_radar_smn.seleccionar_mas_reciente(
+                [
+                    ("20261021163500", "older.png"),
+                    ("20261021164000", "newer.png"),
+                ]
+            )
+
+        self.assertEqual(selected, ("20261021164000", "newer.png"))
+
+    def test_rejects_duplicate_and_stale_frames(self):
+        last_frame = datetime(2026, 10, 21, 19, 40, tzinfo=timezone.utc)
+        with patch.object(
+            capturar_radar_smn,
+            "timestamp_persistido",
+            return_value=last_frame,
+        ):
+            for timestamp in ("20261021164000", "20261021163000"):
+                with self.subTest(timestamp=timestamp):
+                    self.assertIsNone(
+                        capturar_radar_smn.seleccionar_mas_reciente(
+                            [(timestamp, "old.png")]
+                        )
+                    )
+
+
+class EvolutionConnectorTests(unittest.TestCase):
+    def test_preserves_principal_without_valid_motion(self):
+        timestamp = "2026-10-21T19:40:00Z"
+        radar = {
+            "actualizado": timestamp,
+            "nowcast": {
+                "frame_actual_utc": timestamp,
+                "nucleo_principal_id": 17,
+                "track_principal_candidato_id": 17,
+            },
+        }
+        evolution = {
+            "radar_timestamp": timestamp,
+            "nucleos": [
+                {
+                    "track_id": 17,
+                    "pronostico_disponible": False,
+                    "motivo": "SIN_MOVIMIENTO_VALIDO",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            radar_path = Path(directory) / "radar_nowcast.json"
+            evolution_path = Path(directory) / "prediccion_evolucion.json"
+            radar_path.write_text(json.dumps(radar), encoding="utf-8")
+            evolution_path.write_text(json.dumps(evolution), encoding="utf-8")
+
+            with (
+                patch.object(evolution_connector, "RADAR_FILE", radar_path),
+                patch.object(evolution_connector, "EVOLUTION_FILE", evolution_path),
+            ):
+                evolution_connector.main()
+
+            result = json.loads(radar_path.read_text(encoding="utf-8"))["nowcast"]
+
+        self.assertEqual(result["track_principal_id"], 17)
+        self.assertEqual(result["proyecciones"], {})
+        self.assertFalse(
+            result["proyecciones_metadata"]["pronostico_disponible"]
+        )
+        self.assertEqual(
+            result["proyecciones_metadata"]["motivo_no_disponible"],
+            "SIN_MOVIMIENTO_VALIDO",
+        )
+
+    def test_rejects_unrecognized_missing_forecast(self):
+        nowcast = {
+            "nucleo_principal_id": 17,
+            "track_principal_candidato_id": 17,
+        }
+        evolution = {
+            "nucleos": [
+                {
+                    "track_id": 17,
+                    "pronostico_disponible": False,
+                    "motivo": "DATOS_CORRUPTOS",
+                }
+            ]
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "estado de evolución"):
+            evolution_connector.select_principal_track(nowcast, evolution)
+
+    def test_valid_motion_still_requires_and_builds_all_horizons(self):
+        timestamp = "2026-10-21T19:40:00Z"
+        track = {
+            "track_id": 17,
+            "pronostico_disponible": True,
+            "horizontes": [
+                {
+                    "horizonte_minutos": horizon,
+                    "x_estimado": 250 + horizon,
+                    "y_estimado": 250,
+                }
+                for horizon in (5, 10, 20, 30)
+            ],
+        }
+        radar = {
+            "actualizado": timestamp,
+            "nowcast": {
+                "frame_actual_utc": timestamp,
+                "nucleo_principal_id": 17,
+                "track_principal_candidato_id": 17,
+            },
+        }
+        evolution = {"radar_timestamp": timestamp, "nucleos": [track]}
+
+        with tempfile.TemporaryDirectory() as directory:
+            radar_path = Path(directory) / "radar_nowcast.json"
+            evolution_path = Path(directory) / "prediccion_evolucion.json"
+            radar_path.write_text(json.dumps(radar), encoding="utf-8")
+            evolution_path.write_text(json.dumps(evolution), encoding="utf-8")
+
+            with (
+                patch.object(evolution_connector, "RADAR_FILE", radar_path),
+                patch.object(evolution_connector, "EVOLUTION_FILE", evolution_path),
+            ):
+                evolution_connector.main()
+
+            result = json.loads(radar_path.read_text(encoding="utf-8"))["nowcast"]
+
+        self.assertEqual(set(result["proyecciones"]), {"5", "10", "20", "30"})
+        self.assertTrue(
+            result["proyecciones_metadata"]["pronostico_disponible"]
+        )
+
+    def test_integrity_validator_accepts_explicit_no_motion_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            radar_dir = root / "data/radar"
+            track_dir = radar_dir / "seguimiento"
+            ia_dir = root / "data/ia"
+            track_dir.mkdir(parents=True)
+            ia_dir.mkdir(parents=True)
+
+            paths = (
+                (integrity_validator.RADAR / "radar_timestamp.txt", radar_dir / "radar_timestamp.txt"),
+                (integrity_validator.RADAR / "resultado_procesamiento.json", radar_dir / "resultado_procesamiento.json"),
+                (integrity_validator.TRACK / "seguimiento_temporal.json", track_dir / "seguimiento_temporal.json"),
+                (integrity_validator.TRACK / "estado.json", track_dir / "estado.json"),
+                (integrity_validator.RADAR / "radar_nowcast.json", radar_dir / "radar_nowcast.json"),
+                (integrity_validator.TRACK / "prediccion_ml_rma10.json", track_dir / "prediccion_ml_rma10.json"),
+                (integrity_validator.TRACK / "prediccion_evolucion.json", track_dir / "prediccion_evolucion.json"),
+                (integrity_validator.IA / "estado_meteorologico.json", ia_dir / "estado_meteorologico.json"),
+                (integrity_validator.IA / "inteligencia_tormenta.json", ia_dir / "inteligencia_tormenta.json"),
+                (integrity_validator.IA / "resultado_final.json", ia_dir / "resultado_final.json"),
+            )
+            for source, destination in paths:
+                shutil.copy2(source, destination)
+
+            candidate = json.loads(
+                (track_dir / "seguimiento_temporal.json").read_text(
+                    encoding="utf-8"
+                )
+            )["track_principal_candidato_id"]
+
+            evolution_path = track_dir / "prediccion_evolucion.json"
+            evolution = json.loads(evolution_path.read_text(encoding="utf-8"))
+            evolution_track = next(
+                item
+                for item in evolution["nucleos"]
+                if str(item["track_id"]) == str(candidate)
+            )
+            evolution_track.update(
+                {
+                    "pronostico_disponible": False,
+                    "motivo": "SIN_MOVIMIENTO_VALIDO",
+                }
+            )
+            evolution_path.write_text(
+                json.dumps(evolution),
+                encoding="utf-8",
+            )
+
+            nowcast_path = radar_dir / "radar_nowcast.json"
+            radar = json.loads(nowcast_path.read_text(encoding="utf-8"))
+            nowcast = radar["nowcast"]
+            nowcast["proyecciones"] = {}
+            nowcast["proyecciones_metadata"].update(
+                {
+                    "track_id": candidate,
+                    "pronostico_disponible": False,
+                    "motivo_no_disponible": "SIN_MOVIMIENTO_VALIDO",
+                }
+            )
+            nowcast_path.write_text(json.dumps(radar), encoding="utf-8")
+
+            with (
+                patch.object(integrity_validator, "BASE", root),
+                patch.object(integrity_validator, "RADAR", radar_dir),
+                patch.object(integrity_validator, "TRACK", track_dir),
+                patch.object(integrity_validator, "IA", ia_dir),
+            ):
+                integrity_validator.main()
 
 
 class ProbabilityContractTests(unittest.TestCase):
