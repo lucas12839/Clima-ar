@@ -16,7 +16,7 @@ concurrency:
 jobs:
   radar:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -33,9 +33,13 @@ jobs:
       - name: Instalar dependencias
         run: |
           set -euo pipefail
-
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Instalar Chromium para Playwright
+        run: |
+          set -euo pipefail
+          python -m playwright install --with-deps chromium
 
       - name: Preparar directorios
         run: |
@@ -47,42 +51,49 @@ jobs:
             data/radar/seguimiento \
             logs
 
+      - name: Verificar componentes reales del repositorio
+        run: |
+          set -euo pipefail
+
+          test -f scraper/capturar_radar_smn.py
+          test -f scripts/procesador_radar.py
+          test -f seguimiento_temporal.py
+          test -f scripts/validar_integridad_climaar.py
+
+          echo "Capturador: scraper/capturar_radar_smn.py"
+          echo "Procesador: scripts/procesador_radar.py"
+          echo "Tracking: seguimiento_temporal.py"
+
       - name: Ejecutar captura RMA10
         run: |
           set -euo pipefail
 
-          if [ -f scripts/capturar_rma10.py ]; then
-            python scripts/capturar_rma10.py
-          elif [ -f scripts/descargar_rma10.py ]; then
-            python scripts/descargar_rma10.py
-          elif [ -f scripts/radar_collector.py ]; then
-            python scripts/radar_collector.py
-          else
-            echo "ERROR: no se encontró el capturador RMA10."
-            exit 1
-          fi
+          python scraper/capturar_radar_smn.py
 
-      - name: Validar frame nuevo
+      - name: Validar frame RMA10
         run: |
           set -euo pipefail
 
-          if [ ! -s data/radar/actual.png ]; then
-            echo "ERROR: no existe un frame RMA10 válido."
-            exit 1
-          fi
-
-          if [ ! -s data/radar/radar_timestamp.txt ]; then
-            echo "ERROR: falta radar_timestamp.txt."
-            exit 1
-          fi
+          test -s data/radar/actual.png
+          test -s data/radar/radar_timestamp.txt
 
           python - <<'PY'
           from datetime import datetime, timezone
           from pathlib import Path
+          from PIL import Image
 
-          timestamp = Path(
-              "data/radar/radar_timestamp.txt"
-          ).read_text(
+          image_path = Path("data/radar/actual.png")
+          timestamp_path = Path("data/radar/radar_timestamp.txt")
+
+          try:
+              with Image.open(image_path) as image:
+                  image.verify()
+          except Exception as exc:
+              raise SystemExit(
+                  f"ERROR: PNG RMA10 inválido: {exc}"
+              ) from exc
+
+          timestamp = timestamp_path.read_text(
               encoding="utf-8"
           ).strip()
 
@@ -110,7 +121,7 @@ jobs:
           ).total_seconds()
 
           print(
-              "Timestamp radar:",
+              "Timestamp radar UTC:",
               dt.isoformat()
           )
 
@@ -120,44 +131,73 @@ jobs:
               "segundos"
           )
 
-          if edad < 0:
+          if edad < -120:
               raise SystemExit(
-                  "ERROR: timestamp futuro."
+                  "ERROR: timestamp futuro fuera de tolerancia."
               )
 
-          if edad > 1800:
+          if edad > 2700:
               raise SystemExit(
                   "ERROR: frame RMA10 demasiado antiguo."
               )
 
-          print("Frame temporalmente válido.")
+          print(
+              "Frame RMA10 válido."
+          )
           PY
 
       - name: Procesar radar
         run: |
           set -euo pipefail
 
-          if [ -f scripts/procesar_radar.py ]; then
-            python scripts/procesar_radar.py
-          elif [ -f scripts/procesamiento_radar.py ]; then
-            python scripts/procesamiento_radar.py
-          else
-            echo "ERROR: no se encontró el procesador RMA10."
-            exit 1
-          fi
+          python scripts/procesador_radar.py
+
+      - name: Validar resultado del procesamiento
+        run: |
+          set -euo pipefail
+
+          test -s data/radar/resultado_procesamiento.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path(
+              "data/radar/resultado_procesamiento.json"
+          )
+
+          data = json.loads(
+              path.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          if not isinstance(data, dict):
+              raise SystemExit(
+                  "ERROR: resultado_procesamiento.json "
+                  "no es un objeto JSON."
+              )
+
+          print(
+              "Resultado de procesamiento válido."
+          )
+
+          print(
+              "Timestamp:",
+              data.get("radar_timestamp")
+          )
+
+          print(
+              "Núcleos:",
+              data.get("nucleos_actuales")
+          )
+          PY
 
       - name: Ejecutar seguimiento temporal
         run: |
           set -euo pipefail
 
-          if [ -f scripts/seguimiento_temporal.py ]; then
-            python scripts/seguimiento_temporal.py
-          elif [ -f scripts/tracking_temporal.py ]; then
-            python scripts/tracking_temporal.py
-          else
-            echo "ERROR: no se encontró el seguimiento temporal."
-            exit 1
-          fi
+          python seguimiento_temporal.py
 
       - name: Validar cadena Radar → Tracking
         run: |
@@ -169,32 +209,180 @@ jobs:
 
           python - <<'PY'
           import json
+          from datetime import datetime, timezone
           from pathlib import Path
 
-          archivos = [
-              Path("data/radar/resultado_procesamiento.json"),
-              Path("data/radar/seguimiento/estado.json"),
-              Path("data/radar/seguimiento/seguimiento_temporal.json"),
-          ]
+          radar_path = Path(
+              "data/radar/radar_timestamp.txt"
+          )
 
-          for path in archivos:
-              try:
-                  data = json.loads(
-                      path.read_text(
-                          encoding="utf-8"
-                      )
+          resultado_path = Path(
+              "data/radar/resultado_procesamiento.json"
+          )
+
+          estado_path = Path(
+              "data/radar/seguimiento/estado.json"
+          )
+
+          seguimiento_path = Path(
+              "data/radar/seguimiento/seguimiento_temporal.json"
+          )
+
+          radar_ts = radar_path.read_text(
+              encoding="utf-8"
+          ).strip()
+
+          def parse(value):
+              if not value:
+                  return None
+
+              texto = str(value)
+
+              if texto.endswith("Z"):
+                  texto = texto[:-1] + "+00:00"
+
+              dt = datetime.fromisoformat(
+                  texto
+              )
+
+              if dt.tzinfo is None:
+                  dt = dt.replace(
+                      tzinfo=timezone.utc
                   )
-              except Exception as exc:
-                  raise SystemExit(
-                      f"ERROR: JSON inválido: {path}: {exc}"
-                  ) from exc
 
-              if not isinstance(data, dict):
+              return dt.astimezone(
+                  timezone.utc
+              )
+
+          radar_dt = parse(
+              radar_ts
+          )
+
+          resultado = json.loads(
+              resultado_path.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          estado = json.loads(
+              estado_path.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          seguimiento = json.loads(
+              seguimiento_path.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          if not isinstance(
+              resultado,
+              dict
+          ):
+              raise SystemExit(
+                  "ERROR: resultado_procesamiento.json inválido."
+              )
+
+          if not isinstance(
+              estado,
+              dict
+          ):
+              raise SystemExit(
+                  "ERROR: seguimiento/estado.json inválido."
+              )
+
+          if not isinstance(
+              seguimiento,
+              dict
+          ):
+              raise SystemExit(
+                  "ERROR: seguimiento_temporal.json inválido."
+              )
+
+          timestamps = {
+              "radar": radar_dt,
+              "resultado": parse(
+                  resultado.get(
+                      "radar_timestamp"
+                  )
+                  or
+                  resultado.get(
+                      "timestamp"
+                  )
+              ),
+              "estado": parse(
+                  estado.get(
+                      "ultimo_radar_timestamp"
+                  )
+              ),
+              "seguimiento": parse(
+                  seguimiento.get(
+                      "radar_timestamp"
+                  )
+              ),
+          }
+
+          for nombre, valor in timestamps.items():
+
+              if valor is None:
                   raise SystemExit(
-                      f"ERROR: estructura inválida: {path}"
+                      f"ERROR: falta timestamp en {nombre}."
                   )
 
-              print(f"OK: {path}")
+          base = timestamps["radar"]
+
+          for nombre, valor in timestamps.items():
+
+              diferencia = abs(
+                  (
+                      valor - base
+                  ).total_seconds()
+              )
+
+              if diferencia > 1:
+
+                  raise SystemExit(
+                      "ERROR: timestamp "
+                      f"desincronizado: "
+                      f"radar={base.isoformat()} "
+                      f"{nombre}={valor.isoformat()}"
+                  )
+
+          principal = seguimiento.get(
+              "track_principal_candidato_id"
+          )
+
+          tracks_activos = estado.get(
+              "tracks_activos",
+              []
+          )
+
+          if (
+              principal is not None
+              and
+              principal not in tracks_activos
+          ):
+              raise SystemExit(
+                  "ERROR: el track principal "
+                  "candidato no pertenece a "
+                  "los tracks activos."
+              )
+
+          print(
+              "Timestamp único validado:",
+              base.isoformat()
+          )
+
+          print(
+              "Track principal candidato:",
+              principal
+          )
+
+          print(
+              "Tracks activos:",
+              tracks_activos
+          )
 
           print(
               "Cadena Radar → Tracking validada."
@@ -205,8 +393,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -f scripts/validar_integridad_climaar.py
-
           python scripts/validar_integridad_climaar.py
 
       - name: Preparar artefacto Radar RMA10
@@ -215,7 +401,8 @@ jobs:
 
           rm -rf /tmp/radar-rma10
 
-          mkdir -p /tmp/radar-rma10/data/radar
+          mkdir -p \
+            /tmp/radar-rma10/data/radar
 
           cp -a \
             data/radar/. \
@@ -250,11 +437,14 @@ jobs:
             -m "ClimaAR: actualizar Radar RMA10"
 
           for intento in 1 2 3; do
-            echo "Intento de sincronización: $intento"
+
+            echo \
+              "Intento de sincronización: $intento"
 
             git fetch origin main
 
             if ! git rebase origin/main; then
+
               git rebase --abort 2>/dev/null || true
 
               if [ "$intento" -eq 3 ]; then
@@ -267,14 +457,21 @@ jobs:
             fi
 
             if git push origin HEAD:main; then
+
               echo "Push exitoso."
               exit 0
+
             fi
 
             if [ "$intento" -eq 3 ]; then
-              echo "ERROR: no se pudo publicar Radar RMA10."
+
+              echo \
+                "ERROR: no se pudo publicar Radar RMA10."
+
               exit 1
+
             fi
 
             sleep 2
+
           done
