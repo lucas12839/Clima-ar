@@ -590,14 +590,69 @@ function intensityLabel(level) {
     1: "Muy débil",
     2: "Débil",
     3: "Moderada",
-    4: "Fuerte",
-    5: "Muy fuerte",
-    6: "Severa"
+    4: "Moderada-fuerte",
+    5: "Fuerte",
+    6: "Muy fuerte"
   };
 
   return labels[n] || "Sin datos";
 }
 
+
+function getIntelligenceSeverity() {
+  const intel = state.intelligence || {};
+  const raw =
+    intel.severidad ||
+    intel.severity ||
+    intel?.motor_decision?.severidad_meteorologica ||
+    intel?.severidad_meteorologica?.valor;
+
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+
+  const value = String(raw).trim().toLowerCase();
+  return ["verde", "amarillo", "naranja", "rojo"].includes(value)
+    ? value
+    : null;
+}
+
+function severityLabel(value) {
+  const labels = {
+    verde: "Sin severidad determinada",
+    amarillo: "Severidad meteorológica: Amarillo",
+    naranja: "Severidad meteorológica: Naranja",
+    rojo: "Severidad meteorológica: Rojo"
+  };
+
+  return labels[value] || "Severidad meteorológica: No determinada";
+}
+
+function severityClass(value) {
+  if (value === "rojo") return "riskHigh";
+  if (value === "naranja") return "riskMedium";
+  if (value === "amarillo") return "riskMedium";
+  return "riskLow";
+}
+
+function principalNucleus() {
+  const radar = state.radar || {};
+  const principalId =
+    radar.nucleo_principal_id ??
+    radar?.bahia_blanca?.nucleo_principal_id;
+
+  const nuclei = Array.isArray(radar.nucleos)
+    ? radar.nucleos
+    : [];
+
+  if (principalId === null || principalId === undefined) {
+    return nuclei[0] || null;
+  }
+
+  return nuclei.find(
+    item => String(item?.track_id) === String(principalId)
+  ) || null;
+}
 
 function renderAlert() {
   const level =
@@ -640,19 +695,19 @@ function renderAlert() {
     "Actividad detectada en radar"
   );
 
+  const severity = getIntelligenceSeverity();
+
   setText(
     "#alertDescription",
     `${cores} núcleo${
       cores === 1
         ? ""
         : "s"
-    } detectado${
+    } operativo${
       cores === 1
         ? ""
         : "s"
-    } · Intensidad ${
-      intensityLabel(level)
-    }.`
+    } · Radar: ${intensityLabel(level)} · ${severityLabel(severity)}.`
   );
 
   setText(
@@ -667,98 +722,64 @@ function renderAlert() {
 /* ========================================================= */
 
 function renderStorm() {
-  const radar =
-    state.radar || {};
-
-  const cores =
-    Array.isArray(radar.nucleos)
-      ? radar.nucleos
-      : [];
-
-  const level =
-    number(
-      radar.intensidad_nivel_max
-    );
-
-  const label =
-    radar.intensidad ||
-    intensityLabel(level);
+  const radar = state.radar || {};
+  const cores = Array.isArray(radar.nucleos)
+    ? radar.nucleos
+    : [];
+  const principal = principalNucleus();
+  const level = number(radar.intensidad_nivel_max);
+  const radarLabel = radar.intensidad || intensityLabel(level);
+  const severity = getIntelligenceSeverity();
 
   setText(
     "#stormTitle",
-    cores.length
-      ? "Actividad detectada"
-      : "Sin actividad detectada"
+    principal
+      ? `Núcleo principal · Track ${principal.track_id ?? "—"}`
+      : "Actividad detectada"
   );
 
   setText(
     "#stormRisk",
-    label
+    severityLabel(severity)
   );
 
-  const risk =
-    $("#stormRisk");
-
+  const risk = $("#stormRisk");
   if (risk) {
-    risk.className =
-      "riskBadge";
-
-    if (level !== null && level >= 5) {
-      risk.classList.add(
-        "riskHigh"
-      );
-    } else if (
-      level !== null &&
-      level >= 3
-    ) {
-      risk.classList.add(
-        "riskMedium"
-      );
-    } else if (
-      level !== null &&
-      level > 0
-    ) {
-      risk.classList.add(
-        "riskLow"
-      );
-    }
+    risk.className = "riskBadge";
+    risk.classList.add(severityClass(severity));
   }
 
   setText(
     "#stormIntensity",
-    level !== null
-      ? String(level)
-      : "—"
+    level !== null ? String(level) : "—"
   );
 
   setText(
     "#stormIntensityLevel",
-    label
+    `Radar: ${radarLabel}`
   );
 
   setText(
     "#stormCores",
-    cores.length
-      ? String(cores.length)
-      : "0"
+    principal ? "1" : "0"
   );
 
-  const weather =
-    state.weather || {};
-
-  const intelligenceRadar =
-    state.intelligence?.radar || {};
+  const movement = principal?.movimiento || {};
+  const direction = number(movement.direccion_grados);
 
   setText(
     "#stormMovement",
-    weather.movimiento ||
-    (intelligenceRadar.movimiento_hacia_bahia === true
-      ? "Movimiento hacia Bahía Blanca"
-      : "Sin movimiento confirmado")
+    movement.tendencia
+      ? movement.tendencia
+      : radar.movimiento_hacia_bahia === true
+        ? "Acercándose a Bahía Blanca"
+        : "Sin movimiento hacia Bahía Blanca confirmado"
   );
 
-  const distance =
-    number(intelligenceRadar.distancia_km);
+  const distance = number(
+    radar.distancia_km ??
+    radar?.bahia_blanca?.distancia_principal_km
+  );
 
   setText(
     "#stormDistance",
@@ -767,88 +788,44 @@ function renderStorm() {
       : "Sin datos"
   );
 
-  const eta =
-    number(intelligenceRadar.eta_minutos);
+  const eta = number(
+    radar.eta_minutos ??
+    radar?.bahia_blanca?.eta_minutos
+  );
 
   setText(
     "#stormEta",
     eta !== null
       ? `${Math.round(eta)} min`
-      : "Sin datos"
+      : "Sin ETA válida"
   );
-
-  const direction =
-    number(intelligenceRadar.direccion_grados);
 
   setText(
     "#stormDirection",
     direction !== null
-      ? `${direction.toFixed(1)}°`
+      ? `${Math.round(direction)}°`
       : "Sin datos"
   );
 
-  const trends = cores
-    .map(
-      core =>
-        core?.movimiento?.tendencia
-    )
-    .filter(Boolean);
-
-  let trend =
-    "Sin datos suficientes";
-
-  if (trends.length) {
-    const counts = {};
-
-    for (const item of trends) {
-      counts[item] =
-        (counts[item] || 0) + 1;
-    }
-
-    trend =
-      Object.entries(counts)
-        .sort(
-          (a,b) => b[1] - a[1]
-        )[0][0];
-  }
-
-  const intelligenceTrend =
-    intelligenceRadar.fortalecimiento;
-
-  if (intelligenceTrend) {
-    trend = intelligenceTrend;
-  }
-
+  const trend = movement.tendencia || radar.fortalecimiento;
   const trendMap = {
-    fortaleciendose:
-      "Se observan núcleos fortaleciéndose",
-
-    debilitandose:
-      "Se observan núcleos debilitándose",
-
-    estable:
-      "La evolución observada es estable",
-
-    fortaleciéndose:
-      "Se observan núcleos fortaleciéndose",
-
-    debilitándose:
-      "Se observan núcleos debilitándose"
+    fortaleciendose: "El núcleo principal se está fortaleciendo",
+    debilitandose: "El núcleo principal se está debilitando",
+    estable: "La evolución del núcleo principal es estable",
+    fortaleciendo: "El núcleo principal se está fortaleciendo",
+    debilitando: "El núcleo principal se está debilitando"
   };
 
   setText(
     "#stormTrend",
-    trendMap[trend] ||
-    trend
+    trendMap[trend] || "Evolución no determinada"
   );
 
   setText(
     "#stormTrendDetail",
-    trends.length
-      ? `${trends.length} tracks con tendencia disponible.`
-      : intelligenceTrend
-        ? "Tendencia tomada del motor de Inteligencia."
-        : "Sin tendencia disponible."
+    principal
+      ? `Track ${principal.track_id ?? "—"} · ${cores.length} núcleos operativos en el frame.`
+      : "Sin núcleo principal confirmado."
   );
 
   setText(
@@ -859,7 +836,7 @@ function renderStorm() {
   setText(
     "#summaryIntensity",
     level !== null
-      ? `${level}/6`
+      ? `${level}/6 · ${radarLabel}`
       : "—"
   );
 }
@@ -1002,123 +979,22 @@ function getPredictions(
 }
 
 
-function findPrincipalThreatTrack(
-  predictions
-) {
+function findPrincipalTrack(predictions) {
   if (!predictions.length) {
     return null;
   }
 
-  const intelligenceRadar =
-    state.intelligence?.radar || {};
+  const principalId =
+    state.radar?.nucleo_principal_id ??
+    state.radar?.bahia_blanca?.nucleo_principal_id;
 
-  const intelligenceNuclei =
-    Array.isArray(intelligenceRadar.nucleos)
-      ? intelligenceRadar.nucleos
-      : [];
-
-  const targetDirection =
-    number(intelligenceRadar.direccion_grados);
-
-  const intelligenceTracks =
-    intelligenceNuclei
-      .map(core => ({
-        trackId: core?.track_id,
-        direction: firstNumber(
-          core?.direction,
-          core?.direccion,
-          core?.movimiento?.direccion_grados
-        )
-      }))
-      .filter(
-        item =>
-          item.trackId !== undefined &&
-          item.trackId !== null
-      );
-
-  if (intelligenceTracks.length) {
-    const directMatch =
-      predictions.find(prediction =>
-        intelligenceTracks.some(
-          track =>
-            String(track.trackId) ===
-            String(prediction.track_id)
-        )
-      );
-
-    if (directMatch) {
-      if (targetDirection === null) {
-        return directMatch;
-      }
-
-      const candidates =
-        predictions.filter(prediction =>
-          intelligenceTracks.some(
-            track =>
-              String(track.trackId) ===
-              String(prediction.track_id)
-          )
-        );
-
-      const angularDistance = (a, b) => {
-        const diff =
-          Math.abs(a - b) % 360;
-        return Math.min(diff, 360 - diff);
-      };
-
-      const best =
-        candidates
-          .map(prediction => {
-            const track =
-              intelligenceTracks.find(
-                item =>
-                  String(item.trackId) ===
-                  String(prediction.track_id)
-              );
-
-            const predictionDirection =
-              firstNumber(
-                prediction.motion_bearing_deg,
-                track?.direction
-              );
-
-            return {
-              prediction,
-              directionError:
-                predictionDirection !== null
-                  ? angularDistance(
-                      predictionDirection,
-                      targetDirection
-                    )
-                  : 999,
-              distance:
-                number(prediction.distance_km) ??
-                999999
-            };
-          })
-          .sort(
-            (a, b) =>
-              a.directionError -
-              b.directionError ||
-              a.distance - b.distance
-          )[0];
-
-      if (best) {
-        return best.prediction;
-      }
-    }
+  if (principalId !== null && principalId !== undefined) {
+    return predictions.find(
+      item => String(item?.track_id) === String(principalId)
+    ) || null;
   }
 
-  return [...predictions]
-    .filter(
-      item =>
-        number(item.distance_km) !== null
-    )
-    .sort(
-      (a,b) =>
-        number(a.distance_km) -
-        number(b.distance_km)
-    )[0] || null;
+  return predictions.length === 1 ? predictions[0] : null;
 }
 
 
@@ -1130,7 +1006,7 @@ function renderModel() {
     getPredictions(model);
 
   const nearest =
-    findPrincipalThreatTrack(
+    findPrincipalTrack(
       predictions
     );
 
@@ -1237,7 +1113,7 @@ function renderModel() {
 
   setText(
     "#predictionMode",
-    "Predicción ML del track principal de amenaza · valores del modelo sin reinterpretarlos."
+    "Predicción ML del track más cercano · valores del modelo sin reinterpretarlos."
   );
 }
 
