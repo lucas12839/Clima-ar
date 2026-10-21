@@ -1,4 +1,4 @@
-name: Entrenar modelos ClimaAR V8
+name: ClimaAR Entrenamiento Modelo Híbrido
 
 on:
   workflow_dispatch:
@@ -6,124 +6,233 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: climaar-modelos
+  cancel-in-progress: false
+
 jobs:
-  entrenar:
+  entrenamiento-hibrido:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
-      - name: Descargar repositorio
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Instalar dependencias
         run: |
+          set -euo pipefail
+
           python -m pip install --upgrade pip
-          pip install pandas numpy scikit-learn joblib
+          pip install -r requirements.txt
 
-      - name: Verificar datos históricos
+      - name: Verificar estructura
         run: |
-          test -s data/historico/clima_horario_1980_2026.csv
-          test -s data/eventos_severos/variables_convectivas_2023_2025.csv
+          set -euo pipefail
 
-      - name: Verificar entrenador
-        run: |
-          test -s scripts/entrenar_modelo_hibrido_v6.py
+          if [ ! -d data ]; then
+            echo "ERROR: no existe data/"
+            exit 1
+          fi
 
-      - name: Entrenar modelos ClimaAR
-        run: |
-          python scripts/entrenar_modelo_hibrido_v6.py
+          if [ ! -d scripts ]; then
+            echo "ERROR: no existe scripts/"
+            exit 1
+          fi
 
-      - name: Validar modelos generados
-        run: |
-          test -s modelo/climaar_predictor_hibrido_superficie_v6.joblib
-          test -s modelo/climaar_predictor_formacion_v8.joblib
-          test -s modelo/climaar_predictor_intensificacion_v8.joblib
-          test -s modelo/climaar_predictor_impacto_v8.joblib
+          echo "Estructura básica válida."
 
-      - name: Validar informes
+      - name: Buscar entrenador híbrido
         run: |
-          test -s modelo/importancia_hibrido_superficie_v6.csv
-          test -s modelo/reporte_modelo_hibrido_v6.json
-          test -s modelo/reporte_modelo_hibrido_v8.json
+          set -euo pipefail
 
-      - name: Verificar modelos con Python
+          if [ -f scripts/entrenar_modelo_hibrido.py ]; then
+            echo "ENTRENADOR=scripts/entrenar_modelo_hibrido.py" >> "$GITHUB_ENV"
+          elif [ -f scripts/entrenamiento_hibrido.py ]; then
+            echo "ENTRENADOR=scripts/entrenamiento_hibrido.py" >> "$GITHUB_ENV"
+          else
+            echo "ERROR: no se encontró el entrenador del modelo híbrido."
+            exit 1
+          fi
+
+          echo "Entrenador seleccionado: $ENTRENADOR"
+
+      - name: Preparar directorios
         run: |
+          set -euo pipefail
+
+          mkdir -p \
+            modelo \
+            data/radar/seguimiento \
+            logs
+
+      - name: Entrenar modelo híbrido
+        run: |
+          set -euo pipefail
+
+          python "$ENTRENADOR"
+
+      - name: Verificar modelos generados
+        run: |
+          set -euo pipefail
+
+          encontrados=0
+
+          while IFS= read -r -d '' archivo; do
+            echo "Modelo encontrado: $archivo"
+            encontrados=$((encontrados + 1))
+          done < <(
+            find modelo \
+              -type f \
+              \( \
+                -name "*.joblib" \
+                -o -name "*.pkl" \
+                -o -name "*.json" \
+              \) \
+              -print0
+          )
+
+          if [ "$encontrados" -eq 0 ]; then
+            echo "ERROR: el entrenamiento no produjo ningún archivo."
+            exit 1
+          fi
+
+          echo "Archivos de modelo generados: $encontrados"
+
+      - name: Validar modelos
+        run: |
+          set -euo pipefail
+
           python - <<'PY'
           import json
-          import joblib
+          import pickle
           from pathlib import Path
 
-          modelos = [
-              "modelo/climaar_predictor_hibrido_superficie_v6.joblib",
-              "modelo/climaar_predictor_formacion_v8.joblib",
-              "modelo/climaar_predictor_intensificacion_v8.joblib",
-              "modelo/climaar_predictor_impacto_v8.joblib",
-          ]
+          try:
+              import joblib
+          except ImportError:
+              joblib = None
 
-          for archivo in modelos:
-              ruta = Path(archivo)
+          archivos = list(Path("modelo").rglob("*"))
 
-              if not ruta.exists():
-                  raise SystemExit(f"ERROR: falta {archivo}")
+          validos = 0
 
-              modelo = joblib.load(ruta)
+          for path in archivos:
+              if not path.is_file():
+                  continue
 
-              if modelo is None:
-                  raise SystemExit(f"ERROR: modelo vacío {archivo}")
+              if path.suffix == ".json":
+                  try:
+                      json.loads(
+                          path.read_text(encoding="utf-8")
+                      )
+                  except Exception as exc:
+                      raise SystemExit(
+                          f"ERROR: JSON inválido: {path}: {exc}"
+                      ) from exc
 
-              print(f"OK: {archivo}")
+                  print(f"OK JSON: {path}")
+                  validos += 1
 
-          reportes = [
-              "modelo/reporte_modelo_hibrido_v6.json",
-              "modelo/reporte_modelo_hibrido_v8.json",
-          ]
+              elif path.suffix in {".joblib", ".pkl"}:
+                  try:
+                      if path.suffix == ".joblib" and joblib:
+                          objeto = joblib.load(path)
+                      else:
+                          with path.open("rb") as archivo:
+                              objeto = pickle.load(archivo)
+                  except Exception as exc:
+                      raise SystemExit(
+                          f"ERROR: modelo inválido: {path}: {exc}"
+                      ) from exc
 
-          for archivo in reportes:
-              ruta = Path(archivo)
+                  if objeto is None:
+                      raise SystemExit(
+                          f"ERROR: modelo vacío: {path}"
+                      )
 
-              with ruta.open("r", encoding="utf-8") as f:
-                  datos = json.load(f)
+                  print(f"OK modelo: {path}")
+                  validos += 1
 
-              if not isinstance(datos, dict):
-                  raise SystemExit(
-                      f"ERROR: reporte inválido {archivo}"
-                  )
+          if validos == 0:
+              raise SystemExit(
+                  "ERROR: no se pudo validar ningún modelo."
+              )
 
-              print(f"OK: {archivo}")
-
-          print("====================================")
-          print("ENTRENAMIENTO CLIMAAR V8 VALIDADO")
-          print("Modelos:", len(modelos))
-          print("Reportes:", len(reportes))
-          print("====================================")
+          print(
+              f"Modelos/archivos válidos: {validos}"
+          )
           PY
 
-      - name: Verificar cambios
+      - name: Validar integridad ClimaAR
         run: |
-          git diff --check
+          set -euo pipefail
+
+          test -f scripts/validar_integridad_climaar.py
+
+          python scripts/validar_integridad_climaar.py
+
+      - name: Publicar artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: climaar-modelo-hibrido
+          path: modelo/
+          retention-days: 30
 
       - name: Guardar modelos
         run: |
-          git config user.name "ClimaAR Bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          set -euo pipefail
+
+          git config user.name \
+            "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add modelo/
 
           if git diff --cached --quiet; then
-            echo "No hay nuevos modelos para guardar."
+            echo "No hay cambios de modelo para publicar."
             exit 0
           fi
 
-          git commit -m "Entrenar modelos predictivos ClimaAR V8"
+          git commit \
+            -m "ClimaAR: actualizar modelo híbrido"
 
-      - name: Sincronizar y publicar
-        run: |
-          git fetch origin main
-          git rebase origin/main
-          git push origin HEAD:main
+          for intento in 1 2 3; do
+            echo "Intento de sincronización: $intento"
+
+            git fetch origin main
+
+            if ! git rebase origin/main; then
+              git rebase --abort 2>/dev/null || true
+
+              if [ "$intento" -eq 3 ]; then
+                echo "ERROR: no se pudo completar el rebase."
+                exit 1
+              fi
+
+              sleep 2
+              continue
+            fi
+
+            if git push origin HEAD:main; then
+              echo "Push exitoso."
+              exit 0
+            fi
+
+            if [ "$intento" -eq 3 ]; then
+              echo "ERROR: no se pudo publicar el modelo."
+              exit 1
+            fi
+
+            sleep 2
+          done
