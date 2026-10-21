@@ -524,9 +524,43 @@ jobs:
           data = json.loads(path.read_text(encoding="utf-8"))
           nowcast = data.get("nowcast", {})
           projections = nowcast.get("proyecciones")
+          metadata = nowcast.get("proyecciones_metadata")
 
           if not isinstance(projections, dict):
               raise SystemExit("ERROR: nowcast.proyecciones no es un objeto")
+
+          if not isinstance(metadata, dict):
+              raise SystemExit(
+                  "ERROR: nowcast.proyecciones_metadata no es un objeto"
+              )
+
+          principal = nowcast.get("nucleo_principal_id")
+          if str(metadata.get("track_id")) != str(principal):
+              raise SystemExit(
+                  "ERROR: metadata de proyecciones no corresponde "
+                  "al principal de Tracking"
+              )
+
+          if metadata.get("pronostico_disponible") is False:
+              if metadata.get("motivo_no_disponible") != "SIN_MOVIMIENTO_VALIDO":
+                  raise SystemExit(
+                      "ERROR: motivo de proyección no disponible no reconocido"
+                  )
+              if projections:
+                  raise SystemExit(
+                      "ERROR: hay proyecciones a pesar de no existir "
+                      "movimiento válido"
+                  )
+              print(
+                  "OK: principal preservado; sin proyección por "
+                  "SIN_MOVIMIENTO_VALIDO."
+              )
+              raise SystemExit(0)
+
+          if metadata.get("pronostico_disponible") is not True:
+              raise SystemExit(
+                  "ERROR: disponibilidad de pronóstico no declarada"
+              )
 
           required = ("5", "10", "20", "30")
           missing = [key for key in required if key not in projections]
