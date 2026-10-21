@@ -383,13 +383,13 @@ jobs:
           echo \
             "Historial guardado: $HISTORIAL_NOMBRE"
 
-      - name: Seguimiento temporal
+      - name: Seguimiento temporal BLOQUE 2
         if: steps.frame.outputs.accepted == 'true'
         shell: bash
         run: |
           set -euo pipefail
 
-          python seguimiento_temporal.py
+          python seguimiento_temporal_bloque2.py
 
           test -s \
             data/radar/seguimiento/seguimiento_temporal.json
