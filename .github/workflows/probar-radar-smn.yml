@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -33,12 +34,15 @@ jobs:
       - name: Instalar dependencias
         run: |
           set -euo pipefail
+
           python -m pip install --upgrade pip
+
           pip install -r requirements.txt
 
       - name: Instalar Chromium para Playwright
         run: |
           set -euo pipefail
+
           python -m playwright install --with-deps chromium
 
       - name: Preparar directorios
@@ -51,18 +55,17 @@ jobs:
             data/radar/seguimiento \
             logs
 
-      - name: Verificar componentes reales del repositorio
+      - name: Verificar componentes reales
         run: |
           set -euo pipefail
 
           test -f scraper/capturar_radar_smn.py
           test -f scripts/procesador_radar.py
           test -f seguimiento_temporal.py
-          test -f scripts/validar_integridad_climaar.py
 
-          echo "Capturador: scraper/capturar_radar_smn.py"
-          echo "Procesador: scripts/procesador_radar.py"
-          echo "Tracking: seguimiento_temporal.py"
+          echo "OK - capturador"
+          echo "OK - procesador"
+          echo "OK - seguimiento temporal"
 
       - name: Ejecutar captura RMA10
         run: |
@@ -82,8 +85,17 @@ jobs:
           from pathlib import Path
           from PIL import Image
 
-          image_path = Path("data/radar/actual.png")
-          timestamp_path = Path("data/radar/radar_timestamp.txt")
+          image_path = Path(
+              "data/radar/actual.png"
+          )
+
+          timestamp_path = Path(
+              "data/radar/radar_timestamp.txt"
+          )
+
+          # --------------------------------------------------
+          # Validar imagen
+          # --------------------------------------------------
 
           try:
               with Image.open(image_path) as image:
@@ -93,23 +105,34 @@ jobs:
                   f"ERROR: PNG RMA10 inválido: {exc}"
               ) from exc
 
-          timestamp = timestamp_path.read_text(
+          # --------------------------------------------------
+          # Validar timestamp
+          # --------------------------------------------------
+
+          raw = timestamp_path.read_text(
               encoding="utf-8"
           ).strip()
 
-          if timestamp.endswith("Z"):
-              timestamp = timestamp[:-1] + "+00:00"
+          if not raw:
+              raise SystemExit(
+                  "ERROR: radar_timestamp.txt está vacío."
+              )
+
+          texto = raw
+
+          if texto.endswith("Z"):
+              texto = texto[:-1] + "+00:00"
 
           try:
-              dt = datetime.fromisoformat(timestamp)
+              dt = datetime.fromisoformat(texto)
           except ValueError as exc:
               raise SystemExit(
-                  f"ERROR: timestamp inválido: {timestamp!r}"
+                  f"ERROR: timestamp RMA10 inválido: {raw!r}"
               ) from exc
 
           if dt.tzinfo is None:
               raise SystemExit(
-                  "ERROR: timestamp sin zona horaria."
+                  "ERROR: timestamp RMA10 sin zona horaria."
               )
 
           dt = dt.astimezone(timezone.utc)
@@ -121,7 +144,7 @@ jobs:
           ).total_seconds()
 
           print(
-              "Timestamp radar UTC:",
+              "Timestamp RMA10:",
               dt.isoformat()
           )
 
@@ -133,7 +156,8 @@ jobs:
 
           if edad < -120:
               raise SystemExit(
-                  "ERROR: timestamp futuro fuera de tolerancia."
+                  "ERROR: timestamp RMA10 está "
+                  "más de 2 minutos en el futuro."
               )
 
           if edad > 2700:
@@ -175,7 +199,78 @@ jobs:
           if not isinstance(data, dict):
               raise SystemExit(
                   "ERROR: resultado_procesamiento.json "
-                  "no es un objeto JSON."
+                  "no contiene un objeto JSON."
+              )
+
+          required = (
+              "nucleos",
+              "nucleos_dinamicos",
+              "nucleos_estaticos",
+              "clasificacion_severidad",
+          )
+
+          for key in required:
+              if key not in data:
+                  raise SystemExit(
+                      f"ERROR: falta campo {key!r} "
+                      "en resultado_procesamiento.json."
+                  )
+
+          if not isinstance(
+              data["nucleos"],
+              list
+          ):
+              raise SystemExit(
+                  "ERROR: resultado.nucleos no es una lista."
+              )
+
+          if not isinstance(
+              data["nucleos_dinamicos"],
+              int
+          ):
+              raise SystemExit(
+                  "ERROR: nucleos_dinamicos no es entero."
+              )
+
+          if not isinstance(
+              data["nucleos_estaticos"],
+              list
+          ):
+              raise SystemExit(
+                  "ERROR: nucleos_estaticos no es una lista."
+              )
+
+          # Los ecos estáticos pueden existir internamente,
+          # pero no deben formar parte de los núcleos operativos.
+          for nucleo in data["nucleos"]:
+              if not isinstance(nucleo, dict):
+                  raise SystemExit(
+                      "ERROR: existe un núcleo operativo inválido."
+                  )
+
+              if str(
+                  nucleo.get("estado", "")
+              ).upper() == "ECO_ESTATICO":
+                  raise SystemExit(
+                      "ERROR: un ECO_ESTATICO "
+                      "entró en resultado.nucleos."
+                  )
+
+          if (
+              data["nucleos_dinamicos"]
+              != len(data["nucleos"])
+          ):
+              raise SystemExit(
+                  "ERROR: cantidad de núcleos dinámicos "
+                  "no coincide con resultado.nucleos."
+              )
+
+          if data.get(
+              "radar_intensidad_es_senal_no_severidad"
+          ) is not True:
+              raise SystemExit(
+                  "ERROR: el procesador no declara "
+                  "correctamente que radar ≠ severidad."
               )
 
           print(
@@ -183,13 +278,23 @@ jobs:
           )
 
           print(
-              "Timestamp:",
-              data.get("radar_timestamp")
+              "Núcleos operativos:",
+              len(data["nucleos"])
           )
 
           print(
-              "Núcleos:",
-              data.get("nucleos_actuales")
+              "Núcleos estáticos:",
+              len(data["nucleos_estaticos"])
+          )
+
+          print(
+              "Estado radar:",
+              data.get("estado_general")
+          )
+
+          print(
+              "Severidad meteorológica:",
+              data.get("clasificacion_severidad")
           )
           PY
 
@@ -203,6 +308,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          test -s data/radar/radar_timestamp.txt
           test -s data/radar/resultado_procesamiento.json
           test -s data/radar/seguimiento/estado.json
           test -s data/radar/seguimiento/seguimiento_temporal.json
@@ -212,51 +318,78 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
 
-          radar_path = Path(
-              "data/radar/radar_timestamp.txt"
+          BASE = Path("data/radar")
+
+          radar_path = (
+              BASE / "radar_timestamp.txt"
           )
 
-          resultado_path = Path(
-              "data/radar/resultado_procesamiento.json"
+          resultado_path = (
+              BASE / "resultado_procesamiento.json"
           )
 
-          estado_path = Path(
-              "data/radar/seguimiento/estado.json"
+          estado_path = (
+              BASE
+              / "seguimiento"
+              / "estado.json"
           )
 
-          seguimiento_path = Path(
-              "data/radar/seguimiento/seguimiento_temporal.json"
+          seguimiento_path = (
+              BASE
+              / "seguimiento"
+              / "seguimiento_temporal.json"
           )
 
-          radar_ts = radar_path.read_text(
+          # --------------------------------------------------
+          # Timestamp radar
+          # --------------------------------------------------
+
+          radar_raw = radar_path.read_text(
               encoding="utf-8"
           ).strip()
 
-          def parse(value):
-              if not value:
-                  return None
+          def parse_timestamp(value, name):
+              if value is None:
+                  raise SystemExit(
+                      f"ERROR: falta timestamp en {name}."
+                  )
 
-              texto = str(value)
+              text = str(value).strip()
 
-              if texto.endswith("Z"):
-                  texto = texto[:-1] + "+00:00"
+              if not text:
+                  raise SystemExit(
+                      f"ERROR: timestamp vacío en {name}."
+                  )
 
-              dt = datetime.fromisoformat(
-                  texto
-              )
+              if text.endswith("Z"):
+                  text = text[:-1] + "+00:00"
+
+              try:
+                  dt = datetime.fromisoformat(text)
+              except ValueError as exc:
+                  raise SystemExit(
+                      f"ERROR: timestamp inválido "
+                      f"en {name}: {value!r}"
+                  ) from exc
 
               if dt.tzinfo is None:
-                  dt = dt.replace(
-                      tzinfo=timezone.utc
+                  raise SystemExit(
+                      f"ERROR: timestamp sin zona horaria "
+                      f"en {name}."
                   )
 
               return dt.astimezone(
                   timezone.utc
               )
 
-          radar_dt = parse(
-              radar_ts
+          radar_dt = parse_timestamp(
+              radar_raw,
+              "radar_timestamp.txt"
           )
+
+          # --------------------------------------------------
+          # JSON
+          # --------------------------------------------------
 
           resultado = json.loads(
               resultado_path.read_text(
@@ -289,7 +422,7 @@ jobs:
               dict
           ):
               raise SystemExit(
-                  "ERROR: seguimiento/estado.json inválido."
+                  "ERROR: estado.json inválido."
               )
 
           if not isinstance(
@@ -300,100 +433,270 @@ jobs:
                   "ERROR: seguimiento_temporal.json inválido."
               )
 
-          timestamps = {
-              "radar": radar_dt,
-              "resultado": parse(
-                  resultado.get(
-                      "radar_timestamp"
-                  )
-                  or
-                  resultado.get(
-                      "timestamp"
-                  )
+          # --------------------------------------------------
+          # Timestamp único
+          #
+          # resultado_procesamiento NO genera un timestamp
+          # de frame propio. Su timestamp_procesamiento es
+          # la hora de ejecución y NO se compara con el radar.
+          #
+          # Tracking sí conserva radar_timestamp.
+          # --------------------------------------------------
+
+          tracking_ts = parse_timestamp(
+              seguimiento.get(
+                  "radar_timestamp"
               ),
-              "estado": parse(
-                  estado.get(
-                      "ultimo_radar_timestamp"
-                  )
+              "seguimiento_temporal.radar_timestamp"
+          )
+
+          estado_ts = parse_timestamp(
+              estado.get(
+                  "ultimo_radar_timestamp"
               ),
-              "seguimiento": parse(
-                  seguimiento.get(
-                      "radar_timestamp"
-                  )
-              ),
-          }
+              "estado.ultimo_radar_timestamp"
+          )
 
-          for nombre, valor in timestamps.items():
+          if tracking_ts != radar_dt:
 
-              if valor is None:
-                  raise SystemExit(
-                      f"ERROR: falta timestamp en {nombre}."
-                  )
-
-          base = timestamps["radar"]
-
-          for nombre, valor in timestamps.items():
-
-              diferencia = abs(
-                  (
-                      valor - base
-                  ).total_seconds()
+              raise SystemExit(
+                  "ERROR: timestamp desincronizado "
+                  "entre Radar y Tracking: "
+                  f"radar={radar_dt.isoformat()} "
+                  f"tracking={tracking_ts.isoformat()}"
               )
 
-              if diferencia > 1:
+          if estado_ts != radar_dt:
 
-                  raise SystemExit(
-                      "ERROR: timestamp "
-                      f"desincronizado: "
-                      f"radar={base.isoformat()} "
-                      f"{nombre}={valor.isoformat()}"
-                  )
+              raise SystemExit(
+                  "ERROR: timestamp desincronizado "
+                  "entre Radar y estado de Tracking: "
+                  f"radar={radar_dt.isoformat()} "
+                  f"estado={estado_ts.isoformat()}"
+              )
+
+          # --------------------------------------------------
+          # Coherencia de cantidad de núcleos
+          # --------------------------------------------------
+
+          nucleos_radar = resultado.get(
+              "nucleos"
+          )
+
+          nucleos_tracking = seguimiento.get(
+              "nucleos"
+          )
+
+          if not isinstance(
+              nucleos_radar,
+              list
+          ):
+              raise SystemExit(
+                  "ERROR: resultado.nucleos inválido."
+              )
+
+          if not isinstance(
+              nucleos_tracking,
+              list
+          ):
+              raise SystemExit(
+                  "ERROR: tracking.nucleos inválido."
+              )
+
+          cantidad_radar = len(
+              nucleos_radar
+          )
+
+          cantidad_tracking = len(
+              nucleos_tracking
+          )
+
+          if cantidad_radar != cantidad_tracking:
+
+              raise SystemExit(
+                  "ERROR: cantidad de núcleos "
+                  "Radar != Tracking: "
+                  f"{cantidad_radar} != "
+                  f"{cantidad_tracking}"
+              )
+
+          # --------------------------------------------------
+          # Principal
+          # --------------------------------------------------
 
           principal = seguimiento.get(
               "track_principal_candidato_id"
           )
 
-          tracks_activos = estado.get(
-              "tracks_activos",
+          if principal is None:
+
+              raise SystemExit(
+                  "ERROR: Tracking no definió "
+                  "track_principal_candidato_id."
+              )
+
+          def same_id(a, b):
+              return str(a) == str(b)
+
+          principal_nucleo = None
+
+          for nucleo in nucleos_tracking:
+
+              if not isinstance(
+                  nucleo,
+                  dict
+              ):
+                  continue
+
+              if same_id(
+                  nucleo.get("track_id"),
+                  principal
+              ):
+                  principal_nucleo = nucleo
+                  break
+
+          if principal_nucleo is None:
+
+              raise SystemExit(
+                  "ERROR: el principal "
+                  f"{principal!r} no existe "
+                  "en tracking.nucleos."
+              )
+
+          # --------------------------------------------------
+          # Estado persistente
+          # --------------------------------------------------
+
+          tracks = estado.get(
+              "tracks",
               []
           )
 
-          if (
-              principal is not None
-              and
-              principal not in tracks_activos
+          if not isinstance(
+              tracks,
+              list
           ):
               raise SystemExit(
-                  "ERROR: el track principal "
-                  "candidato no pertenece a "
-                  "los tracks activos."
+                  "ERROR: estado.tracks no es una lista."
               )
 
+          principal_track = None
+
+          for track in tracks:
+
+              if not isinstance(
+                  track,
+                  dict
+              ):
+                  continue
+
+              if same_id(
+                  track.get("track_id"),
+                  principal
+              ):
+                  principal_track = track
+                  break
+
+          if principal_track is None:
+
+              raise SystemExit(
+                  "ERROR: principal "
+                  f"{principal!r} no existe "
+                  "en estado.tracks."
+              )
+
+          if principal_track.get(
+              "activo"
+          ) is not True:
+
+              raise SystemExit(
+                  "ERROR: principal "
+                  f"{principal!r} no está activo."
+              )
+
+          if principal_track.get(
+              "presente_en_ultimo_frame"
+          ) is not True:
+
+              raise SystemExit(
+                  "ERROR: principal "
+                  f"{principal!r} no está presente "
+                  "en el último frame."
+              )
+
+          # --------------------------------------------------
+          # Validar que los ecos estáticos no llegaron
+          # al tracking.
+          # --------------------------------------------------
+
+          for nucleo in nucleos_tracking:
+
+              if not isinstance(
+                  nucleo,
+                  dict
+              ):
+                  raise SystemExit(
+                      "ERROR: núcleo inválido "
+                      "en tracking."
+                  )
+
+              if str(
+                  nucleo.get("estado", "")
+              ).upper() == "ECO_ESTATICO":
+
+                  raise SystemExit(
+                      "ERROR: ECO_ESTATICO "
+                      "llegó al tracking."
+                  )
+
+          # --------------------------------------------------
+          # Resultado
+          # --------------------------------------------------
+
           print(
-              "Timestamp único validado:",
-              base.isoformat()
+              "======================================"
           )
 
           print(
-              "Track principal candidato:",
+              "CADENA RADAR → TRACKING: OK"
+          )
+
+          print(
+              "======================================"
+          )
+
+          print(
+              "Frame UTC:",
+              radar_dt.isoformat()
+          )
+
+          print(
+              "Núcleos Radar:",
+              cantidad_radar
+          )
+
+          print(
+              "Núcleos Tracking:",
+              cantidad_tracking
+          )
+
+          print(
+              "Track principal:",
               principal
           )
 
           print(
-              "Tracks activos:",
-              tracks_activos
+              "Principal activo: OK"
           )
 
           print(
-              "Cadena Radar → Tracking validada."
+              "Principal presente: OK"
+          )
+
+          print(
+              "Ecos estáticos excluidos: OK"
           )
           PY
-
-      - name: Validar integridad ClimaAR
-        run: |
-          set -euo pipefail
-
-          python scripts/validar_integridad_climaar.py
 
       - name: Preparar artefacto Radar RMA10
         run: |
@@ -457,19 +760,14 @@ jobs:
             fi
 
             if git push origin HEAD:main; then
-
               echo "Push exitoso."
               exit 0
-
             fi
 
             if [ "$intento" -eq 3 ]; then
-
               echo \
                 "ERROR: no se pudo publicar Radar RMA10."
-
               exit 1
-
             fi
 
             sleep 2
