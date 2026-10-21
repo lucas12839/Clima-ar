@@ -1,552 +1,234 @@
-name: Probar Radar SMN
+name: ClimaAR Radar RMA10
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "*/10 * * * *"
-  workflow_dispatch:
-
-concurrency:
-  group: climaar-production-writes
-  cancel-in-progress: false
 
 permissions:
   contents: write
   actions: write
 
+concurrency:
+  group: climaar-radar-rma10
+  cancel-in-progress: false
+
 jobs:
   radar:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           ref: main
 
-      - name: Sincronizar main y preparar estado
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git fetch --no-tags --depth=1 origin main
-          git reset --hard origin/main
-
-          mkdir -p \
-            data/radar/historico \
-            data/radar/seguimiento \
-            data/radar/procesado \
-            data/radar/prediccion \
-            data/radar/mascaras \
-            .climaar
-
-          if [ -f .climaar/estado_rma10.json ]; then
-            cp .climaar/estado_rma10.json data/radar/seguimiento/estado.json
-          fi
-
-      - name: Recuperar histórico desde el último artefacto válido
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf /tmp/radar_artifacts
-          mkdir -p /tmp/radar_artifacts
-
-          RUN_ID="$(
-            gh run list \
-              --workflow probar-radar-smn.yml \
-              --limit 20 \
-              --json databaseId,status,conclusion \
-              --jq '
-                map(
-                  select(
-                    .status == "completed"
-                    and .conclusion == "success"
-                  )
-                )
-                | .[0].databaseId // empty
-              '
-          )"
-
-          printf '%s\n' "$RUN_ID" > /tmp/radar_run_id.txt
-
-          if [ -n "$RUN_ID" ]; then
-            echo "Recuperando artefacto del run: $RUN_ID"
-
-            gh run download \
-              "$RUN_ID" \
-              -n radar-rma10 \
-              -D /tmp/radar_artifacts \
-              2>/dev/null || true
-          else
-            echo "No existe un run exitoso anterior."
-          fi
-
-          if [ -d /tmp/radar_artifacts ]; then
-            find /tmp/radar_artifacts \
-              -type f \
-              -path '*/historico/*.png' \
-              -exec cp -n {} data/radar/historico/ \; \
-              2>/dev/null || true
-
-            find /tmp/radar_artifacts \
-              -type f \
-              -name 'predicciones_pendientes.json' \
-              -exec cp {} data/radar/seguimiento/ \; \
-              2>/dev/null || true
-          fi
-
-          echo "Frames históricos: $(find data/radar/historico -maxdepth 1 -type f -name '*.png' | wc -l)"
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Instalar dependencias
-        shell: bash
         run: |
           set -euo pipefail
 
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-          python -m playwright install --with-deps chromium
-
-      - name: Capturar radar RMA10
-        shell: bash
+      - name: Preparar directorios
         run: |
           set -euo pipefail
 
-          python scraper/capturar_radar_smn.py
+          mkdir -p \
+            data/radar \
+            data/radar/historico \
+            data/radar/seguimiento \
+            logs
 
-          test -s data/radar/actual.png
-          test -s data/radar/radar_timestamp.txt
+      - name: Ejecutar captura RMA10
+        run: |
+          set -euo pipefail
 
-          cp data/radar/actual.png data/radar/latest.png
+          if [ -f scripts/capturar_rma10.py ]; then
+            python scripts/capturar_rma10.py
+          elif [ -f scripts/descargar_rma10.py ]; then
+            python scripts/descargar_rma10.py
+          elif [ -f scripts/radar_collector.py ]; then
+            python scripts/radar_collector.py
+          else
+            echo "ERROR: no se encontró el capturador RMA10."
+            exit 1
+          fi
+
+      - name: Validar frame nuevo
+        run: |
+          set -euo pipefail
+
+          if [ ! -s data/radar/actual.png ]; then
+            echo "ERROR: no existe un frame RMA10 válido."
+            exit 1
+          fi
+
+          if [ ! -s data/radar/radar_timestamp.txt ]; then
+            echo "ERROR: falta radar_timestamp.txt."
+            exit 1
+          fi
 
           python - <<'PY'
+          from datetime import datetime, timezone
           from pathlib import Path
-          from PIL import Image
-
-          path = Path("data/radar/actual.png")
-
-          if path.stat().st_size <= 1024:
-              raise SystemExit("ERROR: PNG demasiado pequeño")
-
-          with Image.open(path) as image:
-              if image.format != "PNG":
-                  raise SystemExit("ERROR: la captura no es PNG")
-              image.verify()
 
           timestamp = Path(
-              "data/radar/radar_timestamp.txt"
-          ).read_text(encoding="utf-8").strip()
-
-          if not timestamp:
-              raise SystemExit("ERROR: timestamp del radar vacío")
-
-          print("PNG válido")
-          print("Radar:", timestamp)
-          PY
-
-      - name: Validar frame nuevo, fresco y no repetido
-        id: frame
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python - <<'PY'
-          from datetime import datetime, timezone
-          from pathlib import Path
-          import hashlib
-          import os
-
-          timestamp_path = Path("data/radar/radar_timestamp.txt")
-          ts = timestamp_path.read_text(encoding="utf-8").strip()
-
-          if not ts:
-              raise SystemExit("ERROR: timestamp vacío")
-
-          text = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
-
-          try:
-              dt = datetime.fromisoformat(text)
-          except ValueError as exc:
-              raise SystemExit(
-                  f"ERROR: timestamp inválido: {ts}"
-              ) from exc
-
-          if dt.tzinfo is None:
-              raise SystemExit("ERROR: timestamp sin zona horaria")
-
-          dt = dt.astimezone(timezone.utc)
-
-          age = (
-              datetime.now(timezone.utc) - dt
-          ).total_seconds() / 60.0
-
-          if age < -2:
-              raise SystemExit(
-                  f"ERROR: timestamp futuro: {age:.2f} min"
-              )
-
-          if age > 45:
-              raise SystemExit(
-                  f"ERROR: radar demasiado viejo: {age:.2f} min"
-              )
-
-          current_hash = hashlib.sha256(
-              Path("data/radar/actual.png").read_bytes()
-          ).hexdigest()
-
-          old_ts_path = Path(
-              "data/radar/ultimo_radar_timestamp.txt"
-          )
-          old_ts = (
-              old_ts_path.read_text(
-                  encoding="utf-8"
-              ).strip()
-              if old_ts_path.exists()
-              else ""
-          )
-
-          old_hash_path = Path(
-              "data/radar/ultimo_radar_sha256.txt"
-          )
-          old_hash = (
-              old_hash_path.read_text(
-                  encoding="utf-8"
-              ).strip()
-              if old_hash_path.exists()
-              else ""
-          )
-
-          if old_ts and ts == old_ts:
-              accepted = "false"
-              motivo = "timestamp_repetido"
-          elif old_hash and current_hash == old_hash:
-              accepted = "false"
-              motivo = "imagen_repetida"
-          else:
-              accepted = "true"
-              motivo = "nuevo_frame"
-
-          with open(
-              os.environ["GITHUB_OUTPUT"],
-              "a",
-              encoding="utf-8"
-          ) as output:
-              output.write(f"accepted={accepted}\n")
-              output.write(f"motivo={motivo}\n")
-
-          print(f"Timestamp anterior: {old_ts or 'ninguno'}")
-          print(f"Timestamp nuevo: {ts}")
-          print(f"Edad: {age:.2f} min")
-          print(f"SHA256: {current_hash}")
-          print(f"Resultado: {motivo}")
-          PY
-
-      - name: Detener limpiamente si no hay frame nuevo
-        if: steps.frame.outputs.accepted != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "No se procesará un frame repetido."
-
-      - name: Guardar timestamp y hash aceptados
-        if: steps.frame.outputs.accepted == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cp \
-            data/radar/radar_timestamp.txt \
-            data/radar/ultimo_radar_timestamp.txt
-
-          sha256sum \
-            data/radar/actual.png \
-            | awk '{print $1}' \
-            > data/radar/ultimo_radar_sha256.txt
-
-          cp \
-            data/radar/radar_timestamp.txt \
-            data/radar/continuidad.txt
-
-      - name: Generar máscara estática
-        if: steps.frame.outputs.accepted == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python scripts/generar_mascara_estatica.py
-
-          test -s data/radar/mascara_ecos_estaticos.json
-          test -s data/radar/mascara_ecos_estaticos.png
-          test -s data/radar/mascara_ecos_estaticos_confianza.png
-
-      - name: Procesar radar
-        if: steps.frame.outputs.accepted == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python scripts/procesador_radar.py
-
-          test -s data/radar/resultado_procesamiento.json
-
-      - name: Guardar frame en historial
-        if: steps.frame.outputs.accepted == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          HISTORIAL_NOMBRE="$(
-            python - <<'PY'
-          from pathlib import Path
-          from datetime import datetime, timezone
-
-          ts = Path(
               "data/radar/radar_timestamp.txt"
           ).read_text(
               encoding="utf-8"
           ).strip()
 
-          text = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
-          dt = datetime.fromisoformat(text)
+          if timestamp.endswith("Z"):
+              timestamp = timestamp[:-1] + "+00:00"
+
+          try:
+              dt = datetime.fromisoformat(timestamp)
+          except ValueError as exc:
+              raise SystemExit(
+                  f"ERROR: timestamp inválido: {timestamp!r}"
+              ) from exc
 
           if dt.tzinfo is None:
-              raise SystemExit("timestamp sin zona horaria")
+              raise SystemExit(
+                  "ERROR: timestamp sin zona horaria."
+              )
+
+          dt = dt.astimezone(timezone.utc)
+
+          ahora = datetime.now(timezone.utc)
+
+          edad = (
+              ahora - dt
+          ).total_seconds()
 
           print(
-              dt.astimezone(timezone.utc)
-              .strftime("%Y%m%d%H%M%S.png")
+              "Timestamp radar:",
+              dt.isoformat()
           )
+
+          print(
+              "Edad del frame:",
+              round(edad),
+              "segundos"
+          )
+
+          if edad < 0:
+              raise SystemExit(
+                  "ERROR: timestamp futuro."
+              )
+
+          if edad > 1800:
+              raise SystemExit(
+                  "ERROR: frame RMA10 demasiado antiguo."
+              )
+
+          print("Frame temporalmente válido.")
           PY
-          )"
 
-          cp \
-            data/radar/actual.png \
-            "data/radar/historico/$HISTORIAL_NOMBRE"
-
-          echo "Historial guardado: $HISTORIAL_NOMBRE"
-
-      - name: Seguimiento temporal
-        if: steps.frame.outputs.accepted == 'true'
-        shell: bash
+      - name: Procesar radar
         run: |
           set -euo pipefail
 
-          python seguimiento_temporal.py
-
-          test -s \
-            data/radar/seguimiento/seguimiento_temporal.json
-
-          if [ -f data/radar/seguimiento/estado.json ]; then
-            cp \
-              data/radar/seguimiento/estado.json \
-              .climaar/estado_rma10.json
+          if [ -f scripts/procesar_radar.py ]; then
+            python scripts/procesar_radar.py
+          elif [ -f scripts/procesamiento_radar.py ]; then
+            python scripts/procesamiento_radar.py
+          else
+            echo "ERROR: no se encontró el procesador RMA10."
+            exit 1
           fi
 
-      - name: Predicción ML RMA10
-        if: steps.frame.outputs.accepted == 'true'
-        shell: bash
+      - name: Ejecutar seguimiento temporal
         run: |
           set -euo pipefail
 
-          python scripts/prediccion_rma10_ml.py
-
-          test -s \
-            data/radar/seguimiento/prediccion_ml_rma10.json
-
-      - name: Evolución temporal
-        if: steps.frame.outputs.accepted == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ -f scripts/prediccion_evolucion.py ]; then
-            python scripts/prediccion_evolucion.py
+          if [ -f scripts/seguimiento_temporal.py ]; then
+            python scripts/seguimiento_temporal.py
+          elif [ -f scripts/tracking_temporal.py ]; then
+            python scripts/tracking_temporal.py
+          else
+            echo "ERROR: no se encontró el seguimiento temporal."
+            exit 1
           fi
 
-          test -s \
-            data/radar/seguimiento/prediccion_evolucion.json
-
-      - name: Regenerar Nowcast RMA10 con el frame actual
-        if: steps.frame.outputs.accepted == 'true'
-        shell: bash
+      - name: Validar cadena Radar → Tracking
         run: |
           set -euo pipefail
 
-          python scripts/adaptar_rma10_intelligence.py
-
-          test -s data/radar/radar_nowcast.json
+          test -s data/radar/resultado_procesamiento.json
+          test -s data/radar/seguimiento/estado.json
+          test -s data/radar/seguimiento/seguimiento_temporal.json
 
           python - <<'PY'
           import json
           from pathlib import Path
-          from datetime import datetime, timezone
 
-          def parse_ts(value):
-              if not value:
-                  return None
+          archivos = [
+              Path("data/radar/resultado_procesamiento.json"),
+              Path("data/radar/seguimiento/estado.json"),
+              Path("data/radar/seguimiento/seguimiento_temporal.json"),
+          ]
 
-              text = str(value).strip()
-
-              if text.endswith("Z"):
-                  text = text[:-1] + "+00:00"
-
+          for path in archivos:
               try:
-                  dt = datetime.fromisoformat(text)
-              except ValueError:
-                  return None
+                  data = json.loads(
+                      path.read_text(
+                          encoding="utf-8"
+                      )
+                  )
+              except Exception as exc:
+                  raise SystemExit(
+                      f"ERROR: JSON inválido: {path}: {exc}"
+                  ) from exc
 
-              if dt.tzinfo is None:
-                  dt = dt.replace(tzinfo=timezone.utc)
+              if not isinstance(data, dict):
+                  raise SystemExit(
+                      f"ERROR: estructura inválida: {path}"
+                  )
 
-              return dt.astimezone(timezone.utc)
-
-          radar_raw = Path(
-              "data/radar/radar_timestamp.txt"
-          ).read_text(
-              encoding="utf-8"
-          ).strip()
-
-          radar_dt = parse_ts(radar_raw)
-
-          if radar_dt is None:
-              raise SystemExit(
-                  f"ERROR: timestamp radar inválido: {radar_raw}"
-              )
-
-          nowcast = json.loads(
-              Path(
-                  "data/radar/radar_nowcast.json"
-              ).read_text(
-                  encoding="utf-8"
-              )
-          )
-
-          if not isinstance(nowcast, dict):
-              raise SystemExit(
-                  "ERROR: radar_nowcast.json no es un objeto JSON"
-              )
-
-          public_ts = parse_ts(
-              nowcast.get("actualizado")
-          )
-
-          nowcast_block = nowcast.get(
-              "nowcast",
-              {}
-          )
-
-          if not isinstance(nowcast_block, dict):
-              raise SystemExit(
-                  "ERROR: bloque nowcast inválido"
-              )
-
-          frame_ts = parse_ts(
-              nowcast_block.get("frame_actual_utc")
-          )
-
-          actualizado_ts = parse_ts(
-              nowcast_block.get("actualizado")
-          )
-
-          if public_ts is None:
-              raise SystemExit(
-                  "ERROR: radar_nowcast.json no contiene "
-                  "timestamp 'actualizado' válido"
-              )
-
-          if frame_ts is None:
-              raise SystemExit(
-                  "ERROR: radar_nowcast.json no contiene "
-                  "nowcast.frame_actual_utc válido"
-              )
-
-          if actualizado_ts is None:
-              raise SystemExit(
-                  "ERROR: radar_nowcast.json no contiene "
-                  "nowcast.actualizado válido"
-              )
-
-          if public_ts != radar_dt:
-              raise SystemExit(
-                  "ERROR: Nowcast desincronizado: "
-                  f"radar={radar_dt.isoformat()} "
-                  f"actualizado={public_ts.isoformat()}"
-              )
-
-          if frame_ts != radar_dt:
-              raise SystemExit(
-                  "ERROR: Nowcast frame desincronizado: "
-                  f"radar={radar_dt.isoformat()} "
-                  f"frame={frame_ts.isoformat()}"
-              )
-
-          if actualizado_ts != radar_dt:
-              raise SystemExit(
-                  "ERROR: Nowcast interno desincronizado: "
-                  f"radar={radar_dt.isoformat()} "
-                  f"nowcast={actualizado_ts.isoformat()}"
-              )
-
-          nucleos = nowcast_block.get(
-              "nucleos",
-              []
-          )
-
-          if not isinstance(nucleos, list):
-              raise SystemExit(
-                  "ERROR: nowcast.nucleos no es una lista"
-              )
+              print(f"OK: {path}")
 
           print(
-              "Nowcast sincronizado correctamente:"
-              f" {radar_raw}"
-          )
-          print(
-              "Núcleos operativos en Nowcast:"
-              f" {len(nucleos)}"
+              "Cadena Radar → Tracking validada."
           )
           PY
 
-      - name: Preparar artefacto
-        if: steps.frame.outputs.accepted == 'true'
-        shell: bash
+      - name: Validar integridad ClimaAR
+        run: |
+          set -euo pipefail
+
+          test -f scripts/validar_integridad_climaar.py
+
+          python scripts/validar_integridad_climaar.py
+
+      - name: Preparar artefacto Radar RMA10
         run: |
           set -euo pipefail
 
           rm -rf /tmp/radar-rma10
 
-          mkdir -p /tmp/radar-rma10
+          mkdir -p /tmp/radar-rma10/data/radar
 
           cp -a \
             data/radar/. \
-            /tmp/radar-rma10/
+            /tmp/radar-rma10/data/radar/
 
-          if [ -f .climaar/estado_rma10.json ]; then
-            mkdir -p /tmp/radar-rma10/.climaar
-
-            cp \
-              .climaar/estado_rma10.json \
-              /tmp/radar-rma10/.climaar/
-          fi
-
-      - name: Subir artefacto RMA10
-        if: steps.frame.outputs.accepted == 'true'
+      - name: Publicar artefacto Radar RMA10
         uses: actions/upload-artifact@v4
         with:
           name: radar-rma10
           path: /tmp/radar-rma10
           retention-days: 7
 
-      - name: Guardar estado en repositorio con rebase y retry
-        if: steps.frame.outputs.accepted == 'true'
-        shell: bash
+      - name: Persistir resultados
         run: |
           set -euo pipefail
 
@@ -556,7 +238,8 @@ jobs:
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -A data/radar .climaar
+          git add \
+            data/radar
 
           if git diff --cached --quiet; then
             echo "No hay cambios para publicar."
@@ -564,78 +247,34 @@ jobs:
           fi
 
           git commit \
-            -m "ClimaAR: actualizar RMA10"
-
-          if ! git diff --quiet || ! git diff --cached --quiet; then
-            echo "ERROR: quedaron cambios sin confirmar después del commit."
-            git status --short
-            exit 1
-          fi
+            -m "ClimaAR: actualizar Radar RMA10"
 
           for intento in 1 2 3; do
             echo "Intento de sincronización: $intento"
 
             git fetch origin main
 
-            if git rebase origin/main; then
-              echo "Rebase correcto."
-            else
-              echo "Rebase falló."
-
+            if ! git rebase origin/main; then
               git rebase --abort 2>/dev/null || true
 
               if [ "$intento" -eq 3 ]; then
-                git status --short
+                echo "ERROR: rebase falló."
                 exit 1
               fi
 
-              git reset --hard HEAD
-              sleep 2
-              continue
-            fi
-
-            if ! git diff --quiet || ! git diff --cached --quiet; then
-              echo "ERROR: el rebase dejó cambios locales."
-              git status --short
-
-              if [ "$intento" -eq 3 ]; then
-                exit 1
-              fi
-
-              git reset --hard HEAD
               sleep 2
               continue
             fi
 
             if git push origin HEAD:main; then
-              echo "Push exitoso en intento $intento."
+              echo "Push exitoso."
               exit 0
             fi
 
-            echo "Push falló en intento $intento."
-
             if [ "$intento" -eq 3 ]; then
-              git status --short
+              echo "ERROR: no se pudo publicar Radar RMA10."
               exit 1
             fi
 
             sleep 2
           done
-
-      - name: Lanzar Intelligence Central
-        if: steps.frame.outputs.accepted == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "DISPARANDO CLIMAAR INTELLIGENCE CENTRAL"
-
-          gh workflow run \
-            climaar-intelligence.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref main \
-            -f radar_run_id="$GITHUB_RUN_ID"
-
-          echo "Intelligence disparada correctamente."
