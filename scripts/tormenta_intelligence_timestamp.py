@@ -12,6 +12,7 @@ BASE = Path(__file__).resolve().parents[1]
 
 RADAR_FILE = BASE / "data" / "radar" / "radar_nowcast.json"
 ML_FILE = BASE / "data" / "radar" / "seguimiento" / "prediccion_ml_rma10.json"
+METEO_FILE = BASE / "data" / "ia" / "estado_meteorologico.json"
 
 
 def parse_timestamp(value: str) -> datetime:
@@ -270,6 +271,52 @@ def main() -> None:
     print("Timestamp real del radar:", radar_timestamp.isoformat())
 
     validate_radar_nowcast_ml(radar_timestamp)
+
+    radar_data = load_json(RADAR_FILE)
+    nowcast = radar_data.get("nowcast", {})
+    principal = nowcast.get("nucleo_principal_id")
+    bahia = nowcast.get("bahia_blanca", {})
+    if principal is None:
+        raise RuntimeError(
+            "ERROR: Intelligence recibió un Nowcast sin principal."
+        )
+    if (
+        isinstance(bahia, dict)
+        and bahia.get("nucleo_principal_id") is not None
+        and str(bahia.get("nucleo_principal_id")) != str(principal)
+    ):
+        raise RuntimeError(
+            "ERROR: Intelligence recibió principales inconsistentes: "
+            f"nowcast={principal} bahia={bahia.get('nucleo_principal_id')}"
+        )
+
+    meteo_data = load_json(METEO_FILE)
+    meteo_radar = meteo_data.get("radar", {})
+    if not isinstance(meteo_radar, dict):
+        raise RuntimeError(
+            "ERROR: estado_meteorologico.radar inválido."
+        )
+
+    meteo_frame = parse_timestamp(
+        meteo_radar.get("frame_actual_utc")
+    )
+    if meteo_frame is None or meteo_frame != radar_timestamp:
+        raise RuntimeError(
+            "ERROR: meteorología y Radar están desincronizados: "
+            f"radar={radar_timestamp.isoformat()} "
+            f"meteo={meteo_radar.get('frame_actual_utc')}"
+        )
+
+    meteo_principal = meteo_radar.get("nucleo_principal_id")
+    if meteo_principal is None:
+        raise RuntimeError(
+            "ERROR: meteorología no contiene nucleo_principal_id."
+        )
+    if str(meteo_principal) != str(principal):
+        raise RuntimeError(
+            "ERROR: meteorología recibió un principal distinto al Radar: "
+            f"radar={principal} meteo={meteo_principal}"
+        )
 
     sys.path.insert(0, str(BASE / "scripts"))
     engine = importlib.import_module("tormenta_intelligence")
