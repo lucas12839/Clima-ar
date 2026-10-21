@@ -17,11 +17,18 @@ MASCARA_JSON = BASE / "mascara_ecos_estaticos.json"
 SALIDA = BASE / "resultado_procesamiento.json"
 
 
-MIN_AREA_NUCLEO = 8
-MIN_AREA_CELDA_GRANDE = 80
+# ============================================================
+# UMBRALES OPERATIVOS DE DETECCIÓN
+# ============================================================
+
+MIN_AREA_NUCLEO = 20
+MIN_AREA_CELDA_GRANDE = 120
 UMBRAL_REGION_GRANDE = 1500
-DISTANCIA_MIN_SEMILLAS = 12
-INTENSIDAD_MINIMA = 1
+DISTANCIA_MIN_SEMILLAS = 18
+
+# Los ecos débiles siguen existiendo en el radar,
+# pero no se consideran núcleos operativos.
+INTENSIDAD_MINIMA = 3
 
 
 NIVELES = {
@@ -197,14 +204,18 @@ def _parse_timestamp_text(texto):
         texto = texto[:-1] + "+00:00"
 
     try:
+
         dt = datetime.fromisoformat(texto)
+
         if dt.tzinfo is None:
             dt = dt.replace(
                 tzinfo=timezone.utc
             )
+
         return dt.astimezone(
             timezone.utc
         )
+
     except ValueError:
         pass
 
@@ -217,25 +228,36 @@ def _parse_timestamp_text(texto):
     )
 
     for formato in formatos:
+
         try:
+
             return datetime.strptime(
                 texto,
                 formato
             ).replace(
                 tzinfo=timezone.utc
             )
+
         except ValueError:
             continue
 
     if texto.isdigit() and len(texto) == 10:
+
         try:
+
             dt = datetime.fromtimestamp(
                 int(texto),
                 tz=timezone.utc
             )
+
             if 2000 <= dt.year <= 2100:
                 return dt
-        except (OverflowError, OSError, ValueError):
+
+        except (
+            OverflowError,
+            OSError,
+            ValueError
+        ):
             pass
 
     return None
@@ -264,11 +286,13 @@ def _timestamp_actual():
         return None
 
     try:
+
         return _parse_timestamp_text(
             timestamp_path.read_text(
                 encoding="utf-8"
             )
         )
+
     except Exception:
         return None
 
@@ -276,8 +300,11 @@ def _timestamp_actual():
 def _frames_previos(ruta_actual=None):
 
     if ruta_actual is None:
+
         objetivo = _timestamp_actual()
+
     else:
+
         objetivo = _timestamp_de_path(
             ruta_actual
         )
@@ -294,10 +321,12 @@ def _frames_previos(ruta_actual=None):
         BASE / "historico",
         BASE / "historico_tracking_backup",
     ):
+
         if not carpeta.exists():
             continue
 
         for path in carpeta.glob("*.png"):
+
             stamp = _timestamp_de_path(
                 path
             )
@@ -314,16 +343,19 @@ def _frames_previos(ruta_actual=None):
 
             if (
                 diferencia <= 0
-                or diferencia > TEMPORAL_MAX_GAP_MINUTOS
+                or
+                diferencia > TEMPORAL_MAX_GAP_MINUTOS
             ):
                 continue
 
             clave = stamp.isoformat()
+
             anterior = candidatos.get(
                 clave
             )
 
             if anterior is None:
+
                 candidatos[clave] = (
                     stamp,
                     path
@@ -356,10 +388,13 @@ def _cargar_intensidades_previas(
     for path in _frames_previos(
         ruta_actual
     ):
+
         try:
+
             rgb = cargar_imagen(
                 path
             )
+
             matriz = intensidad_radar(
                 rgb
             )
@@ -370,7 +405,9 @@ def _cargar_intensidades_previas(
             previas.append(
                 matriz
             )
+
         except Exception as exc:
+
             print(
                 "AVISO: no se pudo usar "
                 f"frame previo {path}: {exc}"
@@ -386,10 +423,14 @@ def _mascara_temporal_dinamica(
 ):
 
     if mascara is None:
-        return np.zeros(
-            actual.shape,
-            dtype=bool
-        ), 0
+
+        return (
+            np.zeros(
+                actual.shape,
+                dtype=bool
+            ),
+            0
+        )
 
     previas = _cargar_intensidades_previas(
         actual,
@@ -397,10 +438,14 @@ def _mascara_temporal_dinamica(
     )
 
     if not previas:
-        return np.zeros(
-            actual.shape,
-            dtype=bool
-        ), 0
+
+        return (
+            np.zeros(
+                actual.shape,
+                dtype=bool
+            ),
+            0
+        )
 
     apilado = np.stack(
         previas,
@@ -436,7 +481,8 @@ def _mascara_temporal_dinamica(
             cantidad_presente
             <= max(
                 0,
-                len(previas) - TEMPORAL_NUEVO_ECO_MIN_FRAMES
+                len(previas)
+                - TEMPORAL_NUEVO_ECO_MIN_FRAMES
             )
         )
     )
@@ -447,7 +493,8 @@ def _mascara_temporal_dinamica(
             np.abs(
                 actual.astype(np.int16)
                 - mediana_previa.astype(np.int16)
-            ) >= TEMPORAL_DELTA_INTENSIDAD
+            )
+            >= TEMPORAL_DELTA_INTENSIDAD
         )
     )
 
@@ -1052,19 +1099,65 @@ def detectar_nucleos(
     return nucleos
 
 
-def _region_nucleo(nucleo, shape):
+def _region_nucleo(
+    nucleo,
+    shape
+):
 
-    x = int(round(nucleo["x"]))
-    y = int(round(nucleo["y"]))
-    ancho = max(int(nucleo["ancho"]), 1)
-    alto = max(int(nucleo["alto"]), 1)
+    x = int(
+        round(
+            nucleo["x"]
+        )
+    )
+
+    y = int(
+        round(
+            nucleo["y"]
+        )
+    )
+
+    ancho = max(
+        int(
+            nucleo["ancho"]
+        ),
+        1
+    )
+
+    alto = max(
+        int(
+            nucleo["alto"]
+        ),
+        1
+    )
 
     h, w = shape
-    x1 = max(0, x - ancho // 2)
-    x2 = min(w, x + ancho // 2 + 1)
-    y1 = max(0, y - alto // 2)
-    y2 = min(h, y + alto // 2 + 1)
-    return y1, y2, x1, x2
+
+    x1 = max(
+        0,
+        x - ancho // 2
+    )
+
+    x2 = min(
+        w,
+        x + ancho // 2 + 1
+    )
+
+    y1 = max(
+        0,
+        y - alto // 2
+    )
+
+    y2 = min(
+        h,
+        y + alto // 2 + 1
+    )
+
+    return (
+        y1,
+        y2,
+        x1,
+        x2
+    )
 
 
 def analizar_mascara(
@@ -1074,31 +1167,82 @@ def analizar_mascara(
 ):
 
     if mascara is None:
-        return ("DINAMICO", 0.70)
+        return (
+            "DINAMICO",
+            0.70
+        )
 
     try:
-        y1, y2, x1, x2 = _region_nucleo(nucleo, mascara.shape)
-        region = mascara[y1:y2, x1:x2]
+
+        y1, y2, x1, x2 = _region_nucleo(
+            nucleo,
+            mascara.shape
+        )
+
+        region = mascara[
+            y1:y2,
+            x1:x2
+        ]
 
         if region.size == 0:
-            return ("DINAMICO", 0.70)
+            return (
+                "DINAMICO",
+                0.70
+            )
 
-        porcentaje = float(np.mean(region))
+        porcentaje = float(
+            np.mean(
+                region
+            )
+        )
 
         if porcentaje >= 0.70:
+
             if evidencia_temporal is not None:
-                evidencia = evidencia_temporal[y1:y2, x1:x2]
-                if evidencia.size and float(np.mean(evidencia)) >= 0.15:
-                    return ("CAMBIO", 0.78)
-            return ("ECO_ESTATICO", 0.95)
+
+                evidencia = evidencia_temporal[
+                    y1:y2,
+                    x1:x2
+                ]
+
+                if (
+                    evidencia.size
+                    and
+                    float(
+                        np.mean(
+                            evidencia
+                        )
+                    ) >= 0.15
+                ):
+
+                    return (
+                        "CAMBIO",
+                        0.78
+                    )
+
+            return (
+                "ECO_ESTATICO",
+                0.95
+            )
 
         if porcentaje >= 0.40:
-            return ("CAMBIO", 0.65)
 
-        return ("DINAMICO", 0.75)
+            return (
+                "CAMBIO",
+                0.65
+            )
+
+        return (
+            "DINAMICO",
+            0.75
+        )
 
     except Exception:
-        return ("DINAMICO", 0.50)
+
+        return (
+            "DINAMICO",
+            0.50
+        )
 
 
 def calcular_confianza(
@@ -1226,15 +1370,19 @@ def main():
     )
 
     mascara = cargar_mascara()
-    evidencia_temporal, _ = _mascara_temporal_dinamica(
-        matriz_original,
-        mascara,
-        ruta_actual=ACTUAL
+
+    evidencia_temporal, _ = (
+        _mascara_temporal_dinamica(
+            matriz_original,
+            mascara,
+            ruta_actual=ACTUAL
+        )
     )
 
     # La matriz limpia alimenta la cadena operativa.
     # El frame original se usa solo para conservar/contabilizar
     # ecos estaticos internamente.
+
     nucleos_operativos = detectar_nucleos(
         matriz_dinamica
     )
@@ -1246,60 +1394,100 @@ def main():
     nucleos_estaticos = []
 
     for nucleo in nucleos_candidatos_estaticos:
-        estado, confianza_base = analizar_mascara(
-            nucleo,
-            mascara,
-            evidencia_temporal
+
+        estado, confianza_base = (
+            analizar_mascara(
+                nucleo,
+                mascara,
+                evidencia_temporal
+            )
         )
+
         nucleo["estado"] = estado
-        nucleo["confianza"] = calcular_confianza(
-            nucleo,
-            estado,
-            confianza_base
+
+        nucleo["confianza"] = (
+            calcular_confianza(
+                nucleo,
+                estado,
+                confianza_base
+            )
         )
+
         if estado == "ECO_ESTATICO":
-            nucleos_estaticos.append(nucleo)
+
+            nucleos_estaticos.append(
+                nucleo
+            )
 
     nucleos_dinamicos = []
 
     for nucleo in nucleos_operativos:
-        estado, confianza_base = analizar_mascara(
-            nucleo,
-            mascara,
-            evidencia_temporal
+
+        estado, confianza_base = (
+            analizar_mascara(
+                nucleo,
+                mascara,
+                evidencia_temporal
+            )
         )
 
         if estado == "ECO_ESTATICO":
-            nucleos_estaticos.append(nucleo)
+
+            nucleos_estaticos.append(
+                nucleo
+            )
+
             continue
 
         nucleo["estado"] = estado
-        nucleo["confianza"] = calcular_confianza(
-            nucleo,
-            estado,
-            confianza_base
+
+        nucleo["confianza"] = (
+            calcular_confianza(
+                nucleo,
+                estado,
+                confianza_base
+            )
         )
-        nucleos_dinamicos.append(nucleo)
+
+        nucleos_dinamicos.append(
+            nucleo
+        )
 
     nucleos_estaticos.sort(
         key=lambda n: (
-            -n.get("pixeles", 0),
-            -n.get("intensidad", 0)
+            -n.get(
+                "pixeles",
+                0
+            ),
+            -n.get(
+                "intensidad",
+                0
+            )
         )
     )
 
     nucleos_dinamicos.sort(
         key=lambda n: (
-            -n.get("pixeles", 0),
-            -n.get("intensidad", 0)
+            -n.get(
+                "pixeles",
+                0
+            ),
+            -n.get(
+                "intensidad",
+                0
+            )
         )
     )
 
-    # Este es el unico conjunto que pasa a tracking/ML/Intelligence.
+    # Este es el único conjunto que pasa
+    # a tracking / ML / Intelligence.
+
     nucleos = nucleos_dinamicos
 
-    estado_general = calcular_estado_general(
-        nucleos_dinamicos
+    estado_general = (
+        calcular_estado_general(
+            nucleos_dinamicos
+        )
     )
 
     resultado = {
@@ -1341,13 +1529,21 @@ def main():
             pixeles_dinamicos,
 
         "nucleos_estaticos_excluidos":
-            len(nucleos_estaticos),
+            len(
+                nucleos_estaticos
+            ),
 
         "nucleos_detectados":
-            len(nucleos_dinamicos) + len(nucleos_estaticos),
+            (
+                len(nucleos_dinamicos)
+                +
+                len(nucleos_estaticos)
+            ),
 
         "nucleos_dinamicos":
-            len(nucleos_dinamicos),
+            len(
+                nucleos_dinamicos
+            ),
 
         "nucleos_estaticos":
             nucleos_estaticos,
