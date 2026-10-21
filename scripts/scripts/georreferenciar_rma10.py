@@ -608,12 +608,6 @@ def main():
         BAHIA_LON,
     )
 
-    # Guardamos el candidato preliminar antes de que georreferenciacion
-    # determine el principal operativo definitivo.
-    nowcast["nucleo_principal_id_previo"] = nowcast.get(
-        "nucleo_principal_id"
-    )
-
     nucleos = nowcast.get(
         "nucleos",
         nowcast.get("nucleos_analizados", []),
@@ -636,17 +630,23 @@ def main():
             georeferenced.append(item)
 
     principal_id = nowcast.get("nucleo_principal_id")
-    principal_item = None
+    if principal_id is None:
+        raise RuntimeError(
+            "ERROR: Nowcast no contiene nucleo_principal_id. "
+            "Georreferenciación no puede inventar un principal."
+        )
 
-    if principal_id is not None:
-        for item in georeferenced:
-            if (
-                item.get("track_id") == principal_id
-                or item.get("id") == principal_id
-                or item.get("nucleo_id") == principal_id
-            ):
-                principal_item = item
-                break
+    principal_item = None
+    for item in georeferenced:
+        if str(item.get("track_id")) == str(principal_id):
+            principal_item = item
+            break
+
+    if principal_item is None:
+        raise RuntimeError(
+            "ERROR: el principal del Nowcast "
+            f"({principal_id}) no existe entre los núcleos georreferenciados."
+        )
 
     approaching = [
         item
@@ -656,67 +656,24 @@ def main():
         )
     ]
 
-    # Para la evaluacion hacia Bahia, un nucleo principal que NO se
-    # aproxima a Bahia no debe ocultar a otro nucleo que SI lo hace.
-    # Primero conservamos el principal del radar solo si realmente va
-    # hacia Bahia; si no, seleccionamos el nucleo que se aproxima y esta
-    # mas cerca de Bahia.
-    principal_hacia_bahia = (
-        principal_item is not None
-        and principal_item.get("movimiento_bahia", {}).get(
-            "movimiento_hacia_bahia"
-        ) is True
-    )
-
     eta_candidates = [
         item
         for item in approaching
         if item.get("movimiento_bahia", {}).get("eta_valida") is True
     ]
 
-    if principal_hacia_bahia and principal_item is not None:
-        principal_eta_valida = (
-            principal_item.get("movimiento_bahia", {}).get("eta_valida")
-            is True
+    approaching = [
+        item
+        for item in georeferenced
+        if item.get("movimiento_bahia", {}).get(
+            "movimiento_hacia_bahia"
         )
-        if not principal_eta_valida and eta_candidates:
-            principal_item = min(
-                eta_candidates,
-                key=lambda item: finite(
-                    item.get("movimiento_bahia", {}).get("eta_minutos"),
-                    float("inf"),
-                ),
-            )
-    elif eta_candidates:
-        # Para ETA, priorizar el nucleo con llegada estimada mas proxima,
-        # no simplemente el que este fisicamente mas cerca en este instante.
-        principal_item = min(
-            eta_candidates,
-            key=lambda item: finite(
-                item.get("movimiento_bahia", {}).get("eta_minutos"),
-                float("inf"),
-            ),
-        )
-    elif approaching:
-        principal_item = min(
-            approaching,
-            key=lambda item: finite(
-                item.get("georreferencia", {}).get(
-                    "distancia_bahia_km"
-                ),
-                float("inf"),
-            ),
-        )
-    elif principal_item is None and georeferenced:
-        principal_item = min(
-            georeferenced,
-            key=lambda item: finite(
-                item.get("georreferencia", {}).get(
-                    "distancia_bahia_km"
-                ),
-                float("inf"),
-            ),
-        )
+    ]
+
+    # La georreferenciación calcula distancia, rumbo, movimiento y ETA
+    # del principal ya seleccionado por Tracking. Nunca cambia de track.
+    # Los demás núcleos pueden conservar sus indicadores hacia Bahía como
+    # diagnóstico, pero no pueden reemplazar al principal operativo.
 
     nowcast["georreferenciacion"] = {
         "disponible": True,
@@ -784,19 +741,17 @@ def main():
         geo = principal_item["georreferencia"]
         motion = principal_item["movimiento_bahia"]
 
-        # La georreferenciacion es la etapa que puede determinar si un
-        # track realmente amenaza Bahia Blanca. Desde este punto, este
-        # track pasa a ser el PRINCIPAL OPERATIVO y debe reemplazar al
-        # candidato preliminar del tracking.
-        principal_operativo_id = principal_item.get(
-            "track_id",
-            principal_item.get("nucleo_id"),
-        )
-        nowcast["nucleo_principal_id"] = principal_operativo_id
-        nowcast["nucleo_principal_fuente"] = "georreferenciacion_eta"
-        nowcast["track_principal_candidato_id"] = nowcast.get(
-            "nucleo_principal_id_previo"
-        )
+        principal_operativo_id = principal_item.get("track_id")
+        if str(principal_operativo_id) != str(principal_id):
+            raise RuntimeError(
+                "ERROR: inconsistencia de principal durante georreferenciación: "
+                f"nowcast={principal_id} georreferenciado={principal_operativo_id}"
+            )
+
+        nowcast["nucleo_principal_id"] = principal_id
+        nowcast["track_principal_id"] = principal_id
+        nowcast["track_principal_candidato_id"] = principal_id
+        nowcast["nucleo_principal_fuente"] = "seguimiento_temporal"
 
         nowcast["distancia_km"] = geo["distancia_bahia_km"]
         nowcast["distancia_tipo"] = (
@@ -836,33 +791,10 @@ def main():
             ),
         }
     else:
-        nowcast["distancia_km"] = round(
-            radar_bahia_distance,
-            2,
+        raise RuntimeError(
+            "ERROR: no existe principal georreferenciado; "
+            "se rechaza la publicación de un Nowcast incompleto."
         )
-        nowcast["distancia_tipo"] = (
-            "radar_a_Bahia_Blanca_sin_nucleo"
-        )
-        nowcast["rumbo_bahia_grados"] = round(
-            radar_bahia_bearing,
-            1,
-        )
-        nowcast["movimiento_hacia_bahia"] = False
-        nowcast["eta_minutos"] = None
-        nowcast["bahia_blanca"] = {
-            "latitud": BAHIA_LAT,
-            "longitud": BAHIA_LON,
-            "distancia_radar_km": round(
-                radar_bahia_distance,
-                2,
-            ),
-            "rumbo_radar_bahia_grados": round(
-                radar_bahia_bearing,
-                1,
-            ),
-            "movimiento_hacia_bahia": False,
-            "eta_minutos": None,
-        }
 
     diagnostico = data.get("diagnostico")
     if not isinstance(diagnostico, dict):
