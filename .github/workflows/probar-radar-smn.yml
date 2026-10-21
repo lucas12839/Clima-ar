@@ -10,7 +10,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: climaar-radar-rma10
+  group: climaar-production-writes
   cancel-in-progress: false
 
 jobs:
@@ -20,16 +20,28 @@ jobs:
 
     steps:
 
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: main
 
+      # ============================================================
+      # PYTHON
+      # ============================================================
+
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # ============================================================
+      # DEPENDENCIAS
+      # ============================================================
 
       - name: Instalar dependencias
         run: |
@@ -39,11 +51,19 @@ jobs:
 
           pip install -r requirements.txt
 
+      # ============================================================
+      # PLAYWRIGHT
+      # ============================================================
+
       - name: Instalar Chromium para Playwright
         run: |
           set -euo pipefail
 
           python -m playwright install --with-deps chromium
+
+      # ============================================================
+      # DIRECTORIOS
+      # ============================================================
 
       - name: Preparar directorios
         run: |
@@ -55,6 +75,10 @@ jobs:
             data/radar/seguimiento \
             logs
 
+      # ============================================================
+      # VERIFICAR ARCHIVOS REALES
+      # ============================================================
+
       - name: Verificar componentes reales
         run: |
           set -euo pipefail
@@ -63,15 +87,32 @@ jobs:
           test -f scripts/procesador_radar.py
           test -f seguimiento_temporal.py
 
-          echo "OK - capturador"
-          echo "OK - procesador"
-          echo "OK - seguimiento temporal"
+          echo "======================================"
+          echo "COMPONENTES RMA10"
+          echo "======================================"
+          echo "Capturador:"
+          echo "  scraper/capturar_radar_smn.py"
+          echo
+          echo "Procesador:"
+          echo "  scripts/procesador_radar.py"
+          echo
+          echo "Tracking:"
+          echo "  seguimiento_temporal.py"
+          echo "======================================"
+
+      # ============================================================
+      # CAPTURA
+      # ============================================================
 
       - name: Ejecutar captura RMA10
         run: |
           set -euo pipefail
 
           python scraper/capturar_radar_smn.py
+
+      # ============================================================
+      # VALIDAR FRAME
+      # ============================================================
 
       - name: Validar frame RMA10
         run: |
@@ -94,7 +135,7 @@ jobs:
           )
 
           # --------------------------------------------------
-          # Validar imagen
+          # PNG
           # --------------------------------------------------
 
           try:
@@ -106,7 +147,7 @@ jobs:
               ) from exc
 
           # --------------------------------------------------
-          # Validar timestamp
+          # TIMESTAMP
           # --------------------------------------------------
 
           raw = timestamp_path.read_text(
@@ -156,8 +197,8 @@ jobs:
 
           if edad < -120:
               raise SystemExit(
-                  "ERROR: timestamp RMA10 está "
-                  "más de 2 minutos en el futuro."
+                  "ERROR: timestamp RMA10 "
+                  "está más de 2 minutos en el futuro."
               )
 
           if edad > 2700:
@@ -166,15 +207,23 @@ jobs:
               )
 
           print(
-              "Frame RMA10 válido."
+              "FRAME RMA10: OK"
           )
           PY
+
+      # ============================================================
+      # PROCESAMIENTO RADAR
+      # ============================================================
 
       - name: Procesar radar
         run: |
           set -euo pipefail
 
           python scripts/procesador_radar.py
+
+      # ============================================================
+      # VALIDAR PROCESAMIENTO
+      # ============================================================
 
       - name: Validar resultado del procesamiento
         run: |
@@ -210,7 +259,9 @@ jobs:
           )
 
           for key in required:
+
               if key not in data:
+
                   raise SystemExit(
                       f"ERROR: falta campo {key!r} "
                       "en resultado_procesamiento.json."
@@ -220,61 +271,92 @@ jobs:
               data["nucleos"],
               list
           ):
+
               raise SystemExit(
-                  "ERROR: resultado.nucleos no es una lista."
+                  "ERROR: resultado.nucleos "
+                  "no es una lista."
               )
 
           if not isinstance(
               data["nucleos_dinamicos"],
               int
           ):
+
               raise SystemExit(
-                  "ERROR: nucleos_dinamicos no es entero."
+                  "ERROR: nucleos_dinamicos "
+                  "no es entero."
               )
 
           if not isinstance(
               data["nucleos_estaticos"],
               list
           ):
+
               raise SystemExit(
-                  "ERROR: nucleos_estaticos no es una lista."
+                  "ERROR: nucleos_estaticos "
+                  "no es una lista."
               )
 
-          # Los ecos estáticos pueden existir internamente,
-          # pero no deben formar parte de los núcleos operativos.
+          # --------------------------------------------------
+          # Ecos estáticos
+          # --------------------------------------------------
+
           for nucleo in data["nucleos"]:
-              if not isinstance(nucleo, dict):
+
+              if not isinstance(
+                  nucleo,
+                  dict
+              ):
+
                   raise SystemExit(
-                      "ERROR: existe un núcleo operativo inválido."
+                      "ERROR: núcleo operativo inválido."
                   )
 
               if str(
-                  nucleo.get("estado", "")
+                  nucleo.get(
+                      "estado",
+                      ""
+                  )
               ).upper() == "ECO_ESTATICO":
+
                   raise SystemExit(
-                      "ERROR: un ECO_ESTATICO "
+                      "ERROR: ECO_ESTATICO "
                       "entró en resultado.nucleos."
                   )
+
+          # --------------------------------------------------
+          # Cantidad dinámica
+          # --------------------------------------------------
 
           if (
               data["nucleos_dinamicos"]
               != len(data["nucleos"])
           ):
+
               raise SystemExit(
-                  "ERROR: cantidad de núcleos dinámicos "
+                  "ERROR: nucleos_dinamicos "
                   "no coincide con resultado.nucleos."
               )
+
+          # --------------------------------------------------
+          # Radar != severidad
+          # --------------------------------------------------
 
           if data.get(
               "radar_intensidad_es_senal_no_severidad"
           ) is not True:
+
               raise SystemExit(
                   "ERROR: el procesador no declara "
                   "correctamente que radar ≠ severidad."
               )
 
           print(
-              "Resultado de procesamiento válido."
+              "======================================"
+          )
+
+          print(
+              "PROCESAMIENTO RADAR: OK"
           )
 
           print(
@@ -293,16 +375,28 @@ jobs:
           )
 
           print(
-              "Severidad meteorológica:",
+              "Clasificación severidad:",
               data.get("clasificacion_severidad")
           )
+
+          print(
+              "======================================"
+          )
           PY
+
+      # ============================================================
+      # TRACKING
+      # ============================================================
 
       - name: Ejecutar seguimiento temporal
         run: |
           set -euo pipefail
 
           python seguimiento_temporal.py
+
+      # ============================================================
+      # VALIDAR RADAR → TRACKING
+      # ============================================================
 
       - name: Validar cadena Radar → Tracking
         run: |
@@ -318,7 +412,9 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
 
-          BASE = Path("data/radar")
+          BASE = Path(
+              "data/radar"
+          )
 
           radar_path = (
               BASE / "radar_timestamp.txt"
@@ -340,56 +436,78 @@ jobs:
               / "seguimiento_temporal.json"
           )
 
-          # --------------------------------------------------
-          # Timestamp radar
-          # --------------------------------------------------
+          # ==================================================
+          # TIMESTAMP
+          # ==================================================
 
-          radar_raw = radar_path.read_text(
-              encoding="utf-8"
-          ).strip()
+          def parse_timestamp(
+              value,
+              name
+          ):
 
-          def parse_timestamp(value, name):
               if value is None:
+
                   raise SystemExit(
                       f"ERROR: falta timestamp en {name}."
                   )
 
-              text = str(value).strip()
+              text = str(
+                  value
+              ).strip()
 
               if not text:
+
                   raise SystemExit(
                       f"ERROR: timestamp vacío en {name}."
                   )
 
               if text.endswith("Z"):
-                  text = text[:-1] + "+00:00"
+
+                  text = (
+                      text[:-1]
+                      + "+00:00"
+                  )
 
               try:
-                  dt = datetime.fromisoformat(text)
+
+                  dt = datetime.fromisoformat(
+                      text
+                  )
+
               except ValueError as exc:
+
                   raise SystemExit(
                       f"ERROR: timestamp inválido "
                       f"en {name}: {value!r}"
                   ) from exc
 
               if dt.tzinfo is None:
+
                   raise SystemExit(
-                      f"ERROR: timestamp sin zona horaria "
-                      f"en {name}."
+                      f"ERROR: timestamp sin "
+                      f"zona horaria en {name}."
                   )
 
               return dt.astimezone(
                   timezone.utc
               )
 
+          radar_raw = (
+              radar_path
+              .read_text(
+                  encoding="utf-8"
+              )
+              .strip()
+          )
+
           radar_dt = parse_timestamp(
               radar_raw,
               "radar_timestamp.txt"
           )
 
-          # --------------------------------------------------
+          # ==================================================
           # JSON
-          # --------------------------------------------------
+          # ==================================================
 
           resultado = json.loads(
               resultado_path.read_text(
@@ -413,6 +531,7 @@ jobs:
               resultado,
               dict
           ):
+
               raise SystemExit(
                   "ERROR: resultado_procesamiento.json inválido."
               )
@@ -421,6 +540,7 @@ jobs:
               estado,
               dict
           ):
+
               raise SystemExit(
                   "ERROR: estado.json inválido."
               )
@@ -429,19 +549,23 @@ jobs:
               seguimiento,
               dict
           ):
+
               raise SystemExit(
                   "ERROR: seguimiento_temporal.json inválido."
               )
 
-          # --------------------------------------------------
-          # Timestamp único
+          # ==================================================
+          # TIMESTAMP RADAR → TRACKING
           #
-          # resultado_procesamiento NO genera un timestamp
-          # de frame propio. Su timestamp_procesamiento es
-          # la hora de ejecución y NO se compara con el radar.
+          # IMPORTANTE:
+          # timestamp_procesamiento NO se compara.
+          # Es la hora de ejecución del procesador.
           #
-          # Tracking sí conserva radar_timestamp.
-          # --------------------------------------------------
+          # El timestamp meteorológico real es:
+          # radar_timestamp.txt
+          #
+          # Tracking conserva ese mismo timestamp.
+          # ==================================================
 
           tracking_ts = parse_timestamp(
               seguimiento.get(
@@ -461,7 +585,7 @@ jobs:
 
               raise SystemExit(
                   "ERROR: timestamp desincronizado "
-                  "entre Radar y Tracking: "
+                  "Radar → Tracking: "
                   f"radar={radar_dt.isoformat()} "
                   f"tracking={tracking_ts.isoformat()}"
               )
@@ -470,27 +594,32 @@ jobs:
 
               raise SystemExit(
                   "ERROR: timestamp desincronizado "
-                  "entre Radar y estado de Tracking: "
+                  "Radar → estado Tracking: "
                   f"radar={radar_dt.isoformat()} "
                   f"estado={estado_ts.isoformat()}"
               )
 
-          # --------------------------------------------------
-          # Coherencia de cantidad de núcleos
-          # --------------------------------------------------
+          # ==================================================
+          # NÚCLEOS
+          # ==================================================
 
-          nucleos_radar = resultado.get(
-              "nucleos"
+          nucleos_radar = (
+              resultado.get(
+                  "nucleos"
+              )
           )
 
-          nucleos_tracking = seguimiento.get(
-              "nucleos"
+          nucleos_tracking = (
+              seguimiento.get(
+                  "nucleos"
+              )
           )
 
           if not isinstance(
               nucleos_radar,
               list
           ):
+
               raise SystemExit(
                   "ERROR: resultado.nucleos inválido."
               )
@@ -499,6 +628,7 @@ jobs:
               nucleos_tracking,
               list
           ):
+
               raise SystemExit(
                   "ERROR: tracking.nucleos inválido."
               )
@@ -520,25 +650,178 @@ jobs:
                   f"{cantidad_tracking}"
               )
 
-          # --------------------------------------------------
-          # Principal
-          # --------------------------------------------------
+          # ==================================================
+          # TRACK PRINCIPAL
+          # ==================================================
 
-          principal = seguimiento.get(
-              "track_principal_candidato_id"
+          principal = (
+              seguimiento.get(
+                  "track_principal_candidato_id"
+              )
           )
 
-          if principal is None:
-
-              raise SystemExit(
-                  "ERROR: Tracking no definió "
-                  "track_principal_candidato_id."
-              )
-
-          def same_id(a, b):
+          def same_id(
+              a,
+              b
+          ):
               return str(a) == str(b)
 
-          principal_nucleo = None
+          # --------------------------------------------------
+          # Caso SIN núcleos operativos:
+          #
+          # No existe amenaza principal.
+          # Esto es válido.
+          # --------------------------------------------------
+
+          if cantidad_tracking == 0:
+
+              if principal is not None:
+
+                  raise SystemExit(
+                      "ERROR: no hay núcleos operativos "
+                      "pero Tracking declaró "
+                      "un principal."
+                  )
+
+              print(
+                  "No hay núcleos operativos."
+              )
+
+              print(
+                  "Principal: NINGUNO — válido."
+              )
+
+          # --------------------------------------------------
+          # Caso CON núcleos:
+          #
+          # Tiene que existir exactamente un candidato
+          # principal válido.
+          # --------------------------------------------------
+
+          else:
+
+              if principal is None:
+
+                  raise SystemExit(
+                      "ERROR: existen núcleos operativos "
+                      "pero Tracking no definió "
+                      "track_principal_candidato_id."
+                  )
+
+              principal_nucleo = None
+
+              for nucleo in nucleos_tracking:
+
+                  if not isinstance(
+                      nucleo,
+                      dict
+                  ):
+
+                      continue
+
+                  if same_id(
+                      nucleo.get(
+                          "track_id"
+                      ),
+                      principal
+                  ):
+
+                      principal_nucleo = nucleo
+
+                      break
+
+              if principal_nucleo is None:
+
+                  raise SystemExit(
+                      "ERROR: el principal "
+                      f"{principal!r} no existe "
+                      "en tracking.nucleos."
+                  )
+
+              # ------------------------------------------------
+              # Estado persistente
+              # ------------------------------------------------
+
+              tracks = estado.get(
+                  "tracks",
+                  []
+              )
+
+              if not isinstance(
+                  tracks,
+                  list
+              ):
+
+                  raise SystemExit(
+                      "ERROR: estado.tracks "
+                      "no es una lista."
+                  )
+
+              principal_track = None
+
+              for track in tracks:
+
+                  if not isinstance(
+                      track,
+                      dict
+                  ):
+
+                      continue
+
+                  if same_id(
+                      track.get(
+                          "track_id"
+                      ),
+                      principal
+                  ):
+
+                      principal_track = track
+
+                      break
+
+              if principal_track is None:
+
+                  raise SystemExit(
+                      "ERROR: principal "
+                      f"{principal!r} no existe "
+                      "en estado.tracks."
+                  )
+
+              if principal_track.get(
+                  "activo"
+              ) is not True:
+
+                  raise SystemExit(
+                      "ERROR: principal "
+                      f"{principal!r} no está activo."
+                  )
+
+              if principal_track.get(
+                  "presente_en_ultimo_frame"
+              ) is not True:
+
+                  raise SystemExit(
+                      "ERROR: principal "
+                      f"{principal!r} no está presente "
+                      "en el último frame."
+                  )
+
+              print(
+                  "Track principal:",
+                  principal
+              )
+
+              print(
+                  "Principal activo: OK"
+              )
+
+              print(
+                  "Principal presente: OK"
+              )
+
+          # ==================================================
+          # ECOS ESTÁTICOS
+          # ==================================================
 
           for nucleo in nucleos_tracking:
 
@@ -546,102 +829,17 @@ jobs:
                   nucleo,
                   dict
               ):
-                  continue
 
-              if same_id(
-                  nucleo.get("track_id"),
-                  principal
-              ):
-                  principal_nucleo = nucleo
-                  break
-
-          if principal_nucleo is None:
-
-              raise SystemExit(
-                  "ERROR: el principal "
-                  f"{principal!r} no existe "
-                  "en tracking.nucleos."
-              )
-
-          # --------------------------------------------------
-          # Estado persistente
-          # --------------------------------------------------
-
-          tracks = estado.get(
-              "tracks",
-              []
-          )
-
-          if not isinstance(
-              tracks,
-              list
-          ):
-              raise SystemExit(
-                  "ERROR: estado.tracks no es una lista."
-              )
-
-          principal_track = None
-
-          for track in tracks:
-
-              if not isinstance(
-                  track,
-                  dict
-              ):
-                  continue
-
-              if same_id(
-                  track.get("track_id"),
-                  principal
-              ):
-                  principal_track = track
-                  break
-
-          if principal_track is None:
-
-              raise SystemExit(
-                  "ERROR: principal "
-                  f"{principal!r} no existe "
-                  "en estado.tracks."
-              )
-
-          if principal_track.get(
-              "activo"
-          ) is not True:
-
-              raise SystemExit(
-                  "ERROR: principal "
-                  f"{principal!r} no está activo."
-              )
-
-          if principal_track.get(
-              "presente_en_ultimo_frame"
-          ) is not True:
-
-              raise SystemExit(
-                  "ERROR: principal "
-                  f"{principal!r} no está presente "
-                  "en el último frame."
-              )
-
-          # --------------------------------------------------
-          # Validar que los ecos estáticos no llegaron
-          # al tracking.
-          # --------------------------------------------------
-
-          for nucleo in nucleos_tracking:
-
-              if not isinstance(
-                  nucleo,
-                  dict
-              ):
                   raise SystemExit(
                       "ERROR: núcleo inválido "
                       "en tracking."
                   )
 
               if str(
-                  nucleo.get("estado", "")
+                  nucleo.get(
+                      "estado",
+                      ""
+                  )
               ).upper() == "ECO_ESTATICO":
 
                   raise SystemExit(
@@ -649,9 +847,9 @@ jobs:
                       "llegó al tracking."
                   )
 
-          # --------------------------------------------------
-          # Resultado
-          # --------------------------------------------------
+          # ==================================================
+          # RESULTADO
+          # ==================================================
 
           print(
               "======================================"
@@ -681,22 +879,21 @@ jobs:
           )
 
           print(
-              "Track principal:",
-              principal
-          )
-
-          print(
-              "Principal activo: OK"
-          )
-
-          print(
-              "Principal presente: OK"
+              "Timestamp Radar = Tracking: OK"
           )
 
           print(
               "Ecos estáticos excluidos: OK"
           )
+
+          print(
+              "======================================"
+          )
           PY
+
+      # ============================================================
+      # ARTEFACTO
+      # ============================================================
 
       - name: Preparar artefacto Radar RMA10
         run: |
@@ -718,6 +915,10 @@ jobs:
           path: /tmp/radar-rma10
           retention-days: 7
 
+      # ============================================================
+      # PERSISTENCIA ROBUSTA
+      # ============================================================
+
       - name: Persistir resultados
         run: |
           set -euo pipefail
@@ -728,48 +929,141 @@ jobs:
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add \
-            data/radar
+          # --------------------------------------------------
+          # IMPORTANTE
+          #
+          # No agregamos solamente data/radar.
+          #
+          # El fallo anterior demostró que el job podía terminar
+          # con modificaciones fuera de esa ruta.
+          #
+          # Por eso primero dejamos TODO el árbol limpio mediante
+          # un commit de los cambios producidos por el pipeline.
+          # --------------------------------------------------
+
+          git add -A
 
           if git diff --cached --quiet; then
+
             echo "No hay cambios para publicar."
+
             exit 0
+
           fi
 
           git commit \
             -m "ClimaAR: actualizar Radar RMA10"
 
+          # --------------------------------------------------
+          # Comprobar que el commit dejó el árbol limpio.
+          # --------------------------------------------------
+
+          if [ -n "$(git status --porcelain)" ]; then
+
+            echo
+            echo "ERROR: el árbol sigue sucio después del commit."
+            echo
+            git status --short
+            echo
+
+            exit 1
+
+          fi
+
+          # --------------------------------------------------
+          # Sincronización robusta con main.
+          #
+          # --autostash evita el error:
+          #
+          # "cannot rebase: You have unstaged changes"
+          #
+          # aunque aparezca alguna modificación durante la
+          # sincronización.
+          # --------------------------------------------------
+
           for intento in 1 2 3; do
 
-            echo \
-              "Intento de sincronización: $intento"
+            echo
+            echo "======================================"
+            echo "SINCRONIZACIÓN — INTENTO $intento"
+            echo "======================================"
 
             git fetch origin main
 
-            if ! git rebase origin/main; then
+            if git rebase --autostash origin/main; then
+
+              echo "Rebase exitoso."
+
+            else
+
+              echo "Rebase falló."
 
               git rebase --abort 2>/dev/null || true
 
               if [ "$intento" -eq 3 ]; then
-                echo "ERROR: rebase falló."
+
+                echo
+                echo "ERROR: no se pudo sincronizar main."
+                echo
+                git status --short
+
                 exit 1
+
               fi
 
-              sleep 2
+              sleep 3
+
               continue
+
             fi
+
+            # ------------------------------------------------
+            # Verificación después del rebase.
+            # ------------------------------------------------
+
+            if [ -n "$(git status --porcelain)" ]; then
+
+              echo
+              echo "Se detectaron cambios después del rebase."
+              echo "Se incorporan al commit de resultados."
+              echo
+
+              git add -A
+
+              if ! git diff --cached --quiet; then
+
+                git commit \
+                  -m "ClimaAR: completar persistencia Radar RMA10"
+
+              fi
+
+            fi
+
+            # ------------------------------------------------
+            # Push
+            # ------------------------------------------------
 
             if git push origin HEAD:main; then
-              echo "Push exitoso."
+
+              echo
+              echo "======================================"
+              echo "PERSISTENCIA: OK"
+              echo "======================================"
+
               exit 0
+
             fi
 
-            if [ "$intento" -eq 3 ]; then
-              echo \
-                "ERROR: no se pudo publicar Radar RMA10."
-              exit 1
-            fi
+            echo
+            echo "Push rechazado."
+            echo "El remoto pudo avanzar durante el proceso."
+            echo "Se reintentará."
+            echo
 
-            sleep 2
+            sleep 3
 
           done
+
+          echo
+          echo "ERROR: agotados los intentos de sincronización."
+          exit 1
