@@ -42,8 +42,7 @@ jobs:
             ARTIFACTO="$(
               gh api \
                 "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
-                --jq '.artifacts[] | select(.name=="radar-rma10" and .expired==false) | .id' \
-                | head -n 1
+                --jq '[.artifacts[] | select(.name=="radar-rma10" and .expired==false) | .id] | .[0] // empty'
             )"
 
             if [ -n "$ARTIFACTO" ]; then
@@ -64,8 +63,7 @@ jobs:
             ARTIFACTO="$(
               gh api \
                 "repos/$GH_REPO/actions/runs/$CANDIDATO/artifacts?per_page=100" \
-                --jq '.artifacts[] | select(.name=="radar-rma10" and .expired==false) | .id' \
-                | head -n 1
+                --jq '[.artifacts[] | select(.name=="radar-rma10" and .expired==false) | .id] | .[0] // empty'
             )"
 
             if [ -n "$ARTIFACTO" ]; then
@@ -103,6 +101,11 @@ jobs:
         with:
           fetch-depth: 0
           ref: main
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Preparar directorios
         run: |
@@ -450,11 +453,7 @@ jobs:
                   "ERROR: predicciones inválidas"
               )
 
-          if d.get(
-              "tracks_analizados"
-          ) != len(
-              d["predicciones"]
-          ):
+          if d.get("tracks_analizados") != len(d["predicciones"]):
               raise SystemExit(
                   "ERROR: tracks_analizados != predicciones"
               )
@@ -613,6 +612,11 @@ jobs:
 
           test -s \
             data/ia/resultado_final.json
+
+      - name: Validar integridad completa de ClimaAR
+        run: |
+          set -euo pipefail
+          python scripts/validar_integridad_climaar.py
 
       - name: Preparar artefacto final
         run: |
