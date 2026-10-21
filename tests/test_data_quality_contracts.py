@@ -261,11 +261,89 @@ class EvolutionConnectorTests(unittest.TestCase):
             for source, destination in paths:
                 shutil.copy2(source, destination)
 
+            radar_timestamp = (
+                radar_dir / "radar_timestamp.txt"
+            ).read_text(encoding="utf-8").strip()
+            timestamp_fields = {
+                radar_dir / "radar_nowcast.json": (
+                    ("actualizado",),
+                    ("nowcast", "actualizado"),
+                    ("nowcast", "frame_actual_utc"),
+                ),
+                track_dir / "seguimiento_temporal.json": (
+                    ("radar_timestamp",),
+                ),
+                track_dir / "estado.json": (
+                    ("ultimo_radar_timestamp",),
+                ),
+                track_dir / "prediccion_ml_rma10.json": (
+                    ("frame_radar",),
+                ),
+                track_dir / "prediccion_evolucion.json": (
+                    ("radar_timestamp",),
+                ),
+                ia_dir / "estado_meteorologico.json": (
+                    ("radar", "frame_actual_utc"),
+                ),
+                ia_dir / "inteligencia_tormenta.json": (
+                    ("radar", "frame_actual_utc"),
+                ),
+                ia_dir / "resultado_final.json": (
+                    ("radar", "nowcast", "frame_actual_utc"),
+                ),
+            }
+            for path, fields in timestamp_fields.items():
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                for field_path in fields:
+                    target = payload
+                    for key in field_path[:-1]:
+                        target = target[key]
+                    target[field_path[-1]] = radar_timestamp
+                path.write_text(json.dumps(payload), encoding="utf-8")
+
             candidate = json.loads(
                 (track_dir / "seguimiento_temporal.json").read_text(
                     encoding="utf-8"
                 )
             )["track_principal_candidato_id"]
+
+            principal_fields = {
+                radar_dir / "radar_nowcast.json": (
+                    ("nowcast", "nucleo_principal_id"),
+                    ("nowcast", "track_principal_id"),
+                    ("nowcast", "track_principal_candidato_id"),
+                    ("nowcast", "bahia_blanca", "nucleo_principal_id"),
+                    ("nowcast", "proyecciones_metadata", "track_id"),
+                ),
+                ia_dir / "estado_meteorologico.json": (
+                    ("radar", "nucleo_principal_id"),
+                ),
+                ia_dir / "inteligencia_tormenta.json": (
+                    ("radar", "nucleo_principal_id"),
+                ),
+                ia_dir / "resultado_final.json": (
+                    ("principal", "track_id"),
+                ),
+            }
+            for path, fields in principal_fields.items():
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                for field_path in fields:
+                    target = payload
+                    for key in field_path[:-1]:
+                        target = target[key]
+                    target[field_path[-1]] = candidate
+                path.write_text(json.dumps(payload), encoding="utf-8")
+
+            processing_path = radar_dir / "resultado_procesamiento.json"
+            processing = json.loads(processing_path.read_text(encoding="utf-8"))
+            processing["nucleos_dinamicos"] = len(
+                json.loads(
+                    (radar_dir / "radar_nowcast.json").read_text(
+                        encoding="utf-8"
+                    )
+                )["nowcast"]["nucleos"]
+            )
+            processing_path.write_text(json.dumps(processing), encoding="utf-8")
 
             evolution_path = track_dir / "prediccion_evolucion.json"
             evolution = json.loads(evolution_path.read_text(encoding="utf-8"))
