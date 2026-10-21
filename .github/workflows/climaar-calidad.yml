@@ -207,6 +207,11 @@ jobs:
           )
           PY
 
+      - name: Validar integridad completa de ClimaAR
+        run: |
+          set -euo pipefail
+          python scripts/validar_integridad_climaar.py
+
       - name: Calcular riesgo severo
         run: |
           set -euo pipefail
