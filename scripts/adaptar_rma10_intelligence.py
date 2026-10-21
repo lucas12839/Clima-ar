@@ -682,10 +682,36 @@ def associate_tracks(
     return enriched
 
 
-def select_compatibility_track(
-    tracks
-):
+def select_tracking_principal_track(tracks, seguimiento):
+    """Usa exactamente el principal elegido por seguimiento_temporal.py.
 
+    El adaptador no puede volver a elegir otro track por area/intensidad: eso
+    rompe la cadena tracking -> nowcast -> evolucion -> intelligence.
+    """
+    principal_id = seguimiento.get(
+        "track_principal_candidato_id"
+    )
+
+    if principal_id is None:
+        return None
+
+    principal_text = str(principal_id)
+
+    for track in tracks:
+        if not isinstance(track, dict):
+            continue
+        track_id = track.get(
+            "track_id",
+            track.get("id")
+        )
+        if track_id is not None and str(track_id) == principal_text:
+            return track
+
+    return None
+
+
+def select_compatibility_track(tracks):
+    """Fallback solamente para estados historicos sin principal de tracking."""
     if not tracks:
         return None
 
@@ -695,9 +721,7 @@ def select_compatibility_track(
             max(
                 0.0,
                 number(
-                    track.get(
-                        "pixeles"
-                    ),
+                    track.get("pixeles"),
                     0
                 )
             )
@@ -705,9 +729,7 @@ def select_compatibility_track(
             max(
                 1.0,
                 number(
-                    track.get(
-                        "intensidad"
-                    ),
+                    track.get("intensidad"),
                     0
                 )
             )
@@ -945,10 +967,32 @@ def main():
         else 0.0
     )
 
-    compat_track = (
-        select_compatibility_track(
-            tracks
+    tracking_principal = select_tracking_principal_track(
+        tracks,
+        seguimiento
+    )
+
+    if tracks and tracking_principal is None:
+        principal_id = seguimiento.get(
+            "track_principal_candidato_id"
         )
+        if principal_id is not None:
+            raise SystemExit(
+                "ERROR: el track principal indicado por seguimiento "
+                f"({principal_id}) no existe entre los tracks activos. "
+                "Se aborta para evitar mezclar amenazas distintas."
+            )
+
+    compat_track = tracking_principal or select_compatibility_track(
+        tracks
+    )
+
+    principal_source = (
+        "seguimiento_temporal"
+        if tracking_principal is not None
+        else "fallback_compatibilidad"
+        if compat_track is not None
+        else "sin_track"
     )
 
     if compat_track:
@@ -1185,6 +1229,9 @@ def main():
                     else None
                 ),
 
+            "nucleo_principal_fuente":
+                principal_source,
+
             "resumen_nucleos": {
 
                 "total_detectados":
@@ -1298,6 +1345,14 @@ def main():
                     )
                     if compat_track
                     else None
+                ),
+
+            "track_principal_fuente":
+                principal_source,
+
+            "track_principal_seguimiento":
+                seguimiento.get(
+                    "track_principal_candidato_id"
                 ),
 
             "intervalo_minutos":
