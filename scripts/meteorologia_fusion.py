@@ -920,6 +920,23 @@ def main():
         "OK" if radar.get("disponible") else "SIN DATOS",
     )
 
+    principal = radar.get("nucleo_principal_id")
+    bahia_principal = radar.get("bahia_blanca", {}).get("nucleo_principal_id")
+
+    if principal is None:
+        raise RuntimeError(
+            "ERROR: meteorología recibió un Nowcast sin principal."
+        )
+
+    if (
+        bahia_principal is not None
+        and str(principal) != str(bahia_principal)
+    ):
+        raise RuntimeError(
+            "ERROR: meteorología recibió principales inconsistentes: "
+            f"nowcast={principal} bahia={bahia_principal}"
+        )
+
     sazb = cargar_sazb()
 
     print(
