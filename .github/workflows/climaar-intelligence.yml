@@ -7,6 +7,11 @@ on:
         description: "ID del Radar RMA10 que disparó Intelligence"
         required: false
         type: string
+  workflow_run:
+    workflows:
+      - "ClimaAR Radar RMA10"
+    types:
+      - completed
 
 permissions:
   actions: read
@@ -18,6 +23,7 @@ concurrency:
 
 jobs:
   verificar-radar:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     outputs:
@@ -30,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          INPUT_RADAR_RUN_ID: ${{ inputs.radar_run_id }}
+          INPUT_RADAR_RUN_ID: ${{ inputs.radar_run_id || github.event.workflow_run.id }}
         run: |
           set -euo pipefail
 
