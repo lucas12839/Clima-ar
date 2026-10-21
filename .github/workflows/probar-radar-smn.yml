@@ -58,19 +58,23 @@ jobs:
           rm -rf /tmp/radar_artifacts
           mkdir -p /tmp/radar_artifacts
 
-          gh run list \
-            --workflow probar-radar-smn.yml \
-            --limit 20 \
-            --json databaseId,status,conclusion \
-            --jq '
-              .[]
-              | select(.status == "completed" and .conclusion == "success")
-              | .databaseId
-            ' \
-            | head -n 1 \
-            > /tmp/radar_run_id.txt
+          RUN_ID="$(
+            gh run list \
+              --workflow probar-radar-smn.yml \
+              --limit 20 \
+              --json databaseId,status,conclusion \
+              --jq '
+                map(
+                  select(
+                    .status == "completed"
+                    and .conclusion == "success"
+                  )
+                )
+                | .[0].databaseId // empty
+              '
+          )"
 
-          RUN_ID="$(cat /tmp/radar_run_id.txt || true)"
+          printf '%s\n' "$RUN_ID" > /tmp/radar_run_id.txt
 
           if [ -n "$RUN_ID" ]; then
             echo "Recuperando artefacto del run: $RUN_ID"
