@@ -23,7 +23,7 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install pandas numpy scikit-learn joblib
+          pip install pandas numpy scikit-learn==1.9.1 joblib
 
       - name: Entrenar modelo historico
         run: |
@@ -37,20 +37,8 @@ jobs:
 
           from sklearn.ensemble import RandomForestClassifier
           from sklearn.preprocessing import StandardScaler
-          from sklearn.metrics import (
-              roc_auc_score,
-              average_precision_score,
-              confusion_matrix,
-              precision_score,
-              recall_score,
-              f1_score
-          )
 
           warnings.filterwarnings("ignore")
-
-          # ============================================================
-          # CONFIGURACION
-          # ============================================================
 
           CLIMA = "data/historico/clima_horario_1980_2026.csv"
           EVENTOS = "data/historico/eventos_severos.csv"
@@ -72,52 +60,23 @@ jobs:
               "climaar_features.json"
           )
 
-          os.makedirs(
-              OUT_DIR,
-              exist_ok=True
-          )
-
-          # ============================================================
-          # VALIDACION DE ARCHIVOS
-          # ============================================================
+          os.makedirs(OUT_DIR, exist_ok=True)
 
           if not os.path.exists(CLIMA):
-              raise SystemExit(
-                  f"ERROR: no existe {CLIMA}"
-              )
+              raise SystemExit(f"ERROR: no existe {CLIMA}")
 
           if not os.path.exists(EVENTOS):
-              raise SystemExit(
-                  f"ERROR: no existe {EVENTOS}"
-              )
+              raise SystemExit(f"ERROR: no existe {EVENTOS}")
 
           print("=" * 70)
           print("CLIMAAR - MODELO HISTORICO DEFINITIVO")
           print("=" * 70)
 
-          # ============================================================
-          # CARGA
-          # ============================================================
+          clima = pd.read_csv(CLIMA)
+          eventos = pd.read_csv(EVENTOS)
 
-          clima = pd.read_csv(
-              CLIMA
-          )
-
-          eventos = pd.read_csv(
-              EVENTOS
-          )
-
-          print(
-              f"Registros meteorologicos: {len(clima):,}"
-          )
-
-          print(
-              f"Eventos catalogados: {len(eventos):,}"
-          )
-
-          # ============================================================
-          # COLUMNAS NECESARIAS
-          # ============================================================
+          print(f"Registros meteorologicos: {len(clima):,}")
+          print(f"Eventos catalogados: {len(eventos):,}")
 
           columnas = [
               "time",
@@ -153,25 +112,17 @@ jobs:
                       f"ERROR: falta columna de eventos {columna}"
                   )
 
-          # ============================================================
-          # LIMPIEZA
-          # ============================================================
-
           clima["time"] = pd.to_datetime(
               clima["time"],
               errors="coerce"
           )
 
-          clima = clima.dropna(
-              subset=["time"]
-          )
+          clima = clima.dropna(subset=["time"])
 
           clima = (
               clima
               .sort_values("time")
-              .drop_duplicates(
-                  subset=["time"]
-              )
+              .drop_duplicates(subset=["time"])
               .reset_index(drop=True)
           )
 
@@ -186,18 +137,9 @@ jobs:
               errors="coerce"
           )
 
-          eventos = eventos.dropna(
-              subset=["fecha"]
-          )
+          eventos = eventos.dropna(subset=["fecha"])
 
-          eventos["fecha"] = (
-              eventos["fecha"]
-              .dt.normalize()
-          )
-
-          # ============================================================
-          # SOLO EVENTOS REALES CATALOGADOS
-          # ============================================================
+          eventos["fecha"] = eventos["fecha"].dt.normalize()
 
           eventos["severo"] = (
               eventos[
@@ -221,9 +163,7 @@ jobs:
 
           eventos = (
               eventos
-              .drop_duplicates(
-                  subset=["fecha"]
-              )
+              .drop_duplicates(subset=["fecha"])
               .sort_values("fecha")
               .reset_index(drop=True)
           )
@@ -236,7 +176,7 @@ jobs:
               print(
                   fila["fecha"].strftime("%Y-%m-%d"),
                   "-",
-                  fila["evento"]
+                  fila.get("evento", "evento")
               )
 
           print(
@@ -248,33 +188,10 @@ jobs:
                   "ERROR: hay menos de 3 eventos severos reales."
               )
 
-          # ============================================================
-          # VARIABLES TEMPORALES
-          # ============================================================
-
-          clima["fecha"] = (
-              clima["time"]
-              .dt.normalize()
-          )
-
-          clima["hora"] = (
-              clima["time"]
-              .dt.hour
-          )
-
-          clima["mes"] = (
-              clima["time"]
-              .dt.month
-          )
-
-          clima["dia_ano"] = (
-              clima["time"]
-              .dt.dayofyear
-          )
-
-          # ============================================================
-          # VARIABLES FISICAS
-          # ============================================================
+          clima["fecha"] = clima["time"].dt.normalize()
+          clima["hora"] = clima["time"].dt.hour
+          clima["mes"] = clima["time"].dt.month
+          clima["dia_ano"] = clima["time"].dt.dayofyear
 
           clima["temp_rocio_dif"] = (
               clima["temperature_2m"]
@@ -295,326 +212,161 @@ jobs:
               * np.cos(rad)
           )
 
-          # ============================================================
-          # CAMBIOS METEOROLOGICOS
-          # ============================================================
-
           clima["cambio_presion_1h"] = (
-              clima["pressure_msl"]
-              .diff(1)
+              clima["pressure_msl"].diff(1)
           )
 
           clima["cambio_presion_3h"] = (
-              clima["pressure_msl"]
-              .diff(3)
+              clima["pressure_msl"].diff(3)
           )
 
           clima["cambio_temp_1h"] = (
-              clima["temperature_2m"]
-              .diff(1)
+              clima["temperature_2m"].diff(1)
           )
 
           clima["cambio_temp_3h"] = (
-              clima["temperature_2m"]
-              .diff(3)
+              clima["temperature_2m"].diff(3)
           )
 
           clima["cambio_humedad_1h"] = (
-              clima["relative_humidity_2m"]
-              .diff(1)
+              clima["relative_humidity_2m"].diff(1)
           )
 
           clima["cambio_viento_1h"] = (
-              clima["wind_speed_10m"]
-              .diff(1)
+              clima["wind_speed_10m"].diff(1)
           )
-
-          # ============================================================
-          # VENTANAS METEOROLOGICAS
-          # ============================================================
 
           clima["lluvia_3h"] = (
               clima["precipitation"]
-              .rolling(
-                  3,
-                  min_periods=3
-              )
+              .rolling(3, min_periods=3)
               .sum()
           )
 
           clima["lluvia_6h"] = (
               clima["precipitation"]
-              .rolling(
-                  6,
-                  min_periods=6
-              )
+              .rolling(6, min_periods=6)
               .sum()
           )
 
           clima["lluvia_12h"] = (
               clima["precipitation"]
-              .rolling(
-                  12,
-                  min_periods=12
-              )
+              .rolling(12, min_periods=12)
               .sum()
           )
 
           clima["rafaga_max_3h"] = (
               clima["wind_gusts_10m"]
-              .rolling(
-                  3,
-                  min_periods=3
-              )
+              .rolling(3, min_periods=3)
               .max()
           )
 
           clima["rafaga_max_6h"] = (
               clima["wind_gusts_10m"]
-              .rolling(
-                  6,
-                  min_periods=6
-              )
+              .rolling(6, min_periods=6)
               .max()
           )
 
           clima["viento_max_6h"] = (
               clima["wind_speed_10m"]
-              .rolling(
-                  6,
-                  min_periods=6
-              )
-              .max()
-          )
-
-          clima["presion_min_6h"] = (
-              clima["pressure_msl"]
-              .rolling(
-                  6,
-                  min_periods=6
-              )
-              .min()
-          )
-
-          clima["presion_max_6h"] = (
-              clima["pressure_msl"]
-              .rolling(
-                  6,
-                  min_periods=6
-              )
-              .max()
-          )
-
-          clima["humedad_max_6h"] = (
-              clima["relative_humidity_2m"]
-              .rolling(
-                  6,
-                  min_periods=6
-              )
+              .rolling(6, min_periods=6)
               .max()
           )
 
           clima["humedad_min_6h"] = (
               clima["relative_humidity_2m"]
-              .rolling(
-                  6,
-                  min_periods=6
-              )
+              .rolling(6, min_periods=6)
+              .min()
+          )
+
+          clima["presion_min_6h"] = (
+              clima["pressure_msl"]
+              .rolling(6, min_periods=6)
               .min()
           )
 
           # ============================================================
-          # CONSTRUIR RESUMEN DIARIO
-          #
-          # IMPORTANTE:
-          # No se generan miles de positivos artificiales.
-          # Cada fecha severa sigue siendo UN caso.
+          # VARIABLES UTILIZADAS POR EL MODELO
           # ============================================================
 
-          agregaciones = {
-              "temperature_2m": [
-                  "mean",
-                  "max",
-                  "min"
-              ],
-              "relative_humidity_2m": [
-                  "mean",
-                  "max",
-                  "min"
-              ],
-              "dew_point_2m": [
-                  "mean",
-                  "max"
-              ],
-              "pressure_msl": [
-                  "mean",
-                  "min",
-                  "max"
-              ],
-              "precipitation": [
-                  "sum",
-                  "max"
-              ],
-              "wind_speed_10m": [
-                  "mean",
-                  "max"
-              ],
-              "wind_gusts_10m": [
-                  "mean",
-                  "max"
-              ],
-              "temp_rocio_dif": [
-                  "mean",
-                  "min"
-              ],
-              "viento_u": [
-                  "mean",
-                  "max",
-                  "min"
-              ],
-              "viento_v": [
-                  "mean",
-                  "max",
-                  "min"
-              ],
-              "cambio_presion_1h": [
-                  "mean",
-                  "min"
-              ],
-              "cambio_presion_3h": [
-                  "mean",
-                  "min"
-              ],
-              "cambio_temp_1h": [
-                  "mean",
-                  "min",
-                  "max"
-              ],
-              "cambio_temp_3h": [
-                  "mean",
-                  "min",
-                  "max"
-              ],
-              "cambio_humedad_1h": [
-                  "mean",
-                  "min",
-                  "max"
-              ],
-              "cambio_viento_1h": [
-                  "mean",
-                  "max"
-              ],
-              "lluvia_3h": [
-                  "max"
-              ],
-              "lluvia_6h": [
-                  "max"
-              ],
-              "lluvia_12h": [
-                  "max"
-              ],
-              "rafaga_max_3h": [
-                  "max"
-              ],
-              "rafaga_max_6h": [
-                  "max"
-              ],
-              "viento_max_6h": [
-                  "max"
-              ],
-              "presion_min_6h": [
-                  "min"
-              ],
-              "presion_max_6h": [
-                  "max"
-              ],
-              "humedad_max_6h": [
-                  "max"
-              ],
-              "humedad_min_6h": [
-                  "min"
-              ]
-          }
+          features = [
+              "temperature_2m",
+              "relative_humidity_2m",
+              "dew_point_2m",
+              "pressure_msl",
+              "precipitation",
+              "wind_speed_10m",
+              "wind_direction_10m",
+              "wind_gusts_10m",
+              "temp_rocio_dif",
+              "viento_u",
+              "viento_v",
+              "cambio_presion_1h",
+              "cambio_presion_3h",
+              "cambio_temp_1h",
+              "cambio_temp_3h",
+              "cambio_humedad_1h",
+              "cambio_viento_1h",
+              "lluvia_3h",
+              "lluvia_6h",
+              "lluvia_12h",
+              "rafaga_max_3h",
+              "rafaga_max_6h",
+              "viento_max_6h",
+              "humedad_min_6h",
+              "presion_min_6h",
+              "hora",
+              "mes",
+              "dia_ano"
+          ]
+
+          # ============================================================
+          # CONSTRUIR PERFIL DIARIO
+          # ============================================================
 
           diario = (
               clima
               .groupby("fecha")
-              .agg(agregaciones)
-          )
-
-          diario.columns = [
-              "_".join(
-                  [str(x) for x in columna]
-              )
-              for columna in diario.columns
-          ]
-
-          diario = diario.reset_index()
-
-          # ============================================================
-          # VARIABLES CALENDARIO
-          # ============================================================
-
-          diario["mes"] = (
-              diario["fecha"]
-              .dt.month
-          )
-
-          diario["dia_ano"] = (
-              diario["fecha"]
-              .dt.dayofyear
-          )
-
-          # ============================================================
-          # ETIQUETA
-          # ============================================================
-
-          fechas_eventos = set(
-              eventos["fecha"]
+              .agg({
+                  "temperature_2m": "mean",
+                  "relative_humidity_2m": "mean",
+                  "dew_point_2m": "mean",
+                  "pressure_msl": "mean",
+                  "precipitation": "sum",
+                  "wind_speed_10m": "mean",
+                  "wind_direction_10m": "mean",
+                  "wind_gusts_10m": "max",
+                  "temp_rocio_dif": "mean",
+                  "viento_u": "mean",
+                  "viento_v": "mean",
+                  "cambio_presion_1h": "min",
+                  "cambio_presion_3h": "min",
+                  "cambio_temp_1h": "max",
+                  "cambio_temp_3h": "max",
+                  "cambio_humedad_1h": "min",
+                  "cambio_viento_1h": "max",
+                  "lluvia_3h": "max",
+                  "lluvia_6h": "max",
+                  "lluvia_12h": "max",
+                  "rafaga_max_3h": "max",
+                  "rafaga_max_6h": "max",
+                  "viento_max_6h": "max",
+                  "humedad_min_6h": "min",
+                  "presion_min_6h": "min",
+                  "hora": "mean",
+                  "mes": "first",
+                  "dia_ano": "first"
+              })
+              .reset_index()
           )
 
           diario["evento_severo"] = (
               diario["fecha"]
-              .isin(fechas_eventos)
-              .astype(int)
-          )
-
-          # ============================================================
-          # LIMPIEZA FINAL
-          # ============================================================
-
-          diario = diario.replace(
-              [np.inf, -np.inf],
-              np.nan
-          )
+              .isin(eventos["fecha"])
+          ).astype(int)
 
           diario = diario.dropna(
-              subset=[
-                  columna
-                  for columna in diario.columns
-                  if columna not in [
-                      "fecha",
-                      "evento_severo"
-                  ]
-              ]
+              subset=features
           ).reset_index(drop=True)
-
-          # ============================================================
-          # FEATURES
-          # ============================================================
-
-          features = [
-              columna
-              for columna in diario.columns
-              if columna not in [
-                  "fecha",
-                  "evento_severo"
-              ]
-          ]
-
-          # ============================================================
-          # VALIDACION DE CLASES
-          # ============================================================
 
           positivos = diario[
               diario["evento_severo"] == 1
@@ -624,49 +376,21 @@ jobs:
               diario["evento_severo"] == 0
           ].copy()
 
-          print("=" * 70)
-          print("DATASET DIARIO")
-          print("=" * 70)
-
-          print(
-              f"Dias meteorologicos: {len(diario):,}"
-          )
-
-          print(
-              f"Dias severos reales: {len(positivos):,}"
-          )
-
-          print(
-              f"Dias no severos: {len(negativos):,}"
-          )
-
           if len(positivos) < 3:
               raise SystemExit(
-                  "ERROR: no hay suficientes eventos para validar."
+                  "ERROR: no hay suficientes eventos severos después "
+                  "de limpiar los datos."
               )
 
-          # ============================================================
-          # NORMALIZACION
-          # ============================================================
-
-          X = diario[
-              features
-          ].astype(float)
-
-          y = diario[
-              "evento_severo"
-          ].astype(int)
+          X = diario[features].astype(float)
+          y = diario["evento_severo"].astype(int)
 
           scaler = StandardScaler()
 
-          X_scaled = scaler.fit_transform(
-              X
-          )
+          X_scaled = scaler.fit_transform(X)
 
           # ============================================================
           # VALIDACION LEAVE-ONE-EVENT-OUT
-          #
-          # Cada evento severo se deja fuera del entrenamiento.
           # ============================================================
 
           resultados_validacion = []
@@ -684,19 +408,16 @@ jobs:
               mascara_train = (
                   ~mascara_test
                   & (
-                      diario["evento_severo"]
-                      == 0
+                      diario["evento_severo"] == 0
                   )
               )
 
-              # Agregar los otros eventos severos al entrenamiento.
               mascara_train = (
                   mascara_train
                   | (
                       (~mascara_test)
                       & (
-                          diario["evento_severo"]
-                          == 1
+                          diario["evento_severo"] == 1
                       )
                   )
               )
@@ -749,16 +470,11 @@ jobs:
                   }
               )
 
-          # ============================================================
-          # METRICAS DE VALIDACION
-          # ============================================================
-
           probabilidades_eventos = [
               x["probabilidad"]
               for x in resultados_validacion
           ]
 
-          # Umbral conservador para detectar casos anormales.
           if probabilidades_eventos:
               umbral = float(
                   np.percentile(
@@ -787,10 +503,6 @@ jobs:
               y
           )
 
-          # ============================================================
-          # IMPORTANCIA
-          # ============================================================
-
           importancia = pd.DataFrame(
               {
                   "feature": features,
@@ -803,10 +515,6 @@ jobs:
               "importance",
               ascending=False
           )
-
-          # ============================================================
-          # INFORMACION DEL MODELO
-          # ============================================================
 
           paquete_modelo = {
               "modelo": modelo_final,
@@ -823,182 +531,21 @@ jobs:
               "umbral_referencia": umbral
           }
 
-          # ============================================================
-          # GUARDAR MODELO COMPRIMIDO
-          # ============================================================
-
           joblib.dump(
               paquete_modelo,
               MODEL_FILE,
               compress=3
           )
 
-          # ============================================================
-          # METRICAS
-          # ============================================================
-
           metricas = {
               "modelo": "RandomForestClassifier",
               "version": "2.0",
               "tipo": "firma_atmosferica_evento_severo",
               "periodo": "1980-2026",
-              "dias_totales": int(
-                  len(diario)
-              ),
-              "eventos_severos_reales": int(
-                  len(positivos)
-              ),
-              "dias_no_severos": int(
-                  len(negativos)
-              ),
-              "metodo_validacion": (
-                  "leave_one_event_out"
-              ),
-              "resultados_eventos": (
-                  resultados_validacion
-              ),
+              "dias_totales": int(len(diario)),
+              "eventos_severos_reales": int(len(positivos)),
+              "dias_no_severos": int(len(negativos)),
+              "metodo_validacion": "leave_one_event_out",
+              "resultados_eventos": resultados_validacion,
               "umbral_referencia": umbral,
-              "variables_mas_importantes": (
-                  importancia
-                  .head(20)
-                  .to_dict(
-                      orient="records"
-                  )
-              ),
-              "eventos_utilizados": (
-                  eventos[
-                      [
-                          "fecha",
-                          "evento",
-                          "rafaga_kmh",
-                          "lluvia_mm",
-                          "tornado"
-                      ]
-                  ]
-                  .astype(str)
-                  .to_dict(
-                      orient="records"
-                  )
-              ),
-              "advertencia": (
-                  "Este modelo aprende firmas atmosfericas "
-                  "de los eventos historicos catalogados. "
-                  "No representa por si solo un nowcast de "
-                  "1 hora. El nowcast operacional se construira "
-                  "combinando este modelo con RainViewer."
-              )
-          }
-
-          with open(
-              METRICS_FILE,
-              "w",
-              encoding="utf-8"
-          ) as f:
-              json.dump(
-                  metricas,
-                  f,
-                  indent=2,
-                  ensure_ascii=False
-              )
-
-          with open(
-              FEATURES_FILE,
-              "w",
-              encoding="utf-8"
-          ) as f:
-              json.dump(
-                  features,
-                  f,
-                  indent=2,
-                  ensure_ascii=False
-              )
-
-          # ============================================================
-          # RESULTADO
-          # ============================================================
-
-          print("=" * 70)
-          print("MODELO FINALIZADO")
-          print("=" * 70)
-
-          print(
-              f"Dias utilizados: {len(diario):,}"
-          )
-
-          print(
-              f"Eventos severos reales: {len(positivos)}"
-          )
-
-          print(
-              f"Variables: {len(features)}"
-          )
-
-          print("=" * 70)
-          print("VALIDACION POR EVENTO")
-          print("=" * 70)
-
-          for resultado in resultados_validacion:
-              print(
-                  resultado["fecha"],
-                  "->",
-                  round(
-                      resultado["probabilidad"],
-                      4
-                  )
-              )
-
-          print("=" * 70)
-          print("ARCHIVOS")
-          print("=" * 70)
-
-          print(
-              MODEL_FILE
-          )
-
-          print(
-              METRICS_FILE
-          )
-
-          print(
-              FEATURES_FILE
-          )
-
-          print("=" * 70)
-
-          PY
-
-      - name: Verificar archivos y tamanos
-        run: |
-          echo "Archivos generados:"
-          ls -lh modelo/
-
-          MODEL_SIZE=$(stat -c%s modelo/climaar_modelo_historico.joblib)
-
-          echo "Tamano modelo: ${MODEL_SIZE} bytes"
-
-          if [ "$MODEL_SIZE" -ge 95000000 ]; then
-            echo "ERROR: el modelo supera 95 MB."
-            exit 1
-          fi
-
-          test -s modelo/climaar_modelo_historico.joblib
-          test -s modelo/climaar_modelo_historico_metricas.json
-          test -s modelo/climaar_features.json
-
-          echo "VERIFICACION OK"
-
-      - name: Guardar modelo en GitHub
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add modelo/climaar_modelo_historico.joblib
-          git add modelo/climaar_modelo_historico_metricas.json
-          git add modelo/climaar_features.json
-
-          if git diff --cached --quiet; then
-            echo "No hay cambios para guardar."
-          else
-            git commit -m "Modelo historico ClimaAR definitivo"
-            git push
-          fi
+              "variables_m
