@@ -920,12 +920,131 @@ def synchronized_frame_status() -> (
 # INTELIGENCIA
 # ============================================================
 
+def sanitize_storm_probabilities(storm: Any) -> Any:
+    if not isinstance(storm, dict):
+        return storm
+
+    sanitized = dict(storm)
+    if sanitized.get("probabilidades_calibradas") is True:
+        return sanitized
+
+    probabilities = sanitized.get("probabilidades")
+    if isinstance(probabilities, dict):
+        sanitized["probabilidades"] = {
+            key: None
+            for key in probabilities
+        }
+
+    hazards = sanitized.get("peligros")
+    if isinstance(hazards, dict):
+        sanitized["peligros"] = {
+            key: None
+            for key in hazards
+        }
+
+    ai = sanitized.get("ia_v8")
+    if isinstance(ai, dict) and "probabilidad_impacto" in ai:
+        sanitized["ia_v8"] = dict(ai)
+        sanitized["ia_v8"]["probabilidad_impacto"] = None
+
+    return sanitized
+
+
+def sanitize_ml_probabilities(ml: Any) -> Any:
+    if not isinstance(ml, dict):
+        return ml
+
+    sanitized = dict(ml)
+    calibration = sanitized.get("calibracion_probabilistica", {})
+    if not isinstance(calibration, dict):
+        calibration = {}
+
+    per_model = calibration.get("por_modelo", {})
+    metrics = calibration.get("metricas", {})
+    if not isinstance(per_model, dict):
+        per_model = {}
+    if not isinstance(metrics, dict):
+        metrics = {}
+
+    predictions = sanitized.get("predicciones")
+    if not isinstance(predictions, list):
+        return sanitized
+
+    sanitized_predictions = []
+    for prediction in predictions:
+        if not isinstance(prediction, dict):
+            sanitized_predictions.append(prediction)
+            continue
+
+        clean_prediction = dict(prediction)
+        horizons = clean_prediction.get("horizontes")
+        if isinstance(horizons, dict):
+            clean_horizons = {}
+            for horizon, values in horizons.items():
+                if not isinstance(values, dict):
+                    clean_horizons[horizon] = values
+                    continue
+
+                clean_values = dict(values)
+                for target in ("strengthened", "weakened", "toward_bahia"):
+                    key = f"{horizon}m_{target}"
+                    model_calibration = per_model.get(key)
+                    if isinstance(model_calibration, dict):
+                        calibrated = model_calibration.get("aplicada") is True
+                    else:
+                        metric = metrics.get(key, {})
+                        calibrated = (
+                            isinstance(metric, dict)
+                            and metric.get("selection") == "CALIBRATED"
+                        )
+                    if not calibrated:
+                        clean_values[target] = None
+
+                clean_horizons[horizon] = clean_values
+
+            clean_prediction["horizontes"] = clean_horizons
+
+        sanitized_predictions.append(clean_prediction)
+
+    sanitized["predicciones"] = sanitized_predictions
+    return sanitized
+
+
+def sanitize_decision_probabilities(decision: Any) -> Any:
+    if not isinstance(decision, dict):
+        return decision
+
+    sanitized = dict(decision)
+    sanitized["inteligencia"] = sanitize_storm_probabilities(
+        sanitized.get("inteligencia")
+    )
+
+    summary = sanitized.get("resumen_operativo")
+    if isinstance(summary, dict):
+        summary = dict(summary)
+        for key in (
+            "probabilidad_tormenta",
+            "probabilidad_llegada_bahia",
+            "probabilidad_fortalecimiento",
+            "probabilidad_debilitamiento",
+            "lluvia_fuerte",
+            "viento_fuerte",
+            "granizo",
+            "rayo",
+        ):
+            if key in summary:
+                summary[key] = None
+        sanitized["resumen_operativo"] = summary
+
+    return sanitized
+
+
 def result_payload() -> (
     dict[str, Any]
 ):
 
-    storm = read_json(
-        STORM_FILE
+    storm = sanitize_storm_probabilities(
+        read_json(STORM_FILE)
     )
 
     if storm is not None:
@@ -937,21 +1056,13 @@ def result_payload() -> (
         storm[
             "interpretacion_probabilidades"
         ] = (
-            "heuristicas_no_calibradas"
+            "calibradas"
+            if storm.get("probabilidades_calibradas") is True
+            else "no_publicadas_sin_calibracion"
         )
 
-        storm[
-            "probabilidades_calibradas"
-        ] = False
-
-        storm["nota"] = (
-            "Los campos "
-            "probabilidad/peligros "
-            "del Storm Engine son "
-            "estimaciones heurísticas; "
-            "no representan "
-            "probabilidades científicas "
-            "calibradas."
+        storm["probabilidades_calibradas"] = (
+            storm.get("probabilidades_calibradas") is True
         )
 
     return {
@@ -964,8 +1075,8 @@ def result_payload() -> (
             ),
 
         "resultado_final":
-            read_json(
-                DECISION_FILE
+            sanitize_decision_probabilities(
+                read_json(DECISION_FILE)
             ),
 
         "inteligencia_tormenta":
@@ -1690,16 +1801,14 @@ def tormenta() -> (
                 False,
 
             "tipo_probabilidades":
-                "heuristicas_no_calibradas",
+                "no_publicadas",
 
-            "nota": (
-                "No hay salida "
-                "disponible del "
-                "Storm Engine."
-            ),
+            "estado": "sin_datos",
 
             **radar_metadata(),
         }
+
+    storm = sanitize_storm_probabilities(storm)
 
     return {
         "ok": True,
@@ -1708,17 +1817,14 @@ def tormenta() -> (
             storm,
 
         "probabilidades_calibradas":
-            False,
+            storm.get("probabilidades_calibradas") is True,
 
         "tipo_probabilidades":
-            "heuristicas_no_calibradas",
-
-        "nota": (
-            "Las probabilidades "
-            "del Storm Engine son "
-            "heurísticas y no están "
-            "científicamente calibradas."
-        ),
+            (
+                "calibradas"
+                if storm.get("probabilidades_calibradas") is True
+                else "no_publicadas"
+            ),
 
         "frame_radar":
             radar_timestamp(),
@@ -1765,11 +1871,13 @@ def modelo() -> (
             "predicciones":
                 [],
 
-            "calibracion":
+            "calibracion_probabilistica":
                 None,
 
             **radar_metadata(),
         }
+
+    ml = sanitize_ml_probabilities(ml)
 
     return {
         "ok":
@@ -1811,9 +1919,10 @@ def modelo() -> (
                 [],
             ),
 
-        "calibracion":
+        "calibracion_probabilistica":
             ml.get(
-                "calibracion"
+                "calibracion_probabilistica",
+                ml.get("calibracion"),
             ),
 
         **radar_metadata(),
@@ -1828,6 +1937,8 @@ def modelo_nowcast() -> (
     ml = read_json(
         ML_PREDICTION_FILE
     )
+
+    ml = sanitize_ml_probabilities(ml)
 
     return {
         "ok":
