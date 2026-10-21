@@ -1060,6 +1060,11 @@ def result_payload() -> (
             if storm.get("probabilidades_calibradas") is True
             else "no_publicadas_sin_calibracion"
         )
+        storm["tipo_probabilidades"] = (
+            "calibradas"
+            if storm.get("probabilidades_calibradas") is True
+            else "heuristicas_no_calibradas"
+        )
 
         storm["probabilidades_calibradas"] = (
             storm.get("probabilidades_calibradas") is True
@@ -1823,7 +1828,7 @@ def tormenta() -> (
             (
                 "calibradas"
                 if storm.get("probabilidades_calibradas") is True
-                else "no_publicadas"
+                else "heuristicas_no_calibradas"
             ),
 
         "frame_radar":
@@ -1874,6 +1879,9 @@ def modelo() -> (
             "calibracion_probabilistica":
                 None,
 
+            "calibracion":
+                None,
+
             **radar_metadata(),
         }
 
@@ -1920,6 +1928,12 @@ def modelo() -> (
             ),
 
         "calibracion_probabilistica":
+            ml.get(
+                "calibracion_probabilistica",
+                ml.get("calibracion"),
+            ),
+
+        "calibracion":
             ml.get(
                 "calibracion_probabilistica",
                 ml.get("calibracion"),

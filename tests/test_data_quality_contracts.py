@@ -75,6 +75,10 @@ class ProbabilityContractTests(unittest.TestCase):
             payload = app.tormenta()
 
         self.assertFalse(payload["probabilidades_calibradas"])
+        self.assertEqual(
+            payload["tipo_probabilidades"],
+            "heuristicas_no_calibradas",
+        )
         self.assertTrue(
             all(
                 value is None
@@ -91,6 +95,11 @@ class ProbabilityContractTests(unittest.TestCase):
             patch.object(app, "radar_metadata", return_value={}),
         ):
             payload = app.modelo()
+
+        self.assertEqual(
+            payload["calibracion"],
+            payload["calibracion_probabilistica"],
+        )
 
         track = payload["predicciones"][0]
         for target in ("strengthened", "weakened", "toward_bahia"):
