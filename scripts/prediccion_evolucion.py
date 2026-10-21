@@ -64,7 +64,10 @@ MIN_MATCH_PIXELS = 10.0
 MAX_MATCH_EXTRA_UNCERTAINTY = 1.35
 MIN_MATCH_MARGIN = 2.0
 
-MAX_SEGMENT_INTERVAL = 60.0
+# Los frames pueden faltar por interrupciones del radar o del histórico.
+# Un intervalo largo no debe borrar la predicción del track, pero sí
+# degradar explícitamente su confianza y aumentar su incertidumbre.
+MAX_SEGMENT_INTERVAL = 180.0
 
 # No dejamos que una aceleración estimada cambie demasiado
 # la velocidad durante un único horizonte.
@@ -617,6 +620,14 @@ def estimate_motion(track, history=None):
 
     recent = movements[-min(5, len(movements)):]
 
+    # Calidad temporal del movimiento. Un hueco largo puede seguir
+    # aportando información de desplazamiento, pero nunca debe tratarse
+    # como si fuera una secuencia normal de frames.
+    max_gap_minutes = max(
+        item["dt"]
+        for item in movements
+    )
+
     weights = list(range(1, len(recent) + 1))
 
     recent_vx = weighted_mean(
@@ -778,6 +789,18 @@ def estimate_motion(track, history=None):
         elif backtest_p75 > 8:
             confidence = min(confidence, 78.0)
 
+    # Penalización explícita por huecos temporales. Hasta 15 minutos
+    # no aplicamos penalización. Después, la confianza cae de forma
+    # progresiva; así un intervalo de 70 minutos no se interpreta como
+    # una observación normal de 10 minutos.
+    if max_gap_minutes > 15.0:
+        gap_penalty = (
+            max_gap_minutes - 15.0
+        ) * 0.60
+        confidence = clamp(
+            confidence - gap_penalty
+        )
+
     area_trend = history_area_trend(history)
     intensity_trend = history_intensity_trend(history)
 
@@ -828,6 +851,7 @@ def estimate_motion(track, history=None):
         "speed_stability": speed_stability,
         "speed_cv": speed_cv,
         "speed_trend_r2": speed_trend_r2,
+        "max_gap_minutes": max_gap_minutes,
         "mean_turn_degrees": mean_turn,
         "backtest_count": backtest["count"],
         "backtest_median_error": backtest_median,
@@ -959,6 +983,19 @@ def project(motion, x0, y0, horizon):
         + speed_error
         + horizon * 0.10
     )
+
+    # Un hueco largo aumenta la incertidumbre de la extrapolación.
+    # La predicción sigue disponible, pero el sistema deja explícito
+    # que la calidad temporal es inferior.
+    max_gap_minutes = number(
+        motion.get("max_gap_minutes", 0.0)
+    )
+
+    if max_gap_minutes > 15.0:
+        gap_factor = 1.0 + (
+            (max_gap_minutes - 15.0) / 60.0
+        )
+        uncertainty *= gap_factor
 
     return {
         "x_estimado": round(x_future, 2),
@@ -1686,6 +1723,10 @@ def predict_track(track, calibration_records=None):
             "confianza_prediccion": round(
                 motion["confidence"],
                 1,
+            ),
+            "max_gap_temporal_minutos": round(
+                motion.get("max_gap_minutes", 0.0),
+                2,
             ),
             "estabilidad_direccion": round(
                 motion["direction_stability"],
