@@ -145,10 +145,9 @@ def radar_timestamp(resultado):
         if dt:
             return iso(dt)
 
-    return iso(
-        datetime.now(
-            timezone.utc
-        )
+    raise RuntimeError(
+        "ERROR: no se pudo determinar el timestamp real del radar. "
+        "No se permite inventar un timestamp con la hora actual."
     )
 
 
@@ -682,57 +681,30 @@ def associate_tracks(
     return enriched
 
 
-def select_tracking_principal_track(tracks, seguimiento):
-    """Usa exactamente el principal elegido por seguimiento_temporal.py.
+def require_tracking_principal_track(tracks, seguimiento):
+    """Devuelve exclusivamente el track elegido por Tracking.
 
-    El adaptador no puede volver a elegir otro track por area/intensidad: eso
-    rompe la cadena tracking -> nowcast -> evolucion -> intelligence.
+    El adaptador no puede inventar ni volver a seleccionar un principal.
+    Si Tracking no entrega un principal válido, la cadena se detiene.
     """
-    principal_id = seguimiento.get(
-        "track_principal_candidato_id"
-    )
-
+    principal_id = seguimiento.get("track_principal_candidato_id")
     if principal_id is None:
-        return None
+        raise RuntimeError(
+            "ERROR: Tracking no definió track_principal_candidato_id. "
+            "Se aborta para evitar publicar un Nowcast sin principal."
+        )
 
     principal_text = str(principal_id)
-
     for track in tracks:
         if not isinstance(track, dict):
             continue
-        track_id = track.get(
-            "track_id",
-            track.get("id")
-        )
+        track_id = track.get("track_id", track.get("id"))
         if track_id is not None and str(track_id) == principal_text:
             return track
 
-    return None
-
-
-def select_compatibility_track(tracks):
-    """Fallback solamente para estados historicos sin principal de tracking."""
-    if not tracks:
-        return None
-
-    return max(
-        tracks,
-        key=lambda track:
-            max(
-                0.0,
-                number(
-                    track.get("pixeles"),
-                    0
-                )
-            )
-            *
-            max(
-                1.0,
-                number(
-                    track.get("intensidad"),
-                    0
-                )
-            )
+    raise RuntimeError(
+        "ERROR: track_principal_candidato_id="
+        f"{principal_id} no existe entre los tracks activos."
     )
 
 
@@ -772,6 +744,36 @@ def main():
     ):
         raise SystemExit(
             "ERROR: estado.json invalido"
+        )
+
+    radar_ts = radar_timestamp(resultado)
+    radar_dt = parse_ts(radar_ts)
+    if radar_dt is None:
+        raise RuntimeError(
+            "ERROR: timestamp radar invalido."
+        )
+
+    tracking_ts = parse_ts(
+        seguimiento.get("radar_timestamp")
+    )
+    if tracking_ts is None:
+        raise RuntimeError(
+            "ERROR: Tracking no contiene radar_timestamp valido."
+        )
+
+    if tracking_ts != radar_dt:
+        raise RuntimeError(
+            "ERROR: Tracking y Radar estan desincronizados: "
+            f"radar={radar_ts} tracking={iso(tracking_ts)}"
+        )
+
+    estado_ts = parse_ts(
+        estado.get("ultimo_radar_timestamp")
+    )
+    if estado_ts is not None and estado_ts != radar_dt:
+        raise RuntimeError(
+            "ERROR: estado.json y Radar estan desincronizados: "
+            f"radar={radar_ts} estado={iso(estado_ts)}"
         )
 
     width = max(
@@ -967,33 +969,18 @@ def main():
         else 0.0
     )
 
-    tracking_principal = select_tracking_principal_track(
+    if not tracks:
+        raise RuntimeError(
+            "ERROR: Tracking no contiene tracks activos para el frame actual."
+        )
+
+    tracking_principal = require_tracking_principal_track(
         tracks,
         seguimiento
     )
 
-    if tracks and tracking_principal is None:
-        principal_id = seguimiento.get(
-            "track_principal_candidato_id"
-        )
-        if principal_id is not None:
-            raise SystemExit(
-                "ERROR: el track principal indicado por seguimiento "
-                f"({principal_id}) no existe entre los tracks activos. "
-                "Se aborta para evitar mezclar amenazas distintas."
-            )
-
-    compat_track = tracking_principal or select_compatibility_track(
-        tracks
-    )
-
-    principal_source = (
-        "seguimiento_temporal"
-        if tracking_principal is not None
-        else "fallback_compatibilidad"
-        if compat_track is not None
-        else "sin_track"
-    )
+    compat_track = tracking_principal
+    principal_source = "seguimiento_temporal"
 
     if compat_track:
 
@@ -1087,10 +1074,6 @@ def main():
             "GAP_MAYOR_60_MIN"
         )
 
-    radar_ts = radar_timestamp(
-        resultado
-    )
-
     salida = {
 
         "version":
@@ -1111,9 +1094,15 @@ def main():
                 radar_ts,
 
             "frames_analizados":
-                len(
-                    nucleos_dinamicos
-                ),
+                int(
+                    number(
+                        resultado.get(
+                            "frames_historicos_utilizados",
+                            0
+                        ),
+                        0
+                    )
+                ) + 1,
 
             "tiles_ok":
                 True,
@@ -1218,16 +1207,19 @@ def main():
                 nucleos_con_track,
 
             "nucleo_principal_id":
-                (
-                    compat_track.get(
-                        "track_id",
-                        compat_track.get(
-                            "id"
-                        )
-                    )
-                    if compat_track
-                    else None
+                compat_track.get(
+                    "track_id",
+                    compat_track.get("id")
                 ),
+
+            "track_principal_id":
+                compat_track.get(
+                    "track_id",
+                    compat_track.get("id")
+                ),
+
+            "track_principal_candidato_id":
+                seguimiento.get("track_principal_candidato_id"),
 
             "nucleo_principal_fuente":
                 principal_source,
