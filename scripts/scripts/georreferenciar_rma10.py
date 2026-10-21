@@ -608,6 +608,12 @@ def main():
         BAHIA_LON,
     )
 
+    # Guardamos el candidato preliminar antes de que georreferenciacion
+    # determine el principal operativo definitivo.
+    nowcast["nucleo_principal_id_previo"] = nowcast.get(
+        "nucleo_principal_id"
+    )
+
     nucleos = nowcast.get(
         "nucleos",
         nowcast.get("nucleos_analizados", []),
@@ -777,6 +783,20 @@ def main():
     if principal_item is not None:
         geo = principal_item["georreferencia"]
         motion = principal_item["movimiento_bahia"]
+
+        # La georreferenciacion es la etapa que puede determinar si un
+        # track realmente amenaza Bahia Blanca. Desde este punto, este
+        # track pasa a ser el PRINCIPAL OPERATIVO y debe reemplazar al
+        # candidato preliminar del tracking.
+        principal_operativo_id = principal_item.get(
+            "track_id",
+            principal_item.get("nucleo_id"),
+        )
+        nowcast["nucleo_principal_id"] = principal_operativo_id
+        nowcast["nucleo_principal_fuente"] = "georreferenciacion_eta"
+        nowcast["track_principal_candidato_id"] = nowcast.get(
+            "nucleo_principal_id_previo"
+        )
 
         nowcast["distancia_km"] = geo["distancia_bahia_km"]
         nowcast["distancia_tipo"] = (
