@@ -12,7 +12,7 @@ SALIDA = SEGUIMIENTO / "seguimiento_temporal.json"
 SCHEMA_VERSION = 8
 
 MIN_INTERVALO = 2.0
-MAX_INTERVALO = 200.0
+MAX_INTERVALO = 45.0
 MIN_DESPLAZAMIENTO_MOVIMIENTO = 1.0
 MIN_VELOCIDAD_RUMBO = 0.75
 MIN_DESPLAZAMIENTO_RUMBO = 3.0
@@ -2301,7 +2301,7 @@ def procesar_frame_secuencia(
             "FRAME_REPETIDO_O_ATRASADO"
             if intervalo <= 0
             else
-            "GAP_MAYOR_60_MIN"
+            "GAP_MAYOR_45_MIN"
         )
 
         principal = seleccionar_track_principal(
