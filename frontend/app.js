@@ -646,7 +646,7 @@ function principalNucleus() {
     : [];
 
   if (principalId === null || principalId === undefined) {
-    return nuclei[0] || null;
+    return null;
   }
 
   return nuclei.find(
@@ -761,7 +761,7 @@ function renderStorm() {
 
   setText(
     "#stormCores",
-    principal ? "1" : "0"
+    String(cores.length)
   );
 
   const movement = principal?.movimiento || {};
@@ -1005,7 +1005,7 @@ function renderModel() {
   const predictions =
     getPredictions(model);
 
-  const nearest =
+  const principal =
     findPrincipalTrack(
       predictions
     );
@@ -1016,7 +1016,7 @@ function renderModel() {
     "—"
   );
 
-  if (!nearest) {
+  if (!principal) {
     setText(
       "#predictionTrack",
       "Sin track disponible"
@@ -1049,13 +1049,13 @@ function renderModel() {
 
   setText(
     "#predictionTrack",
-    nearest.track_id !== undefined
-      ? `Track ${nearest.track_id}`
+    principal.track_id !== undefined
+      ? `Track ${principal.track_id}`
       : "Track"
   );
 
   const distance =
-    number(nearest.distance_km);
+    number(principal.distance_km);
 
   setText(
     "#predictionDistance",
@@ -1065,7 +1065,7 @@ function renderModel() {
   );
 
   const horizons =
-    nearest.horizontes || {};
+    principal.horizontes || {};
 
   for (
     const minute of [5,10,20,30]
@@ -1101,7 +1101,7 @@ function renderModel() {
 
   const bearing =
     number(
-      nearest.motion_bearing_deg
+      principal.motion_bearing_deg
     );
 
   setText(
