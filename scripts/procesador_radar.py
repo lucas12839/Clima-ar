@@ -219,14 +219,14 @@ def aplicar_mascara_estatica(actual, ruta_actual=None):
     mascara = cargar_mascara()
     if mascara is None:
         print("AVISO: se procesa el radar sin máscara estática.")
-        return actual.copy(), 0, 0, 0
+        return actual.copy(), 0, 0
 
     if mascara.shape != actual.shape:
         print("AVISO: tamaño de máscara diferente al radar actual.")
         print("Máscara:", mascara.shape)
         print("Radar:", actual.shape)
         print("Se ignora la máscara para no producir un error.")
-        return actual.copy(), 0, 0, 0
+        return actual.copy(), 0, 0
 
     estaticos = mascara & (actual > 0)
     evidencia_temporal, frames_temporales = _mascara_temporal_dinamica(
@@ -248,7 +248,7 @@ def aplicar_mascara_estatica(actual, ruta_actual=None):
     print("Frames temporales comparados:", frames_temporales)
     print("Frames utilizados para máscara:", frames_mascara)
 
-    return resultado, cantidad, frames_mascara, frames_temporales
+    return resultado, cantidad, frames_mascara
 
 
 def distancia_px(x1, y1, x2, y2):
@@ -480,9 +480,19 @@ def main():
     matriz_original = intensidad_radar(imagen)
     pixeles_originales = int(np.sum(matriz_original > 0))
 
-    matriz_dinamica, pixeles_estaticos, frames_mascara, frames_temporales = aplicar_mascara_estatica(
+    matriz_dinamica, pixeles_estaticos, frames_mascara = aplicar_mascara_estatica(
         matriz_original,
         ruta_actual=ACTUAL,
+    )
+
+    # Compatibilidad con seguimiento_temporal.py: aplicar_mascara_estatica
+    # conserva la firma histórica de 3 valores. El conteo de frames se
+    # obtiene aquí sin alterar la cadena de tracking.
+    frames_temporales = len(
+        _cargar_intensidades_previas(
+            matriz_original,
+            ruta_actual=ACTUAL,
+        )
     )
 
     pixeles_dinamicos = int(np.sum(matriz_dinamica > 0))
