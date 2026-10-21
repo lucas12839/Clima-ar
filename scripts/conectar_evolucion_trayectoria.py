@@ -329,37 +329,14 @@ def pixel_to_latlon(
 def get_bahia_principal_track_id(
     nowcast: dict[str, Any],
 ) -> Any:
-    """
-    Devuelve el track seleccionado específicamente
-    para el análisis hacia Bahía Blanca.
-
-    Esta prioridad es fundamental:
-    ETA/Bahía y trayectoria deben analizar el mismo núcleo.
-
-    No modifica nowcast.nucleo_principal_id.
-    """
-
-    bahia = nowcast.get(
-        "bahia_blanca"
-    )
-
-    if isinstance(bahia, dict):
-        value = bahia.get(
-            "nucleo_principal_id"
-        )
-
-        if value is not None:
-            return value
-
-    return None
+    """Devuelve el único principal operativo ya definido por Tracking."""
+    return nowcast.get("nucleo_principal_id")
 
 
 def get_radar_principal_track_id(
     nowcast: dict[str, Any],
 ) -> Any:
-    return nowcast.get(
-        "nucleo_principal_id"
-    )
+    return nowcast.get("nucleo_principal_id")
 
 
 def find_track(
@@ -402,109 +379,39 @@ def find_track(
 def select_principal_track(
     nowcast: dict[str, Any],
     evolution: dict[str, Any],
-) -> tuple[
-    dict[str, Any],
-    str,
-]:
+) -> tuple[dict[str, Any], str]:
+    """Obtiene exclusivamente el principal definido por Tracking/Nowcast.
+
+    Esta etapa no puede cambiar de track ni usar un fallback.
     """
-    Selección de núcleo para la trayectoria.
-
-    Prioridad:
-
-    1. Núcleo principal seleccionado por
-       el análisis de Bahía Blanca / ETA.
-    2. Núcleo principal general del Radar.
-    3. Mejor track activo con predicción.
-
-    Esto evita que ETA use un núcleo y la
-    trayectoria meteorológica otro distinto.
-    """
-
-    bahia_track_id = (
-        get_bahia_principal_track_id(
-            nowcast
-        )
-    )
-
-    if bahia_track_id is not None:
-        track = find_track(
-            evolution,
-            bahia_track_id,
-        )
-
-        if track is not None:
-            if track.get(
-                "pronostico_disponible"
-            ) is True:
-                return (
-                    track,
-                    "bahia_blanca_eta",
-                )
-
-    radar_track_id = (
-        get_radar_principal_track_id(
-            nowcast
-        )
-    )
-
-    if radar_track_id is not None:
-        track = find_track(
-            evolution,
-            radar_track_id,
-        )
-
-        if track is not None:
-            if track.get(
-                "pronostico_disponible"
-            ) is True:
-                return (
-                    track,
-                    "radar_principal",
-                )
-
-    nuclei = evolution.get(
-        "nucleos"
-    )
-
-    if not isinstance(
-        nuclei,
-        list,
-    ):
-        nuclei = []
-
-    candidates = [
-        track
-        for track in nuclei
-        if isinstance(
-            track,
-            dict,
-        )
-        and track.get(
-            "pronostico_disponible"
-        ) is True
-    ]
-
-    if not candidates:
+    principal_id = nowcast.get("nucleo_principal_id")
+    if principal_id is None:
         raise RuntimeError(
-            "No existe ningún track con "
-            "predicción de evolución disponible."
+            "ERROR: Nowcast no contiene nucleo_principal_id."
         )
 
-    selected = max(
-        candidates,
-        key=lambda item: float(
-            item.get(
-                "confianza_prediccion",
-                0,
-            )
-            or 0
-        ),
-    )
+    candidate_id = nowcast.get("track_principal_candidato_id")
+    if candidate_id is not None and str(candidate_id) != str(principal_id):
+        raise RuntimeError(
+            "ERROR: Nowcast tiene principales inconsistentes: "
+            f"nucleo_principal_id={principal_id} "
+            f"track_principal_candidato_id={candidate_id}."
+        )
 
-    return (
-        selected,
-        "fallback_confianza",
-    )
+    track = find_track(evolution, principal_id)
+    if track is None:
+        raise RuntimeError(
+            "ERROR: el principal "
+            f"{principal_id} no existe en prediccion_evolucion.json."
+        )
+
+    if track.get("pronostico_disponible") is not True:
+        raise RuntimeError(
+            "ERROR: el principal "
+            f"{principal_id} no tiene predicción de evolución disponible."
+        )
+
+    return track, "tracking_principal"
 
 
 def get_horizon_prediction(
@@ -850,14 +757,16 @@ def main() -> None:
             track=track,
         )
 
-    # IMPORTANTE:
-    # No modificamos nowcast.nucleo_principal_id.
-    # Ese campo sigue representando el principal
-    # general del radar.
-    #
-    # Las proyecciones de trayectoria, en cambio,
-    # quedan explícitamente asociadas al núcleo
-    # que ETA/Bahía seleccionó.
+    # El mismo principal de Tracking atraviesa toda la trayectoria.
+    if str(track_id) != str(nowcast.get("nucleo_principal_id")):
+        raise RuntimeError(
+            "ERROR: trayectoria intentó cambiar el principal: "
+            f"nowcast={nowcast.get('nucleo_principal_id')} "
+            f"trayectoria={track_id}"
+        )
+
+    nowcast["track_principal_id"] = track_id
+    nowcast["track_principal_candidato_id"] = track_id
 
     nowcast[
         "proyecciones"
