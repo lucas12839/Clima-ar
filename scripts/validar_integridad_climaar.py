@@ -185,38 +185,69 @@ def main() -> None:
     if not isinstance(evolution_nuclei, list):
         fail("evolution.nucleos no es lista")
     evolution_track = find_track(evolution_nuclei, candidate, "prediccion_evolucion.nucleos")
-    if evolution_track.get("pronostico_disponible") is not True:
-        fail(f"evolution principal {candidate} no tiene pronóstico disponible")
+    forecast_available = (
+        evolution_track.get("pronostico_disponible") is True
+    )
+    if (
+        not forecast_available
+        and evolution_track.get("motivo") != "SIN_MOVIMIENTO_VALIDO"
+    ):
+        fail(
+            f"evolution principal {candidate} tiene un estado de "
+            f"pronóstico no reconocido: {evolution_track.get('motivo')}"
+        )
 
     metadata = nc.get("proyecciones_metadata")
     if not isinstance(metadata, dict):
         fail("nowcast.proyecciones_metadata inválido")
     if sid(metadata.get("track_id")) != sid(candidate):
         fail(f"proyecciones_metadata.track_id={metadata.get('track_id')} != {candidate}")
+    metadata_availability = metadata.get(
+        "pronostico_disponible",
+        True,
+    )
+    if metadata_availability is not forecast_available:
+        fail(
+            "proyecciones_metadata.pronostico_disponible no coincide "
+            "con prediccion_evolucion"
+        )
 
     projections = nc.get("proyecciones")
     if not isinstance(projections, dict):
         fail("nowcast.proyecciones inválido")
-    for horizon in ("5", "10", "20", "30"):
-        projection = projections.get(horizon)
-        if not isinstance(projection, dict):
-            fail(f"falta proyección {horizon}")
-        if sid(projection.get("track_id")) != sid(candidate):
+    if not forecast_available:
+        if projections:
             fail(
-                f"proyección {horizon} track_id={projection.get('track_id')} "
-                f"!= principal={candidate}"
+                "nowcast contiene proyecciones sin movimiento válido"
             )
-        projection_ts = parse_utc(
-            projection.get("timestamp_utc"),
-            f"proyección {horizon}.timestamp_utc",
-        )
-        expected_projection_ts = radar_ts + timedelta(minutes=int(horizon))
-        if projection_ts != expected_projection_ts:
+        if metadata.get("motivo_no_disponible") != evolution_track.get(
+            "motivo"
+        ):
             fail(
-                f"proyección {horizon} desincronizada: "
-                f"{projection_ts.isoformat()} != "
-                f"{expected_projection_ts.isoformat()}"
+                "motivo de proyección no disponible no coincide "
+                "con prediccion_evolucion"
             )
+    else:
+        for horizon in ("5", "10", "20", "30"):
+            projection = projections.get(horizon)
+            if not isinstance(projection, dict):
+                fail(f"falta proyección {horizon}")
+            if sid(projection.get("track_id")) != sid(candidate):
+                fail(
+                    f"proyección {horizon} track_id={projection.get('track_id')} "
+                    f"!= principal={candidate}"
+                )
+            projection_ts = parse_utc(
+                projection.get("timestamp_utc"),
+                f"proyección {horizon}.timestamp_utc",
+            )
+            expected_projection_ts = radar_ts + timedelta(minutes=int(horizon))
+            if projection_ts != expected_projection_ts:
+                fail(
+                    f"proyección {horizon} desincronizada: "
+                    f"{projection_ts.isoformat()} != "
+                    f"{expected_projection_ts.isoformat()}"
+                )
 
     if sid(radar_intel.get("nucleo_principal_id")) != sid(candidate):
         fail(

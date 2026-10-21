@@ -136,17 +136,8 @@ def temporal_interpolation(rows, target):
             after = (dt, row)
             break
 
-    if before is None:
-        result = dict(valid[0][1])
-        result["tiempo_utc"] = target.isoformat()
-        result["interpolacion_temporal"] = False
-        return result
-
-    if after is None:
-        result = dict(valid[-1][1])
-        result["tiempo_utc"] = target.isoformat()
-        result["interpolacion_temporal"] = False
-        return result
+    if before is None or after is None:
+        return None
 
     t0, r0 = before
     t1, r1 = after
