@@ -1,9 +1,13 @@
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
+import numpy as np
+import app
 from app import sanitize_ml_probabilities, sanitize_storm_probabilities
 from scripts.motor_decision_climaar import intelligence_score
 from scripts.prediccion_rma10_ml import get_calibrated_probability
+from scripts import procesador_radar
 from scripts.tormenta_intelligence_timestamp import temporal_interpolation
 
 
@@ -62,6 +66,44 @@ class ProbabilityContractTests(unittest.TestCase):
         self.assertIsNone(result["peligros"]["granizo"])
         self.assertIsNone(result["ia_v8"]["probabilidad_impacto"])
 
+    def test_storm_api_does_not_return_legacy_heuristics_as_probabilities(self):
+        with (
+            patch.object(app, "STORM_FILE", app.BASE_DIR / "data/ia/inteligencia_tormenta.json"),
+            patch.object(app, "radar_metadata", return_value={}),
+            patch.object(app, "radar_timestamp", return_value="2026-10-21T19:40:00Z"),
+        ):
+            payload = app.tormenta()
+
+        self.assertFalse(payload["probabilidades_calibradas"])
+        self.assertTrue(
+            all(
+                value is None
+                for value in payload["datos"]["probabilidades"].values()
+            )
+        )
+
+    def test_model_api_applies_legacy_per_model_calibration_metrics(self):
+        path = app.BASE_DIR / "data/radar/seguimiento/prediccion_ml_rma10.json"
+        source = app.read_json(path)
+
+        with (
+            patch.object(app, "ML_PREDICTION_FILE", path),
+            patch.object(app, "radar_metadata", return_value={}),
+        ):
+            payload = app.modelo()
+
+        track = payload["predicciones"][0]
+        for target in ("strengthened", "weakened", "toward_bahia"):
+            key = f"5m_{target}"
+            selection = source["calibracion_probabilistica"]["metricas"][key][
+                "selection"
+            ]
+            value = track["horizontes"]["5"][target]
+            if selection == "CALIBRATED":
+                self.assertIsNotNone(value)
+            else:
+                self.assertIsNone(value)
+
     def test_decision_engine_uses_heuristic_indices_not_legacy_probabilities(self):
         result = intelligence_score(
             {
@@ -102,6 +144,29 @@ class TemporalInterpolationTests(unittest.TestCase):
         after = datetime(2024, 1, 1, 1, 30, tzinfo=timezone.utc)
         self.assertIsNone(temporal_interpolation(self.rows, before))
         self.assertIsNone(temporal_interpolation(self.rows, after))
+
+
+class StaticEchoMaskTests(unittest.TestCase):
+    def test_intensifying_echo_is_preserved_inside_static_mask(self):
+        static_mask = np.ones((3, 3), dtype=bool)
+        previous = np.ones((3, 3), dtype=np.uint8)
+        current = previous.copy()
+        current[1, 1] = 3
+
+        with (
+            patch.object(procesador_radar, "cargar_mascara", return_value=static_mask),
+            patch.object(procesador_radar, "cargar_info_mascara", return_value={}),
+            patch.object(
+                procesador_radar,
+                "_cargar_intensidades_previas",
+                return_value=[previous],
+            ),
+        ):
+            result, removed, _ = procesador_radar.aplicar_mascara_estatica(current)
+
+        self.assertEqual(removed, 8)
+        self.assertEqual(result[0, 0], 0)
+        self.assertEqual(result[1, 1], 3)
 
 
 if __name__ == "__main__":
