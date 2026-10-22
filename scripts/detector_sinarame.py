@@ -15,8 +15,10 @@ liviana: solo lista los timestamps RMA10 publicados
 
 El reloj es el timestamp real del frame, nunca el de GitHub.
 
-Debe correr como servicio persistente (ver docs/ARQUITECTURA_RELOJ_RADAR.md):
-    python scripts/detector_sinarame.py --loop
+Despliegue: servicio persistente (systemd) en una VM/Raspberry Pi:
+    python scripts/detector_sinarame.py --loop --latido
+Ver docs/DESPLIEGUE_DETECTOR.md. GitHub Actions solo hace de watchdog:
+lanza este mismo script unos minutos si el latido del servicio se apaga.
 """
 
 from __future__ import annotations
@@ -42,7 +44,10 @@ ESTADO_LOCAL = Path(".climaar/detector_estado.json")
 
 WORKFLOW_RADAR = "probar-radar-smn.yml"
 WORKFLOW_INTELLIGENCE = "climaar-intelligence.yml"
-WORKFLOW_DETECTOR = "climaar-detector-sinarame.yml"
+VARIABLE_LATIDO = "CLIMAAR_DETECTOR_LATIDO"
+# El watchdog considera caido al servicio si el latido supera esto.
+LATIDO_MAX_MIN = 5.0
+LATIDO_CADA_SEG = 120.0
 
 
 def _env_float(nombre, defecto):
@@ -52,7 +57,7 @@ def _env_float(nombre, defecto):
         return float(defecto)
 
 
-INTERVALO_SEG = _env_float("CLIMAAR_DETECTOR_INTERVALO_SEG", 60)
+INTERVALO_SEG = _env_float("CLIMAAR_DETECTOR_INTERVALO_SEG", 30)
 REFRESCO_MIN = _env_float("CLIMAAR_REFRESCO_MIN", 10)
 REDESPACHO_MIN = _env_float("CLIMAAR_REDESPACHO_MIN", 10)
 
@@ -95,6 +100,17 @@ def refresco_debido(ahora, ultimo_refresco_utc, refresco_min=REFRESCO_MIN):
     return ultimo is None or (
         ahora - ultimo
     ) >= timedelta(minutes=refresco_min)
+
+
+def servicio_vivo(latido, ahora=None, max_min=LATIDO_MAX_MIN):
+    """True si el ultimo latido del servicio es reciente."""
+    ahora = ahora or re_.ahora_utc()
+    dt = re_.parse_utc(latido)
+    if dt is None:
+        return False
+    return timedelta(0) - timedelta(minutes=1) <= (ahora - dt) <= timedelta(
+        minutes=max_min
+    )
 
 
 # ------------------------------------------------------------
@@ -140,6 +156,16 @@ class GitHub:
             )
             total += int(json.loads(raw).get("total_count", 0))
         return total
+
+    def escribir_latido(self, valor, nombre=VARIABLE_LATIDO):
+        """Variable de repositorio que el watchdog de Actions lee (vars.*)."""
+        cuerpo = {"name": nombre, "value": valor}
+        try:
+            self._req("PATCH", f"actions/variables/{nombre}", cuerpo)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
+            self._req("POST", "actions/variables", cuerpo)
 
     def ultimo_procesado(self):
         raw = self._req(
@@ -286,6 +312,32 @@ class Detector:
         return accion
 
 
+def mostrar_estado(ahora=None, estado_path=ESTADO_LOCAL, max_min=LATIDO_MAX_MIN):
+    """Salud local: ultima consulta reciente y sin error persistente."""
+    ahora = ahora or re_.ahora_utc()
+    try:
+        est = json.loads(Path(estado_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print("SIN ESTADO: el detector nunca corrio en esta maquina.")
+        return 1
+    ultimo = re_.parse_utc(est.get("last_check_utc"))
+    edad = (ahora - ultimo).total_seconds() / 60.0 if ultimo else None
+    sano = edad is not None and edad <= max_min
+    print(json.dumps({
+        "sano": sano,
+        "ultima_consulta_utc": est.get("last_check_utc"),
+        "edad_ultima_consulta_min": round(edad, 1) if edad is not None else None,
+        "collector_state": est.get("collector_state"),
+        "last_seen_radar_timestamp": est.get("last_seen_radar_timestamp"),
+        "last_processed_radar_timestamp": est.get(
+            "last_processed_radar_timestamp"
+        ),
+        "errores_consecutivos": est.get("errores_consecutivos", 0),
+        "ultimo_error": est.get("ultimo_error"),
+    }, ensure_ascii=False, indent=2))
+    return 0 if sano else 1
+
+
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--loop", action="store_true", help="servicio persistente")
@@ -295,11 +347,26 @@ def main(argv=None):
         help="0 = sin limite (servicio); en Actions < limite del job",
     )
     p.add_argument(
-        "--relevo", action="store_true",
-        help="al terminar, relanza el workflow del detector (Actions)",
+        "--latido", action="store_true",
+        help="publica el latido del servicio (variable de repo) para el watchdog",
     )
     p.add_argument("--sin-despachar", action="store_true")
+    p.add_argument(
+        "--servicio-vivo", metavar="LATIDO", default=None,
+        help="imprime true/false segun el latido recibido y sale",
+    )
+    p.add_argument(
+        "--estado", action="store_true",
+        help="salud local del detector; sale 0 si esta sano, 1 si no",
+    )
     a = p.parse_args(argv)
+
+    if a.servicio_vivo is not None:
+        print("true" if servicio_vivo(a.servicio_vivo) else "false")
+        return 0
+
+    if a.estado:
+        return mostrar_estado()
 
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
@@ -341,12 +408,23 @@ def main(argv=None):
     signal.signal(signal.SIGINT, lambda *_: parar.update(v=True))
 
     inicio = time.monotonic()
+    ultimo_latido = 0.0
     while not parar["v"]:
         t0 = time.monotonic()
         print(
             f"{datetime.now(timezone.utc).isoformat()} tick: {det.tick()}",
             flush=True,
         )
+        if (
+            a.latido
+            and not a.sin_despachar
+            and time.monotonic() - ultimo_latido >= LATIDO_CADA_SEG
+        ):
+            try:
+                gh.escribir_latido(re_.iso(re_.ahora_utc()))
+                ultimo_latido = time.monotonic()
+            except Exception as exc:  # el latido nunca frena al detector
+                print(f"ADVERTENCIA: latido no publicado: {exc}", flush=True)
         if a.duracion_max_min and (
             time.monotonic() - inicio
         ) >= a.duracion_max_min * 60:
@@ -356,12 +434,6 @@ def main(argv=None):
         while not parar["v"] and time.monotonic() < fin:
             time.sleep(min(1.0, fin - time.monotonic()))
 
-    if a.relevo and not parar["v"] and not a.sin_despachar:
-        try:
-            gh.despachar(WORKFLOW_DETECTOR)
-            print("Relevo del detector solicitado.")
-        except Exception as exc:
-            print(f"ADVERTENCIA: relevo fallido: {exc}")
     return 0
 
 

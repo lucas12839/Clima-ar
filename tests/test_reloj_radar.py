@@ -337,3 +337,57 @@ class ScraperDetectorTest(_Base):
         self.assertEqual(
             datos["candidatos"][0]["utc"], "2026-10-22T03:00:00+00:00"
         )
+
+
+class DespliegueServicioTest(_Base):
+    def test_unit_systemd(self):
+        u = (ROOT / "deploy/climaar-detector.service").read_text()
+        self.assertIn("scripts/detector_sinarame.py --loop", u)
+        self.assertIn("CLIMAAR_DETECTOR_INTERVALO_SEG=30", u)
+        self.assertIn("Restart=always", u)
+        self.assertIn("StartLimitIntervalSec=0", u)
+        self.assertIn("WantedBy=multi-user.target", u)
+        self.assertNotIn("Environment=GH_TOKEN", u)
+
+    def test_intervalo_por_defecto_30s(self):
+        self.assertEqual(det.INTERVALO_SEG, 30)
+
+    def test_servicio_vivo_segun_latido(self):
+        self.assertTrue(det.servicio_vivo(iso(T0 - timedelta(minutes=2)), T0))
+        self.assertFalse(det.servicio_vivo(iso(T0 - timedelta(minutes=6)), T0))
+        self.assertFalse(det.servicio_vivo("", T0))
+        self.assertFalse(det.servicio_vivo(None, T0))
+        self.assertFalse(det.servicio_vivo("basura", T0))
+
+    def test_estado_sano_y_caido(self):
+        p = self.dir / "det.json"
+        self.assertEqual(det.mostrar_estado(T0, p), 1)
+        p.write_text(json.dumps({"last_check_utc": iso(T0)}))
+        self.assertEqual(det.mostrar_estado(T0 + timedelta(seconds=40), p), 0)
+        self.assertEqual(det.mostrar_estado(T0 + timedelta(minutes=10), p), 1)
+
+    def test_el_tick_no_procesa_meteorologia(self):
+        src = (ROOT / "scripts/detector_sinarame.py").read_text()
+        for prohibido in ("import procesador_radar", "import seguimiento_temporal",
+                          "import tormenta_intelligence"):
+            self.assertNotIn(prohibido, src)
+        self.assertIn("--solo-detectar", src)
+
+    def test_latido_crea_variable_si_no_existe(self):
+        import urllib.error
+
+        llamadas = []
+
+        class G(det.GitHub):
+            def _req(self, metodo, ruta, cuerpo=None, accept=""):
+                llamadas.append((metodo, ruta))
+                if metodo == "PATCH":
+                    raise urllib.error.HTTPError(ruta, 404, "nf", {}, None)
+                return b"{}"
+
+        G("o/r", "t").escribir_latido("x")
+        self.assertEqual(
+            llamadas,
+            [("PATCH", "actions/variables/CLIMAAR_DETECTOR_LATIDO"),
+             ("POST", "actions/variables")],
+        )

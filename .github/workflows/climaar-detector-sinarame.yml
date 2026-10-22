@@ -1,39 +1,36 @@
-name: ClimaAR Detector SINARAME
+name: ClimaAR Detector SINARAME (watchdog)
 
-# EL RELOJ METEOROLOGICO ES EL FRAME DE SINARAME, NO EL SCHEDULE.
+# GitHub Actions NO es el reloj meteorologico ni el vigilante normal de
+# SINARAME. El detector real es el servicio persistente
+#   python scripts/detector_sinarame.py --loop --latido
+# (systemd en una VM/Raspberry Pi, ver docs/DESPLIEGUE_DETECTOR.md), que
+# publica un latido en la variable de repositorio CLIMAAR_DETECTOR_LATIDO.
 #
-# Este job es el detector: consulta SINARAME cada CLIMAAR_DETECTOR_INTERVALO_SEG
-# segundos, de forma liviana (solo lista timestamps RMA10). Cuando aparece un
-# timestamp nuevo despacha UNA vez probar-radar-smn.yml con ese radar_timestamp.
-# Entre frames pide refrescos de Inteligencia con el ultimo radar valido.
-#
-# LIMITACION REAL: GitHub Actions no ofrece servicios persistentes. Un job vive
-# como maximo 6 h, por eso corre ~5 h 40 min y se relanza solo ("relevo").
-# El `schedule` de abajo es UNICAMENTE el WATCHDOG del detector (reinicia el
-# detector si murio o se perdio el relevo); no decide cuando se procesa un frame.
-# El despliegue recomendado es ejecutar scripts/detector_sinarame.py --loop como
-# servicio (ver docs/ARQUITECTURA_RELOJ_RADAR.md y deploy/).
+# Este WATCHDOG/RECOVERY corre por schedule y solo actua si el latido
+# esta apagado (servicio caido): entonces ejecuta el mismo detector durante
+# unos minutos para no perder frames hasta que el servicio vuelva. Con el
+# servicio sano termina en segundos sin consultar SINARAME.
+# No procesa meteorologia ni despacha nada por su cuenta: eso lo hace el
+# detector, siempre via probar-radar-smn.yml (idempotente por timestamp).
 
 on:
   workflow_dispatch:
   schedule:
     # WATCHDOG del detector, no reloj meteorologico.
-    - cron: "11,41 * * * *"
+    - cron: "3,13,23,33,43,53 * * * *"
 
 permissions:
   actions: write
   contents: read
 
-# Un detector corriendo + como maximo uno pendiente que toma el relevo.
-# Un pendiente nuevo reemplaza al anterior: no se acumulan.
 concurrency:
   group: climaar-detector
   cancel-in-progress: false
 
 jobs:
-  detector:
+  watchdog:
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -46,7 +43,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Dependencias del detector
+      - name: Verificar latido del servicio
+        id: latido
+        env:
+          LATIDO: ${{ vars.CLIMAAR_DETECTOR_LATIDO }}
+        run: |
+          set -euo pipefail
+
+          vivo="$(python scripts/detector_sinarame.py --servicio-vivo "${LATIDO:-}")"
+          echo "Latido del servicio: '${LATIDO:-<nunca>}' -> vivo=$vivo"
+          echo "vivo=$vivo" >> "$GITHUB_OUTPUT"
+
+      - name: Servicio sano - no se hace nada
+        if: steps.latido.outputs.vivo == 'true'
+        run: echo "El servicio persistente vigila SINARAME. Watchdog en reposo."
+
+      - name: Dependencias de recuperación
+        if: steps.latido.outputs.vivo != 'true'
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
@@ -55,16 +68,16 @@ jobs:
             || sudo "$(command -v python)" -m playwright install-deps chromium
           python -m playwright install chromium
 
-      - name: Detectar frames nuevos de SINARAME
+      - name: Recuperación - detector temporal (servicio caído)
+        if: steps.latido.outputs.vivo != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          CLIMAAR_DETECTOR_INTERVALO_SEG: "60"
+          CLIMAAR_DETECTOR_INTERVALO_SEG: "30"
           CLIMAAR_REFRESCO_MIN: "10"
           CLIMAAR_REDESPACHO_MIN: "10"
         run: |
           set -euo pipefail
-          python scripts/detector_sinarame.py \
-            --loop \
-            --duracion-max-min 335 \
-            --relevo
+          echo "::warning::Servicio del detector sin latido: recuperación temporal desde Actions."
+          # Acotado a ~9 min: el siguiente watchdog vuelve a comprobar el latido.
+          python scripts/detector_sinarame.py --loop --duracion-max-min 9

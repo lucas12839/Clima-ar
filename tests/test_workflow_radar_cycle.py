@@ -49,7 +49,11 @@ def test_cron_del_detector_es_solo_watchdog():
     assert "gh workflow run" not in texto
     assert data["concurrency"]["group"] == "climaar-detector"
     assert data["concurrency"]["cancel-in-progress"] is False
-    assert "--relevo" in texto and "--loop" in texto
+    assert "--relevo" not in texto
+    assert "--servicio-vivo" in texto
+    assert "steps.latido.outputs.vivo != 'true'" in texto
+    assert "--duracion-max-min 9" in texto
+    assert data["jobs"]["watchdog"]["timeout-minutes"] <= 15
 
 
 def test_radar_idempotente_y_protegido_por_concurrencia():
