@@ -915,6 +915,19 @@ jobs:
           path: /tmp/radar-rma10
           retention-days: 7
 
+      - name: Disparar Intelligence con el artefacto recién publicado
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RADAR_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          gh workflow run climaar-intelligence.yml \
+            --repo "$GH_REPO" \
+            --ref main \
+            -f radar_run_id="$RADAR_RUN_ID"
+
       # ============================================================
       # PERSISTENCIA ROBUSTA
       # ============================================================
