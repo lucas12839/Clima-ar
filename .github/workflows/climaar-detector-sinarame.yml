@@ -1,0 +1,83 @@
+name: ClimaAR Detector SINARAME (watchdog)
+
+# GitHub Actions NO es el reloj meteorologico ni el vigilante normal de
+# SINARAME. El detector real es el servicio persistente
+#   python scripts/detector_sinarame.py --loop --latido
+# (systemd en una VM/Raspberry Pi, ver docs/DESPLIEGUE_DETECTOR.md), que
+# publica un latido en la variable de repositorio CLIMAAR_DETECTOR_LATIDO.
+#
+# Este WATCHDOG/RECOVERY corre por schedule y solo actua si el latido
+# esta apagado (servicio caido): entonces ejecuta el mismo detector durante
+# unos minutos para no perder frames hasta que el servicio vuelva. Con el
+# servicio sano termina en segundos sin consultar SINARAME.
+# No procesa meteorologia ni despacha nada por su cuenta: eso lo hace el
+# detector, siempre via probar-radar-smn.yml (idempotente por timestamp).
+
+on:
+  workflow_dispatch:
+  schedule:
+    # WATCHDOG del detector, no reloj meteorologico.
+    - cron: "3,13,23,33,43,53 * * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: climaar-detector
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verificar latido del servicio
+        id: latido
+        env:
+          LATIDO: ${{ vars.CLIMAAR_DETECTOR_LATIDO }}
+        run: |
+          set -euo pipefail
+
+          vivo="$(python scripts/detector_sinarame.py --servicio-vivo "${LATIDO:-}")"
+          echo "Latido del servicio: '${LATIDO:-<nunca>}' -> vivo=$vivo"
+          echo "vivo=$vivo" >> "$GITHUB_OUTPUT"
+
+      - name: Servicio sano - no se hace nada
+        if: steps.latido.outputs.vivo == 'true'
+        run: echo "El servicio persistente vigila SINARAME. Watchdog en reposo."
+
+      - name: Dependencias de recuperación
+        if: steps.latido.outputs.vivo != 'true'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install playwright pillow
+          python -m playwright install-deps chromium \
+            || sudo "$(command -v python)" -m playwright install-deps chromium
+          python -m playwright install chromium
+
+      - name: Recuperación - detector temporal (servicio caído)
+        if: steps.latido.outputs.vivo != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CLIMAAR_DETECTOR_INTERVALO_SEG: "30"
+          CLIMAAR_REFRESCO_MIN: "10"
+          CLIMAAR_REDESPACHO_MIN: "10"
+        run: |
+          set -euo pipefail
+          echo "::warning::Servicio del detector sin latido: recuperación temporal desde Actions."
+          # Acotado a ~9 min: el siguiente watchdog vuelve a comprobar el latido.
+          python scripts/detector_sinarame.py --loop --duracion-max-min 9

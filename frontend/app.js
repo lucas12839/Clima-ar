@@ -585,25 +585,43 @@ function renderWeather(data) {
 function intensityLabel(level) {
   const n = number(level);
 
-  const labels = {
-    0: "Sin precipitación",
-    1: "Muy débil",
-    2: "Débil",
-    3: "Moderada",
-    4: "Moderada-fuerte",
-    5: "Fuerte",
-    6: "Muy fuerte"
-  };
+  // Intensidad del eco radar (RMA10 0-6): no es la clasificación
+  // meteorológica ni la severidad de la tormenta.
+  if (n === null) return "Sin datos";
+  if (n <= 0) return "Sin eco";
+  return `Eco radar nivel ${n}/6`;
+}
 
-  return labels[n] || "Sin datos";
+
+const CLASSIFICATION_LABELS = {
+  sin_tormenta: "Sin tormenta para Bahía Blanca",
+  tormenta: "Tormenta",
+  tormenta_fuerte: "Tormenta fuerte",
+  tormenta_severa: "Tormenta severa"
+};
+
+
+function getIntelligenceClassification() {
+  const intel = state.intelligence || {};
+  const raw =
+    intel.clasificacion_meteorologica ||
+    intel?.resultado_final?.clasificacion_meteorologica ||
+    intel?.resultado_final?.motor_decision?.clasificacion_meteorologica ||
+    intel?.inteligencia_tormenta?.clasificacion_meteorologica;
+
+  return CLASSIFICATION_LABELS[raw] ? raw : null;
 }
 
 
 function getIntelligenceSeverity() {
   const intel = state.intelligence || {};
+  const final = intel.resultado_final || {};
   const raw =
     intel.severidad ||
     intel.severity ||
+    final?.severidad_meteorologica?.valor ||
+    final?.motor_decision?.severidad_meteorologica ||
+    intel?.inteligencia_tormenta?.severidad ||
     intel?.motor_decision?.severidad_meteorologica ||
     intel?.severidad_meteorologica?.valor;
 
@@ -611,7 +629,9 @@ function getIntelligenceSeverity() {
     return null;
   }
 
-  const value = String(raw).trim().toLowerCase();
+  const value = String(raw).trim().toLowerCase() === "roja"
+    ? "rojo"
+    : String(raw).trim().toLowerCase();
   return ["verde", "amarillo", "naranja", "rojo"].includes(value)
     ? value
     : null;
@@ -635,11 +655,31 @@ function severityClass(value) {
   return "riskLow";
 }
 
+function principalTrackId() {
+  const intel = state.intelligence || {};
+  const radar = state.radar || {};
+
+  const candidates = [
+    radar.nucleo_principal_id,
+    radar?.bahia_blanca?.nucleo_principal_id,
+    intel?.principal?.track_id,
+    intel?.resultado_final?.principal?.track_id,
+    state.model?.principal_track_id
+  ];
+
+  for (const value of candidates) {
+    if (value !== null && value !== undefined && value !== "") {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+
 function principalNucleus() {
   const radar = state.radar || {};
-  const principalId =
-    radar.nucleo_principal_id ??
-    radar?.bahia_blanca?.nucleo_principal_id;
+  const principalId = principalTrackId();
 
   const nuclei = Array.isArray(radar.nucleos)
     ? radar.nucleos
@@ -653,6 +693,14 @@ function principalNucleus() {
     item => String(item?.track_id) === String(principalId)
   ) || null;
 }
+
+function classificationText() {
+  const value = getIntelligenceClassification();
+  return value
+    ? CLASSIFICATION_LABELS[value]
+    : "Clasificación no determinada";
+}
+
 
 function renderAlert() {
   const level =
@@ -707,7 +755,7 @@ function renderAlert() {
       cores === 1
         ? ""
         : "s"
-    } · Radar: ${intensityLabel(level)} · ${severityLabel(severity)}.`
+    } · ${intensityLabel(level)} · ${classificationText()} · ${severityLabel(severity)}.`
   );
 
   setText(
@@ -740,7 +788,7 @@ function renderStorm() {
 
   setText(
     "#stormRisk",
-    severityLabel(severity)
+    `${classificationText()} · ${severityLabel(severity)}`
   );
 
   const risk = $("#stormRisk");
@@ -765,14 +813,16 @@ function renderStorm() {
   );
 
   const movement = principal?.movimiento || {};
-  const direction = number(movement.direccion_grados);
+  const direction = number(
+    movement.direccion_grados ?? radar.direccion_grados
+  );
 
   setText(
     "#stormMovement",
-    movement.tendencia
-      ? movement.tendencia
-      : radar.movimiento_hacia_bahia === true
-        ? "Acercándose a Bahía Blanca"
+    radar.movimiento_hacia_bahia === true
+      ? "Acercándose a Bahía Blanca"
+      : radar.movimiento_hacia_bahia === false
+        ? "No se dirige hacia Bahía Blanca"
         : "Sin movimiento hacia Bahía Blanca confirmado"
   );
 
@@ -984,9 +1034,7 @@ function findPrincipalTrack(predictions) {
     return null;
   }
 
-  const principalId =
-    state.radar?.nucleo_principal_id ??
-    state.radar?.bahia_blanca?.nucleo_principal_id;
+  const principalId = principalTrackId();
 
   if (principalId !== null && principalId !== undefined) {
     return predictions.find(
