@@ -340,6 +340,7 @@ def main():
         },
         "clasificacion_meteorologica": weather_class,
         "amenaza_bahia": threat,
+        "clasificacion_historica": intel.get("clasificacion_historica"),
         "severidad_meteorologica": {
             "valor": severity,
             "fuente": "inteligencia_tormenta",

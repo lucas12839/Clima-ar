@@ -6,6 +6,11 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 try:
+    import clasificador_tormenta
+except Exception:
+    clasificador_tormenta = None
+
+try:
     import joblib
 except Exception:
     joblib = None
@@ -1396,10 +1401,22 @@ def bahia_threat(nowcast):
     }
 
 
-def classify_weather(threat, severity_level, hazards, hybrid_score):
+def classify_weather(
+    threat,
+    severity_level,
+    hazards,
+    hybrid_score,
+    historical_ml=None,
+    nowcast=None,
+):
     """
     sin_tormenta / tormenta / tormenta_fuerte / tormenta_severa
-    para Bahia Blanca. No depende de la intensidad maxima de un eco.
+    para Bahia Blanca.
+
+    Combina (1) si el sistema amenaza realmente a la ciudad, (2) el
+    clasificador entrenado con el historico y los eventos severos
+    documentados y (3) la severidad del Storm Engine. El maximo del eco
+    radar solo puede limitar la clase, nunca elevarla.
     """
 
     if not threat.get("amenaza"):
@@ -1410,12 +1427,58 @@ def classify_weather(threat, severity_level, hazards, hybrid_score):
     if severity_level == "rojo" or (
         severity_level == "naranja" and maximum >= 0.55
     ):
-        return "tormenta_severa"
+        rule_idx = 3
+    elif severity_level in ("naranja", "amarillo"):
+        rule_idx = 2
+    else:
+        rule_idx = 1
 
-    if severity_level in ("naranja", "amarillo"):
-        return "tormenta_fuerte"
+    ml_idx = None
+    if historical_ml:
+        try:
+            ml_idx = clasificador_tormenta.CLASSES.index(
+                historical_ml.get("clase")
+            )
+        except (ValueError, AttributeError):
+            ml_idx = None
 
-    return "tormenta"
+    if ml_idx is None:
+        idx = rule_idx
+    else:
+        idx = int((ml_idx + rule_idx) / 2.0 + 0.5)
+        # La severa exige que el historico tambien vea un ambiente fuerte.
+        if idx >= 3 and ml_idx < 2 and severity_level != "rojo":
+            idx = 2
+
+    idx = max(1, min(3, idx))
+
+    level = finite((nowcast or {}).get("intensidad_nivel_max"))
+    if level is not None and level <= 2:
+        idx = min(idx, 1)
+
+    if threat.get("nivel") == "baja":
+        idx = min(idx, 2)
+
+    return (
+        "tormenta",
+        "tormenta",
+        "tormenta_fuerte",
+        "tormenta_severa",
+    )[idx]
+
+
+def cap_severity_by_class(severity_level, weather_class):
+    caps = {
+        "sin_tormenta": "verde",
+        "tormenta": "amarillo",
+        "tormenta_fuerte": "naranja",
+        "tormenta_severa": "rojo",
+    }
+    order = SEVERIDADES_VALIDAS
+    limit = caps.get(weather_class, "rojo")
+    if order.index(severity_level) > order.index(limit):
+        return limit
+    return severity_level
 
 
 def classify_storm(
@@ -1816,6 +1879,25 @@ def main():
         )
     )
 
+    historical_ml = (
+        clasificador_tormenta.predict(
+            environment,
+            now_dt(),
+        )
+        if clasificador_tormenta is not None
+        else None
+    )
+
+    if historical_ml:
+        historical = clamp(
+            0.6 * historical_ml["indice_severidad_historica"]
+            + 0.4 * historical
+        )
+        historical_reasons = list(historical_reasons) + [
+            "clasificador historico: "
+            f"{historical_ml['clase']} para el ambiente actual."
+        ]
+
     impact = impact_signal(
         nowcast
     )
@@ -1892,6 +1974,13 @@ def main():
         severity_level,
         hazards,
         hybrid_score,
+        historical_ml,
+        nowcast,
+    )
+
+    severity_level = cap_severity_by_class(
+        severity_level,
+        weather_class,
     )
 
     duration = duration_estimate(
@@ -2097,6 +2186,9 @@ def main():
 
         "amenaza_bahia":
             threat,
+
+        "clasificacion_historica":
+            historical_ml,
 
         "vigencia_radar":
             nowcast.get("vigencia_radar"),

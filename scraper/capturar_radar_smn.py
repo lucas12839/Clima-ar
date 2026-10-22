@@ -508,6 +508,121 @@ def descargar_imagen(
 
 
 # ============================================================
+# FRAMES INTERMEDIOS (RELLENO DE HUECOS)
+# ============================================================
+
+MAX_FRAMES_INTERMEDIOS = 12
+
+MAX_EDAD_INTERMEDIOS_HORAS = 6
+
+
+def respaldar_frames_intermedios(
+    page,
+    candidatos,
+    timestamp_elegido
+):
+
+    ultimo = timestamp_persistido()
+
+    ahora = datetime.now(
+        timezone.utc
+    )
+
+    pendientes = {}
+
+    for timestamp, url in candidatos:
+
+        if timestamp == timestamp_elegido:
+            continue
+
+        try:
+
+            fecha = (
+                timestamp_source_to_datetime(
+                    timestamp
+                )
+                .astimezone(
+                    timezone.utc
+                )
+            )
+
+        except ValueError:
+            continue
+
+        if ultimo is not None and fecha <= ultimo:
+            continue
+
+        if fecha > ahora:
+            continue
+
+        if (
+            ahora - fecha
+            > timedelta(
+                hours=MAX_EDAD_INTERMEDIOS_HORAS
+            )
+        ):
+            continue
+
+        pendientes.setdefault(
+            timestamp,
+            url
+        )
+
+    guardados = 0
+
+    for timestamp in sorted(
+        pendientes
+    )[-MAX_FRAMES_INTERMEDIOS:]:
+
+        fecha = (
+            timestamp_source_to_datetime(
+                timestamp
+            )
+            .astimezone(
+                timezone.utc
+            )
+        )
+
+        destino = (
+            HIST /
+            f"{fecha.strftime('%Y%m%d%H%M%S')}.png"
+        )
+
+        if destino.exists():
+            continue
+
+        try:
+
+            data, _ = descargar_imagen(
+                page,
+                pendientes[timestamp]
+            )
+
+        except Exception as exc:
+
+            print(
+                "Frame intermedio omitido:",
+                timestamp,
+                exc
+            )
+
+            continue
+
+        destino.write_bytes(
+            data
+        )
+
+        guardados += 1
+
+    if guardados:
+
+        print(
+            "Frames intermedios respaldados:",
+            guardados
+        )
+
+
+# ============================================================
 # MIGRACIÓN SEGURA
 # ============================================================
 
@@ -1035,6 +1150,17 @@ def main():
                         "Frame seleccionado:",
                         timestamp,
                         url
+                    )
+
+                    # SINARAME publica un frame cada ~10 min pero el
+                    # cron de GitHub puede tardar horas en ejecutarse.
+                    # Los frames intermedios publicados desde el ultimo
+                    # aceptado se guardan en el historico para que el
+                    # seguimiento no tenga huecos.
+                    respaldar_frames_intermedios(
+                        page,
+                        candidatos,
+                        timestamp
                     )
 
                     data, detail = (
