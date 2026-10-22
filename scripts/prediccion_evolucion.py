@@ -1896,8 +1896,24 @@ def main():
     gap_count = 0
     gap_validated_now = []
 
+    # Solo se pronostican tracks observados en el frame actual; los
+    # tracks de frames anteriores quedan fuera para no arrastrar un frame viejo.
     for track in tracks:
-        if len(valid_history(track)) < 2:
+        history = valid_history(track)
+
+        if not history or canonical_ts(
+            history[-1].get("timestamp")
+        ) != canonical_ts(radar_ts):
+            continue
+
+        if len(history) < 2:
+            predictions.append(
+                {
+                    "track_id": track_id(track),
+                    "pronostico_disponible": False,
+                    "motivo": "SIN_MOVIMIENTO_VALIDO",
+                }
+            )
             continue
 
         prediction, gap_predictions = predict_track(
