@@ -1,9 +1,8 @@
 name: ClimaAR Radar RMA10
 
 on:
+  # Solo lo lanza climaar-ciclo-radar.yml (o una persona a mano).
   workflow_dispatch:
-  schedule:
-    - cron: "3,13,23,33,43,53 * * * *"
 
 permissions:
   contents: write
@@ -935,19 +934,6 @@ jobs:
             --repo "$GH_REPO" \
             --ref main \
             -f radar_run_id="$RADAR_RUN_ID"
-
-      - name: Reencadenar ciclo del Radar
-        if: always()
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          gh workflow run climaar-ciclo-radar.yml \
-            --repo "$GH_REPO" \
-            --ref main
 
       # ============================================================
       # PERSISTENCIA ROBUSTA
