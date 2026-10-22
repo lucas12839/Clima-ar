@@ -1,8 +1,8 @@
 name: ClimaAR Watchdog
 
+# La recuperación automática ahora la hace el cron de
+# climaar-ciclo-radar.yml; este diagnóstico queda solo manual.
 on:
-  schedule:
-    - cron: "1,6,11,16,21,26,31,36,41,46,51,56 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -267,7 +267,7 @@ jobs:
           echo "=========================================="
 
           gh workflow run \
-            probar-radar-smn.yml \
+            climaar-ciclo-radar.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref main
 
