@@ -1,24 +1,33 @@
-# Servicio persistente recomendado para el detector SINARAME.
-# Requiere: Python 3.12, `pip install playwright pillow`, `playwright install chromium`
-# y un token con permiso "actions: write" sobre el repo (fine-grained PAT).
-#
-#   sudo cp deploy/climaar-detector.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now climaar-detector
+# Servicio systemd del detector SINARAME de ClimaAR.
+# Guia completa: docs/DESPLIEGUE_DETECTOR.md  (instalador: deploy/instalar_detector.sh)
 [Unit]
 Description=ClimaAR - detector de frames RMA10 (SINARAME)
 After=network-online.target
 Wants=network-online.target
+# Sin limite de reinicios: el servicio debe volver siempre.
+StartLimitIntervalSec=0
 
 [Service]
+Type=simple
+User=climaar
 WorkingDirectory=/opt/Clima-ar
+Environment=PYTHONUNBUFFERED=1
 Environment=GITHUB_REPOSITORY=lucas12839/Clima-ar
+Environment=CLIMAAR_REF=main
+# Consulta a SINARAME cada 30 s (solo lista timestamps; no procesa meteorologia).
 Environment=CLIMAAR_DETECTOR_INTERVALO_SEG=30
 Environment=CLIMAAR_REFRESCO_MIN=10
-# GH_TOKEN=<PAT>  -> definir en /etc/climaar-detector.env (chmod 600)
+Environment=CLIMAAR_REDESPACHO_MIN=10
+# Contiene GH_TOKEN=<PAT fine-grained>  (chmod 600, ver docs)
 EnvironmentFile=/etc/climaar-detector.env
-ExecStart=/usr/bin/python3 scripts/detector_sinarame.py --loop
+ExecStart=/opt/Clima-ar/.venv/bin/python scripts/detector_sinarame.py --loop --latido
+# Reinicio automatico si el proceso se cae o sale con error.
 Restart=always
 RestartSec=15
+# Un tick colgado (Chromium) no debe dejar el servicio zombi.
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

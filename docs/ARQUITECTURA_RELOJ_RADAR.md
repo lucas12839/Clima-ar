@@ -36,17 +36,14 @@ SINARAME publica frame T
   (`observacion_radar` / `extrapolacion_nowcast` / `prediccion_ml`).
 
 ## Schedules
-Solo `climaar-detector-sinarame.yml` (`11,41 * * * *`), que es **watchdog del detector**.
+Solo `climaar-detector-sinarame.yml` (`3,13,23,33,43,53 * * * *`): **watchdog/recovery** del
+servicio persistente (actúa solo si el latido `CLIMAAR_DETECTOR_LATIDO` está apagado).
 Radar, Intelligence, SAZB, ciclo, watchdog y auto-radar no tienen schedule.
+El despliegue del detector está en `docs/DESPLIEGUE_DETECTOR.md`.
 
 ## Limitaciones reales de GitHub Actions
-- No hay servicios persistentes: un job dura ≤ 6 h. El detector corre ~5 h 35 min y se relanza
-  solo (`--relevo`); el cron lo reinicia si se perdió. Entre relevos puede haber un hueco corto.
-- `schedule` puede retrasarse o perderse; por eso solo vigila, no procesa.
-- Un job largo consume minutos de Actions (gratis en repos públicos).
-- Cada consulta abre Chromium (~25–35 s): el intervalo efectivo mínimo es ~60 s en Actions.
-- **Componente que debería ser servicio persistente**: `scripts/detector_sinarame.py --loop`
-  en una VM/Raspberry (ver `deploy/climaar-detector.service`), con intervalo de 30 s.
-  Es seguro correr ambos a la vez: el reclamo por timestamp evita duplicados.
-- No se pudo verificar contra SINARAME real desde el entorno de desarrollo (sin red);
-  la consulta reutiliza la extracción ya existente del scraper.
+- No hay servicios persistentes ni cron fiable: por eso el detector corre como servicio
+  systemd en una VM/Raspberry (`deploy/`), y Actions solo vigila.
+- `schedule` puede retrasarse o perderse; el watchdog puede tardar más de 10 min en actuar.
+- Cada consulta abre Chromium (~25–35 s); el intervalo de 30 s es el mínimo práctico.
+- No se pudo verificar contra SINARAME real desde el entorno de desarrollo (sin red).
