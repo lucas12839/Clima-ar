@@ -1,0 +1,54 @@
+name: ClimaAR Ciclo Radar
+
+# El cron de GitHub Actions no es fiable: en este repositorio las
+# ejecuciones "schedule" del Radar RMA10 se disparaban cada varias horas
+# en lugar de cada 10 minutos, por eso el radar quedaba atrasado.
+# Este workflow reencadena el Radar: espera el intervalo de publicación
+# de SINARAME y vuelve a lanzar probar-radar-smn.yml. Usa su propio grupo
+# de concurrencia para no bloquear la escritura de datos de producción.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7,37 * * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: climaar-ciclo-radar
+  cancel-in-progress: false
+
+jobs:
+  reencadenar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Esperar próxima publicación de SINARAME
+        run: sleep 420
+
+      - name: Lanzar Radar RMA10
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          activos="$(
+            gh run list \
+              --repo "$GH_REPO" \
+              --workflow probar-radar-smn.yml \
+              --limit 10 \
+              --json status \
+              --jq '[.[] | select(.status == "in_progress")] | length'
+          )"
+
+          if [ "$activos" -gt 0 ]; then
+            echo "Radar en ejecución; el próximo ciclo se encarga."
+          else
+            gh workflow run probar-radar-smn.yml \
+              --repo "$GH_REPO" \
+              --ref main
+          fi

@@ -936,6 +936,19 @@ jobs:
             --ref main \
             -f radar_run_id="$RADAR_RUN_ID"
 
+      - name: Reencadenar ciclo del Radar
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          gh workflow run climaar-ciclo-radar.yml \
+            --repo "$GH_REPO" \
+            --ref main
+
       # ============================================================
       # PERSISTENCIA ROBUSTA
       # ============================================================
