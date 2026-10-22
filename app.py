@@ -685,6 +685,59 @@ def get_openmeteo_data() -> (
 # NOWCAST / NÚCLEOS
 # ============================================================
 
+def radar_threat_fields(
+    nc: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Campos del núcleo principal / trayectoria hacia Bahía Blanca
+    tal como los publica el nowcast, para la interfaz.
+    """
+
+    bahia = nc.get("bahia_blanca")
+
+    if not isinstance(bahia, dict):
+        bahia = {}
+
+    principal = nc.get("nucleo_principal_id")
+
+    if principal is None:
+        principal = bahia.get("nucleo_principal_id")
+
+    keys = (
+        "distancia_km",
+        "eta_minutos",
+        "movimiento_hacia_bahia",
+        "direccion_grados",
+        "velocidad_kmh",
+        "fortalecimiento",
+        "cambio_area_pct",
+        "confianza_movimiento",
+        "rumbo_bahia_grados",
+        "error_rumbo_bahia_grados",
+        "proyecciones",
+    )
+
+    fields = {
+        key: nc.get(key)
+        for key in keys
+    }
+
+    if fields["distancia_km"] is None:
+        fields["distancia_km"] = bahia.get(
+            "distancia_principal_km"
+        )
+
+    return {
+        "nucleo_principal_id": principal,
+        "track_principal_id": nc.get(
+            "track_principal_id",
+            principal,
+        ),
+        "bahia_blanca": bahia,
+        **fields,
+    }
+
+
 def get_nowcast() -> dict[str, Any]:
     return (
         read_json(
@@ -778,18 +831,15 @@ def intensity_label(
     level: int | None,
 ) -> str:
 
-    return {
-        0: "Sin precipitación",
-        1: "Muy débil",
-        2: "Débil",
-        3: "Moderada",
-        4: "Fuerte",
-        5: "Muy fuerte",
-        6: "Severa",
-    }.get(
-        level,
-        "Sin datos",
-    )
+    # Es la intensidad del eco radar (escala RMA10 0-6). NO es la
+    # clasificación meteorológica ni la severidad de la tormenta.
+    if level is None:
+        return "Sin datos"
+
+    if level <= 0:
+        return "Sin eco"
+
+    return f"Eco radar nivel {level}/6"
 
 
 # ============================================================
@@ -1440,6 +1490,10 @@ def radar() -> dict[str, Any]:
                 nowcast
             ),
 
+        **radar_threat_fields(
+            nc
+        ),
+
         "intensidad_nivel_max":
             max_intensity(
                 nowcast
@@ -2005,7 +2059,63 @@ def inteligencia() -> (
     dict[str, Any]
 ):
 
-    return result_payload()
+    payload = result_payload()
+
+    final = payload.get("resultado_final")
+    storm = payload.get("inteligencia_tormenta")
+
+    if not isinstance(final, dict):
+        final = {}
+
+    if not isinstance(storm, dict):
+        storm = {}
+
+    decision = final.get("motor_decision")
+
+    if not isinstance(decision, dict):
+        decision = {}
+
+    severity_block = final.get("severidad_meteorologica")
+
+    severity = (
+        severity_block.get("valor")
+        if isinstance(severity_block, dict)
+        else severity_block
+    )
+
+    severity = (
+        severity
+        or decision.get("severidad_meteorologica")
+        or storm.get("severidad")
+    )
+
+    if severity == "roja":
+        severity = "rojo"
+
+    classification = (
+        final.get("clasificacion_meteorologica")
+        or decision.get("clasificacion_meteorologica")
+        or storm.get("clasificacion_meteorologica")
+    )
+
+    threat = (
+        final.get("amenaza_bahia")
+        or storm.get("amenaza_bahia")
+    )
+
+    # Resumen plano y estable para la interfaz; la estructura
+    # completa se mantiene intacta debajo.
+    return {
+        **payload,
+        "severidad": severity,
+        "clasificacion_meteorologica": classification,
+        "amenaza_bahia": threat,
+        "estado_operativo": decision.get("estado_operativo"),
+        "principal": final.get("principal"),
+        "vigencia_radar": (
+            storm.get("vigencia_radar")
+        ),
+    }
 
 
 # ============================================================

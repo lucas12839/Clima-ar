@@ -7,8 +7,20 @@
     "latitud": -38.71,
     "longitud": -62.26
   },
-  "estado": "tormenta_con_lluvia",
+  "estado": "sistema_sin_amenaza_para_bahia",
   "severidad": "verde",
+  "clasificacion_meteorologica": "sin_tormenta",
+  "amenaza_bahia": {
+    "amenaza": false,
+    "nivel": "ninguna",
+    "motivo": "no_se_dirige_hacia_bahia_blanca",
+    "distancia_km": 107.91
+  },
+  "vigencia_radar": {
+    "edad_radar_minutos": 83.0,
+    "modo": "estimado_desde_ultimo_radar_valido",
+    "estimado": true
+  },
   "probabilidades_calibradas": false,
   "probabilidades": {
     "tormenta": null,
@@ -22,19 +34,19 @@
     "impacto": null
   },
   "indices_heuristicos": {
-    "tormenta": 0.19,
-    "llegada_bahia": 0.05,
+    "tormenta": 0.241,
+    "llegada_bahia": 0.042,
     "fortalecimiento": 0.665,
     "debilitamiento": 0.335,
-    "impacto": 0.05,
+    "impacto": 0.042,
     "peligros": {
       "lluvia_fuerte": 0.47,
       "viento_fuerte": 0.36,
       "granizo": 0.2,
       "rayo": 0.21
     },
-    "indice_hibrido_severidad": 0.367,
-    "fuente_componente_ia": "modelo_impacto_v8_no_calibrado"
+    "indice_hibrido_severidad": 0.411,
+    "fuente_componente_ia": "heuristica_ambiental"
   },
   "peligros": {
     "lluvia_fuerte": null,
@@ -42,11 +54,11 @@
     "granizo": null,
     "rayo": null
   },
-  "indice_hibrido_severidad": 0.367,
+  "indice_hibrido_severidad": 0.411,
   "ia_v8": {
-    "disponible": true,
+    "disponible": false,
     "probabilidad_impacto": null,
-    "score_impacto": 0.063
+    "score_impacto": null
   },
   "referencia_historica": {
     "eventos": [
@@ -90,7 +102,7 @@
     "movimiento_hacia_centro_dominio": false,
     "eta_minutos": null,
     "eta_minutos_aproximada_centro_dominio": null,
-    "confianza_movimiento": 0.95,
+    "confianza_movimiento": 0.731,
     "estado": "actividad_detectada",
     "nucleos": [
       {
@@ -3090,6 +3102,13 @@
         20,
         30
       ]
+    },
+    "distancia_km_frame": 107.91,
+    "eta_minutos_frame": null,
+    "vigencia_radar": {
+      "edad_radar_minutos": 83.0,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true
     }
   },
   "ambiente": {
@@ -3359,8 +3378,8 @@
     }
   },
   "calidad_datos": 100.0,
-  "calidad_tracking": 0.628,
-  "confianza_modelo": 0.9,
+  "calidad_tracking": 0.529,
+  "confianza_modelo": 0.68,
   "limitaciones": [
     "El radar actual no aporta dBZ cuantitativo validado en este motor.",
     "No hay observacion directa de rayos integrada en esta etapa.",
@@ -3373,11 +3392,10 @@
     "No se confirma movimiento hacia Bahia Blanca.",
     "El area radar esta aumentando.",
     "tendencia de fortalecimiento",
-    "IA V8 impacto 3-6h: 6%.",
     "CAPE ECMWF: 10 J/kg.",
     "Rafaga prevista ECMWF: 22.3 km/h.",
-    "Indice hibrido de severidad: 37%.",
-    "Impacto inmediato estimado por radar: 5%.",
+    "Indice hibrido de severidad: 41%.",
+    "Impacto inmediato estimado por radar: 4%.",
     "Radar, evolucion, meteorologia, IA e historial se combinan en un unico Storm Engine.",
     "La estimacion no reemplaza avisos oficiales y requiere validacion continua."
   ]

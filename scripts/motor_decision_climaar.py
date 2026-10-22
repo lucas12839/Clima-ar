@@ -12,6 +12,12 @@ OUT = BASE / "data/ia/resultado_final.json"
 
 VERSION = "ClimaAR-final-3.0"
 VALID_SEVERITIES = {"verde", "amarillo", "naranja", "rojo"}
+VALID_CLASSES = {
+    "sin_tormenta",
+    "tormenta",
+    "tormenta_fuerte",
+    "tormenta_severa",
+}
 
 
 def load(path):
@@ -248,14 +254,36 @@ def main():
     elif intensity["tendencia"] == "debilitandose" and operational_score < 0.60:
         state = "debilitandose"
 
+    threat = intel.get("amenaza_bahia")
+    if not isinstance(threat, dict):
+        threat = {}
+    threatens = threat.get("amenaza") is True
+
+    # Un sistema que no amenaza a Bahia Blanca no puede presentarse como
+    # estado fuerte/muy fuerte para la ciudad solo por su eco radar.
+    if radar_activity and not threatens and state in (
+        "actividad_muy_fuerte",
+        "fuerte",
+    ):
+        state = "activa"
+
     severity_raw = intel.get("severidad")
     severity = (
         str(severity_raw).strip().lower()
         if severity_raw is not None
         else ""
     )
+    severity = {"roja": "rojo"}.get(severity, severity)
     if severity not in VALID_SEVERITIES:
         severity = "no_determinada"
+
+    intel_radar = intel.get("radar")
+    if not isinstance(intel_radar, dict):
+        intel_radar = {}
+
+    weather_class = intel.get("clasificacion_meteorologica")
+    if weather_class not in VALID_CLASSES:
+        weather_class = "no_determinada"
 
     geo = nowcast.get("georreferenciacion", {})
     if not isinstance(geo, dict):
@@ -294,6 +322,7 @@ def main():
             "estado": state,
             "estado_operativo": state,
             "severidad_meteorologica": severity,
+            "clasificacion_meteorologica": weather_class,
             "score_integrado": round(operational_score, 3),
             "actividad_radar": radar_activity,
             "componentes": {
@@ -309,6 +338,8 @@ def main():
                 "proviene de Intelligence/IA/histórico y no del color radar."
             ),
         },
+        "clasificacion_meteorologica": weather_class,
+        "amenaza_bahia": threat,
         "severidad_meteorologica": {
             "valor": severity,
             "fuente": "inteligencia_tormenta",
@@ -353,14 +384,19 @@ def main():
             "granizo": None,
             "rayo": None,
             "eta_minutos": first_number(
+                intel_radar.get("eta_minutos"),
                 nowcast.get("eta_minutos"),
                 bahia.get("eta_minutos"),
             ),
             "distancia_km": first_number(
+                intel_radar.get("distancia_km"),
                 nowcast.get("distancia_km"),
                 bahia.get("distancia_principal_km"),
             ),
             "severidad_meteorologica": severity,
+            "clasificacion_meteorologica": weather_class,
+            "amenaza_bahia": threat,
+            "vigencia_radar": intel_radar.get("vigencia_radar"),
         },
     }
 

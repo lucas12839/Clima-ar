@@ -206,8 +206,12 @@ jobs:
               )
 
           if edad > 2700:
-              raise SystemExit(
-                  "ERROR: frame RMA10 demasiado antiguo."
+              # SINARAME dejó de publicar: se continúa con el último
+              # radar válido para que Intelligence siga estimando con
+              # meteorología actual hasta recibir un radar nuevo.
+              print(
+                  "ADVERTENCIA: RMA10 sin actualizar hace "
+                  f"{round(edad / 60)} min; se usa el último radar válido."
               )
 
           print(
