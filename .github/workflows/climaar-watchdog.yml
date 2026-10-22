@@ -263,7 +263,7 @@ jobs:
           set -euo pipefail
 
           echo "=========================================="
-          echo "WATCHDOG: LANZANDO RADAR RMA10"
+          echo "WATCHDOG: ASEGURANDO DETECTOR SINARAME"
           echo "=========================================="
 
           gh workflow run \
@@ -271,7 +271,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --ref main
 
-          echo "Radar solicitado correctamente."
+          echo "Detector solicitado (si no había uno activo)."
 
       - name: Radar ya está ejecutándose
         if: |

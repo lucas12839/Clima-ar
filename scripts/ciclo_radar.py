@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Decisiones del ciclo Radar (climaar-ciclo-radar.yml).
+Guardas de ejecucion unica. Ya no hay ciclo Radar: lo usa
+climaar-ciclo-radar.yml solo para no lanzar dos detectores.
 
 Garantiza un unico ciclo vivo. El workflow pasa por stdin el JSON de
 `gh run list --json databaseId,status` y este modulo decide con reglas

@@ -4,9 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       radar_run_id:
-        description: "ID del Radar RMA10 que disparó Intelligence"
-        required: true
+        description: "ID del Radar RMA10 que disparó Intelligence (obligatorio salvo modo=refresco)"
+        required: false
+        default: ""
         type: string
+      modo:
+        description: "frame_nuevo: usa el artefacto exacto del Radar. refresco: entre frames, usa el último radar válido ya publicado."
+        required: false
+        default: "frame_nuevo"
+        type: choice
+        options:
+          - frame_nuevo
+          - refresco
 
 permissions:
   actions: read
@@ -31,10 +40,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           INPUT_RADAR_RUN_ID: ${{ inputs.radar_run_id }}
+          MODO: ${{ inputs.modo }}
         run: |
           set -euo pipefail
 
           RUN_ID="$INPUT_RADAR_RUN_ID"
+
+          # Entre frames SINARAME la Inteligencia sigue con el ULTIMO radar
+          # valido (el publicado en main). Se verifica mas adelante que ese
+          # radar activo sea un frame completo y procesado.
+          if [ "$MODO" = "refresco" ]; then
+            echo "Refresco de Inteligencia con el último radar válido."
+            echo "ejecutar=true" >> "$GITHUB_OUTPUT"
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if [ -z "$RUN_ID" ]; then
             echo "ERROR: Intelligence requiere el ID exacto de la ejecución Radar."
@@ -90,7 +110,16 @@ jobs:
             logs \
             /tmp/radar-artifact
 
+      - name: Verificar radar activo completo y validado (refresco)
+        if: inputs.modo == 'refresco'
+        run: |
+          set -euo pipefail
+
+          test -s data/radar/radar_timestamp.txt
+          python scripts/radar_estado.py verificar-activo
+
       - name: Obtener artefacto del radar
+        if: inputs.modo != 'refresco'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ needs.verificar-radar.outputs.run_id }}

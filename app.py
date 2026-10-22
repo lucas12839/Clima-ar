@@ -2115,6 +2115,9 @@ def inteligencia() -> (
         "vigencia_radar": (
             storm.get("vigencia_radar")
         ),
+        "radar_timestamp": storm.get("radar_timestamp"),
+        "radar_age": storm.get("radar_age"),
+        "origen_datos": storm.get("origen_datos"),
     }
 
 
