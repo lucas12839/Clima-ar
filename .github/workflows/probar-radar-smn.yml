@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   radar:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
@@ -59,7 +59,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          python -m playwright install --with-deps chromium
+          python -m pip show playwright
+          sudo apt-get update
+          python -m playwright install-deps chromium \
+            || sudo "$(command -v python)" -m playwright install-deps chromium
+          python -m playwright install chromium
 
       # ============================================================
       # DIRECTORIOS
