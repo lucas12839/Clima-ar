@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import argparse
 import io
 import json
+import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -826,9 +828,32 @@ def aceptar_frame(
         OUT / "actual.png.tmp"
     )
 
-    tmp_actual.write_bytes(
-        data
+    # Descargar a temporal -> validar -> reemplazar el radar activo.
+    # os.replace es atomico: nadie lee un PNG parcial.
+    with open(tmp_actual, "wb") as handle:
+
+        handle.write(
+            data
+        )
+
+        handle.flush()
+
+        os.fsync(
+            handle.fileno()
+        )
+
+    ok_tmp, detalle_tmp = validar_png(
+        tmp_actual.read_bytes()
     )
+
+    if not ok_tmp:
+
+        tmp_actual.unlink()
+
+        raise RuntimeError(
+            "Frame invalido tras escribir "
+            f"el temporal: {detalle_tmp}"
+        )
 
     tmp_actual.replace(
         ACTUAL
@@ -845,9 +870,17 @@ def aceptar_frame(
             data
         )
 
-    TSFILE.write_text(
+    tmp_ts = TSFILE.with_name(
+        TSFILE.name + ".tmp"
+    )
+
+    tmp_ts.write_text(
         utc_iso,
         encoding="utf-8"
+    )
+
+    tmp_ts.replace(
+        TSFILE
     )
 
     guardar_estado_persistente(
@@ -889,7 +922,67 @@ def aceptar_frame(
 # MAIN
 # ============================================================
 
-def main():
+def emitir_candidatos(candidatos, salida):
+    """Modo detector: solo informa los timestamps publicados."""
+
+    items = []
+
+    for timestamp, url in sorted(
+        candidatos
+    ):
+
+        fecha = timestamp_source_to_datetime(
+            timestamp
+        ).astimezone(
+            timezone.utc
+        )
+
+        items.append(
+            {
+                "timestamp_fuente": timestamp,
+                "utc": fecha.isoformat(),
+                "url": url,
+            }
+        )
+
+    Path(salida).write_text(
+        json.dumps(
+            {
+                "consulta_utc": datetime.now(
+                    timezone.utc
+                ).isoformat(),
+                "candidatos": items,
+            },
+            ensure_ascii=False,
+            indent=2
+        ),
+        encoding="utf-8"
+    )
+
+
+def main(
+    argv=None
+):
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--solo-detectar",
+        action="store_true",
+        help=(
+            "Consulta SINARAME y escribe los timestamps "
+            "publicados sin descargar ni modificar nada."
+        )
+    )
+
+    parser.add_argument(
+        "--salida",
+        default="/tmp/climaar_candidatos_rma10.json"
+    )
+
+    args = parser.parse_args(
+        argv
+    )
 
     OUT.mkdir(
         parents=True,
@@ -901,11 +994,13 @@ def main():
         exist_ok=True
     )
 
-    migrar_historico_legacy()
+    if not args.solo_detectar:
 
-    escribir_estado(
-        "INICIANDO\n"
-    )
+        migrar_historico_legacy()
+
+        escribir_estado(
+            "INICIANDO\n"
+        )
 
     with sync_playwright() as playwright:
 
@@ -1115,6 +1210,15 @@ def main():
                         "Candidatos RMA10 encontrados:",
                         len(candidatos)
                     )
+
+                    if args.solo_detectar:
+
+                        emitir_candidatos(
+                            candidatos,
+                            args.salida
+                        )
+
+                        return 0
 
                     elegido = (
                         seleccionar_mas_reciente(

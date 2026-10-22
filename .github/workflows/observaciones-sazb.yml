@@ -1,8 +1,10 @@
 name: Observaciones SAZB
 
+# Sin schedule propio: la observación SAZB se actualiza en cada ejecución de
+# Intelligence (frame nuevo o refresco entre frames), así ningún cron
+# independiente puede desincronizarse del reloj radar ni cancelar un Radar
+# pendiente del grupo de concurrencia.
 on:
-  schedule:
-    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 permissions:

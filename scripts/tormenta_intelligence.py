@@ -1286,6 +1286,12 @@ def apply_radar_age(nowcast):
     age = radar_age_minutes(nowcast)
 
     vigencia = {
+        "radar_timestamp": nowcast.get("frame_actual_utc"),
+        "radar_age": (
+            round(age, 1)
+            if age is not None
+            else None
+        ),
         "edad_radar_minutos": (
             round(age, 1)
             if age is not None
@@ -1351,6 +1357,63 @@ def apply_radar_age(nowcast):
 
     nowcast["vigencia_radar"] = vigencia
     return nowcast
+
+
+def origen_datos(nowcast, estado_radar=None):
+    """
+    Separa lo que es observacion radar real, extrapolacion del nowcast
+    y prediccion ML, para no presentar un radar viejo como actual.
+    """
+
+    vigencia = nowcast.get("vigencia_radar") or {}
+    modo = vigencia.get("modo")
+    edad = vigencia.get("edad_radar_minutos")
+    estado_radar = estado_radar or {}
+
+    return {
+        "observacion_radar": {
+            "radar_timestamp": nowcast.get("frame_actual_utc"),
+            "edad_minutos": edad,
+            "es_actual": modo == "radar_vigente",
+            "vigencia": modo,
+        },
+        "extrapolacion_nowcast": {
+            "aplicada": modo == "estimado_desde_ultimo_radar_valido",
+            "minutos_extrapolados": (
+                edad
+                if modo == "estimado_desde_ultimo_radar_valido"
+                else 0
+            ),
+            "limite_minutos": RADAR_ESTIMACION_MAX_MIN,
+        },
+        "prediccion_ml": {
+            "base_radar_timestamp": nowcast.get("frame_actual_utc"),
+            "valida_con_radar_obsoleto": False,
+        },
+        "collector": {
+            "last_seen_radar_timestamp": estado_radar.get(
+                "last_seen_radar_timestamp"
+            ),
+            "last_processed_radar_timestamp": estado_radar.get(
+                "last_processed_radar_timestamp"
+            ),
+            "estado_collector": estado_radar.get("estado_collector"),
+            "estado_procesamiento": estado_radar.get(
+                "estado_procesamiento"
+            ),
+        },
+    }
+
+
+def leer_estado_radar():
+    try:
+        return json.loads(
+            Path("data/radar/estado_radar.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception:
+        return {}
 
 
 def bahia_threat(nowcast):
@@ -2192,6 +2255,15 @@ def main():
 
         "vigencia_radar":
             nowcast.get("vigencia_radar"),
+
+        "radar_timestamp":
+            (nowcast.get("vigencia_radar") or {}).get("radar_timestamp"),
+
+        "radar_age":
+            (nowcast.get("vigencia_radar") or {}).get("radar_age"),
+
+        "origen_datos":
+            origen_datos(nowcast, leer_estado_radar()),
 
         "probabilidades_calibradas": False,
 

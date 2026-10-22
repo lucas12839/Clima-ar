@@ -1,0 +1,24 @@
+# Servicio persistente recomendado para el detector SINARAME.
+# Requiere: Python 3.12, `pip install playwright pillow`, `playwright install chromium`
+# y un token con permiso "actions: write" sobre el repo (fine-grained PAT).
+#
+#   sudo cp deploy/climaar-detector.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now climaar-detector
+[Unit]
+Description=ClimaAR - detector de frames RMA10 (SINARAME)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/Clima-ar
+Environment=GITHUB_REPOSITORY=lucas12839/Clima-ar
+Environment=CLIMAAR_DETECTOR_INTERVALO_SEG=30
+Environment=CLIMAAR_REFRESCO_MIN=10
+# GH_TOKEN=<PAT>  -> definir en /etc/climaar-detector.env (chmod 600)
+EnvironmentFile=/etc/climaar-detector.env
+ExecStart=/usr/bin/python3 scripts/detector_sinarame.py --loop
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

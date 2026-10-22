@@ -1,29 +1,21 @@
 name: ClimaAR Ciclo Radar
 
-# UNICO programador del Radar RMA10. Nadie mas lanza probar-radar-smn.yml.
-#
-# - Un ciclo = lanzar Radar, esperar ~9 min, lanzar el proximo ciclo.
-# - El cron NO crea un segundo ciclo: solo reinicia la cadena si GitHub
-#   perdio un schedule o el ciclo murio. Si ya hay un ciclo vivo, la
-#   ejecucion nueva termina de inmediato (el id mas antiguo gana).
-# - El Radar mantiene la concurrencia climaar-production-writes que
-#   protege tracking y persistencia; este workflow solo agenda.
-# - Sin grupo de concurrencia aqui a proposito: un grupo dejaria una
-#   ejecucion pendiente que se convertiria en un segundo ciclo.
+# YA NO ES UN RELOJ. El reloj meteorologico es el frame de SINARAME y lo
+# vigila climaar-detector-sinarame.yml. Este workflow queda solo como
+# reinicio MANUAL (o desde el watchdog de diagnostico) del detector: lo lanza
+# unicamente si no hay un detector en ejecucion o en cola. Nunca lanza el Radar.
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "2,17,32,47 * * * *"
 
 permissions:
   actions: write
   contents: read
 
 jobs:
-  ciclo:
+  reiniciar-detector:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
 
     steps:
       - name: Checkout
@@ -32,37 +24,7 @@ jobs:
           sparse-checkout: scripts/ciclo_radar.py
           sparse-checkout-cone-mode: false
 
-      - name: Verificar que es el único ciclo
-        id: unico
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          MI_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-
-          # Un ciclo recién encadenado espera a que termine su
-          # predecesor; si otro ciclo más antiguo sigue vivo, es duplicado.
-          for intento in 1 2 3 4 5 6; do
-            resultado="$(
-              gh run list --repo "$GH_REPO" \
-                --workflow climaar-ciclo-radar.yml \
-                --limit 30 --json databaseId,status \
-                | python3 scripts/ciclo_radar.py inicio --run-id "$MI_ID"
-            )"
-            if [ "$resultado" = "true" ]; then
-              echo "continuar=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "Ciclo más antiguo activo; reintento $intento/6."
-            sleep 15
-          done
-
-          echo "Ciclo duplicado: termina sin lanzar nada."
-          echo "continuar=false" >> "$GITHUB_OUTPUT"
-
-      - name: Lanzar Radar RMA10 (si no hay uno activo)
-        if: steps.unico.outputs.continuar == 'true'
+      - name: Lanzar detector si no hay uno activo
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -71,41 +33,14 @@ jobs:
 
           resultado="$(
             gh run list --repo "$GH_REPO" \
-              --workflow probar-radar-smn.yml \
+              --workflow climaar-detector-sinarame.yml \
               --limit 30 --json databaseId,status \
               | python3 scripts/ciclo_radar.py radar
           )"
 
           if [ "$resultado" = "true" ]; then
-            gh workflow run probar-radar-smn.yml \
+            gh workflow run climaar-detector-sinarame.yml \
               --repo "$GH_REPO" --ref main
           else
-            echo "Radar en cola o ejecutándose; no se duplica."
-          fi
-
-      - name: Esperar próxima publicación de SINARAME
-        if: steps.unico.outputs.continuar == 'true'
-        run: sleep 540
-
-      - name: Encadenar próximo ciclo (si no hay otro activo)
-        if: steps.unico.outputs.continuar == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          MI_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-
-          resultado="$(
-            gh run list --repo "$GH_REPO" \
-              --workflow climaar-ciclo-radar.yml \
-              --limit 30 --json databaseId,status \
-              | python3 scripts/ciclo_radar.py encadenar --run-id "$MI_ID"
-          )"
-
-          if [ "$resultado" = "true" ]; then
-            gh workflow run climaar-ciclo-radar.yml \
-              --repo "$GH_REPO" --ref main
-          else
-            echo "Ya hay otro ciclo activo; no se encadena."
+            echo "El detector ya está en ejecución o en cola."
           fi

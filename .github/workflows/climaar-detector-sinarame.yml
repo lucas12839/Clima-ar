@@ -1,0 +1,70 @@
+name: ClimaAR Detector SINARAME
+
+# EL RELOJ METEOROLOGICO ES EL FRAME DE SINARAME, NO EL SCHEDULE.
+#
+# Este job es el detector: consulta SINARAME cada CLIMAAR_DETECTOR_INTERVALO_SEG
+# segundos, de forma liviana (solo lista timestamps RMA10). Cuando aparece un
+# timestamp nuevo despacha UNA vez probar-radar-smn.yml con ese radar_timestamp.
+# Entre frames pide refrescos de Inteligencia con el ultimo radar valido.
+#
+# LIMITACION REAL: GitHub Actions no ofrece servicios persistentes. Un job vive
+# como maximo 6 h, por eso corre ~5 h 40 min y se relanza solo ("relevo").
+# El `schedule` de abajo es UNICAMENTE el WATCHDOG del detector (reinicia el
+# detector si murio o se perdio el relevo); no decide cuando se procesa un frame.
+# El despliegue recomendado es ejecutar scripts/detector_sinarame.py --loop como
+# servicio (ver docs/ARQUITECTURA_RELOJ_RADAR.md y deploy/).
+
+on:
+  workflow_dispatch:
+  schedule:
+    # WATCHDOG del detector, no reloj meteorologico.
+    - cron: "11,41 * * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+# Un detector corriendo + como maximo uno pendiente que toma el relevo.
+# Un pendiente nuevo reemplaza al anterior: no se acumulan.
+concurrency:
+  group: climaar-detector
+  cancel-in-progress: false
+
+jobs:
+  detector:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencias del detector
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install playwright pillow
+          python -m playwright install-deps chromium \
+            || sudo "$(command -v python)" -m playwright install-deps chromium
+          python -m playwright install chromium
+
+      - name: Detectar frames nuevos de SINARAME
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CLIMAAR_DETECTOR_INTERVALO_SEG: "60"
+          CLIMAAR_REFRESCO_MIN: "10"
+          CLIMAAR_REDESPACHO_MIN: "10"
+        run: |
+          set -euo pipefail
+          python scripts/detector_sinarame.py \
+            --loop \
+            --duracion-max-min 335 \
+            --relevo
