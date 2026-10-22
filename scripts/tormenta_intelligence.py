@@ -6,6 +6,11 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 try:
+    import clasificador_tormenta
+except Exception:
+    clasificador_tormenta = None
+
+try:
     import joblib
 except Exception:
     joblib = None
@@ -1246,6 +1251,299 @@ def ai_prediction(
         return None
 
 
+RADAR_ESTIMACION_MAX_MIN = 180.0
+RADAR_FRESCO_MAX_MIN = 20.0
+DISTANCIA_SOBRE_CIUDAD_KM = 30.0
+SEVERIDADES_VALIDAS = ("verde", "amarillo", "naranja", "rojo")
+
+
+def radar_age_minutes(nowcast):
+    frame = parse_dt(
+        nowcast.get("frame_actual_utc")
+    )
+
+    if frame is None:
+        return None
+
+    return max(
+        0.0,
+        (
+            datetime.now(timezone.utc)
+            - frame
+        ).total_seconds()
+        / 60.0,
+    )
+
+
+def apply_radar_age(nowcast):
+    """
+    Si el RMA10 deja de actualizarse se sigue usando el ULTIMO radar
+    valido, desplazando su distancia/ETA por la antiguedad del frame.
+    No se inventan datos: se conserva el valor original del frame.
+    """
+
+    nowcast = dict(nowcast)
+    age = radar_age_minutes(nowcast)
+
+    vigencia = {
+        "radar_timestamp": nowcast.get("frame_actual_utc"),
+        "radar_age": (
+            round(age, 1)
+            if age is not None
+            else None
+        ),
+        "edad_radar_minutos": (
+            round(age, 1)
+            if age is not None
+            else None
+        ),
+        "modo": "radar_vigente",
+        "estimado": False,
+    }
+
+    if age is None or age <= RADAR_FRESCO_MAX_MIN:
+        nowcast["vigencia_radar"] = vigencia
+        return nowcast
+
+    vigencia["modo"] = "estimado_desde_ultimo_radar_valido"
+    vigencia["estimado"] = True
+
+    if age > RADAR_ESTIMACION_MAX_MIN:
+        vigencia["modo"] = "radar_obsoleto"
+        vigencia["motivo"] = (
+            "El ultimo radar valido es demasiado antiguo para extrapolar."
+        )
+        nowcast["vigencia_radar"] = vigencia
+        nowcast["actividad"] = False
+        return nowcast
+
+    nowcast["distancia_km_frame"] = nowcast.get("distancia_km")
+    nowcast["eta_minutos_frame"] = nowcast.get("eta_minutos")
+
+    toward = bool(
+        nowcast.get("movimiento_hacia_bahia")
+    )
+    speed = finite(nowcast.get("velocidad_kmh"))
+    distance = finite(nowcast.get("distancia_km"))
+    eta = finite(nowcast.get("eta_minutos"))
+
+    if toward and eta is not None:
+        remaining = eta - age
+        nowcast["eta_minutos"] = round(max(remaining, 0.0), 1)
+        if remaining <= 0:
+            vigencia["llegada_estimada_ocurrida"] = True
+
+    if (
+        toward
+        and distance is not None
+        and speed is not None
+        and 0 < speed <= 180
+    ):
+        nowcast["distancia_km"] = round(
+            max(distance - speed * age / 60.0, 0.0),
+            2,
+        )
+
+    nowcast["confianza_movimiento"] = round(
+        clamp(
+            finite(nowcast.get("confianza_movimiento"), 0.0)
+            * max(
+                0.3,
+                1.0 - age / (2 * RADAR_ESTIMACION_MAX_MIN),
+            )
+        ),
+        3,
+    )
+
+    nowcast["vigencia_radar"] = vigencia
+    return nowcast
+
+
+def origen_datos(nowcast, estado_radar=None):
+    """
+    Separa lo que es observacion radar real, extrapolacion del nowcast
+    y prediccion ML, para no presentar un radar viejo como actual.
+    """
+
+    vigencia = nowcast.get("vigencia_radar") or {}
+    modo = vigencia.get("modo")
+    edad = vigencia.get("edad_radar_minutos")
+    estado_radar = estado_radar or {}
+
+    return {
+        "observacion_radar": {
+            "radar_timestamp": nowcast.get("frame_actual_utc"),
+            "edad_minutos": edad,
+            "es_actual": modo == "radar_vigente",
+            "vigencia": modo,
+        },
+        "extrapolacion_nowcast": {
+            "aplicada": modo == "estimado_desde_ultimo_radar_valido",
+            "minutos_extrapolados": (
+                edad
+                if modo == "estimado_desde_ultimo_radar_valido"
+                else 0
+            ),
+            "limite_minutos": RADAR_ESTIMACION_MAX_MIN,
+        },
+        "prediccion_ml": {
+            "base_radar_timestamp": nowcast.get("frame_actual_utc"),
+            "valida_con_radar_obsoleto": False,
+        },
+        "collector": {
+            "last_seen_radar_timestamp": estado_radar.get(
+                "last_seen_radar_timestamp"
+            ),
+            "last_processed_radar_timestamp": estado_radar.get(
+                "last_processed_radar_timestamp"
+            ),
+            "estado_collector": estado_radar.get("estado_collector"),
+            "estado_procesamiento": estado_radar.get(
+                "estado_procesamiento"
+            ),
+        },
+    }
+
+
+def leer_estado_radar():
+    try:
+        return json.loads(
+            Path("data/radar/estado_radar.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception:
+        return {}
+
+
+def bahia_threat(nowcast):
+    """Determina si el sistema principal realmente amenaza Bahia Blanca."""
+
+    if not nowcast.get("actividad"):
+        return {
+            "amenaza": False,
+            "nivel": "ninguna",
+            "motivo": "sin_actividad_radar",
+        }
+
+    distance = finite(nowcast.get("distancia_km"))
+    eta = finite(nowcast.get("eta_minutos"))
+    toward = bool(nowcast.get("movimiento_hacia_bahia"))
+    over_city = (
+        distance is not None
+        and distance <= DISTANCIA_SOBRE_CIUDAD_KM
+    )
+
+    if not toward and not over_city:
+        return {
+            "amenaza": False,
+            "nivel": "ninguna",
+            "motivo": "no_se_dirige_hacia_bahia_blanca",
+            "distancia_km": distance,
+        }
+
+    if over_city:
+        level = "alta"
+    elif eta is not None and eta <= 60:
+        level = "alta"
+    elif eta is not None and eta <= 180:
+        level = "media"
+    else:
+        level = "baja"
+
+    return {
+        "amenaza": True,
+        "nivel": level,
+        "motivo": (
+            "sobre_o_muy_cerca_de_la_ciudad"
+            if over_city
+            else "trayectoria_hacia_bahia_blanca"
+        ),
+        "distancia_km": distance,
+        "eta_minutos": eta,
+    }
+
+
+def classify_weather(
+    threat,
+    severity_level,
+    hazards,
+    hybrid_score,
+    historical_ml=None,
+    nowcast=None,
+):
+    """
+    sin_tormenta / tormenta / tormenta_fuerte / tormenta_severa
+    para Bahia Blanca.
+
+    Combina (1) si el sistema amenaza realmente a la ciudad, (2) el
+    clasificador entrenado con el historico y los eventos severos
+    documentados y (3) la severidad del Storm Engine. El maximo del eco
+    radar solo puede limitar la clase, nunca elevarla.
+    """
+
+    if not threat.get("amenaza"):
+        return "sin_tormenta"
+
+    maximum = max(hazards.values(), default=0.0)
+
+    if severity_level == "rojo" or (
+        severity_level == "naranja" and maximum >= 0.55
+    ):
+        rule_idx = 3
+    elif severity_level in ("naranja", "amarillo"):
+        rule_idx = 2
+    else:
+        rule_idx = 1
+
+    ml_idx = None
+    if historical_ml:
+        try:
+            ml_idx = clasificador_tormenta.CLASSES.index(
+                historical_ml.get("clase")
+            )
+        except (ValueError, AttributeError):
+            ml_idx = None
+
+    if ml_idx is None:
+        idx = rule_idx
+    else:
+        idx = int((ml_idx + rule_idx) / 2.0 + 0.5)
+        # La severa exige que el historico tambien vea un ambiente fuerte.
+        if idx >= 3 and ml_idx < 2 and severity_level != "rojo":
+            idx = 2
+
+    idx = max(1, min(3, idx))
+
+    level = finite((nowcast or {}).get("intensidad_nivel_max"))
+    if level is not None and level <= 2:
+        idx = min(idx, 1)
+
+    if threat.get("nivel") == "baja":
+        idx = min(idx, 2)
+
+    return (
+        "tormenta",
+        "tormenta",
+        "tormenta_fuerte",
+        "tormenta_severa",
+    )[idx]
+
+
+def cap_severity_by_class(severity_level, weather_class):
+    caps = {
+        "sin_tormenta": "verde",
+        "tormenta": "amarillo",
+        "tormenta_fuerte": "naranja",
+        "tormenta_severa": "rojo",
+    }
+    order = SEVERIDADES_VALIDAS
+    limit = caps.get(weather_class, "rojo")
+    if order.index(severity_level) > order.index(limit):
+        return limit
+    return severity_level
+
+
 def classify_storm(
     nowcast,
     hazards,
@@ -1256,6 +1554,9 @@ def classify_storm(
         "actividad"
     ):
         return "sin_tormenta_activa"
+
+    if not bahia_threat(nowcast)["amenaza"]:
+        return "sistema_sin_amenaza_para_bahia"
 
     maximum = max(
         hazards.values()
@@ -1295,6 +1596,11 @@ def severity(
     ):
         return "verde"
 
+    # Un sistema que no se dirige hacia Bahia Blanca no es una
+    # condicion adversa para la ciudad.
+    if not bahia_threat(nowcast)["amenaza"]:
+        return "verde"
+
     raw = (
         0.60 * hybrid_score
         + 0.25 * impact
@@ -1302,7 +1608,7 @@ def severity(
     )
 
     if raw >= 0.80:
-        return "roja"
+        return "rojo"
 
     if raw >= 0.62:
         return "naranja"
@@ -1600,9 +1906,13 @@ def main():
         load_inputs()
     )
 
-    nowcast = radar_summary(
-        radar_file
+    nowcast = apply_radar_age(
+        radar_summary(
+            radar_file
+        )
     )
+
+    threat = bahia_threat(nowcast)
 
     environment = (
         current_environment(
@@ -1631,6 +1941,25 @@ def main():
             environment
         )
     )
+
+    historical_ml = (
+        clasificador_tormenta.predict(
+            environment,
+            now_dt(),
+        )
+        if clasificador_tormenta is not None
+        else None
+    )
+
+    if historical_ml:
+        historical = clamp(
+            0.6 * historical_ml["indice_severidad_historica"]
+            + 0.4 * historical
+        )
+        historical_reasons = list(historical_reasons) + [
+            "clasificador historico: "
+            f"{historical_ml['clase']} para el ambiente actual."
+        ]
 
     impact = impact_signal(
         nowcast
@@ -1701,6 +2030,20 @@ def main():
         hybrid_score,
         confidence,
         impact,
+    )
+
+    weather_class = classify_weather(
+        threat,
+        severity_level,
+        hazards,
+        hybrid_score,
+        historical_ml,
+        nowcast,
+    )
+
+    severity_level = cap_severity_by_class(
+        severity_level,
+        weather_class,
     )
 
     duration = duration_estimate(
@@ -1901,6 +2244,27 @@ def main():
         "severidad":
             severity_level,
 
+        "clasificacion_meteorologica":
+            weather_class,
+
+        "amenaza_bahia":
+            threat,
+
+        "clasificacion_historica":
+            historical_ml,
+
+        "vigencia_radar":
+            nowcast.get("vigencia_radar"),
+
+        "radar_timestamp":
+            (nowcast.get("vigencia_radar") or {}).get("radar_timestamp"),
+
+        "radar_age":
+            (nowcast.get("vigencia_radar") or {}).get("radar_age"),
+
+        "origen_datos":
+            origen_datos(nowcast, leer_estado_radar()),
+
         "probabilidades_calibradas": False,
 
         "probabilidades": {
@@ -2096,6 +2460,10 @@ def main():
 
     print(
         f"Severidad: {severity_level}"
+    )
+
+    print(
+        f"Clasificacion: {weather_class}"
     )
 
     print(

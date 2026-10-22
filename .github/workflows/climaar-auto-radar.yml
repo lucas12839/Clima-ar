@@ -16,15 +16,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Lanzar captura RMA10
+      - name: Asegurar detector SINARAME
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -e
 
-          gh workflow run probar-radar-smn.yml \
+          gh workflow run climaar-ciclo-radar.yml \
             --repo "$GH_REPO" \
             --ref main
 
-          echo "Captura RMA10 solicitada correctamente."
+          echo "Reinicio del detector solicitado (ignorado si ya hay uno activo). El Radar lo despacha el detector al ver un frame nuevo."

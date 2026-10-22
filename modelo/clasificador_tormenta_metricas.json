@@ -1,0 +1,131 @@
+{
+  "version": "clasificador-tormenta-v1",
+  "generado_utc": "2026-10-22T02:44:38.932672+00:00",
+  "ventana_etiqueta_horas": 3,
+  "umbrales_proxy": {
+    "tormenta_severa": {
+      "rafaga_kmh_con_lluvia": 90.0,
+      "lluvia_1h_mm": 15.0,
+      "lluvia_ventana_mm": 30.0
+    },
+    "tormenta_fuerte": {
+      "rafaga_kmh_con_lluvia": 70.0,
+      "lluvia_1h_mm": 8.0,
+      "lluvia_ventana_mm": 15.0
+    },
+    "tormenta": {
+      "rafaga_kmh_con_lluvia": 60.0,
+      "lluvia_1h_mm": 2.0,
+      "lluvia_ventana_mm": 4.0
+    }
+  },
+  "filas_totales": 409869,
+  "distribucion_total": {
+    "sin_tormenta": 399241,
+    "tormenta": 9295,
+    "tormenta_fuerte": 1188,
+    "tormenta_severa": 145
+  },
+  "corte_validacion": "entrenamiento < 2019; prueba >= 2019",
+  "validacion": {
+    "muestras": 67989,
+    "balanced_accuracy": 0.5506,
+    "matriz_confusion": [
+      [
+        62229,
+        3348,
+        426,
+        16
+      ],
+      [
+        386,
+        1085,
+        211,
+        6
+      ],
+      [
+        51,
+        70,
+        106,
+        5
+      ],
+      [
+        0,
+        17,
+        25,
+        8
+      ]
+    ],
+    "distribucion_real": {
+      "sin_tormenta": 66019,
+      "tormenta": 1688,
+      "tormenta_fuerte": 232,
+      "tormenta_severa": 50
+    },
+    "auc_tormenta_o_superior": 0.9444,
+    "auc_tormenta_fuerte_o_superior": 0.9337,
+    "auc_tormenta_severa_o_superior": 0.9726,
+    "indice_medio_por_clase_real": {
+      "sin_tormenta": 0.0622,
+      "tormenta": 0.3403,
+      "tormenta_fuerte": 0.4546,
+      "tormenta_severa": 0.6233
+    }
+  },
+  "indice_medio_prueba": 0.0709,
+  "eventos_documentados": [
+    {
+      "fecha": "1981-03-14",
+      "evento": "Temporal grave",
+      "hora_pico": "1981-03-14 16:00:00",
+      "horas_forzadas": 4,
+      "verificacion": "pendiente_verificacion",
+      "en_entrenamiento": true,
+      "indice_maximo_6h_previas": 0.9625
+    },
+    {
+      "fecha": "1982-02-13",
+      "evento": "Tornado temporal Chile Pedro Pico",
+      "hora_pico": "1982-02-13 15:00:00",
+      "horas_forzadas": 4,
+      "verificacion": "pendiente_verificacion",
+      "en_entrenamiento": true,
+      "indice_maximo_6h_previas": 0.9535
+    },
+    {
+      "fecha": "2019-12-30",
+      "evento": "Tornado F0 Paso Piedras",
+      "hora_pico": "2019-12-30 04:00:00",
+      "horas_forzadas": 4,
+      "verificacion": "parcialmente_verificado",
+      "en_entrenamiento": false,
+      "indice_maximo_6h_previas": 0.599
+    },
+    {
+      "fecha": "2023-12-16",
+      "evento": "Temporal destructivo",
+      "hora_pico": "2023-12-16 20:00:00",
+      "horas_forzadas": 4,
+      "verificacion": "parcialmente_verificado",
+      "en_entrenamiento": false,
+      "indice_maximo_6h_previas": 0.6973
+    },
+    {
+      "fecha": "2025-03-07",
+      "evento": "Inundacion historica",
+      "hora_pico": "2025-03-07 05:00:00",
+      "horas_forzadas": 4,
+      "verificacion": "verificado",
+      "en_entrenamiento": false,
+      "indice_maximo_6h_previas": 0.6769
+    }
+  ],
+  "limitaciones": [
+    "Probabilidades NO calibradas: se publican como indices.",
+    "La ventana de la etiqueta incluye la hora actual, por lo que parte del acierto es persistencia (lluvia/rafaga presentes).",
+    "Pocos eventos severos documentados; la clase severa es la menos confiable.",
+    "El historico horario es una reconstruccion y subestima picos convectivos.",
+    "No hay etiquetas de clase asociadas a radar RMA10 todavia: el radar decide si el sistema amenaza a Bahia Blanca, el historico decide cuan fuerte es el ambiente."
+  ],
+  "reentrenar": "python scripts/entrenar_clasificador_tormenta.py"
+}

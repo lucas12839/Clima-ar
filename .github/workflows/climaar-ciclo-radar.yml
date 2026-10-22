@@ -1,0 +1,46 @@
+name: ClimaAR Ciclo Radar
+
+# YA NO ES UN RELOJ. El reloj meteorologico es el frame de SINARAME y lo
+# vigila climaar-detector-sinarame.yml. Este workflow queda solo como
+# reinicio MANUAL (o desde el watchdog de diagnostico) del detector: lo lanza
+# unicamente si no hay un detector en ejecucion o en cola. Nunca lanza el Radar.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  reiniciar-detector:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ciclo_radar.py
+          sparse-checkout-cone-mode: false
+
+      - name: Lanzar detector si no hay uno activo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          resultado="$(
+            gh run list --repo "$GH_REPO" \
+              --workflow climaar-detector-sinarame.yml \
+              --limit 30 --json databaseId,status \
+              | python3 scripts/ciclo_radar.py radar
+          )"
+
+          if [ "$resultado" = "true" ]; then
+            gh workflow run climaar-detector-sinarame.yml \
+              --repo "$GH_REPO" --ref main
+          else
+            echo "El detector ya está en ejecución o en cola."
+          fi

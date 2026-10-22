@@ -1,0 +1,95 @@
+{
+  "generado_utc": "2026-10-22T02:44:38.932672+00:00",
+  "fuentes": [
+    {
+      "archivo": "data/historico/clima_horario_1980_2026.csv",
+      "usado_para": "ENTRENAMIENTO clasificador de 4 clases (variables y etiquetas)",
+      "nota": "46 anios horarios sin huecos; reconstruccion que subestima picos convectivos.",
+      "existe": true,
+      "filas": 409872,
+      "desde": "1980-01-01 00:00:00+00:00",
+      "hasta": "2026-10-03 23:00:00+00:00"
+    },
+    {
+      "archivo": "data/historico/eventos_severos.csv",
+      "usado_para": "ENTRENAMIENTO: fuerza clase severa en el pico de cada evento",
+      "nota": "5 eventos documentados; 2 siguen 'pendiente_verificacion'.",
+      "existe": true,
+      "filas": 5,
+      "desde": "1981-03-14 00:00:00+00:00",
+      "hasta": "2025-03-07 00:00:00+00:00"
+    },
+    {
+      "archivo": "data/historico/ventanas_eventos_24h.csv",
+      "usado_para": "AUDITORIA: ventanas de 24 h previas a eventos",
+      "nota": "Ya contenido en el historico horario; no se duplica.",
+      "existe": true,
+      "filas": 125,
+      "desde": "1981-03-13 00:00:00+00:00",
+      "hasta": "2025-03-07 00:00:00+00:00"
+    },
+    {
+      "archivo": "data/eventos_severos/variables_convectivas_2023_2025.csv",
+      "usado_para": "AUDITORIA: CAPE/LI/niveles de presion en 2 eventos",
+      "nota": "Solo 2 eventos; insuficiente para entrenar. Se usa como referencia en reglas ambientales del Storm Engine.",
+      "existe": true,
+      "filas": 240,
+      "desde": "2023-12-13 00:00:00+00:00",
+      "hasta": "2025-03-08 23:00:00+00:00"
+    },
+    {
+      "archivo": "data/eventos_severos/meteorologia_tres_eventos.csv",
+      "usado_para": "AUDITORIA: 3 eventos con variables extendidas",
+      "nota": "Muestra demasiado chica para entrenar por separado.",
+      "existe": true,
+      "filas": 360,
+      "desde": "2019-12-27 00:00:00+00:00",
+      "hasta": "2025-03-08 23:00:00+00:00"
+    },
+    {
+      "archivo": "data/radar/rma10_dataset_historico.csv",
+      "usado_para": "MODELO RMA10 (fortalecimiento/debilitamiento/hacia Bahia)",
+      "nota": "Entrenado en data/models/rma10_model.joblib; sin verdad terreno de clase meteorologica, por eso no entrena el clasificador de 4 clases.",
+      "existe": true,
+      "filas": 3267,
+      "desde": "2026-10-12 06:50:00+00:00",
+      "hasta": "2026-10-15 02:20:00+00:00"
+    },
+    {
+      "archivo": "data/radar/radar_features_rma10.csv",
+      "usado_para": "AUDITORIA: serie de actividad radar RMA10",
+      "nota": "Sin solape temporal con el historico horario (termina el 2026-10-03; RMA10 empieza el 2026-10-12).",
+      "existe": true,
+      "filas": 85,
+      "desde": "2026-10-14 17:10:00+00:00",
+      "hasta": "2026-10-22 01:10:00+00:00"
+    },
+    {
+      "archivo": "data/radar/radar_features.csv",
+      "usado_para": "NO USADO: decodificador RainViewer legado",
+      "nota": "Fuente distinta de RMA10 (ver reconstruir_dataset_radar.py).",
+      "existe": true,
+      "filas": 245,
+      "desde": "2026-10-01 17:00:00+00:00",
+      "hasta": "2026-10-03 09:50:00+00:00"
+    },
+    {
+      "archivo": "data/ia/historial_inteligencia_tormenta.csv",
+      "usado_para": "NO USADO PARA ENTRENAR: salida del propio motor",
+      "nota": "Entrenar con salidas propias seria circular.",
+      "existe": true,
+      "filas": 215,
+      "desde": "2026-10-05 22:03:25.185947+00:00",
+      "hasta": "2026-10-20 10:33:20.408124+00:00"
+    },
+    {
+      "archivo": "data/ia/historial_meteorologico.csv",
+      "usado_para": "NO USADO PARA ENTRENAR: instantaneas del propio pipeline",
+      "nota": "Sin etiqueta de resultado observado.",
+      "existe": true,
+      "filas": 133,
+      "desde": "2026-10-05 21:51:50.004247+00:00",
+      "hasta": "2026-10-22 01:30:10.023594+00:00"
+    }
+  ]
+}

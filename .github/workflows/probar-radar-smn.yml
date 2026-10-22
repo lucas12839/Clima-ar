@@ -1,9 +1,15 @@
 name: ClimaAR Radar RMA10
 
 on:
+  # Sin schedule: lo despacha climaar-detector-sinarame.yml cuando SINARAME
+  # publica un frame nuevo (o una persona a mano). Es idempotente: un mismo
+  # radar_timestamp se procesa una sola vez (scripts/radar_estado.py).
   workflow_dispatch:
-  schedule:
-    - cron: "3,13,23,33,43,53 * * * *"
+    inputs:
+      radar_timestamp:
+        description: "Timestamp UTC del frame que detecto el detector (informativo)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -206,8 +212,12 @@ jobs:
               )
 
           if edad > 2700:
-              raise SystemExit(
-                  "ERROR: frame RMA10 demasiado antiguo."
+              # SINARAME dejó de publicar: se continúa con el último
+              # radar válido para que Intelligence siga estimando con
+              # meteorología actual hasta recibir un radar nuevo.
+              print(
+                  "ADVERTENCIA: RMA10 sin actualizar hace "
+                  f"{round(edad / 60)} min; se usa el último radar válido."
               )
 
           print(
@@ -216,10 +226,26 @@ jobs:
           PY
 
       # ============================================================
+      # IDEMPOTENCIA: UN frame = UN procesamiento
+      # ============================================================
+
+      - name: Reclamar frame (idempotencia por radar_timestamp)
+        id: reclamar
+        env:
+          RADAR_TIMESTAMP_DETECTADO: ${{ inputs.radar_timestamp }}
+        run: |
+          set -euo pipefail
+
+          echo "Detectado por el detector: ${RADAR_TIMESTAMP_DETECTADO:-<manual>}"
+
+          python scripts/radar_estado.py reclamar
+
+      # ============================================================
       # PROCESAMIENTO RADAR
       # ============================================================
 
       - name: Procesar radar
+        if: steps.reclamar.outputs.procesar == 'true'
         run: |
           set -euo pipefail
 
@@ -230,6 +256,7 @@ jobs:
       # ============================================================
 
       - name: Validar resultado del procesamiento
+        if: steps.reclamar.outputs.procesar == 'true'
         run: |
           set -euo pipefail
 
@@ -393,6 +420,7 @@ jobs:
       # ============================================================
 
       - name: Ejecutar seguimiento temporal
+        if: steps.reclamar.outputs.procesar == 'true'
         run: |
           set -euo pipefail
 
@@ -403,6 +431,7 @@ jobs:
       # ============================================================
 
       - name: Validar cadena Radar → Tracking
+        if: steps.reclamar.outputs.procesar == 'true'
         run: |
           set -euo pipefail
 
@@ -899,7 +928,15 @@ jobs:
       # ARTEFACTO
       # ============================================================
 
+      - name: Marcar frame como procesado (radar activo validado)
+        if: steps.reclamar.outputs.procesar == 'true'
+        run: |
+          set -euo pipefail
+
+          python scripts/radar_estado.py completar
+
       - name: Preparar artefacto Radar RMA10
+        if: steps.reclamar.outputs.procesar == 'true'
         run: |
           set -euo pipefail
 
@@ -913,6 +950,7 @@ jobs:
             /tmp/radar-rma10/data/radar/
 
       - name: Publicar artefacto Radar RMA10
+        if: steps.reclamar.outputs.procesar == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: radar-rma10
@@ -920,6 +958,7 @@ jobs:
           retention-days: 7
 
       - name: Disparar Intelligence con el artefacto recién publicado
+        if: steps.reclamar.outputs.procesar == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -937,6 +976,7 @@ jobs:
       # ============================================================
 
       - name: Persistir resultados
+        if: steps.reclamar.outputs.procesar == 'true'
         run: |
           set -euo pipefail
 
@@ -1084,3 +1124,15 @@ jobs:
           echo
           echo "ERROR: agotados los intentos de sincronización."
           exit 1
+
+      - name: Liberar reclamo si el procesamiento falló
+        if: failure() && steps.reclamar.outputs.procesar == 'true'
+        run: |
+          python scripts/radar_estado.py fallar \
+            --motivo "falló el pipeline del radar" || true
+
+      - name: Frame ya procesado o en curso
+        if: steps.reclamar.outputs.procesar != 'true'
+        run: |
+          echo "No se procesa: ${{ steps.reclamar.outputs.motivo }}"
+          echo "Un mismo radar_timestamp se procesa una sola vez."

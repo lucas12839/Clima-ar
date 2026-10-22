@@ -1,0 +1,49 @@
+name: Entrenar Clasificador de Tormentas
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: climaar-production-writes
+  cancel-in-progress: false
+
+jobs:
+  entrenar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Entrenar con todo el histórico
+        run: python scripts/entrenar_clasificador_tormenta.py
+
+      - name: Probar
+        run: |
+          pip install pytest
+          python -m pytest tests/test_clasificador_tormenta.py -q
+
+      - name: Publicar modelo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add modelo/climaar_clasificador_tormenta_v1.joblib \
+            modelo/clasificador_tormenta_metricas.json \
+            modelo/auditoria_datos_historicos.json
+          git diff --cached --quiet && exit 0
+          git commit -m "ClimaAR: reentrenar clasificador de tormentas"
+          git pull --rebase origin main
+          git push origin HEAD:main
