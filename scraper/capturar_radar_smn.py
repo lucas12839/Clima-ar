@@ -687,9 +687,11 @@ def aceptar_frame(
 
     if edad > MAX_RADAR_AGE_MINUTES:
 
-        raise RuntimeError(
-            "Frame RMA10 demasiado antiguo: "
-            f"{edad:.1f} minutos."
+        # Es un frame real y mas nuevo que el ultimo aceptado: se
+        # publica igualmente. Descartarlo dejaba el radar congelado.
+        print(
+            "ADVERTENCIA: el frame RMA10 llego atrasado "
+            f"({edad:.1f} min); se acepta por ser el mas nuevo."
         )
 
     utc_iso = (
