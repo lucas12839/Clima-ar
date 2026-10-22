@@ -753,6 +753,13 @@ def main():
             "ERROR: timestamp radar invalido."
         )
 
+    # La evolución se regenera después de este adaptador: si el archivo
+    # persistido es de otro frame, no se publica como si fuera del actual.
+    if not isinstance(prediccion, dict) or parse_ts(
+        prediccion.get("radar_timestamp")
+    ) != radar_dt:
+        prediccion = {}
+
     tracking_ts = parse_ts(
         seguimiento.get("radar_timestamp")
     )
@@ -1362,16 +1369,7 @@ def main():
                 ),
 
             "radar_timestamp":
-                (
-                    prediccion.get(
-                        "radar_timestamp"
-                    )
-                    if isinstance(
-                        prediccion,
-                        dict
-                    )
-                    else None
-                ),
+                radar_ts,
 
             "resumen":
                 (
