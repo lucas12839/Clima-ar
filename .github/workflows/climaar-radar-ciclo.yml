@@ -1,0 +1,60 @@
+name: ClimaAR Radar Ciclo
+
+# GitHub entrega los cron "*/5" y "*/10" con retrasos de horas, por lo que ni el
+# radar ni el watchdog (ambos por schedule) corrian a tiempo. Este workflow se
+# dispara por workflow_run (no es throttled): al terminar cada corrida del
+# radar espera unos minutos y vuelve a lanzarlo, manteniendo el ciclo activo.
+# El schedule solo sirve para re-arrancar el ciclo si se corto.
+
+on:
+  workflow_run:
+    workflows: ["ClimaAR Radar RMA10"]
+    types: [completed]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: climaar-radar-ciclo
+  cancel-in-progress: false
+
+jobs:
+  ciclo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Esperar y relanzar Radar RMA10
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENTO: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENTO" = "workflow_run" ]; then
+            sleep 420
+          fi
+
+          activos="$(
+            gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow probar-radar-smn.yml \
+              --limit 20 \
+              --json status \
+              --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length'
+          )"
+
+          if [ "$activos" -gt 0 ]; then
+            echo "Radar ya activo/en cola ($activos). No se relanza."
+            exit 0
+          fi
+
+          gh workflow run probar-radar-smn.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main
+
+          echo "Radar RMA10 relanzado."
