@@ -32,23 +32,23 @@
   },
   "vigencia_radar": {
     "radar_timestamp": "2026-10-23T10:20:00Z",
-    "radar_age": 20.0,
-    "edad_radar_minutos": 20.0,
-    "modo": "radar_vigente",
-    "estimado": false
+    "radar_age": 21.6,
+    "edad_radar_minutos": 21.6,
+    "modo": "estimado_desde_ultimo_radar_valido",
+    "estimado": true
   },
   "radar_timestamp": "2026-10-23T10:20:00Z",
-  "radar_age": 20.0,
+  "radar_age": 21.6,
   "origen_datos": {
     "observacion_radar": {
       "radar_timestamp": "2026-10-23T10:20:00Z",
-      "edad_minutos": 20.0,
-      "es_actual": true,
-      "vigencia": "radar_vigente"
+      "edad_minutos": 21.6,
+      "es_actual": false,
+      "vigencia": "estimado_desde_ultimo_radar_valido"
     },
     "extrapolacion_nowcast": {
-      "aplicada": false,
-      "minutos_extrapolados": 0,
+      "aplicada": true,
+      "minutos_extrapolados": 21.6,
       "limite_minutos": 180.0
     },
     "prediccion_ml": {
@@ -75,18 +75,18 @@
     "impacto": null
   },
   "indices_heuristicos": {
-    "tormenta": 0.155,
-    "llegada_bahia": 0.048,
+    "tormenta": 0.153,
+    "llegada_bahia": 0.047,
     "fortalecimiento": 0.665,
     "debilitamiento": 0.335,
-    "impacto": 0.048,
+    "impacto": 0.047,
     "peligros": {
       "lluvia_fuerte": 0.285,
       "viento_fuerte": 0.212,
       "granizo": 0.067,
       "rayo": 0.077
     },
-    "indice_hibrido_severidad": 0.254,
+    "indice_hibrido_severidad": 0.253,
     "fuente_componente_ia": "modelo_impacto_v8_no_calibrado"
   },
   "peligros": {
@@ -95,7 +95,7 @@
     "granizo": null,
     "rayo": null
   },
-  "indice_hibrido_severidad": 0.254,
+  "indice_hibrido_severidad": 0.253,
   "ia_v8": {
     "disponible": true,
     "probabilidad_impacto": null,
@@ -143,7 +143,7 @@
     "movimiento_hacia_centro_dominio": false,
     "eta_minutos": null,
     "eta_minutos_aproximada_centro_dominio": null,
-    "confianza_movimiento": 0.55,
+    "confianza_movimiento": 0.517,
     "estado": "actividad_detectada",
     "nucleos": [
       {
@@ -1016,12 +1016,14 @@
         30
       ]
     },
+    "distancia_km_frame": 25.74,
+    "eta_minutos_frame": null,
     "vigencia_radar": {
       "radar_timestamp": "2026-10-23T10:20:00Z",
-      "radar_age": 20.0,
-      "edad_radar_minutos": 20.0,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 21.6,
+      "edad_radar_minutos": 21.6,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true
     }
   },
   "ambiente": {
@@ -1061,7 +1063,7 @@
     "modelo_ecmwf_rafaga_10m_kmh": 32.0,
     "fuente_superficie_actual": "SAZB_AWC",
     "observacion_sazb_utc": "2026-10-23T10:00:00+00:00",
-    "observacion_sazb_edad_minutos": 39.5,
+    "observacion_sazb_edad_minutos": 41.0,
     "viento_actual_fuente": "SAZB_AWC",
     "viento_actual_kmh": 20.372,
     "direccion_viento_actual": 190.0,
@@ -1084,7 +1086,7 @@
         "pressure_msl": 1014.736177953205,
         "surface_pressure": 995.797394918918,
         "precipitation": 0.09317984027227093,
-        "rain": 0.0,
+        "rain": 0.09317984027227093,
         "showers": 0.0,
         "cloud_cover": 100.0,
         "cloud_cover_low": 100.0,
@@ -1139,7 +1141,7 @@
         "pressure_msl": 1014.8319822877557,
         "surface_pressure": 995.073672868918,
         "precipitation": 0.0895088218380541,
-        "rain": 0.0,
+        "rain": 0.0895088218380541,
         "showers": 0.0,
         "cloud_cover": 100.00000000000001,
         "cloud_cover_low": 100.00000000000001,
@@ -1194,7 +1196,7 @@
         "pressure_msl": 1014.9702517447748,
         "surface_pressure": 995.0333913680896,
         "precipitation": 0.08967877654496675,
-        "rain": 0.0,
+        "rain": 0.08967877654496675,
         "showers": 0.0,
         "cloud_cover": 100.0,
         "cloud_cover_low": 100.0,
@@ -1249,7 +1251,7 @@
         "pressure_msl": 1015.0753693453681,
         "surface_pressure": 995.5297610212934,
         "precipitation": 0.08040217303576304,
-        "rain": 0.0,
+        "rain": 0.08040217303576304,
         "showers": 0.0,
         "cloud_cover": 100.0,
         "cloud_cover_low": 100.0,
@@ -1291,7 +1293,7 @@
     }
   },
   "calidad_datos": 100.0,
-  "calidad_tracking": 0.598,
+  "calidad_tracking": 0.583,
   "confianza_modelo": 0.9,
   "limitaciones": [
     "El radar actual no aporta dBZ cuantitativo validado en este motor.",
