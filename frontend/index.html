@@ -15,6 +15,11 @@
 
   <title>ClimaAR · Bahía Blanca</title>
 
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    crossorigin=""
+  >
   <link rel="stylesheet" href="styles.css">
 </head>
 
@@ -75,7 +80,7 @@
 
         <div class="heroHeader">
           <div>
-            <span class="eyebrow">AHORA</span>
+            <span class="eyebrow">CONDICIONES ACTUALES</span>
             <h1>Bahía Blanca</h1>
           </div>
 
@@ -110,31 +115,65 @@
 
         </div>
 
-        <div class="metrics">
+        <div class="metrics conditionsGrid">
 
-          <div class="metric">
-            <span>Viento</span>
-            <strong id="wind">—</strong>
-          </div>
-
-          <div class="metric">
-            <span>Presión</span>
-            <strong id="pressure">—</strong>
-          </div>
-
-          <div class="metric">
-            <span>Lluvia</span>
-            <strong id="rain">—</strong>
-          </div>
+          <div class="metric"><span>Temperatura</span><strong id="cardTemp">—</strong></div>
+          <div class="metric"><span>Sensación térmica</span><strong id="cardFeels">—</strong></div>
+          <div class="metric"><span>Viento</span><strong id="wind">—</strong></div>
+          <div class="metric"><span>Dirección del viento</span><strong id="windDir">—</strong></div>
+          <div class="metric"><span>Ráfagas</span><strong id="gusts">—</strong></div>
+          <div class="metric"><span>Presión</span><strong id="pressure">—</strong></div>
+          <div class="metric"><span>Humedad</span><strong id="humidity">—</strong></div>
+          <div class="metric"><span>Estado del cielo</span><strong id="sky">—</strong></div>
+          <div class="metric"><span>Lluvia ahora</span><strong id="rain">—</strong></div>
 
         </div>
 
       </div>
 
 
-      <!-- ESTADO -->
+    </section>
 
-      <button
+    <section
+      id="radar"
+      class="section"
+      data-section="radar"
+    >
+
+      <div class="sectionTitle">
+        <div>
+          <span class="eyebrow">MAPA</span>
+          <h2>Radar</h2>
+        </div>
+        <span id="mapStatus" class="statusBadge statusUnknown">MAPA</span>
+      </div>
+
+      <div class="card radarCard">
+        <div id="map" class="mapView" role="region" aria-label="Mapa de Bahía Blanca"></div>
+        <div id="mapNote" class="mapNote">
+          El radar sobre el mapa se mostrará cuando ClimaAR entregue su ubicación geográfica real.
+        </div>
+        <div id="radarHumanText" class="humanText">
+          <p>Sin información de tormentas para mostrar.</p>
+        </div>
+      </div>
+
+    </section>
+
+    <section
+      id="adversas"
+      class="section"
+      data-section="adversas"
+    >
+
+      <div class="sectionTitle">
+        <div>
+          <span class="eyebrow">ATENCIÓN</span>
+          <h2>Condiciones adversas</h2>
+        </div>
+      </div>
+
+<button
         id="alertCard"
         class="alertCard"
         type="button"
@@ -179,9 +218,95 @@
       </button>
 
 
-      <!-- RESUMEN -->
+      
+      <div id="advNone" class="card advNone">No se esperan condiciones adversas.</div>
+
+      <div id="advDetail" class="card advDetail hidden">
+        <div class="advHeader">
+          <strong id="advType">—</strong>
+          <span id="advClass" class="classBadge">—</span>
+        </div>
+        <div class="advGrid">
+          <div><span>Dirección</span><strong id="advDirection">—</strong></div>
+          <div><span>Distancia</span><strong id="advDistance">—</strong></div>
+          <div><span>Llegada estimada</span><strong id="advEta">—</strong></div>
+          <div><span>Duración estimada</span><strong id="advDuration">—</strong></div>
+          <div><span>Pronóstico</span><strong id="advTrend">—</strong></div>
+          <div><span>Probabilidad</span><strong id="advProbability">Probabilidad: no disponible</strong></div>
+          <div><span>Confianza</span><strong id="advConfidence">—</strong></div>
+        </div>
+      </div>
+
+      <div class="infoNote">
+        Clase 1: fenómeno débil · Clase 2: moderado · Clase 3: fuerte · Clase 4: severo.
+        La probabilidad (que afecte tu zona) y la confianza (qué tan seguro está el modelo) son datos distintos.
+      </div>
+
+    </section>
+
+    <section
+      id="pronostico"
+      class="section"
+      data-section="pronostico"
+    >
 
       <div class="sectionTitle">
+        <div>
+          <span class="eyebrow">PRÓXIMOS DÍAS</span>
+          <h2>Pronóstico de 3 días</h2>
+        </div>
+      </div>
+
+      <div id="forecastEmpty" class="infoNote">
+        El pronóstico diario todavía no está disponible.
+      </div>
+
+      <div id="forecastGrid" class="forecastGrid">
+        <article class="dayCard" data-day="1">
+          <h3 data-field="day">Día 1</h3>
+          <strong data-field="state">—</strong>
+          <div class="dayRow"><span>Mínima</span><b data-field="min">—</b></div>
+          <div class="dayRow"><span>Máxima</span><b data-field="max">—</b></div>
+          <div class="dayRow"><span>Viento</span><b data-field="wind">—</b></div>
+          <div class="dayRow"><span>Prob. de lluvia</span><b data-field="rain">—</b></div>
+          <p data-field="desc">—</p>
+        </article>
+        <article class="dayCard" data-day="2">
+          <h3 data-field="day">Día 2</h3>
+          <strong data-field="state">—</strong>
+          <div class="dayRow"><span>Mínima</span><b data-field="min">—</b></div>
+          <div class="dayRow"><span>Máxima</span><b data-field="max">—</b></div>
+          <div class="dayRow"><span>Viento</span><b data-field="wind">—</b></div>
+          <div class="dayRow"><span>Prob. de lluvia</span><b data-field="rain">—</b></div>
+          <p data-field="desc">—</p>
+        </article>
+        <article class="dayCard" data-day="3">
+          <h3 data-field="day">Día 3</h3>
+          <strong data-field="state">—</strong>
+          <div class="dayRow"><span>Mínima</span><b data-field="min">—</b></div>
+          <div class="dayRow"><span>Máxima</span><b data-field="max">—</b></div>
+          <div class="dayRow"><span>Viento</span><b data-field="wind">—</b></div>
+          <div class="dayRow"><span>Prob. de lluvia</span><b data-field="rain">—</b></div>
+          <p data-field="desc">—</p>
+        </article>
+      </div>
+
+    </section>
+
+    <div class="secondaryZone">
+
+      <section id="mas" class="section" data-section="mas">
+        <div class="sectionTitle">
+          <div>
+            <span class="eyebrow">MÁS INFORMACIÓN</span>
+            <h2>Zona secundaria</h2>
+          </div>
+        </div>
+      </section>
+
+      <details class="secondaryBlock" open>
+        <summary>Resumen de seguimiento</summary>
+        <div class="sectionTitle">
         <div>
           <span class="eyebrow">RESUMEN</span>
           <h2>Seguimiento actual</h2>
@@ -216,17 +341,15 @@
 
       </div>
 
-    </section>
 
+      </details>
 
-    <!-- ==================================================== -->
-    <!-- RADAR -->
-    <!-- ==================================================== -->
-
-    <section
-      id="radar"
+      <details class="secondaryBlock">
+        <summary>Radar en imagen (RMA10)</summary>
+        <section
+      id="radarImagen"
       class="section"
-      data-section="radar"
+      data-section="mas"
     >
 
       <div class="sectionTitle">
@@ -363,16 +486,14 @@
       </div>
 
     </section>
+      </details>
 
-
-    <!-- ==================================================== -->
-    <!-- TORMENTAS -->
-    <!-- ==================================================== -->
-
-    <section
+      <details class="secondaryBlock">
+        <summary>Actividad detallada</summary>
+        <section
       id="tormentas"
       class="section"
-      data-section="tormentas"
+      data-section="mas"
     >
 
       <div class="sectionTitle">
@@ -500,16 +621,14 @@
 
 
     </section>
+      </details>
 
-
-    <!-- ==================================================== -->
-    <!-- PRONÓSTICO -->
-    <!-- ==================================================== -->
-
-    <section
-      id="pronostico"
+      <details class="secondaryBlock">
+        <summary>Evolución próxima</summary>
+        <section
+      id="evolucion"
       class="section"
-      data-section="pronostico"
+      data-section="mas"
     >
 
       <div class="sectionTitle">
@@ -605,14 +724,12 @@
       </div>
 
     </section>
+      </details>
 
-
-    <!-- ==================================================== -->
-    <!-- MÁS / ESTADO -->
-    <!-- ==================================================== -->
-
-    <section
-      id="mas"
+      <details class="secondaryBlock" id="sistema">
+        <summary>Estado del sistema</summary>
+        <section
+      id="mas2"
       class="section"
       data-section="mas"
     >
@@ -691,6 +808,9 @@
       </div>
 
     </section>
+      </details>
+
+    </div>
 
   </main>
 
@@ -738,13 +858,13 @@
     <button
       class="navItem"
       type="button"
-      data-target="tormentas"
-      aria-label="Tormentas"
+      data-target="adversas"
+      aria-label="Condiciones"
     >
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M13 2 5 13h6l-1 9 9-13h-6z"/>
       </svg>
-      <span>Actividad</span>
+      <span>Condiciones</span>
     </button>
 
 
@@ -760,29 +880,21 @@
         <path d="M16 18v-7"/>
         <path d="M22 18V3"/>
       </svg>
-      <span>Evolución</span>
+      <span>Pronóstico</span>
     </button>
 
 
-    <button
-      class="navItem"
-      type="button"
-      data-target="mas"
-      aria-label="Más"
-    >
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="5" cy="12" r="1.5"/>
-        <circle cx="12" cy="12" r="1.5"/>
-        <circle cx="19" cy="12" r="1.5"/>
-      </svg>
-      <span>Más</span>
-    </button>
+    
 
   </nav>
 
 </div>
 
 
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  crossorigin=""
+></script>
 <script src="config.js"></script>
 <script src="app.js"></script>
 
