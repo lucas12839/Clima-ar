@@ -18,6 +18,7 @@ const state = {
   storm: null,
   intelligence: null,
   model: null,
+  forecast: null,
   sequence: [],
 
   radarZoom: 1,
@@ -517,10 +518,13 @@ function renderWeather(data) {
       : "—"
   );
 
+  const skyNow = skyDescription();
+
   setText(
     "#condition",
-    state.weather.nowcast ||
-    "Sin datos suficientes"
+    skyNow !== "—"
+      ? skyNow
+      : "Sin datos suficientes"
   );
 
   const secondary = [];
@@ -621,6 +625,12 @@ function skyDescription() {
     return "Tormenta";
   }
 
+  const fromCode = weatherCodeText(w.codigo_tiempo);
+
+  if (fromCode) {
+    return fromCode;
+  }
+
   const rain = number(w.precipitacion);
 
   if (rain !== null && rain > 0) {
@@ -628,6 +638,27 @@ function skyDescription() {
   }
 
   return "—";
+}
+
+
+// Códigos WMO de Open-Meteo traducidos a lenguaje simple.
+function weatherCodeText(code) {
+  const c = number(code);
+
+  if (c === null) return null;
+  if (c === 0) return "Despejado";
+  if (c === 1) return "Mayormente despejado";
+  if (c === 2) return "Parcialmente nublado";
+  if (c === 3) return "Nublado";
+  if (c === 45 || c === 48) return "Niebla";
+  if (c >= 51 && c <= 57) return "Llovizna";
+  if (c >= 61 && c <= 67) return "Lluvia";
+  if (c >= 71 && c <= 77) return "Nieve";
+  if (c >= 80 && c <= 82) return "Chaparrones";
+  if (c === 85 || c === 86) return "Nevadas";
+  if (c >= 95) return "Tormenta";
+
+  return null;
 }
 
 
@@ -1851,15 +1882,28 @@ function renderAdverse() {
   const radar = state.radar || {};
   const stormRadar = storm.radar || {};
 
-  const bearing = firstNumber(
+  // Bearing desde el fenómeno hacia Bahía Blanca; llega desde el opuesto.
+  const toCity = number(
+    stormRadar.bahia_blanca?.rumbo_desde_principal_grados
+  );
+
+  const heading = firstNumber(
     stormRadar.direccion_grados,
     radar.direccion_grados
   );
 
+  const from =
+    toCity !== null
+      ? toCity + 180
+      : heading !== null &&
+        (stormRadar.movimiento_hacia_bahia ?? radar.movimiento_hacia_bahia) === true
+        ? heading + 180
+        : null;
+
   setText(
     "#advDirection",
-    bearing !== null
-      ? `Rumbo ${degreesToCardinal(bearing)}`
+    from !== null
+      ? `Llega desde el ${degreesToCardinal(from)}`
       : "—"
   );
 
@@ -2104,12 +2148,19 @@ function renderMap() {
     : [];
 
   nuclei.forEach(item => {
-    const pos = validLatLon(item?.latitud ?? item?.lat, item?.longitud ?? item?.lon);
+    const geo = item?.georreferencia;
+    const pos = validLatLon(geo?.latitud, geo?.longitud);
 
     if (pos) {
       L.circleMarker(pos, { radius: 8, color: "#ff9f43" })
         .addTo(map.nuclei)
-        .bindPopup("Núcleo detectado");
+        .bindPopup(
+          `Núcleo detectado${
+            number(geo?.distancia_bahia_km) !== null
+              ? ` · a ${Math.round(geo.distancia_bahia_km)} km de Bahía Blanca`
+              : ""
+          }`
+        );
     }
   });
 
@@ -2134,6 +2185,54 @@ function renderMap() {
 /* ========================================================= */
 
 // No existe aún un endpoint de pronóstico diario: estado vacío.
+const WEEKDAYS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+
+function dayName(iso) {
+  const d = new Date(`${iso}T12:00:00`);
+
+  return Number.isNaN(d.getTime())
+    ? null
+    : WEEKDAYS[d.getDay()];
+}
+
+
+function dayDescription(d) {
+  const parts = [];
+  const rain = number(d.prob_lluvia);
+  const gust = number(d.rafagas);
+  const mm = number(d.lluvia_mm);
+
+  if (rain !== null) {
+    parts.push(
+      rain >= 60 ? "Es probable que llueva."
+        : rain >= 30 ? "Puede llover."
+        : "Poco probable que llueva."
+    );
+  }
+
+  if (mm !== null && mm > 0) parts.push(`Se esperan unos ${mm.toFixed(1)} mm.`);
+  if (gust !== null && gust >= 60) parts.push(`Ráfagas fuertes de hasta ${Math.round(gust)} km/h.`);
+
+  return parts.join(" ") || null;
+}
+
+
+function mapForecast(payload) {
+  const list = Array.isArray(payload?.dias) ? payload.dias : [];
+
+  return list.map(d => ({
+    dia: dayName(d.fecha),
+    estado: weatherCodeText(d.codigo_tiempo),
+    minima: d.minima,
+    maxima: d.maxima,
+    viento: d.viento,
+    prob_lluvia: d.prob_lluvia,
+    descripcion: dayDescription(d),
+    severo: number(d.codigo_tiempo) >= 95
+  }));
+}
+
+
 function renderForecast(days) {
   const list = Array.isArray(days) ? days.slice(0, 3) : [];
   const empty = $("#forecastEmpty");
@@ -2154,6 +2253,7 @@ function renderForecast(days) {
     set("wind", number(day.viento) !== null ? `${Math.round(day.viento)} km/h` : "—");
     set("rain", number(day.prob_lluvia) !== null ? `${Math.round(day.prob_lluvia)}%` : "—");
     set("desc", day.descripcion);
+    card.classList.toggle("dayAlert", day.severo === true);
   });
 }
 
@@ -2171,7 +2271,8 @@ async function cargarDatos() {
       getJSON("/prediccion/en-vivo"),
       getJSON("/tormenta"),
       getJSON("/inteligencia"),
-      getJSON("/modelo")
+      getJSON("/modelo"),
+      getJSON("/pronostico")
     ]);
 
   const [
@@ -2181,8 +2282,14 @@ async function cargarDatos() {
     livePrediction,
     storm,
     intelligence,
-    model
+    model,
+    forecast
   ] = results;
+
+  state.forecast =
+    forecast.status === "fulfilled"
+      ? forecast.value
+      : state.forecast;
 
   state.radar =
     radar.status === "fulfilled"
@@ -2242,7 +2349,7 @@ async function cargarDatos() {
 
   renderMap();
 
-  renderForecast(null);
+  renderForecast(mapForecast(state.forecast));
 }
 
 
