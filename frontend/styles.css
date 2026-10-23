@@ -1206,7 +1206,7 @@ main {
   z-index: 100;
 
   display: grid;
-  grid-template-columns: repeat(5,1fr);
+  grid-template-columns: repeat(4,1fr);
 
   width: min(592px, calc(100% - 20px));
 
@@ -1328,3 +1328,158 @@ main {
     font-size: 7px;
   }
   }
+
+
+/* ========================================================= */
+/* NUEVA ESTRUCTURA (ETAPA 1) */
+/* ========================================================= */
+
+.hidden {
+  display: none !important;
+}
+
+.conditionsGrid {
+  grid-template-columns: repeat(2,1fr);
+}
+
+.mapView {
+  height: 340px;
+  border-radius: 16px;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.mapNote {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.humanText {
+  margin-top: 12px;
+  min-height: 48px;
+}
+
+.humanText p {
+  margin: 4px 0;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.advNone {
+  padding: 18px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--green);
+}
+
+.advDetail {
+  padding: 16px;
+}
+
+.advHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.classBadge {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255,159,67,.15);
+  color: var(--orange);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.advGrid {
+  display: grid;
+  grid-template-columns: repeat(2,1fr);
+  gap: 10px;
+}
+
+.advGrid span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.advGrid strong {
+  font-size: 15px;
+}
+
+.forecastGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.dayCard {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.dayCard h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.dayRow {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 14px;
+}
+
+.dayRow span {
+  color: var(--muted);
+}
+
+.dayCard p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.secondaryZone {
+  margin-top: 28px;
+  padding-bottom: 90px;
+}
+
+.secondaryBlock {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 0 14px;
+}
+
+.secondaryBlock > summary {
+  padding: 14px 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+@media (min-width: 760px) {
+  .forecastGrid {
+    grid-template-columns: repeat(3,1fr);
+  }
+
+  .conditionsGrid {
+    grid-template-columns: repeat(3,1fr);
+  }
+
+  .mapView {
+    height: 460px;
+  }
+}
+
+.dayCard.dayAlert {
+  border-color: var(--orange);
+  box-shadow: 0 0 0 1px var(--orange);
+}

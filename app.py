@@ -629,7 +629,12 @@ def get_openmeteo_data() -> (
         "pressure_msl,"
         "wind_speed_10m,"
         "wind_direction_10m,"
-        "precipitation"
+        "precipitation,"
+        "apparent_temperature,"
+        "relative_humidity_2m,"
+        "wind_gusts_10m,"
+        "cloud_cover,"
+        "weather_code"
         "&timezone="
         "America/Argentina/"
         "Buenos_Aires"
@@ -674,11 +679,115 @@ def get_openmeteo_data() -> (
             "precipitacion": current.get(
                 "precipitation"
             ),
+            "sensacion_termica": current.get(
+                "apparent_temperature"
+            ),
+            "humedad": current.get(
+                "relative_humidity_2m"
+            ),
+            "rafagas": current.get(
+                "wind_gusts_10m"
+            ),
+            "nubosidad": current.get(
+                "cloud_cover"
+            ),
+            "codigo_tiempo": current.get(
+                "weather_code"
+            ),
             "fuente": "Open-Meteo",
         }
 
     except Exception:
         return None
+
+
+_FORECAST_CACHE: dict[str, Any] = {
+    "ts": 0.0,
+    "data": None,
+}
+
+FORECAST_CACHE_SECONDS = 900.0
+
+
+def get_openmeteo_forecast() -> (
+    list[dict[str, Any]] | None
+):
+    """Próximos 3 días completos (sin hoy) desde Open-Meteo."""
+
+    now = time.time()
+
+    if (
+        _FORECAST_CACHE["data"] is not None
+        and now - _FORECAST_CACHE["ts"]
+        < FORECAST_CACHE_SECONDS
+    ):
+        return _FORECAST_CACHE["data"]
+
+    url = (
+        "https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}"
+        f"&longitude={LON}"
+        "&daily="
+        "weather_code,"
+        "temperature_2m_max,"
+        "temperature_2m_min,"
+        "precipitation_probability_max,"
+        "precipitation_sum,"
+        "wind_speed_10m_max,"
+        "wind_gusts_10m_max,"
+        "wind_direction_10m_dominant"
+        "&forecast_days=4"
+        "&timezone="
+        "America/Argentina/"
+        "Buenos_Aires"
+    )
+
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+
+        daily = response.json().get("daily")
+
+        if not isinstance(daily, dict):
+            return _FORECAST_CACHE["data"]
+
+        dates = daily.get("time") or []
+
+        def pick(key: str, i: int) -> Any:
+            values = daily.get(key)
+            return (
+                values[i]
+                if isinstance(values, list)
+                and i < len(values)
+                else None
+            )
+
+        days = [
+            {
+                "fecha": dates[i],
+                "codigo_tiempo": pick("weather_code", i),
+                "minima": pick("temperature_2m_min", i),
+                "maxima": pick("temperature_2m_max", i),
+                "prob_lluvia": pick(
+                    "precipitation_probability_max", i
+                ),
+                "lluvia_mm": pick("precipitation_sum", i),
+                "viento": pick("wind_speed_10m_max", i),
+                "rafagas": pick("wind_gusts_10m_max", i),
+                "viento_direccion": pick(
+                    "wind_direction_10m_dominant", i
+                ),
+            }
+            for i in range(1, min(4, len(dates)))
+        ]
+
+        _FORECAST_CACHE["ts"] = now
+        _FORECAST_CACHE["data"] = days
+
+        return days
+
+    except Exception:
+        return _FORECAST_CACHE["data"]
 
 
 # ============================================================
@@ -1354,6 +1463,31 @@ def estado() -> dict[str, Any]:
             if meteo
             else None,
 
+        "sensacion_termica":
+            meteo.get("sensacion_termica")
+            if meteo
+            else None,
+
+        "humedad":
+            meteo.get("humedad")
+            if meteo
+            else None,
+
+        "rafagas":
+            meteo.get("rafagas")
+            if meteo
+            else None,
+
+        "nubosidad":
+            meteo.get("nubosidad")
+            if meteo
+            else None,
+
+        "codigo_tiempo":
+            meteo.get("codigo_tiempo")
+            if meteo
+            else None,
+
         "presion":
             meteo.get(
                 "presion"
@@ -1429,6 +1563,73 @@ def estado() -> dict[str, Any]:
     }
 
 
+def radar_geo() -> dict[str, Any]:
+    """Georreferenciación real publicada por Intelligence (RMA10)."""
+
+    storm = read_json(STORM_FILE) or {}
+    block = storm.get("radar")
+
+    if not isinstance(block, dict):
+        return {"bounds": None, "nucleos_geo": {}}
+
+    geo = block.get("georreferenciacion")
+    bounds = None
+
+    try:
+        if (
+            isinstance(geo, dict)
+            and geo.get("disponible") is True
+            and (geo.get("validacion") or {}).get("estado") is True
+        ):
+            c = geo["validacion"]["controles_cardinales"]
+            bounds = [
+                [float(c["sur"]["latitud"]),
+                 float(c["oeste"]["longitud"])],
+                [float(c["norte"]["latitud"]),
+                 float(c["este"]["longitud"])],
+            ]
+    except (KeyError, TypeError, ValueError):
+        bounds = None
+
+    nucleos_geo: dict[str, Any] = {}
+
+    for item in block.get("nucleos_georreferenciados") or []:
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("georreferencia"), dict)
+            and item.get("track_id") is not None
+        ):
+            nucleos_geo[str(item["track_id"])] = item["georreferencia"]
+
+    return {
+        "bounds": bounds,
+        "frame": block.get("frame_actual_utc"),
+        "centro": (
+            [geo.get("radar_latitud"), geo.get("radar_longitud")]
+            if isinstance(geo, dict)
+            else None
+        ),
+        "alcance_km": (
+            geo.get("alcance_radio_km")
+            if isinstance(geo, dict)
+            else None
+        ),
+        "nucleos_geo": nucleos_geo,
+    }
+
+
+@app.get("/pronostico")
+def pronostico() -> dict[str, Any]:
+
+    days = get_openmeteo_forecast()
+
+    return {
+        "disponible": bool(days),
+        "fuente": "Open-Meteo",
+        "dias": days or [],
+    }
+
+
 @app.get("/radar")
 def radar() -> dict[str, Any]:
 
@@ -1449,11 +1650,44 @@ def radar() -> dict[str, Any]:
         radar_metadata()
     )
 
+    geo = radar_geo()
+
+    # Solo se georreferencia si Intelligence analizó el mismo frame.
+    geo_vigente = (
+        geo.get("frame") is not None
+        and geo.get("frame") == nc.get("frame_actual_utc")
+    )
+
+    nucleos = []
+
+    for item in get_nucleos(nowcast):
+        item = dict(item) if isinstance(item, dict) else item
+
+        if geo_vigente and isinstance(item, dict):
+            g = geo["nucleos_geo"].get(
+                str(item.get("track_id"))
+            )
+
+            if g:
+                item["georreferencia"] = g
+
+        nucleos.append(item)
+
     return {
         "estado":
             "ok"
             if nowcast
             else "sin_datos",
+
+        "bounds":
+            geo["bounds"],
+
+        "georreferenciacion": {
+            "bounds": geo["bounds"],
+            "centro": geo["centro"],
+            "alcance_km": geo["alcance_km"],
+            "fuente": "inteligencia_tormenta.radar.georreferenciacion",
+        },
 
         "fuente":
             FUENTE,
@@ -1486,9 +1720,7 @@ def radar() -> dict[str, Any]:
             ),
 
         "nucleos":
-            get_nucleos(
-                nowcast
-            ),
+            nucleos,
 
         **radar_threat_fields(
             nc
