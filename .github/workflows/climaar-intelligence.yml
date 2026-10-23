@@ -626,6 +626,27 @@ jobs:
               )
 
           if not trajectory:
+              radar_path = Path("data/radar/radar_nowcast.json")
+              radar = json.loads(
+                  radar_path.read_text(encoding="utf-8")
+              )
+              radar_nowcast = radar.get("nowcast", {})
+              projection_meta = radar_nowcast.get(
+                  "proyecciones_metadata",
+                  {}
+              )
+
+              if (
+                  projection_meta.get("pronostico_disponible") is False
+                  and projection_meta.get("motivo_no_disponible")
+                  == "SIN_MOVIMIENTO_VALIDO"
+              ):
+                  print(
+                      "OK: sin ambiente en trayectoria porque "
+                      "no existe movimiento válido."
+                  )
+                  raise SystemExit(0)
+
               raise SystemExit(
                   "ERROR: Storm Engine terminó con ambiente_en_trayectoria vacío"
               )
