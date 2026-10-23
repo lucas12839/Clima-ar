@@ -107,6 +107,14 @@ async function getJSON(path, timeout = 15000) {
 /* ========================================================= */
 
 function number(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
+
   const n = Number(value);
 
   return Number.isFinite(n)
@@ -575,6 +583,67 @@ function renderWeather(data) {
       ? `${rain} mm`
       : "—"
   );
+
+  renderConditionCards();
+}
+
+
+/* ========================================================= */
+/* CONDICIONES ACTUALES (tarjetas) */
+/* ========================================================= */
+
+const CARDINALS = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"];
+
+function degreesToCardinal(value) {
+  const deg = number(value);
+
+  if (deg === null) {
+    return "—";
+  }
+
+  const normalized = ((deg % 360) + 360) % 360;
+
+  return CARDINALS[Math.round(normalized / 45) % 8];
+}
+
+
+function skyDescription() {
+  const w = state.weather || {};
+  const direct = firstValue(w.cielo, w.estado_cielo);
+
+  if (typeof direct === "string") {
+    return direct;
+  }
+
+  const raw = getIntelligenceClassification();
+
+  if (raw && raw !== "sin_tormenta") {
+    return "Tormenta";
+  }
+
+  const rain = number(w.precipitacion);
+
+  if (rain !== null && rain > 0) {
+    return "Lluvia";
+  }
+
+  return "—";
+}
+
+
+function renderConditionCards() {
+  const w = state.weather || {};
+  const unit = (value, suffix, digits = 0) =>
+    value !== null
+      ? `${value.toFixed(digits)}${suffix}`
+      : "—";
+
+  setText("#cardTemp", unit(number(w.temperatura), "°C", 1));
+  setText("#cardFeels", unit(firstNumber(w.sensacion_termica), "°C", 1));
+  setText("#windDir", degreesToCardinal(w.viento_direccion));
+  setText("#gusts", unit(firstNumber(w.rafagas, w.rafaga), " km/h"));
+  setText("#humidity", unit(firstNumber(w.humedad), "%"));
+  setText("#sky", skyDescription());
 }
 
 
@@ -1569,7 +1638,7 @@ function initNavigation() {
       "click",
       () => {
         scrollToSection(
-          "tormentas"
+          "adversas"
         );
       }
     );
@@ -1583,7 +1652,7 @@ function initNavigation() {
       "click",
       () => {
         scrollToSection(
-          "tormentas"
+          "adversas"
         );
       }
     );
@@ -1700,6 +1769,394 @@ function escapeHtml(value) {
 }
 
 
+
+/* ========================================================= */
+/* CONDICIONES ADVERSAS */
+/* ========================================================= */
+
+const CLASS_LABELS = {
+  1: "Clase 1 — fenómeno débil",
+  2: "Clase 2 — fenómeno moderado",
+  3: "Clase 3 — fenómeno fuerte",
+  4: "Clase 4 — fenómeno severo"
+};
+
+const CLASS_FROM_CLASSIFICATION = {
+  tormenta: 2,
+  tormenta_fuerte: 3,
+  tormenta_severa: 4
+};
+
+const CLASS_FROM_SEVERITY = {
+  amarillo: 2,
+  naranja: 3,
+  rojo: 4
+};
+
+
+function intelBlock() {
+  const intel = state.intelligence || {};
+  const storm = intel.inteligencia_tormenta || {};
+  const final = intel.resultado_final || {};
+
+  return { intel, storm, final };
+}
+
+
+function adverseClass() {
+  const raw = getIntelligenceClassification();
+
+  return CLASS_FROM_CLASSIFICATION[raw] ||
+    CLASS_FROM_SEVERITY[getIntelligenceSeverity()] ||
+    null;
+}
+
+
+function renderAdverse() {
+  const { intel, storm, final } = intelBlock();
+
+  const threat = firstValue(
+    intel.amenaza_bahia,
+    final.amenaza_bahia,
+    storm.amenaza_bahia
+  ) || {};
+
+  const classification = getIntelligenceClassification();
+
+  const active =
+    threat.amenaza === true ||
+    (classification !== null && classification !== "sin_tormenta");
+
+  const none = $("#advNone");
+  const detail = $("#advDetail");
+
+  if (none) none.classList.toggle("hidden", active);
+  if (detail) detail.classList.toggle("hidden", !active);
+
+  renderRadarHumanText(active, threat);
+
+  if (!active) {
+    return;
+  }
+
+  setText(
+    "#advType",
+    classification ? CLASSIFICATION_LABELS[classification] : "Tormenta"
+  );
+
+  const cls = adverseClass();
+
+  setText("#advClass", cls ? CLASS_LABELS[cls] : "Clase no determinada");
+
+  const radar = state.radar || {};
+  const stormRadar = storm.radar || {};
+
+  const bearing = firstNumber(
+    stormRadar.direccion_grados,
+    radar.direccion_grados
+  );
+
+  setText(
+    "#advDirection",
+    bearing !== null
+      ? `Rumbo ${degreesToCardinal(bearing)}`
+      : "—"
+  );
+
+  const distance = firstNumber(threat.distancia_km, radar.distancia_km);
+
+  setText(
+    "#advDistance",
+    distance !== null ? `${distance.toFixed(0)} km` : "—"
+  );
+
+  const eta = firstNumber(
+    threat.eta_minutos,
+    intel.eta_minutos,
+    storm.eta_minutos,
+    radar.eta_minutos
+  );
+
+  setText(
+    "#advEta",
+    eta !== null ? `Posible llegada en ${Math.round(eta)} min` : "—"
+  );
+
+  const duration = firstNumber(
+    storm.duracion_estimada_minutos,
+    final.duracion_estimada_minutos
+  );
+
+  setText(
+    "#advDuration",
+    duration !== null ? `${Math.round(duration)} min` : "—"
+  );
+
+  setText("#advTrend", trendText(
+    firstValue(stormRadar.fortalecimiento, radar.fortalecimiento)
+  ));
+
+  const probability = firstNumber(
+    storm.probabilidades?.llegada_bahia,
+    storm.probabilidades?.impacto,
+    storm.probabilidades?.tormenta
+  );
+
+  setText(
+    "#advProbability",
+    probability !== null
+      ? `Probabilidad: ${formatPercent(toPercent(probability))}`
+      : "Probabilidad: no disponible"
+  );
+
+  const confidence = firstNumber(
+    storm.confianza_modelo,
+    final.motor_decision?.componentes?.ia_confianza
+  );
+
+  setText(
+    "#advConfidence",
+    confidence !== null
+      ? `Confianza: ${formatPercent(toPercent(confidence))}`
+      : "Confianza: no disponible"
+  );
+}
+
+
+function toPercent(value) {
+  return value <= 1 ? value * 100 : value;
+}
+
+
+function trendText(value) {
+  const map = {
+    fortaleciendose: "Fortaleciéndose",
+    fortaleciendo: "Fortaleciéndose",
+    debilitandose: "Debilitándose",
+    debilitando: "Debilitándose",
+    estable: "Estable"
+  };
+
+  return map[value] || "—";
+}
+
+
+function renderRadarHumanText(active, threat) {
+  const box = $("#radarHumanText");
+
+  if (!box) {
+    return;
+  }
+
+  if (!active) {
+    box.innerHTML = "<p>No se esperan condiciones adversas.</p>";
+    return;
+  }
+
+  const lines = [];
+  const eta = number(threat.eta_minutos);
+  const distance = number(threat.distancia_km);
+  const cls = adverseClass();
+  const classification = getIntelligenceClassification();
+
+  if (classification) {
+    lines.push(`${CLASSIFICATION_LABELS[classification]} cerca de Bahía Blanca.`);
+  }
+
+  if (distance !== null) lines.push(`Distancia: ${distance.toFixed(0)} km.`);
+  if (eta !== null) lines.push(`Posible llegada en ${Math.round(eta)} minutos.`);
+  if (cls) lines.push(`Intensidad: ${CLASS_LABELS[cls]}.`);
+
+  box.innerHTML = lines.length
+    ? lines.map(line => `<p>${escapeHtml(line)}</p>`).join("")
+    : "<p>Sin información de tormentas para mostrar.</p>";
+}
+
+
+/* ========================================================= */
+/* MAPA (Leaflet) */
+/* ========================================================= */
+
+// Coordenadas públicas de Bahía Blanca, solo como respaldo si la API no responde.
+const FALLBACK_CENTER = [-38.7183, -62.2663];
+
+const map = {
+  instance: null,
+  city: null,
+  radarOverlay: null,
+  nuclei: null,
+  track: null
+};
+
+
+function validLatLon(lat, lon) {
+  const a = number(lat);
+  const b = number(lon);
+
+  return a !== null && b !== null &&
+    Math.abs(a) <= 90 && Math.abs(b) <= 180
+    ? [a, b]
+    : null;
+}
+
+
+function cityCoordinates() {
+  const storm = state.intelligence?.inteligencia_tormenta || {};
+
+  return validLatLon(state.health?.lat, state.health?.lon) ||
+    validLatLon(storm.ubicacion?.latitud, storm.ubicacion?.longitud);
+}
+
+
+function initMap() {
+  const element = $("#map");
+
+  if (!element) {
+    return;
+  }
+
+  if (typeof L === "undefined") {
+    setText("#mapNote", "No se pudo cargar el mapa.");
+    return;
+  }
+
+  map.instance = L.map(element, { zoomControl: true })
+    .setView(FALLBACK_CENTER, 9);
+
+  L.tileLayer(
+    "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {
+      maxZoom: 18,
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }
+  ).addTo(map.instance);
+
+  map.nuclei = L.layerGroup().addTo(map.instance);
+  map.track = L.layerGroup().addTo(map.instance);
+}
+
+
+// Bounds reales del radar: solo si la API los entrega.
+function radarBounds() {
+  const r = state.radar || {};
+  const b = r.bounds || r.limites || r.radar_bounds;
+
+  if (Array.isArray(b) && b.length === 2) {
+    const sw = validLatLon(b[0]?.[0], b[0]?.[1]);
+    const ne = validLatLon(b[1]?.[0], b[1]?.[1]);
+
+    return sw && ne ? [sw, ne] : null;
+  }
+
+  return null;
+}
+
+
+function renderMap() {
+  if (!map.instance) {
+    return;
+  }
+
+  const city = cityCoordinates();
+
+  if (city && !map.city) {
+    map.instance.setView(city, map.instance.getZoom());
+  }
+
+  const position = city || FALLBACK_CENTER;
+
+  if (!map.city) {
+    map.city = L.marker(position)
+      .addTo(map.instance)
+      .bindPopup("Bahía Blanca");
+  } else {
+    map.city.setLatLng(position);
+  }
+
+  const bounds = radarBounds();
+
+  if (map.radarOverlay) {
+    map.instance.removeLayer(map.radarOverlay);
+    map.radarOverlay = null;
+  }
+
+  if (bounds) {
+    map.radarOverlay = L.imageOverlay(
+      radarImageUrl("/radar/imagen"),
+      bounds,
+      { opacity: 0.7 }
+    ).addTo(map.instance);
+  }
+
+  setText(
+    "#mapNote",
+    bounds
+      ? "Radar sobre el mapa."
+      : "El radar sobre el mapa se mostrará cuando ClimaAR entregue su ubicación geográfica real."
+  );
+
+  map.nuclei.clearLayers();
+  map.track.clearLayers();
+
+  const nuclei = Array.isArray(state.radar?.nucleos)
+    ? state.radar.nucleos
+    : [];
+
+  nuclei.forEach(item => {
+    const pos = validLatLon(item?.latitud ?? item?.lat, item?.longitud ?? item?.lon);
+
+    if (pos) {
+      L.circleMarker(pos, { radius: 8, color: "#ff9f43" })
+        .addTo(map.nuclei)
+        .bindPopup("Núcleo detectado");
+    }
+  });
+
+  const projections =
+    state.intelligence?.inteligencia_tormenta?.radar?.proyecciones;
+
+  if (projections && typeof projections === "object") {
+    const points = Object.values(projections)
+      .map(p => validLatLon(p?.latitud, p?.longitud))
+      .filter(Boolean);
+
+    if (points.length > 1) {
+      L.polyline(points, { color: "#ff5e72", dashArray: "6 6" })
+        .addTo(map.track);
+    }
+  }
+}
+
+
+/* ========================================================= */
+/* PRONÓSTICO DE 3 DÍAS */
+/* ========================================================= */
+
+// No existe aún un endpoint de pronóstico diario: estado vacío.
+function renderForecast(days) {
+  const list = Array.isArray(days) ? days.slice(0, 3) : [];
+  const empty = $("#forecastEmpty");
+
+  if (empty) empty.classList.toggle("hidden", list.length > 0);
+
+  $$("#forecastGrid .dayCard").forEach((card, index) => {
+    const day = list[index] || {};
+    const set = (field, value) => {
+      const el = card.querySelector(`[data-field="${field}"]`);
+      if (el) el.textContent = value ?? "—";
+    };
+
+    set("day", day.dia || `Día ${index + 1}`);
+    set("state", day.estado);
+    set("min", number(day.minima) !== null ? `${Math.round(day.minima)}°` : "—");
+    set("max", number(day.maxima) !== null ? `${Math.round(day.maxima)}°` : "—");
+    set("wind", number(day.viento) !== null ? `${Math.round(day.viento)} km/h` : "—");
+    set("rain", number(day.prob_lluvia) !== null ? `${Math.round(day.prob_lluvia)}%` : "—");
+    set("desc", day.descripcion);
+  });
+}
+
 /* ========================================================= */
 /* CARGA */
 /* ========================================================= */
@@ -1780,6 +2237,12 @@ async function cargarDatos() {
   renderModel();
 
   renderSystem();
+
+  renderAdverse();
+
+  renderMap();
+
+  renderForecast(null);
 }
 
 
@@ -1790,6 +2253,8 @@ async function cargarDatos() {
 async function init() {
 
   initNavigation();
+
+  initMap();
 
   initRadarControls();
 
