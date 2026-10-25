@@ -222,14 +222,24 @@ def sync_remote_file(path: Path) -> Path:
             f"{quote(relative, safe='/')}"
         )
 
+        # GitHub Raw/CDN puede conservar una copia anterior del archivo.
+        # ClimaAR ya controla su propia caché local, por lo que agregamos
+        # una clave que cambia cada minuto para forzar una versión fresca
+        # de los datos remotos sin modificar Open-Meteo ni otras peticiones.
+        cache_bucket = int(time.time() // 60)
+
         headers = {
             "User-Agent": "ClimaAR/8.1",
             "Accept": "application/octet-stream",
+            "Cache-Control": "no-cache",
         }
 
         try:
             response = requests.get(
                 url,
+                params={
+                    "climaar_cache": cache_bucket,
+                },
                 timeout=(5, 10),
                 headers=headers,
             )
