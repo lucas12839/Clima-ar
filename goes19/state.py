@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -40,13 +40,17 @@ CLOUDTOP_PRODUCTS = {
 }
 
 
-CLOUDTOP_USABLE_DQF = {0, 1, 2}
-CLOUDTOP_GOOD_DQF = {0}
-
-
-def download_product(product: str, destination: Path) -> dict:
+def download_product(
+    product: str,
+    destination: Path,
+    when: datetime | None = None,
+) -> dict:
     """Busca y descarga el producto GOES más reciente."""
-    obj = latest_product_object(product)
+    obj = latest_product_object(
+        product,
+        now=when,
+        hours_back=0,
+    )
 
     if obj is None:
         raise RuntimeError(
@@ -64,7 +68,9 @@ def download_product(product: str, destination: Path) -> dict:
     return obj
 
 
-def calculate_statistics(values: np.ndarray) -> dict:
+def calculate_statistics(
+    values: np.ndarray,
+) -> dict:
     values = np.asarray(
         values,
         dtype=np.float64,
@@ -98,6 +104,7 @@ def haversine_distance_km(
     longitude: np.ndarray,
 ) -> np.ndarray:
     """Calcula distancia desde el centro operativo de ClimaAR."""
+
     earth_radius_km = 6371.0
 
     lat1 = np.radians(RADAR_LAT)
@@ -128,7 +135,7 @@ def process_product(
     variable: str,
     temp_dir: Path,
 ) -> dict:
-    """Procesa un producto ABI dentro del dominio ClimaAR."""
+
     file_path = temp_dir / f"{product}.nc"
 
     metadata = download_product(
@@ -169,7 +176,7 @@ def process_cloudtop(
     variable: str,
     temp_dir: Path,
 ) -> dict:
-    """Procesa Cloud Top Height/Pressure con control DQF."""
+
     file_path = temp_dir / f"{product}.nc"
 
     metadata = download_product(
@@ -197,54 +204,18 @@ def process_cloudtop(
         dtype=np.float64,
     )
 
-    if values.size != dqf.size:
-        raise RuntimeError(
-            "Cloud Top: los datos y DQF no tienen "
-            "la misma cantidad de puntos."
-        )
-
-    finite = (
+    valid = (
         np.isfinite(values)
         & np.isfinite(dqf)
+        & (dqf == 0)
     )
 
-    values = values[finite]
-    dqf = dqf[finite].astype(np.int16)
+    usable = values[valid]
 
-    quality_counts = {
-        "good": int(np.sum(dqf == 0)),
-        "marginal": int(np.sum(dqf == 1)),
-        "retrieval_attempted": int(np.sum(dqf == 2)),
-        "bad": int(np.sum(dqf == 3)),
-    }
-
-    usable_mask = np.isin(
-        dqf,
-        list(CLOUDTOP_USABLE_DQF),
-    )
-
-    good_mask = np.isin(
-        dqf,
-        list(CLOUDTOP_GOOD_DQF),
-    )
-
-    usable_values = values[usable_mask]
-    good_values = values[good_mask]
-
-    if usable_values.size == 0:
+    if usable.size == 0:
         raise RuntimeError(
-            f"{product}: no hay datos Cloud Top utilizables."
-        )
-
-    statistics = calculate_statistics(
-        usable_values
-    )
-
-    good_statistics = None
-
-    if good_values.size > 0:
-        good_statistics = calculate_statistics(
-            good_values
+            f"{product}: no hay píxeles con DQF=0 "
+            "dentro del dominio ClimaAR."
         )
 
     return {
@@ -260,26 +231,29 @@ def process_cloudtop(
             "center_lat": RADAR_LAT,
             "center_lon": RADAR_LON,
             "radius_km": RADAR_RANGE_KM,
-            "points": int(values.size),
+            "points": int(len(values)),
         },
         "quality": {
-            "dqf_usable": [0, 1, 2],
-            "dqf_discarded": [3],
-            "counts": quality_counts,
-            "usable_points": int(
-                usable_values.size
-            ),
-            "good_points": int(
-                good_values.size
+            "usable_points": int(usable.size),
+            "good_quality_qf": int(np.sum(dqf == 0)),
+            "non_good_quality_qf": int(
+                np.sum(
+                    np.isfinite(dqf)
+                    & (dqf != 0)
+                )
             ),
         },
-        "statistics": statistics,
-        "good_quality_statistics": good_statistics,
+        "statistics": calculate_statistics(
+            usable
+        ),
     }
 
 
-def process_glm(temp_dir: Path) -> dict:
+def process_glm(
+    temp_dir: Path,
+) -> dict:
     """Procesa GLM dentro del dominio operativo de ClimaAR."""
+
     file_path = temp_dir / "glm.nc"
 
     metadata = download_product(
@@ -419,6 +393,7 @@ def process_glm(temp_dir: Path) -> dict:
             activity_status = "ok"
 
         if flashes_inside > 0:
+
             energy_stats = calculate_statistics(
                 domain_energy
             )
@@ -427,9 +402,9 @@ def process_glm(temp_dir: Path) -> dict:
                 domain_area
             )
 
-            inside_distances = flash_distance[
-                flash_inside
-            ]
+            inside_distances = (
+                flash_distance[flash_inside]
+            )
 
             inside_lat = flash_lat[
                 flash_inside
@@ -440,7 +415,9 @@ def process_glm(temp_dir: Path) -> dict:
             ]
 
             nearest_position = int(
-                np.argmin(inside_distances)
+                np.argmin(
+                    inside_distances
+                )
             )
 
             nearest_distance = float(
@@ -462,6 +439,7 @@ def process_glm(temp_dir: Path) -> dict:
             )
 
         else:
+
             energy_stats = None
             area_stats = None
             nearest_distance = None
@@ -474,7 +452,9 @@ def process_glm(temp_dir: Path) -> dict:
             "product": "glm",
             "key": metadata["key"],
             "url": metadata["url"],
-            "last_modified_utc": metadata["last_modified"],
+            "last_modified_utc": metadata[
+                "last_modified"
+            ],
             "size_bytes": metadata["size"],
         },
         "domain": {
@@ -499,9 +479,243 @@ def process_glm(temp_dir: Path) -> dict:
     }
 
 
+def process_dmw(
+    temp_dir: Path,
+    search_hours: int = 12,
+) -> dict:
+    """
+    Busca DMW hacia atrás hasta encontrar un archivo
+    con vectores de viento de buena calidad dentro
+    del dominio operativo de ClimaAR.
+    """
+
+    now = datetime.now(timezone.utc)
+
+    for offset in range(search_hours + 1):
+
+        when = now - timedelta(
+            hours=offset
+        )
+
+        metadata = latest_product_object(
+            "dmw",
+            now=when,
+            hours_back=0,
+        )
+
+        if metadata is None:
+            continue
+
+        file_path = (
+            temp_dir
+            / f"dmw_{offset}.nc"
+        )
+
+        response = requests.get(
+            metadata["url"],
+            timeout=180,
+        )
+
+        response.raise_for_status()
+
+        file_path.write_bytes(
+            response.content
+        )
+
+        with xr.open_dataset(
+            file_path,
+            engine="netcdf4",
+            mask_and_scale=True,
+        ) as ds:
+
+            required = [
+                "lat",
+                "lon",
+                "wind_speed",
+                "wind_direction",
+                "temperature",
+                "pressure",
+                "DQF",
+            ]
+
+            missing = [
+                name
+                for name in required
+                if name not in ds
+            ]
+
+            if missing:
+                continue
+
+            lat = ds["lat"].values
+            lon = ds["lon"].values
+            wind_speed = ds[
+                "wind_speed"
+            ].values
+            wind_direction = ds[
+                "wind_direction"
+            ].values
+            temperature = ds[
+                "temperature"
+            ].values
+            pressure = ds[
+                "pressure"
+            ].values
+            dqf = ds["DQF"].values
+
+            valid = (
+                np.isfinite(lat)
+                & np.isfinite(lon)
+                & np.isfinite(wind_speed)
+                & np.isfinite(wind_direction)
+                & np.isfinite(temperature)
+                & np.isfinite(pressure)
+                & np.isfinite(dqf)
+                & (dqf == 0)
+            )
+
+            if not np.any(valid):
+                continue
+
+            lat = lat[valid]
+            lon = lon[valid]
+            wind_speed = wind_speed[valid]
+            wind_direction = wind_direction[valid]
+            temperature = temperature[valid]
+            pressure = pressure[valid]
+
+            distance = haversine_distance_km(
+                lat,
+                lon,
+            )
+
+            inside = (
+                distance <= RADAR_RANGE_KM
+            )
+
+            if not np.any(inside):
+                continue
+
+            lat_inside = lat[inside]
+            lon_inside = lon[inside]
+            speed_inside = wind_speed[
+                inside
+            ]
+            direction_inside = (
+                wind_direction[inside]
+            )
+            temperature_inside = (
+                temperature[inside]
+            )
+            pressure_inside = (
+                pressure[inside]
+            )
+            distance_inside = (
+                distance[inside]
+            )
+
+            nearest_index = int(
+                np.argmin(distance_inside)
+            )
+
+            return {
+                "status": "ok",
+                "source": {
+                    "product": "dmw",
+                    "key": metadata["key"],
+                    "url": metadata["url"],
+                    "last_modified_utc": (
+                        metadata["last_modified"]
+                    ),
+                    "size_bytes": metadata["size"],
+                },
+                "domain": {
+                    "center_lat": RADAR_LAT,
+                    "center_lon": RADAR_LON,
+                    "radius_km": RADAR_RANGE_KM,
+                    "measurements": int(
+                        len(speed_inside)
+                    ),
+                },
+                "search": {
+                    "hours_back": offset,
+                },
+                "wind_speed": (
+                    calculate_statistics(
+                        speed_inside
+                    )
+                ),
+                "wind_direction": (
+                    calculate_statistics(
+                        direction_inside
+                    )
+                ),
+                "temperature": (
+                    calculate_statistics(
+                        temperature_inside
+                    )
+                ),
+                "pressure": (
+                    calculate_statistics(
+                        pressure_inside
+                    )
+                ),
+                "nearest_measurement": {
+                    "distance_km": float(
+                        distance_inside[
+                            nearest_index
+                        ]
+                    ),
+                    "latitude": float(
+                        lat_inside[
+                            nearest_index
+                        ]
+                    ),
+                    "longitude": float(
+                        lon_inside[
+                            nearest_index
+                        ]
+                    ),
+                    "wind_speed": float(
+                        speed_inside[
+                            nearest_index
+                        ]
+                    ),
+                    "wind_direction": float(
+                        direction_inside[
+                            nearest_index
+                        ]
+                    ),
+                    "temperature": float(
+                        temperature_inside[
+                            nearest_index
+                        ]
+                    ),
+                    "pressure": float(
+                        pressure_inside[
+                            nearest_index
+                        ]
+                    ),
+                },
+            }
+
+    return {
+        "status": "unavailable",
+        "reason": (
+            "No se encontró DMW con "
+            "mediciones DQF=0 dentro de "
+            f"{RADAR_RANGE_KM} km en las "
+            f"últimas {search_hours} horas."
+        ),
+    }
+
+
 def build_state() -> dict:
+
     generated_at = (
-        datetime.now(timezone.utc).isoformat()
+        datetime.now(
+            timezone.utc
+        ).isoformat()
     )
 
     state = {
@@ -518,6 +732,7 @@ def build_state() -> dict:
         "products": {},
         "cloudtop": {},
         "glm": None,
+        "dmw": None,
     }
 
     with tempfile.TemporaryDirectory(
@@ -528,7 +743,9 @@ def build_state() -> dict:
 
         # ABI C08 / C13
         for product, variable in PRODUCTS.items():
+
             try:
+
                 state["products"][product] = (
                     process_product(
                         product,
@@ -538,16 +755,19 @@ def build_state() -> dict:
                 )
 
             except Exception as exc:
+
                 state["products"][product] = {
                     "status": "unavailable",
                     "error": str(exc),
                 }
 
-        # Cloud Top Height / Pressure
+        # Cloud Top
         for product, variable in (
             CLOUDTOP_PRODUCTS.items()
         ):
+
             try:
+
                 state["cloudtop"][product] = (
                     process_cloudtop(
                         product,
@@ -557,6 +777,7 @@ def build_state() -> dict:
                 )
 
             except Exception as exc:
+
                 state["cloudtop"][product] = {
                     "status": "unavailable",
                     "error": str(exc),
@@ -564,70 +785,94 @@ def build_state() -> dict:
 
         # GLM
         try:
+
             state["glm"] = process_glm(
                 temp_dir
             )
 
         except Exception as exc:
+
             state["glm"] = {
                 "status": "unavailable",
                 "error": str(exc),
             }
 
+        # DMW
+        try:
+
+            state["dmw"] = process_dmw(
+                temp_dir
+            )
+
+        except Exception as exc:
+
+            state["dmw"] = {
+                "status": "unavailable",
+                "error": str(exc),
+            }
+
         # Estado general
-        abi_available = [
-            value
-            for value in state["products"].values()
-            if value.get("status") == "ok"
-        ]
+        components = []
 
-        cloudtop_available = [
-            value
-            for value in state["cloudtop"].values()
-            if value.get("status") == "ok"
-        ]
+        components.extend(
+            state["products"].values()
+        )
 
-        glm_available = (
-            state["glm"] is not None
-            and state["glm"].get("status")
+        components.extend(
+            state["cloudtop"].values()
+        )
+
+        components.append(
+            state["glm"]
+        )
+
+        components.append(
+            state["dmw"]
+        )
+
+        available_components = sum(
+            1
+            for value in components
+            if value
+            and value.get("status")
             in {
                 "ok",
                 "sin_actividad",
             }
         )
 
-        total_components = (
-            len(PRODUCTS)
-            + len(CLOUDTOP_PRODUCTS)
-            + 1
-        )
-
-        available_components = (
-            len(abi_available)
-            + len(cloudtop_available)
-            + int(glm_available)
+        total_components = len(
+            components
         )
 
         if available_components == 0:
-            state["status"] = "unavailable"
+
+            state["status"] = (
+                "unavailable"
+            )
 
         elif available_components < total_components:
+
             state["status"] = "partial"
 
         else:
+
             state["status"] = "ok"
 
     return state
 
 
-def save_state(state: dict) -> None:
+def save_state(
+    state: dict,
+) -> None:
+
     OUTPUT_FILE.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    temporary_file = OUTPUT_FILE.with_suffix(
-        ".tmp"
+    temporary_file = (
+        OUTPUT_FILE.with_suffix(".tmp")
     )
 
     temporary_file.write_text(
@@ -645,6 +890,7 @@ def save_state(state: dict) -> None:
 
 
 def main() -> None:
+
     print(
         "ClimaAR GOES-19 State Engine"
     )
@@ -660,14 +906,19 @@ def main() -> None:
     for product, data in (
         state["products"].items()
     ):
+
         if data.get("status") != "ok":
+
             print(
                 f"{product}: "
                 f"{data.get('status', 'ERROR')}"
             )
+
             continue
 
-        points = data["domain"]["points"]
+        points = data[
+            "domain"
+        ]["points"]
 
         print(
             f"{product}: OK - "
@@ -677,30 +928,40 @@ def main() -> None:
     for product, data in (
         state["cloudtop"].items()
     ):
+
         if data.get("status") != "ok":
+
             print(
                 f"{product}: "
                 f"{data.get('status', 'ERROR')}"
             )
+
             continue
 
-        quality = data["quality"]
+        quality = data[
+            "quality"
+        ]
 
         print(
             f"{product}: OK - "
-            f"{quality['usable_points']:,} utilizables - "
-            f"{quality['good_points']:,} buena calidad"
+            f"{quality['usable_points']:,} "
+            "utilizables - "
+            f"{quality['good_quality_qf']:,} "
+            "buena calidad"
         )
 
     glm = state.get("glm")
 
     if glm is None:
+
         print("GLM: NO DISPONIBLE")
 
     elif glm.get("status") == "unavailable":
+
         print("GLM: NO DISPONIBLE")
 
     else:
+
         counts = glm["counts"]
 
         print(
@@ -709,6 +970,35 @@ def main() -> None:
             f"{counts['events']} eventos, "
             f"{counts['groups']} grupos, "
             f"{counts['flashes']} flashes"
+        )
+
+    dmw = state.get("dmw")
+
+    if dmw is None:
+
+        print("DMW: NO DISPONIBLE")
+
+    elif dmw.get("status") != "ok":
+
+        print(
+            "DMW: "
+            f"{dmw.get('status', 'ERROR')}"
+        )
+
+    else:
+
+        measurements = dmw[
+            "domain"
+        ]["measurements"]
+
+        hours_back = dmw[
+            "search"
+        ]["hours_back"]
+
+        print(
+            "DMW: OK - "
+            f"{measurements} mediciones - "
+            f"{hours_back} h atrás"
         )
 
     print(
