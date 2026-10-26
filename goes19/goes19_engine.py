@@ -7,10 +7,12 @@ from .s3_client import latest_object
 
 
 PRODUCT_PREFIXES = {
-    "abi": "ABI-L1b-RadC",
+    "abi": "ABI-L2-MCMIPF",
     "glm": "GLM-L2-LCFA",
-    "cloudtop": "ABI-L2-CTP",
-    "dmw": "ABI-L2-DMW",
+    "cloudtop_height": "ABI-L2-ACHAF",
+    "cloudtop_temperature": "ABI-L2-ACHTF",
+    "cloudtop_pressure": "ABI-L2-CTPF",
+    "dmw": "ABI-L2-DMWF",
 }
 
 
