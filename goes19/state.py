@@ -143,9 +143,7 @@ def process_product(
 
     data = result["data"]
 
-    statistics = calculate_statistics(
-        data
-    )
+    statistics = calculate_statistics(data)
 
     return {
         "status": "ok",
