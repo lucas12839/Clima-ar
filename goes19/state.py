@@ -7,9 +7,15 @@ from pathlib import Path
 
 import numpy as np
 import requests
+import xarray as xr
 
 from .goes19_engine import latest_product_object
-from .geospatial import prepare_goes_domain
+from .geospatial import (
+    RADAR_LAT,
+    RADAR_LON,
+    RADAR_RANGE_KM,
+    prepare_goes_domain,
+)
 
 
 # ============================================================
@@ -99,7 +105,42 @@ def calculate_statistics(
 
 
 # ============================================================
-# Procesamiento de un producto
+# Distancia geodésica
+# ============================================================
+
+def haversine_distance_km(
+    latitude: np.ndarray,
+    longitude: np.ndarray,
+) -> np.ndarray:
+    """Calcula distancia desde el centro operativo de ClimaAR."""
+
+    earth_radius_km = 6371.0
+
+    lat1 = np.radians(RADAR_LAT)
+    lon1 = np.radians(RADAR_LON)
+
+    lat2 = np.radians(latitude)
+    lon2 = np.radians(longitude)
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    a = (
+        np.sin(dlat / 2.0) ** 2
+        + np.cos(lat1)
+        * np.cos(lat2)
+        * np.sin(dlon / 2.0) ** 2
+    )
+
+    return (
+        2.0
+        * earth_radius_km
+        * np.arcsin(np.sqrt(a))
+    )
+
+
+# ============================================================
+# Procesamiento ABI
 # ============================================================
 
 def process_product(
@@ -130,6 +171,7 @@ def process_product(
     )
 
     return {
+        "status": "ok",
         "source": {
             "product": product,
             "key": metadata["key"],
@@ -140,13 +182,295 @@ def process_product(
             "size_bytes": metadata["size"],
         },
         "domain": {
-            "center_lat": -38.7342,
-            "center_lon": -62.1654,
-            "radius_km": 240.0,
+            "center_lat": RADAR_LAT,
+            "center_lon": RADAR_LON,
+            "radius_km": RADAR_RANGE_KM,
             "points": int(len(data)),
         },
         "statistics": statistics,
     }
+
+
+# ============================================================
+# Procesamiento GLM
+# ============================================================
+
+def process_glm(
+    temp_dir: Path,
+) -> dict:
+    """Procesa GLM dentro del dominio operativo de ClimaAR."""
+
+    file_path = (
+        temp_dir
+        / "glm.nc"
+    )
+
+    metadata = download_product(
+        "glm",
+        file_path,
+    )
+
+    with xr.open_dataset(
+        file_path,
+        engine="netcdf4",
+        mask_and_scale=True,
+    ) as ds:
+
+        required = [
+            "event_lat",
+            "event_lon",
+            "group_lat",
+            "group_lon",
+            "flash_lat",
+            "flash_lon",
+            "flash_energy",
+            "flash_area",
+            "flash_quality_flag",
+        ]
+
+        missing = [
+            name
+            for name in required
+            if name not in ds
+        ]
+
+        if missing:
+            raise RuntimeError(
+                "Faltan variables GLM: "
+                + ", ".join(missing)
+            )
+
+        # ----------------------------------------------------
+        # Eventos
+        # ----------------------------------------------------
+
+        event_lat = ds["event_lat"].values
+        event_lon = ds["event_lon"].values
+
+        event_valid = (
+            np.isfinite(event_lat)
+            & np.isfinite(event_lon)
+        )
+
+        event_distance = haversine_distance_km(
+            event_lat[event_valid],
+            event_lon[event_valid],
+        )
+
+        event_inside = (
+            event_distance <= RADAR_RANGE_KM
+        )
+
+        # ----------------------------------------------------
+        # Grupos
+        # ----------------------------------------------------
+
+        group_lat = ds["group_lat"].values
+        group_lon = ds["group_lon"].values
+
+        group_valid = (
+            np.isfinite(group_lat)
+            & np.isfinite(group_lon)
+        )
+
+        group_distance = haversine_distance_km(
+            group_lat[group_valid],
+            group_lon[group_valid],
+        )
+
+        group_inside = (
+            group_distance <= RADAR_RANGE_KM
+        )
+
+        # ----------------------------------------------------
+        # Flashes
+        # ----------------------------------------------------
+
+        flash_lat = ds["flash_lat"].values
+        flash_lon = ds["flash_lon"].values
+
+        flash_energy = ds["flash_energy"].values
+        flash_area = ds["flash_area"].values
+        flash_quality = ds["flash_quality_flag"].values
+
+        flash_valid = (
+            np.isfinite(flash_lat)
+            & np.isfinite(flash_lon)
+            & np.isfinite(flash_energy)
+            & np.isfinite(flash_area)
+        )
+
+        flash_lat = flash_lat[flash_valid]
+        flash_lon = flash_lon[flash_valid]
+        flash_energy = flash_energy[flash_valid]
+        flash_area = flash_area[flash_valid]
+        flash_quality = flash_quality[flash_valid]
+
+        flash_distance = haversine_distance_km(
+            flash_lat,
+            flash_lon,
+        )
+
+        flash_inside = (
+            flash_distance <= RADAR_RANGE_KM
+        )
+
+        # ----------------------------------------------------
+        # Flashes dentro del dominio
+        # ----------------------------------------------------
+
+        domain_energy = flash_energy[
+            flash_inside
+        ]
+
+        domain_area = flash_area[
+            flash_inside
+        ]
+
+        domain_quality = flash_quality[
+            flash_inside
+        ]
+
+        quality_0 = int(
+            np.sum(
+                domain_quality == 0
+            )
+        )
+
+        quality_3 = int(
+            np.sum(
+                domain_quality == 3
+            )
+        )
+
+        flashes_inside = int(
+            np.sum(flash_inside)
+        )
+
+        events_inside = int(
+            np.sum(event_inside)
+        )
+
+        groups_inside = int(
+            np.sum(group_inside)
+        )
+
+        # ----------------------------------------------------
+        # Estado de actividad
+        # ----------------------------------------------------
+
+        if flashes_inside == 0:
+            activity_status = "sin_actividad"
+        else:
+            activity_status = "ok"
+
+        # ----------------------------------------------------
+        # Estadísticas de flashes
+        # ----------------------------------------------------
+
+        if flashes_inside > 0:
+
+            energy_stats = calculate_statistics(
+                domain_energy
+            )
+
+            area_stats = calculate_statistics(
+                domain_area
+            )
+
+            nearest_index = int(
+                np.argmin(
+                    flash_distance[
+                        flash_inside
+                    ]
+                )
+            )
+
+            inside_distances = flash_distance[
+                flash_inside
+            ]
+
+            inside_lat = flash_lat[
+                flash_inside
+            ]
+
+            inside_lon = flash_lon[
+                flash_inside
+            ]
+
+            nearest_position = int(
+                np.argmin(
+                    inside_distances
+                )
+            )
+
+            nearest_distance = float(
+                inside_distances[
+                    nearest_position
+                ]
+            )
+
+            nearest_lat = float(
+                inside_lat[
+                    nearest_position
+                ]
+            )
+
+            nearest_lon = float(
+                inside_lon[
+                    nearest_position
+                ]
+            )
+
+        else:
+
+            energy_stats = None
+            area_stats = None
+            nearest_distance = None
+            nearest_lat = None
+            nearest_lon = None
+
+        # ----------------------------------------------------
+        # Salida GLM
+        # ----------------------------------------------------
+
+        return {
+            "status": activity_status,
+
+            "source": {
+                "product": "glm",
+                "key": metadata["key"],
+                "url": metadata["url"],
+                "last_modified_utc": metadata[
+                    "last_modified"
+                ],
+                "size_bytes": metadata["size"],
+            },
+
+            "domain": {
+                "center_lat": RADAR_LAT,
+                "center_lon": RADAR_LON,
+                "radius_km": RADAR_RANGE_KM,
+            },
+
+            "counts": {
+                "events": events_inside,
+                "groups": groups_inside,
+                "flashes": flashes_inside,
+                "flashes_quality_0": quality_0,
+                "flashes_quality_3": quality_3,
+            },
+
+            "flash_energy": energy_stats,
+
+            "flash_area": area_stats,
+
+            "nearest_flash": {
+                "distance_km": nearest_distance,
+                "latitude": nearest_lat,
+                "longitude": nearest_lon,
+            },
+        }
 
 
 # ============================================================
@@ -160,17 +484,21 @@ def build_state() -> dict:
     ).isoformat()
 
     state = {
-        "version": "1.0",
+        "version": "1.1",
         "satellite": "GOES-19",
         "generated_at_utc": generated_at,
         "status": "ok",
+
         "domain": {
             "type": "RMA10_RADIUS",
-            "center_lat": -38.7342,
-            "center_lon": -62.1654,
-            "radius_km": 240.0,
+            "center_lat": RADAR_LAT,
+            "center_lon": RADAR_LON,
+            "radius_km": RADAR_RANGE_KM,
         },
+
         "products": {},
+
+        "glm": None,
     }
 
     with tempfile.TemporaryDirectory(
@@ -178,6 +506,10 @@ def build_state() -> dict:
     ) as temp:
 
         temp_dir = Path(temp)
+
+        # ----------------------------------------------------
+        # ABI C08 / C13
+        # ----------------------------------------------------
 
         for product, variable in PRODUCTS.items():
 
@@ -198,17 +530,62 @@ def build_state() -> dict:
                     "error": str(exc),
                 }
 
-    available = [
+        # ----------------------------------------------------
+        # GLM
+        # ----------------------------------------------------
+
+        try:
+
+            state["glm"] = process_glm(
+                temp_dir
+            )
+
+        except Exception as exc:
+
+            state["glm"] = {
+                "status": "unavailable",
+                "error": str(exc),
+            }
+
+    # --------------------------------------------------------
+    # Estado general
+    # --------------------------------------------------------
+
+    available_products = [
         value
         for value in state["products"].values()
-        if value.get("status", "ok") == "ok"
+        if value.get("status") == "ok"
     ]
 
-    if not available:
+    glm_available = (
+        state["glm"] is not None
+        and state["glm"].get("status")
+        in {
+            "ok",
+            "sin_actividad",
+        }
+    )
+
+    total_components = (
+        len(PRODUCTS) + 1
+    )
+
+    available_components = (
+        len(available_products)
+        + int(glm_available)
+    )
+
+    if available_components == 0:
+
         state["status"] = "unavailable"
 
-    elif len(available) < len(PRODUCTS):
+    elif available_components < total_components:
+
         state["status"] = "partial"
+
+    else:
+
+        state["status"] = "ok"
 
     return state
 
@@ -264,18 +641,17 @@ def main() -> None:
         f"Estado: {state['status']}"
     )
 
-    print(
-        f"Salida: {OUTPUT_FILE}"
-    )
-
     for product, data in state[
         "products"
     ].items():
 
-        if data.get("status") == "unavailable":
+        if data.get("status") != "ok":
+
             print(
-                f"{product}: NO DISPONIBLE"
+                f"{product}: "
+                f"{data.get('status', 'ERROR')}"
             )
+
             continue
 
         points = data[
@@ -285,6 +661,32 @@ def main() -> None:
         print(
             f"{product}: OK - "
             f"{points:,} puntos"
+        )
+
+    glm = state.get("glm")
+
+    if glm is None:
+
+        print(
+            "GLM: NO DISPONIBLE"
+        )
+
+    elif glm.get("status") == "unavailable":
+
+        print(
+            "GLM: NO DISPONIBLE"
+        )
+
+    else:
+
+        counts = glm["counts"]
+
+        print(
+            "GLM: "
+            f"{glm['status']} - "
+            f"{counts['events']} eventos, "
+            f"{counts['groups']} grupos, "
+            f"{counts['flashes']} flashes"
         )
 
     print(
