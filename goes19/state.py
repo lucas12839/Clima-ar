@@ -18,10 +18,6 @@ from .geospatial import (
 )
 
 
-# ============================================================
-# ClimaAR - GOES-19 State
-# ============================================================
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 OUTPUT_FILE = (
@@ -31,22 +27,25 @@ OUTPUT_FILE = (
     / "goes19_state.json"
 )
 
+
 PRODUCTS = {
     "abi_c08": "CMI",
     "abi_c13": "CMI",
 }
 
 
-# ============================================================
-# Descarga
-# ============================================================
+CLOUDTOP_PRODUCTS = {
+    "cloudtop_height": "HT",
+    "cloudtop_pressure": "PRES",
+}
 
-def download_product(
-    product: str,
-    destination: Path,
-) -> dict:
+
+CLOUDTOP_USABLE_DQF = {0, 1, 2}
+CLOUDTOP_GOOD_DQF = {0}
+
+
+def download_product(product: str, destination: Path) -> dict:
     """Busca y descarga el producto GOES más reciente."""
-
     obj = latest_product_object(product)
 
     if obj is None:
@@ -58,24 +57,14 @@ def download_product(
         obj["url"],
         timeout=180,
     )
-
     response.raise_for_status()
 
-    destination.write_bytes(
-        response.content
-    )
+    destination.write_bytes(response.content)
 
     return obj
 
 
-# ============================================================
-# Estadísticas espaciales
-# ============================================================
-
-def calculate_statistics(
-    values: np.ndarray,
-) -> dict:
-
+def calculate_statistics(values: np.ndarray) -> dict:
     values = np.asarray(
         values,
         dtype=np.float64,
@@ -104,16 +93,11 @@ def calculate_statistics(
     }
 
 
-# ============================================================
-# Distancia geodésica
-# ============================================================
-
 def haversine_distance_km(
     latitude: np.ndarray,
     longitude: np.ndarray,
 ) -> np.ndarray:
     """Calcula distancia desde el centro operativo de ClimaAR."""
-
     earth_radius_km = 6371.0
 
     lat1 = np.radians(RADAR_LAT)
@@ -139,20 +123,13 @@ def haversine_distance_km(
     )
 
 
-# ============================================================
-# Procesamiento ABI
-# ============================================================
-
 def process_product(
     product: str,
     variable: str,
     temp_dir: Path,
 ) -> dict:
-
-    file_path = (
-        temp_dir
-        / f"{product}.nc"
-    )
+    """Procesa un producto ABI dentro del dominio ClimaAR."""
+    file_path = temp_dir / f"{product}.nc"
 
     metadata = download_product(
         product,
@@ -176,9 +153,7 @@ def process_product(
             "product": product,
             "key": metadata["key"],
             "url": metadata["url"],
-            "last_modified_utc": metadata[
-                "last_modified"
-            ],
+            "last_modified_utc": metadata["last_modified"],
             "size_bytes": metadata["size"],
         },
         "domain": {
@@ -191,19 +166,123 @@ def process_product(
     }
 
 
-# ============================================================
-# Procesamiento GLM
-# ============================================================
-
-def process_glm(
+def process_cloudtop(
+    product: str,
+    variable: str,
     temp_dir: Path,
 ) -> dict:
-    """Procesa GLM dentro del dominio operativo de ClimaAR."""
+    """Procesa Cloud Top Height/Pressure con control DQF."""
+    file_path = temp_dir / f"{product}.nc"
 
-    file_path = (
-        temp_dir
-        / "glm.nc"
+    metadata = download_product(
+        product,
+        file_path,
     )
+
+    value_result = prepare_goes_domain(
+        file_path,
+        variable=variable,
+    )
+
+    dqf_result = prepare_goes_domain(
+        file_path,
+        variable="DQF",
+    )
+
+    values = np.asarray(
+        value_result["data"],
+        dtype=np.float64,
+    )
+
+    dqf = np.asarray(
+        dqf_result["data"],
+        dtype=np.float64,
+    )
+
+    if values.size != dqf.size:
+        raise RuntimeError(
+            "Cloud Top: los datos y DQF no tienen "
+            "la misma cantidad de puntos."
+        )
+
+    finite = (
+        np.isfinite(values)
+        & np.isfinite(dqf)
+    )
+
+    values = values[finite]
+    dqf = dqf[finite].astype(np.int16)
+
+    quality_counts = {
+        "good": int(np.sum(dqf == 0)),
+        "marginal": int(np.sum(dqf == 1)),
+        "retrieval_attempted": int(np.sum(dqf == 2)),
+        "bad": int(np.sum(dqf == 3)),
+    }
+
+    usable_mask = np.isin(
+        dqf,
+        list(CLOUDTOP_USABLE_DQF),
+    )
+
+    good_mask = np.isin(
+        dqf,
+        list(CLOUDTOP_GOOD_DQF),
+    )
+
+    usable_values = values[usable_mask]
+    good_values = values[good_mask]
+
+    if usable_values.size == 0:
+        raise RuntimeError(
+            f"{product}: no hay datos Cloud Top utilizables."
+        )
+
+    statistics = calculate_statistics(
+        usable_values
+    )
+
+    good_statistics = None
+
+    if good_values.size > 0:
+        good_statistics = calculate_statistics(
+            good_values
+        )
+
+    return {
+        "status": "ok",
+        "source": {
+            "product": product,
+            "key": metadata["key"],
+            "url": metadata["url"],
+            "last_modified_utc": metadata["last_modified"],
+            "size_bytes": metadata["size"],
+        },
+        "domain": {
+            "center_lat": RADAR_LAT,
+            "center_lon": RADAR_LON,
+            "radius_km": RADAR_RANGE_KM,
+            "points": int(values.size),
+        },
+        "quality": {
+            "dqf_usable": [0, 1, 2],
+            "dqf_discarded": [3],
+            "counts": quality_counts,
+            "usable_points": int(
+                usable_values.size
+            ),
+            "good_points": int(
+                good_values.size
+            ),
+        },
+        "statistics": statistics,
+        "good_quality_statistics": good_statistics,
+    }
+
+
+def process_glm(temp_dir: Path) -> dict:
+    """Procesa GLM dentro del dominio operativo de ClimaAR."""
+    file_path = temp_dir / "glm.nc"
 
     metadata = download_product(
         "glm",
@@ -240,10 +319,6 @@ def process_glm(
                 + ", ".join(missing)
             )
 
-        # ----------------------------------------------------
-        # Eventos
-        # ----------------------------------------------------
-
         event_lat = ds["event_lat"].values
         event_lon = ds["event_lon"].values
 
@@ -260,10 +335,6 @@ def process_glm(
         event_inside = (
             event_distance <= RADAR_RANGE_KM
         )
-
-        # ----------------------------------------------------
-        # Grupos
-        # ----------------------------------------------------
 
         group_lat = ds["group_lat"].values
         group_lon = ds["group_lon"].values
@@ -282,16 +353,13 @@ def process_glm(
             group_distance <= RADAR_RANGE_KM
         )
 
-        # ----------------------------------------------------
-        # Flashes
-        # ----------------------------------------------------
-
         flash_lat = ds["flash_lat"].values
         flash_lon = ds["flash_lon"].values
-
         flash_energy = ds["flash_energy"].values
         flash_area = ds["flash_area"].values
-        flash_quality = ds["flash_quality_flag"].values
+        flash_quality = ds[
+            "flash_quality_flag"
+        ].values
 
         flash_valid = (
             np.isfinite(flash_lat)
@@ -315,10 +383,6 @@ def process_glm(
             flash_distance <= RADAR_RANGE_KM
         )
 
-        # ----------------------------------------------------
-        # Flashes dentro del dominio
-        # ----------------------------------------------------
-
         domain_energy = flash_energy[
             flash_inside
         ]
@@ -332,15 +396,11 @@ def process_glm(
         ]
 
         quality_0 = int(
-            np.sum(
-                domain_quality == 0
-            )
+            np.sum(domain_quality == 0)
         )
 
         quality_3 = int(
-            np.sum(
-                domain_quality == 3
-            )
+            np.sum(domain_quality == 3)
         )
 
         flashes_inside = int(
@@ -355,35 +415,18 @@ def process_glm(
             np.sum(group_inside)
         )
 
-        # ----------------------------------------------------
-        # Estado de actividad
-        # ----------------------------------------------------
-
         if flashes_inside == 0:
             activity_status = "sin_actividad"
         else:
             activity_status = "ok"
 
-        # ----------------------------------------------------
-        # Estadísticas de flashes
-        # ----------------------------------------------------
-
         if flashes_inside > 0:
-
             energy_stats = calculate_statistics(
                 domain_energy
             )
 
             area_stats = calculate_statistics(
                 domain_area
-            )
-
-            nearest_index = int(
-                np.argmin(
-                    flash_distance[
-                        flash_inside
-                    ]
-                )
             )
 
             inside_distances = flash_distance[
@@ -399,9 +442,7 @@ def process_glm(
             ]
 
             nearest_position = int(
-                np.argmin(
-                    inside_distances
-                )
+                np.argmin(inside_distances)
             )
 
             nearest_distance = float(
@@ -423,81 +464,61 @@ def process_glm(
             )
 
         else:
-
             energy_stats = None
             area_stats = None
             nearest_distance = None
             nearest_lat = None
             nearest_lon = None
 
-        # ----------------------------------------------------
-        # Salida GLM
-        # ----------------------------------------------------
+    return {
+        "status": activity_status,
+        "source": {
+            "product": "glm",
+            "key": metadata["key"],
+            "url": metadata["url"],
+            "last_modified_utc": metadata["last_modified"],
+            "size_bytes": metadata["size"],
+        },
+        "domain": {
+            "center_lat": RADAR_LAT,
+            "center_lon": RADAR_LON,
+            "radius_km": RADAR_RANGE_KM,
+        },
+        "counts": {
+            "events": events_inside,
+            "groups": groups_inside,
+            "flashes": flashes_inside,
+            "flashes_quality_0": quality_0,
+            "flashes_quality_3": quality_3,
+        },
+        "flash_energy": energy_stats,
+        "flash_area": area_stats,
+        "nearest_flash": {
+            "distance_km": nearest_distance,
+            "latitude": nearest_lat,
+            "longitude": nearest_lon,
+        },
+    }
 
-        return {
-            "status": activity_status,
-
-            "source": {
-                "product": "glm",
-                "key": metadata["key"],
-                "url": metadata["url"],
-                "last_modified_utc": metadata[
-                    "last_modified"
-                ],
-                "size_bytes": metadata["size"],
-            },
-
-            "domain": {
-                "center_lat": RADAR_LAT,
-                "center_lon": RADAR_LON,
-                "radius_km": RADAR_RANGE_KM,
-            },
-
-            "counts": {
-                "events": events_inside,
-                "groups": groups_inside,
-                "flashes": flashes_inside,
-                "flashes_quality_0": quality_0,
-                "flashes_quality_3": quality_3,
-            },
-
-            "flash_energy": energy_stats,
-
-            "flash_area": area_stats,
-
-            "nearest_flash": {
-                "distance_km": nearest_distance,
-                "latitude": nearest_lat,
-                "longitude": nearest_lon,
-            },
-        }
-
-
-# ============================================================
-# Estado GOES
-# ============================================================
 
 def build_state() -> dict:
-
-    generated_at = datetime.now(
-        timezone.utc
-    ).isoformat()
+    generated_at = (
+        datetime.now(timezone.utc).isoformat()
+    )
 
     state = {
-        "version": "1.1",
+        "version": "1.2",
         "satellite": "GOES-19",
         "generated_at_utc": generated_at,
         "status": "ok",
-
         "domain": {
             "type": "RMA10_RADIUS",
             "center_lat": RADAR_LAT,
             "center_lon": RADAR_LON,
             "radius_km": RADAR_RANGE_KM,
         },
-
         "products": {},
-
+        "cloudtop": {},
         "glm": None,
     }
 
@@ -507,14 +528,9 @@ def build_state() -> dict:
 
         temp_dir = Path(temp)
 
-        # ----------------------------------------------------
         # ABI C08 / C13
-        # ----------------------------------------------------
-
         for product, variable in PRODUCTS.items():
-
             try:
-
                 state["products"][product] = (
                     process_product(
                         product,
@@ -524,89 +540,96 @@ def build_state() -> dict:
                 )
 
             except Exception as exc:
-
                 state["products"][product] = {
                     "status": "unavailable",
                     "error": str(exc),
                 }
 
-        # ----------------------------------------------------
+        # Cloud Top Height / Pressure
+        for product, variable in (
+            CLOUDTOP_PRODUCTS.items()
+        ):
+            try:
+                state["cloudtop"][product] = (
+                    process_cloudtop(
+                        product,
+                        variable,
+                        temp_dir,
+                    )
+                )
+
+            except Exception as exc:
+                state["cloudtop"][product] = {
+                    "status": "unavailable",
+                    "error": str(exc),
+                }
+
         # GLM
-        # ----------------------------------------------------
-
         try:
-
             state["glm"] = process_glm(
                 temp_dir
             )
 
         except Exception as exc:
-
             state["glm"] = {
                 "status": "unavailable",
                 "error": str(exc),
             }
 
-    # --------------------------------------------------------
-    # Estado general
-    # --------------------------------------------------------
+        # Estado general
+        abi_available = [
+            value
+            for value in state["products"].values()
+            if value.get("status") == "ok"
+        ]
 
-    available_products = [
-        value
-        for value in state["products"].values()
-        if value.get("status") == "ok"
-    ]
+        cloudtop_available = [
+            value
+            for value in state["cloudtop"].values()
+            if value.get("status") == "ok"
+        ]
 
-    glm_available = (
-        state["glm"] is not None
-        and state["glm"].get("status")
-        in {
-            "ok",
-            "sin_actividad",
-        }
-    )
+        glm_available = (
+            state["glm"] is not None
+            and state["glm"].get("status")
+            in {
+                "ok",
+                "sin_actividad",
+            }
+        )
 
-    total_components = (
-        len(PRODUCTS) + 1
-    )
+        total_components = (
+            len(PRODUCTS)
+            + len(CLOUDTOP_PRODUCTS)
+            + 1
+        )
 
-    available_components = (
-        len(available_products)
-        + int(glm_available)
-    )
+        available_components = (
+            len(abi_available)
+            + len(cloudtop_available)
+            + int(glm_available)
+        )
 
-    if available_components == 0:
+        if available_components == 0:
+            state["status"] = "unavailable"
 
-        state["status"] = "unavailable"
+        elif available_components < total_components:
+            state["status"] = "partial"
 
-    elif available_components < total_components:
-
-        state["status"] = "partial"
-
-    else:
-
-        state["status"] = "ok"
+        else:
+            state["status"] = "ok"
 
     return state
 
 
-# ============================================================
-# Escritura
-# ============================================================
-
-def save_state(
-    state: dict,
-) -> None:
-
+def save_state(state: dict) -> None:
     OUTPUT_FILE.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    temporary_file = (
-        OUTPUT_FILE.with_suffix(
-            ".tmp"
-        )
+    temporary_file = OUTPUT_FILE.with_suffix(
+        ".tmp"
     )
 
     temporary_file.write_text(
@@ -623,12 +646,7 @@ def save_state(
     )
 
 
-# ============================================================
-# Main
-# ============================================================
-
 def main() -> None:
-
     print(
         "ClimaAR GOES-19 State Engine"
     )
@@ -641,44 +659,50 @@ def main() -> None:
         f"Estado: {state['status']}"
     )
 
-    for product, data in state[
-        "products"
-    ].items():
-
+    for product, data in (
+        state["products"].items()
+    ):
         if data.get("status") != "ok":
-
             print(
                 f"{product}: "
                 f"{data.get('status', 'ERROR')}"
             )
-
             continue
 
-        points = data[
-            "domain"
-        ]["points"]
+        points = data["domain"]["points"]
 
         print(
             f"{product}: OK - "
             f"{points:,} puntos"
         )
 
+    for product, data in (
+        state["cloudtop"].items()
+    ):
+        if data.get("status") != "ok":
+            print(
+                f"{product}: "
+                f"{data.get('status', 'ERROR')}"
+            )
+            continue
+
+        quality = data["quality"]
+
+        print(
+            f"{product}: OK - "
+            f"{quality['usable_points']:,} utilizables - "
+            f"{quality['good_points']:,} buena calidad"
+        )
+
     glm = state.get("glm")
 
     if glm is None:
-
-        print(
-            "GLM: NO DISPONIBLE"
-        )
+        print("GLM: NO DISPONIBLE")
 
     elif glm.get("status") == "unavailable":
-
-        print(
-            "GLM: NO DISPONIBLE"
-        )
+        print("GLM: NO DISPONIBLE")
 
     else:
-
         counts = glm["counts"]
 
         print(
