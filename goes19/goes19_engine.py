@@ -16,7 +16,7 @@ PRODUCT_SPECS = {
     "cloudtop_temperature": ("ABI-L2-ACHTF", None),
     "cloudtop_pressure": ("ABI-L2-CTPF", None),
 
-    # Derived Motion Winds: seis canales de seguimiento de nubes.
+    # DMW: ABI bands 2, 7, 8, 9, 10 and 14.
     "dmw_c02": ("ABI-L2-DMWF", "M6C02"),
     "dmw_c07": ("ABI-L2-DMWF", "M6C07"),
     "dmw_c08": ("ABI-L2-DMWF", "M6C08"),
@@ -24,12 +24,9 @@ PRODUCT_SPECS = {
     "dmw_c10": ("ABI-L2-DMWF", "M6C10"),
     "dmw_c14": ("ABI-L2-DMWF", "M6C14"),
 
-    # Clear-sky water-vapor winds.
+    # DMWV: clear-sky water-vapor winds from ABI band 8 only.
     "dmwvf_c08": ("ABI-L2-DMWVF", "M6C08"),
-    "dmwvf_c09": ("ABI-L2-DMWVF", "M6C09"),
-    "dmwvf_c10": ("ABI-L2-DMWVF", "M6C10"),
 }
-
 
 GOES_TIME_RE = re.compile(
     r"_(?P<kind>[sec])(?P<timestamp>\d{13,16})(?:_|\.|$)"
@@ -60,12 +57,10 @@ def _parse_goes_timestamp(value: str) -> datetime:
     minute = int(value[9:11])
     second = int(value[11:13])
 
-    fractional_digits = value[13:]
+    fractional = value[13:]
     microsecond = 0
-    if fractional_digits:
-        microsecond = int(
-            round(float(f"0.{fractional_digits}") * 1_000_000)
-        )
+    if fractional:
+        microsecond = int(round(float(f"0.{fractional}") * 1_000_000))
         if microsecond >= 1_000_000:
             second += 1
             microsecond -= 1_000_000
@@ -85,13 +80,12 @@ def _parse_goes_timestamp(value: str) -> datetime:
 
 def _parse_goes_filename_times(key: str) -> dict[str, datetime]:
     parsed: dict[str, datetime] = {}
-
     for match in GOES_TIME_RE.finditer(key):
         parsed[match.group("kind")] = _parse_goes_timestamp(
             match.group("timestamp")
         )
 
-    missing = [name for name in ("s", "e", "c") if name not in parsed]
+    missing = [x for x in ("s", "e", "c") if x not in parsed]
     if missing:
         raise ValueError(
             f"No se pudieron extraer todos los timestamps GOES de {key}. "
@@ -116,15 +110,8 @@ def _enrich_object_metadata(obj: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     enriched = dict(obj)
-    enriched["start_time_utc"] = (
-        times["start_time"].isoformat().replace("+00:00", "Z")
-    )
-    enriched["end_time_utc"] = (
-        times["end_time"].isoformat().replace("+00:00", "Z")
-    )
-    enriched["creation_time_utc"] = (
-        times["creation_time"].isoformat().replace("+00:00", "Z")
-    )
+    for name, value in times.items():
+        enriched[f"{name}_utc"] = value.isoformat().replace("+00:00", "Z")
     return enriched
 
 
@@ -155,47 +142,6 @@ def _normalise_reference_time(now: datetime | None) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _select_candidates(
-    product_specs: list[tuple[str, str | None]],
-    reference_time: datetime,
-    hours_back: int,
-) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
-
-    for offset in range(hours_back + 1):
-        hour_reference = reference_time - timedelta(hours=offset)
-
-        for priority, (product_prefix, key_contains) in enumerate(product_specs):
-            objects = _list_candidate_objects(product_prefix, hour_reference)
-
-            for raw_obj in objects:
-                key = raw_obj.get("key", "")
-                if key_contains and key_contains not in key:
-                    continue
-
-                obj = _enrich_object_metadata(raw_obj)
-                if obj is None:
-                    continue
-
-                try:
-                    start_time = _parse_utc(obj["start_time_utc"])
-                    end_time = _parse_utc(obj["end_time_utc"])
-                except (TypeError, ValueError, KeyError):
-                    continue
-
-                if end_time < start_time:
-                    continue
-                if end_time > reference_time:
-                    continue
-
-                obj["product_prefix"] = product_prefix
-                obj["product_priority"] = priority
-                obj["hours_back"] = offset
-                candidates.append(obj)
-
-    return candidates
-
-
 def latest_product_object(
     product: str,
     now: datetime | None = None,
@@ -207,19 +153,42 @@ def latest_product_object(
         raise ValueError("hours_back no puede ser negativo")
 
     reference_time = _normalise_reference_time(now)
-    spec = PRODUCT_SPECS[product]
-    specs = [spec]
+    product_prefix, key_contains = PRODUCT_SPECS[product]
+    candidates: list[dict[str, Any]] = []
 
-    candidates = _select_candidates(specs, reference_time, hours_back)
+    for offset in range(hours_back + 1):
+        when = reference_time - timedelta(hours=offset)
+        objects = _list_candidate_objects(product_prefix, when)
+
+        for raw_obj in objects:
+            key = raw_obj.get("key", "")
+            if key_contains and key_contains not in key:
+                continue
+
+            obj = _enrich_object_metadata(raw_obj)
+            if obj is None:
+                continue
+
+            try:
+                start_time = _parse_utc(obj["start_time_utc"])
+                end_time = _parse_utc(obj["end_time_utc"])
+            except (TypeError, ValueError, KeyError):
+                continue
+
+            if end_time < start_time or end_time > reference_time:
+                continue
+
+            obj["product"] = product
+            obj["product_prefix"] = product_prefix
+            obj["hours_back"] = offset
+            candidates.append(obj)
+
     if not candidates:
         return None
 
     return max(
         candidates,
-        key=lambda obj: (
-            _parse_utc(obj["end_time_utc"]),
-            -int(obj["product_priority"]),
-        ),
+        key=lambda obj: _parse_utc(obj["end_time_utc"]),
     )
 
 
@@ -229,26 +198,22 @@ def latest_product_objects(
     hours_back: int = 6,
 ) -> dict[str, dict[str, Any] | None]:
     reference_time = _normalise_reference_time(now)
-
-    result: dict[str, dict[str, Any] | None] = {}
-    for product in products:
-        result[product] = latest_product_object(
+    return {
+        product: latest_product_object(
             product,
             now=reference_time,
             hours_back=hours_back,
         )
-    return result
+        for product in products
+    }
 
 
 def discover_latest_products(
     now: datetime | None = None,
     hours_back: int = 6,
 ) -> dict[str, dict[str, Any] | None]:
-    return {
-        product: latest_product_object(
-            product,
-            now=now,
-            hours_back=hours_back,
-        )
-        for product in PRODUCT_SPECS
-    }
+    return latest_product_objects(
+        list(PRODUCT_SPECS),
+        now=now,
+        hours_back=hours_back,
+    )
