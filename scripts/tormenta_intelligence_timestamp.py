@@ -307,7 +307,19 @@ def run_goes_state() -> tuple[dict[str, Any] | None, str]:
         try:
             state = load_json(GOES_STATE_FILE)
             if isinstance(state, dict):
-                return state, "actualizado" if completed and completed.returncode == 0 else "reutilizado"
+                state_frame = parse_optional_timestamp(state.get("reference_frame_utc"))
+                if state_frame is None:
+                    print("AVISO GOES-19: estado sin reference_frame_utc válido; no se integra.")
+                    return None, "unavailable"
+                radar_frame = load_radar_timestamp()
+                if state_frame != radar_frame:
+                    print(
+                        "AVISO GOES-19: estado desincronizado; no se integra. "
+                        f"goes={state_frame.isoformat()} radar={radar_frame.isoformat()}"
+                    )
+                    return None, "desincronizado"
+                acquisition = "actualizado" if completed and completed.returncode == 0 else "reutilizado"
+                return state, acquisition
         except Exception as exc:
             print(f"AVISO GOES-19: estado existente inválido: {exc}")
 
@@ -326,7 +338,13 @@ def product_temporal(data: Any, reference: datetime) -> dict[str, Any]:
     if not isinstance(source, dict):
         source = {}
 
-    timestamp = parse_optional_timestamp(source.get("last_modified_utc"))
+    # La validez temporal debe basarse en el final del periodo de observación
+    # del producto, no en la fecha de escritura/modificación del objeto remoto.
+    timestamp = parse_optional_timestamp(source.get("end_time_utc"))
+    if timestamp is None:
+        timestamp = parse_optional_timestamp(data.get("end_time_utc"))
+    if timestamp is None:
+        timestamp = parse_optional_timestamp(source.get("last_modified_utc"))
     if timestamp is None:
         timestamp = parse_optional_timestamp(data.get("last_modified_utc"))
 
@@ -340,9 +358,11 @@ def product_temporal(data: Any, reference: datetime) -> dict[str, Any]:
         }
 
     offset = (reference - timestamp).total_seconds() / 60.0
+    product_name = str(source.get("product") or data.get("product") or "").lower()
+    max_age = 120.0 if ("dmw" in product_name or "dmwv" in product_name) else 45.0
     if offset < 0:
         validity = "future_relative_to_frame"
-    elif offset > GOES_MAX_REUSE_MINUTES:
+    elif offset > max_age:
         validity = "stale"
     else:
         validity = "valid"
@@ -352,6 +372,8 @@ def product_temporal(data: Any, reference: datetime) -> dict[str, Any]:
         "age_minutes": round(max(0.0, offset), 3),
         "offset_minutes": round(offset, 3),
         "temporal_validity": validity,
+        "observation_time_utc": timestamp.isoformat().replace("+00:00", "Z"),
+        "max_age_minutes": max_age,
         "last_modified_utc": timestamp.isoformat().replace("+00:00", "Z"),
     }
 
@@ -529,6 +551,8 @@ def dmw_signal(dmw: Any, reference: datetime) -> tuple[float, dict[str, Any]]:
             continue
 
         vector_summary = record.get("vector_summary")
+        if not isinstance(vector_summary, dict):
+            vector_summary = record.get("summary")
         if not isinstance(vector_summary, dict):
             vector_summary = {}
 
@@ -720,7 +744,9 @@ def apply_goes_to_intelligence(goes: dict[str, Any], radar_timestamp: datetime) 
 
     direction_agreement = None
     if radar_direction is not None and dmw_direction is not None:
-        difference = abs((radar_direction - dmw_direction + 180.0) % 360.0 - 180.0)
+        dmw_toward_direction = (dmw_direction + 180.0) % 360.0
+        signals["dmw_viento_guia"]["mean_direction_toward_deg"] = round(dmw_toward_direction, 2)
+        difference = abs((radar_direction - dmw_toward_direction + 180.0) % 360.0 - 180.0)
         direction_agreement = round(1.0 - difference / 180.0, 3)
 
     signals["dmw_viento_guia"]["radar_direction_agreement"] = direction_agreement
