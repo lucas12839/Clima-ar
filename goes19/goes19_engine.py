@@ -16,53 +16,31 @@ PRODUCT_SPECS = {
     "cloudtop_temperature": ("ABI-L2-ACHTF", None),
     "cloudtop_pressure": ("ABI-L2-CTPF", None),
 
-    # DMW Full Disk principal.
-    # DMW Vapor Full Disk como respaldo.
-    "dmw": (
-        ("ABI-L2-DMWF", None),
-        ("ABI-L2-DMWVF", None),
-    ),
+    # Derived Motion Winds: seis canales de seguimiento de nubes.
+    "dmw_c02": ("ABI-L2-DMWF", "M6C02"),
+    "dmw_c07": ("ABI-L2-DMWF", "M6C07"),
+    "dmw_c08": ("ABI-L2-DMWF", "M6C08"),
+    "dmw_c09": ("ABI-L2-DMWF", "M6C09"),
+    "dmw_c10": ("ABI-L2-DMWF", "M6C10"),
+    "dmw_c14": ("ABI-L2-DMWF", "M6C14"),
+
+    # Clear-sky water-vapor winds.
+    "dmwvf_c08": ("ABI-L2-DMWVF", "M6C08"),
+    "dmwvf_c09": ("ABI-L2-DMWVF", "M6C09"),
+    "dmwvf_c10": ("ABI-L2-DMWVF", "M6C10"),
 }
 
 
-# ============================================================
-# GOES filename timestamps
-# ============================================================
-#
-# Ejemplo:
-#
-# OR_ABI-L2-CMIPF-M6C08_G19_
-# s20263000230203_
-# e20263000239511_
-# c20263000239583.nc
-#
-# Formato:
-#
-# YYYY + DDD + HHMMSS + décima de segundo
-#
-# Ejemplo:
-# 2026 + 300 + 02:30:20.3
-#
-# Admitimos también variantes con más precisión decimal.
-#
 GOES_TIME_RE = re.compile(
-    r"_(?P<kind>[sec])"
-    r"(?P<timestamp>\d{13,16})"
-    r"(?:_|\.|$)"
+    r"_(?P<kind>[sec])(?P<timestamp>\d{13,16})(?:_|\.|$)"
 )
 
 
-def current_hour_prefix(
-    product_prefix: str,
-    when: datetime,
-) -> str:
+def current_hour_prefix(product_prefix: str, when: datetime) -> str:
     return f"{product_prefix}/{when:%Y/%j/%H}/"
 
 
-def current_day_prefix(
-    product_prefix: str,
-    when: datetime,
-) -> str:
+def current_day_prefix(product_prefix: str, when: datetime) -> str:
     return f"{product_prefix}/{when:%Y/%j}/"
 
 
@@ -72,31 +50,9 @@ def _parse_utc(value: str) -> datetime:
     ).astimezone(timezone.utc)
 
 
-def _parse_goes_timestamp(
-    value: str,
-) -> datetime:
-    """
-    Convierte un timestamp GOES del tipo:
-
-        YYYYDDDHHMMSSf
-
-    o variantes con mayor precisión decimal.
-
-    Ejemplo:
-
-        20263000230203
-        -> 2026-10-27 02:30:20.3 UTC
-    """
-
-    if not value.isdigit():
-        raise ValueError(
-            f"Timestamp GOES inválido: {value}"
-        )
-
-    if len(value) < 13:
-        raise ValueError(
-            f"Timestamp GOES demasiado corto: {value}"
-        )
+def _parse_goes_timestamp(value: str) -> datetime:
+    if not value.isdigit() or len(value) < 13:
+        raise ValueError(f"Timestamp GOES inválido: {value}")
 
     year = int(value[0:4])
     day_of_year = int(value[4:7])
@@ -105,16 +61,14 @@ def _parse_goes_timestamp(
     second = int(value[11:13])
 
     fractional_digits = value[13:]
-
+    microsecond = 0
     if fractional_digits:
-        fraction = float(
-            f"0.{fractional_digits}"
-        )
         microsecond = int(
-            round(fraction * 1_000_000)
+            round(float(f"0.{fractional_digits}") * 1_000_000)
         )
-    else:
-        microsecond = 0
+        if microsecond >= 1_000_000:
+            second += 1
+            microsecond -= 1_000_000
 
     base = datetime(
         year=year,
@@ -126,55 +80,22 @@ def _parse_goes_timestamp(
         microsecond=microsecond,
         tzinfo=timezone.utc,
     )
-
-    return base + timedelta(
-        days=day_of_year - 1
-    )
+    return base + timedelta(days=day_of_year - 1)
 
 
-def _parse_goes_filename_times(
-    key: str,
-) -> dict[str, datetime]:
-    """
-    Extrae del nombre del archivo GOES:
-
-        s = inicio del producto
-        e = fin del producto
-        c = creación del producto
-
-    Los timestamps del nombre son la referencia temporal
-    meteorológica del producto.
-
-    LastModified de S3 se conserva por separado y NO se
-    utiliza como reloj meteorológico.
-    """
-
-    matches = GOES_TIME_RE.finditer(key)
-
+def _parse_goes_filename_times(key: str) -> dict[str, datetime]:
     parsed: dict[str, datetime] = {}
 
-    for match in matches:
-
-        kind = match.group("kind")
-        timestamp = match.group("timestamp")
-
-        parsed[kind] = _parse_goes_timestamp(
-            timestamp
+    for match in GOES_TIME_RE.finditer(key):
+        parsed[match.group("kind")] = _parse_goes_timestamp(
+            match.group("timestamp")
         )
 
-    required = ("s", "e", "c")
-
-    missing = [
-        name
-        for name in required
-        if name not in parsed
-    ]
-
+    missing = [name for name in ("s", "e", "c") if name not in parsed]
     if missing:
         raise ValueError(
-            "No se pudieron extraer todos los "
-            "timestamps GOES del archivo "
-            f"{key}. Faltan: {', '.join(missing)}"
+            f"No se pudieron extraer todos los timestamps GOES de {key}. "
+            f"Faltan: {', '.join(missing)}"
         )
 
     return {
@@ -184,77 +105,27 @@ def _parse_goes_filename_times(
     }
 
 
-def _enrich_object_metadata(
-    obj: dict[str, Any],
-) -> dict[str, Any] | None:
-    """
-    Agrega al objeto S3 los timestamps meteorológicos
-    extraídos del nombre del archivo.
-
-    Si el nombre no permite extraerlos de forma segura,
-    el objeto se descarta del selector temporal.
-    """
-
+def _enrich_object_metadata(obj: dict[str, Any]) -> dict[str, Any] | None:
     key = obj.get("key", "")
-
     if not key:
         return None
 
     try:
-        times = _parse_goes_filename_times(
-            key
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
+        times = _parse_goes_filename_times(key)
+    except (TypeError, ValueError):
         return None
 
     enriched = dict(obj)
-
     enriched["start_time_utc"] = (
-        times["start_time"].isoformat()
-        .replace("+00:00", "Z")
+        times["start_time"].isoformat().replace("+00:00", "Z")
     )
-
     enriched["end_time_utc"] = (
-        times["end_time"].isoformat()
-        .replace("+00:00", "Z")
+        times["end_time"].isoformat().replace("+00:00", "Z")
     )
-
     enriched["creation_time_utc"] = (
-        times["creation_time"].isoformat()
-        .replace("+00:00", "Z")
+        times["creation_time"].isoformat().replace("+00:00", "Z")
     )
-
     return enriched
-
-
-def _product_candidates(
-    product: str,
-) -> tuple[tuple[str, str | None], ...]:
-
-    spec = PRODUCT_SPECS[product]
-
-    # Productos normales:
-    #
-    # ("ABI-L2-CMIPF", "M6C08")
-    #
-    if (
-        isinstance(spec, tuple)
-        and len(spec) == 2
-        and isinstance(spec[0], str)
-    ):
-        return (spec,)
-
-    # Productos con múltiples fuentes:
-    #
-    # (
-    #   ("ABI-L2-DMWF", None),
-    #   ("ABI-L2-DMWVF", None),
-    # )
-    #
-    return tuple(spec)
 
 
 def _list_candidate_objects(
@@ -262,37 +133,67 @@ def _list_candidate_objects(
     when: datetime,
     timeout: int = 20,
 ) -> list[dict[str, Any]]:
-    """
-    Busca objetos del producto dentro de la hora indicada.
-
-    Si no existen objetos en esa hora, amplía la búsqueda
-    al día.
-
-    La validación temporal se realiza posteriormente,
-    utilizando los timestamps meteorológicos del propio
-    nombre del producto.
-    """
-
     objects = list_objects(
-        prefix=current_hour_prefix(
-            product_prefix,
-            when,
-        ),
+        prefix=current_hour_prefix(product_prefix, when),
         max_keys=1000,
         timeout=timeout,
     )
-
     if objects:
         return objects
 
     return list_objects(
-        prefix=current_day_prefix(
-            product_prefix,
-            when,
-        ),
+        prefix=current_day_prefix(product_prefix, when),
         max_keys=1000,
         timeout=timeout,
     )
+
+
+def _normalise_reference_time(now: datetime | None) -> datetime:
+    value = now or datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _select_candidates(
+    product_specs: list[tuple[str, str | None]],
+    reference_time: datetime,
+    hours_back: int,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+
+    for offset in range(hours_back + 1):
+        hour_reference = reference_time - timedelta(hours=offset)
+
+        for priority, (product_prefix, key_contains) in enumerate(product_specs):
+            objects = _list_candidate_objects(product_prefix, hour_reference)
+
+            for raw_obj in objects:
+                key = raw_obj.get("key", "")
+                if key_contains and key_contains not in key:
+                    continue
+
+                obj = _enrich_object_metadata(raw_obj)
+                if obj is None:
+                    continue
+
+                try:
+                    start_time = _parse_utc(obj["start_time_utc"])
+                    end_time = _parse_utc(obj["end_time_utc"])
+                except (TypeError, ValueError, KeyError):
+                    continue
+
+                if end_time < start_time:
+                    continue
+                if end_time > reference_time:
+                    continue
+
+                obj["product_prefix"] = product_prefix
+                obj["product_priority"] = priority
+                obj["hours_back"] = offset
+                candidates.append(obj)
+
+    return candidates
 
 
 def latest_product_object(
@@ -300,178 +201,49 @@ def latest_product_object(
     now: datetime | None = None,
     hours_back: int = 6,
 ) -> dict[str, Any] | None:
-    """
-    Devuelve el producto GOES meteorológicamente más
-    reciente que ya haya terminado al momento del frame
-    de referencia.
-
-    Regla temporal fundamental de ClimaAR:
-
-        product_end_time <= reference_time
-
-    Esto evita contaminar un frame histórico RMA10 con
-    información GOES que todavía no estaba disponible
-    dentro de ese intervalo temporal.
-
-    La selección se basa en el timestamp del propio
-    producto GOES, no en S3 LastModified.
-    """
-
     if product not in PRODUCT_SPECS:
-        raise ValueError(
-            f"Producto GOES no soportado: {product}"
-        )
-
+        raise ValueError(f"Producto GOES no soportado: {product}")
     if hours_back < 0:
-        raise ValueError(
-            "hours_back no puede ser negativo"
-        )
+        raise ValueError("hours_back no puede ser negativo")
 
-    reference_time = (
-        now or datetime.now(timezone.utc)
+    reference_time = _normalise_reference_time(now)
+    spec = PRODUCT_SPECS[product]
+    specs = [spec]
+
+    candidates = _select_candidates(specs, reference_time, hours_back)
+    if not candidates:
+        return None
+
+    return max(
+        candidates,
+        key=lambda obj: (
+            _parse_utc(obj["end_time_utc"]),
+            -int(obj["product_priority"]),
+        ),
     )
 
-    if reference_time.tzinfo is None:
-        reference_time = reference_time.replace(
-            tzinfo=timezone.utc
+
+def latest_product_objects(
+    products: list[str],
+    now: datetime | None = None,
+    hours_back: int = 6,
+) -> dict[str, dict[str, Any] | None]:
+    reference_time = _normalise_reference_time(now)
+
+    result: dict[str, dict[str, Any] | None] = {}
+    for product in products:
+        result[product] = latest_product_object(
+            product,
+            now=reference_time,
+            hours_back=hours_back,
         )
-
-    reference_time = reference_time.astimezone(
-        timezone.utc
-    )
-
-    best: dict[str, Any] | None = None
-    best_end_time: datetime | None = None
-    best_priority: int | None = None
-
-    candidates = _product_candidates(product)
-
-    for offset in range(hours_back + 1):
-
-        hour_reference = (
-            reference_time
-            - timedelta(hours=offset)
-        )
-
-        for priority, (
-            product_prefix,
-            key_contains,
-        ) in enumerate(candidates):
-
-            objects = _list_candidate_objects(
-                product_prefix,
-                hour_reference,
-            )
-
-            for raw_obj in objects:
-
-                key = raw_obj.get(
-                    "key",
-                    "",
-                )
-
-                if (
-                    key_contains
-                    and key_contains not in key
-                ):
-                    continue
-
-                obj = _enrich_object_metadata(
-                    raw_obj
-                )
-
-                if obj is None:
-                    continue
-
-                try:
-                    start_time = _parse_utc(
-                        obj["start_time_utc"]
-                    )
-
-                    end_time = _parse_utc(
-                        obj["end_time_utc"]
-                    )
-
-                except (
-                    TypeError,
-                    ValueError,
-                    KeyError,
-                ):
-                    continue
-
-                # =====================================================
-                # VALIDACIÓN ESTRUCTURAL
-                # =====================================================
-                #
-                # Un producto no puede terminar antes de comenzar.
-                #
-                if end_time < start_time:
-                    continue
-
-                # =====================================================
-                # REGLA TEMPORAL CRÍTICA
-                # =====================================================
-                #
-                # El producto completo debe haber terminado antes
-                # o exactamente en el frame RMA10.
-                #
-                # Esto es deliberadamente más estricto que usar:
-                #
-                #     start_time <= reference_time
-                #
-                # porque un producto que todavía está siendo generado
-                # al momento del frame contiene información posterior
-                # al frame que estamos intentando reconstruir.
-                #
-                if end_time > reference_time:
-                    continue
-
-                # =====================================================
-                # SELECCIÓN
-                # =====================================================
-                #
-                # Elegimos el producto cuyo FIN de observación sea
-                # más reciente sin superar el frame.
-                #
-                # La prioridad solo desempata productos con exactamente
-                # el mismo end_time.
-                #
-                if (
-                    best_end_time is None
-                    or end_time > best_end_time
-                    or (
-                        end_time == best_end_time
-                        and (
-                            best_priority is None
-                            or priority < best_priority
-                        )
-                    )
-                ):
-
-                    best = obj
-
-                    best[
-                        "product_prefix"
-                    ] = product_prefix
-
-                    best[
-                        "product_priority"
-                    ] = priority
-
-                    best_end_time = end_time
-                    best_priority = priority
-
-    return best
+    return result
 
 
 def discover_latest_products(
     now: datetime | None = None,
     hours_back: int = 6,
-) -> dict[
-    str,
-    dict[str, Any] | None,
-]:
-
+) -> dict[str, dict[str, Any] | None]:
     return {
         product: latest_product_object(
             product,
