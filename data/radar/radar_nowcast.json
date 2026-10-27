@@ -747,11 +747,11 @@
       "10": {
         "minutos": 10,
         "timestamp_utc": "2026-10-27T02:30:00Z",
-        "x": 273.13,
-        "y": 241.06,
-        "latitud": -38.612061,
-        "longitud": -61.974801,
-        "distancia_radar_km": 21.406,
+        "x": 273.07,
+        "y": 241.11,
+        "latitud": -38.612485,
+        "longitud": -61.975449,
+        "distancia_radar_km": 21.333,
         "rumbo_radar_grados": 50.68,
         "track_id": "1",
         "incertidumbre_pixeles": 26.72,
@@ -759,9 +759,9 @@
         "direccion_estimada": "SE",
         "velocidad_estimada_pixeles_min": 0.3484,
         "rumbo_estimado_grados": 129.6,
-        "calibracion_muestras": 165,
-        "correccion_bias_x_pixeles": -0.62,
-        "correccion_bias_y_pixeles": 0.25
+        "calibracion_muestras": 166,
+        "correccion_bias_x_pixeles": -0.68,
+        "correccion_bias_y_pixeles": 0.3
       },
       "20": {
         "minutos": 20,
@@ -785,21 +785,21 @@
       "30": {
         "minutos": 30,
         "timestamp_utc": "2026-10-27T02:50:00Z",
-        "x": 278.97,
-        "y": 245.67,
-        "latitud": -38.650885,
-        "longitud": -61.911527,
-        "distancia_radar_km": 23.902,
-        "rumbo_radar_grados": 67.27,
+        "x": 278.98,
+        "y": 245.68,
+        "latitud": -38.650969,
+        "longitud": -61.911419,
+        "distancia_radar_km": 23.907,
+        "rumbo_radar_grados": 67.3,
         "track_id": "1",
         "incertidumbre_pixeles": 32.8,
         "confianza_prediccion": 17.6,
         "direccion_estimada": "SE",
         "velocidad_estimada_pixeles_min": 0.3484,
         "rumbo_estimado_grados": 129.6,
-        "calibracion_muestras": 514,
-        "correccion_bias_x_pixeles": -0.15,
-        "correccion_bias_y_pixeles": 0.42
+        "calibracion_muestras": 513,
+        "correccion_bias_x_pixeles": -0.14,
+        "correccion_bias_y_pixeles": 0.43
       }
     },
     "georreferenciacion": {
@@ -1755,11 +1755,77 @@
     "calidad_intervalo": "ACEPTABLE"
   },
   "prediccion": {
-    "disponible": false,
+    "disponible": true,
     "radar_timestamp": "2026-10-27T02:20:00Z",
-    "resumen": {}
+    "resumen": {
+      "nucleos_con_prediccion": 11,
+      "nucleos_sin_prediccion": 2,
+      "promedio_intensificacion": 55.6,
+      "promedio_debilitamiento": 44.4,
+      "promedio_confianza": 46.2,
+      "huecos_estimados": 40,
+      "predicciones_validadas_en_este_frame": 26,
+      "predicciones_validadas_normales": 19,
+      "predicciones_validadas_huecos": 7,
+      "error_medio_pixeles_validado": 37.07,
+      "metricas_por_horizonte": {
+        "5": {
+          "muestras": 0,
+          "error_medio_pixeles": null,
+          "error_mediano_pixeles": null,
+          "dentro_5_pixeles": null,
+          "dentro_10_pixeles": null,
+          "dentro_15_pixeles": null
+        },
+        "10": {
+          "muestras": 7,
+          "error_medio_pixeles": 33.36,
+          "error_mediano_pixeles": 28.24,
+          "dentro_5_pixeles": 14.3,
+          "dentro_10_pixeles": 28.6,
+          "dentro_15_pixeles": 42.9
+        },
+        "20": {
+          "muestras": 5,
+          "error_medio_pixeles": 31.81,
+          "error_mediano_pixeles": 31.61,
+          "dentro_5_pixeles": 20.0,
+          "dentro_10_pixeles": 40.0,
+          "dentro_15_pixeles": 40.0
+        },
+        "30": {
+          "muestras": 14,
+          "error_medio_pixeles": 40.8,
+          "error_mediano_pixeles": 21.64,
+          "dentro_5_pixeles": 14.3,
+          "dentro_10_pixeles": 21.4,
+          "dentro_15_pixeles": 42.9
+        }
+      }
+    }
   },
-  "calibracion": {},
+  "calibracion": {
+    "5": {
+      "muestras": 0,
+      "bias_x": 0.0,
+      "bias_y": 0.0
+    },
+    "10": {
+      "muestras": 165,
+      "bias_x": -0.62,
+      "bias_y": 0.25
+    },
+    "20": {
+      "muestras": 321,
+      "bias_x": -0.65,
+      "bias_y": -0.05
+    },
+    "30": {
+      "muestras": 514,
+      "bias_x": -0.15,
+      "bias_y": 0.45
+    }
+  },
   "escala": {
     "ancho_px": 512,
     "alto_px": 512,
