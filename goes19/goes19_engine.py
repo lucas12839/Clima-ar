@@ -4,7 +4,6 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from .s3_client import list_objects
-from .s3_client import S3_ENDPOINT
 
 
 PRODUCT_SPECS = {
@@ -15,7 +14,13 @@ PRODUCT_SPECS = {
     "cloudtop_height": ("ABI-L2-ACHAF", None),
     "cloudtop_temperature": ("ABI-L2-ACHTF", None),
     "cloudtop_pressure": ("ABI-L2-CTPF", None),
-    "dmw": ("ABI-L2-DMWF", None),
+
+    # DMW Full Disk principal.
+    # DMW Vapor Full Disk como respaldo.
+    "dmw": (
+        ("ABI-L2-DMWF", None),
+        ("ABI-L2-DMWVF", None),
+    ),
 }
 
 
@@ -26,10 +31,72 @@ def current_hour_prefix(
     return f"{product_prefix}/{when:%Y/%j/%H}/"
 
 
+def current_day_prefix(
+    product_prefix: str,
+    when: datetime,
+) -> str:
+    return f"{product_prefix}/{when:%Y/%j}/"
+
+
 def _parse_utc(value: str) -> datetime:
     return datetime.fromisoformat(
         value.replace("Z", "+00:00")
     ).astimezone(timezone.utc)
+
+
+def _product_candidates(
+    product: str,
+) -> tuple[tuple[str, str | None], ...]:
+
+    spec = PRODUCT_SPECS[product]
+
+    # Productos normales:
+    # ("ABI-L2-CMIPF", "M6C08")
+    if (
+        isinstance(spec, tuple)
+        and len(spec) == 2
+        and isinstance(spec[0], str)
+    ):
+        return (spec,)
+
+    # Productos con múltiples fuentes:
+    # (("ABI-L2-DMWF", None), ("ABI-L2-DMWVF", None))
+    return tuple(spec)
+
+
+def _list_candidate_objects(
+    product_prefix: str,
+    when: datetime,
+    timeout: int = 20,
+) -> list[dict[str, Any]]:
+    """
+    Primero busca en la hora exacta.
+
+    Si esa hora no contiene objetos, busca dentro del día.
+    Esto evita depender de una suposición rígida sobre el
+    instante exacto de publicación del producto.
+    """
+
+    objects = list_objects(
+        prefix=current_hour_prefix(
+            product_prefix,
+            when,
+        ),
+        max_keys=1000,
+        timeout=timeout,
+    )
+
+    if objects:
+        return objects
+
+    return list_objects(
+        prefix=current_day_prefix(
+            product_prefix,
+            when,
+        ),
+        max_keys=1000,
+        timeout=timeout,
+    )
 
 
 def latest_product_object(
@@ -61,12 +128,11 @@ def latest_product_object(
         timezone.utc
     )
 
-    product_prefix, key_contains = (
-        PRODUCT_SPECS[product]
-    )
-
     best = None
     best_time = None
+    best_priority = None
+
+    candidates = _product_candidates(product)
 
     for offset in range(hours_back + 1):
 
@@ -75,51 +141,77 @@ def latest_product_object(
             - timedelta(hours=offset)
         )
 
-        prefix = current_hour_prefix(
+        for priority, (
             product_prefix,
-            when,
-        )
+            key_contains,
+        ) in enumerate(candidates):
 
-        objects = list_objects(
-            prefix=prefix,
-            max_keys=1000,
-        )
-
-        for obj in objects:
-
-            key = obj.get("key", "")
-
-            if (
-                key_contains
-                and key_contains not in key
-            ):
-                continue
-
-            last_modified = obj.get(
-                "last_modified"
+            objects = _list_candidate_objects(
+                product_prefix,
+                when,
             )
 
-            if not last_modified:
-                continue
+            for obj in objects:
 
-            try:
-                object_time = _parse_utc(
-                    last_modified
+                key = obj.get(
+                    "key",
+                    "",
                 )
-            except (TypeError, ValueError):
-                continue
 
-            # Nunca permitir datos posteriores
-            # al frame RMA10 que estamos analizando.
-            if object_time > reference_time:
-                continue
+                if (
+                    key_contains
+                    and key_contains not in key
+                ):
+                    continue
 
-            if (
-                best_time is None
-                or object_time > best_time
-            ):
-                best = obj
-                best_time = object_time
+                last_modified = obj.get(
+                    "last_modified"
+                )
+
+                if not last_modified:
+                    continue
+
+                try:
+                    object_time = _parse_utc(
+                        last_modified
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    continue
+
+                # CRÍTICO:
+                # jamás usar GOES posterior al frame RMA10.
+                if object_time > reference_time:
+                    continue
+
+                # El timestamp manda.
+                # La prioridad solo resuelve empates.
+                if (
+                    best_time is None
+                    or object_time > best_time
+                    or (
+                        object_time == best_time
+                        and (
+                            best_priority is None
+                            or priority < best_priority
+                        )
+                    )
+                ):
+
+                    best = dict(obj)
+
+                    best[
+                        "product_prefix"
+                    ] = product_prefix
+
+                    best[
+                        "product_priority"
+                    ] = priority
+
+                    best_time = object_time
+                    best_priority = priority
 
     return best
 
@@ -127,7 +219,10 @@ def latest_product_object(
 def discover_latest_products(
     now: datetime | None = None,
     hours_back: int = 6,
-) -> dict[str, dict[str, Any] | None]:
+) -> dict[
+    str,
+    dict[str, Any] | None,
+]:
 
     return {
         product: latest_product_object(
