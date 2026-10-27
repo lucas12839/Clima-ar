@@ -70,11 +70,14 @@ def _list_candidate_objects(
     timeout: int = 20,
 ) -> list[dict[str, Any]]:
     """
-    Primero busca en la hora exacta.
+    Busca objetos del producto dentro de la hora indicada.
 
-    Si esa hora no contiene objetos, busca dentro del día.
-    Esto evita depender de una suposición rígida sobre el
-    instante exacto de publicación del producto.
+    Si no existen objetos en esa hora, amplía la búsqueda al día.
+
+    La validación temporal NO se hace aquí porque esta función no
+    conoce necesariamente el frame de referencia final. Esa decisión
+    pertenece a latest_product_object(), que es quien garantiza que
+    nunca se utilice un objeto posterior al frame RMA10.
     """
 
     objects = list_objects(
@@ -104,6 +107,19 @@ def latest_product_object(
     now: datetime | None = None,
     hours_back: int = 6,
 ) -> dict[str, Any] | None:
+    """
+    Devuelve exclusivamente el producto GOES más reciente cuya
+    fecha de publicación sea <= al frame de referencia.
+
+    Regla temporal fundamental de ClimaAR:
+
+        object_time <= reference_time
+
+    Nunca se permite utilizar información GOES posterior al frame
+    RMA10 que está siendo analizado.
+
+    hours_back define cuánto tiempo hacia atrás se permite buscar.
+    """
 
     if product not in PRODUCT_SPECS:
         raise ValueError(
@@ -128,15 +144,15 @@ def latest_product_object(
         timezone.utc
     )
 
-    best = None
-    best_time = None
-    best_priority = None
+    best: dict[str, Any] | None = None
+    best_time: datetime | None = None
+    best_priority: int | None = None
 
     candidates = _product_candidates(product)
 
     for offset in range(hours_back + 1):
 
-        when = (
+        hour_reference = (
             reference_time
             - timedelta(hours=offset)
         )
@@ -148,7 +164,7 @@ def latest_product_object(
 
             objects = _list_candidate_objects(
                 product_prefix,
-                when,
+                hour_reference,
             )
 
             for obj in objects:
@@ -181,13 +197,24 @@ def latest_product_object(
                 ):
                     continue
 
-                # CRÍTICO:
-                # jamás usar GOES posterior al frame RMA10.
+                # =====================================================
+                # REGLA TEMPORAL CRÍTICA
+                # =====================================================
+                #
+                # El producto GOES debe pertenecer al pasado o al
+                # mismo instante del frame RMA10.
+                #
+                # Nunca se puede contaminar un frame histórico con
+                # información que todavía no existía en ese momento.
+                #
                 if object_time > reference_time:
                     continue
 
-                # El timestamp manda.
-                # La prioridad solo resuelve empates.
+                # El timestamp real del objeto es lo que determina
+                # cuál es el producto más reciente.
+                #
+                # La prioridad solamente desempata dos objetos que
+                # tengan exactamente el mismo timestamp.
                 if (
                     best_time is None
                     or object_time > best_time
@@ -202,13 +229,13 @@ def latest_product_object(
 
                     best = dict(obj)
 
-                    best[
-                        "product_prefix"
-                    ] = product_prefix
+                    best["product_prefix"] = (
+                        product_prefix
+                    )
 
-                    best[
-                        "product_priority"
-                    ] = priority
+                    best["product_priority"] = (
+                        priority
+                    )
 
                     best_time = object_time
                     best_priority = priority
