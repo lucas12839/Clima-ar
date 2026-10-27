@@ -27,6 +27,44 @@ OUTPUT_FILE = (
     / "goes19_state.json"
 )
 
+RADAR_TIMESTAMP_FILE = (
+    BASE_DIR
+    / "data"
+    / "radar"
+    / "radar_timestamp.txt"
+)
+
+
+def load_radar_reference_time() -> datetime:
+    if not RADAR_TIMESTAMP_FILE.exists():
+        raise RuntimeError(
+            "No existe radar_timestamp.txt. "
+            "No se puede sincronizar GOES-19 "
+            "sin el frame RMA10."
+        )
+
+    value = (
+        RADAR_TIMESTAMP_FILE
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+
+    if not value:
+        raise RuntimeError(
+            "radar_timestamp.txt está vacío."
+        )
+
+    reference_time = datetime.fromisoformat(
+        value.replace("Z", "+00:00")
+    )
+
+    if reference_time.tzinfo is None:
+        reference_time = reference_time.replace(
+            tzinfo=timezone.utc
+        )
+
+    return reference_time.astimezone(timezone.utc)
+
 
 PRODUCTS = {
     "abi_c08": "CMI",
@@ -134,6 +172,7 @@ def process_product(
     product: str,
     variable: str,
     temp_dir: Path,
+    reference_time: datetime,
 ) -> dict:
 
     file_path = temp_dir / f"{product}.nc"
@@ -141,6 +180,7 @@ def process_product(
     metadata = download_product(
         product,
         file_path,
+        when=reference_time,
     )
 
     result = prepare_goes_domain(
@@ -175,6 +215,7 @@ def process_cloudtop(
     product: str,
     variable: str,
     temp_dir: Path,
+    reference_time: datetime,
 ) -> dict:
 
     file_path = temp_dir / f"{product}.nc"
@@ -182,6 +223,7 @@ def process_cloudtop(
     metadata = download_product(
         product,
         file_path,
+        when=reference_time,
     )
 
     value_result = prepare_goes_domain(
@@ -251,6 +293,7 @@ def process_cloudtop(
 
 def process_glm(
     temp_dir: Path,
+    reference_time: datetime,
 ) -> dict:
     """Procesa GLM dentro del dominio operativo de ClimaAR."""
 
@@ -259,6 +302,7 @@ def process_glm(
     metadata = download_product(
         "glm",
         file_path,
+        when=reference_time,
     )
 
     with xr.open_dataset(
@@ -481,6 +525,7 @@ def process_glm(
 
 def process_dmw(
     temp_dir: Path,
+    reference_time: datetime,
     search_hours: int = 12,
 ) -> dict:
     """
@@ -489,11 +534,9 @@ def process_dmw(
     del dominio operativo de ClimaAR.
     """
 
-    now = datetime.now(timezone.utc)
-
     for offset in range(search_hours + 1):
 
-        when = now - timedelta(
+        when = reference_time - timedelta(
             hours=offset
         )
 
@@ -710,7 +753,12 @@ def process_dmw(
     }
 
 
-def build_state() -> dict:
+def build_state(
+    reference_time: datetime | None = None,
+) -> dict:
+
+    if reference_time is None:
+        reference_time = load_radar_reference_time()
 
     generated_at = (
         datetime.now(
@@ -719,9 +767,10 @@ def build_state() -> dict:
     )
 
     state = {
-        "version": "1.2",
+        "version": "1.3",
         "satellite": "GOES-19",
         "generated_at_utc": generated_at,
+        "reference_frame_utc": reference_time.isoformat(),
         "status": "ok",
         "domain": {
             "type": "RMA10_RADIUS",
@@ -751,6 +800,7 @@ def build_state() -> dict:
                         product,
                         variable,
                         temp_dir,
+                        reference_time,
                     )
                 )
 
@@ -773,6 +823,7 @@ def build_state() -> dict:
                         product,
                         variable,
                         temp_dir,
+                        reference_time,
                     )
                 )
 
@@ -787,7 +838,8 @@ def build_state() -> dict:
         try:
 
             state["glm"] = process_glm(
-                temp_dir
+                temp_dir,
+                reference_time,
             )
 
         except Exception as exc:
@@ -801,7 +853,8 @@ def build_state() -> dict:
         try:
 
             state["dmw"] = process_dmw(
-                temp_dir
+                temp_dir,
+                reference_time,
             )
 
         except Exception as exc:
@@ -898,6 +951,11 @@ def main() -> None:
     state = build_state()
 
     save_state(state)
+
+    print(
+        f"Frame RMA10: "
+        f"{state['reference_frame_utc']}"
+    )
 
     print(
         f"Estado: {state['status']}"
