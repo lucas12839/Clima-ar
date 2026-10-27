@@ -28,8 +28,12 @@ PRODUCT_SPECS = {
     "dmwvf_c08": ("ABI-L2-DMWVF", "M6C08"),
 }
 
+
+# Importante:
+# Se usa lookahead (?=...) para NO consumir el "_" o "." que separa
+# los timestamps s/e/c. De esta forma finditer encuentra los tres.
 GOES_TIME_RE = re.compile(
-    r"_(?P<kind>[sec])(?P<timestamp>\d{13,16})(?:_|\.|$)"
+    r"_(?P<kind>[sec])(?P<timestamp>\d{13,16})(?=_|\.|$)"
 )
 
 
@@ -59,8 +63,12 @@ def _parse_goes_timestamp(value: str) -> datetime:
 
     fractional = value[13:]
     microsecond = 0
+
     if fractional:
-        microsecond = int(round(float(f"0.{fractional}") * 1_000_000))
+        microsecond = int(
+            round(float(f"0.{fractional}") * 1_000_000)
+        )
+
         if microsecond >= 1_000_000:
             second += 1
             microsecond -= 1_000_000
@@ -75,17 +83,20 @@ def _parse_goes_timestamp(value: str) -> datetime:
         microsecond=microsecond,
         tzinfo=timezone.utc,
     )
+
     return base + timedelta(days=day_of_year - 1)
 
 
 def _parse_goes_filename_times(key: str) -> dict[str, datetime]:
     parsed: dict[str, datetime] = {}
+
     for match in GOES_TIME_RE.finditer(key):
         parsed[match.group("kind")] = _parse_goes_timestamp(
             match.group("timestamp")
         )
 
     missing = [x for x in ("s", "e", "c") if x not in parsed]
+
     if missing:
         raise ValueError(
             f"No se pudieron extraer todos los timestamps GOES de {key}. "
@@ -99,8 +110,11 @@ def _parse_goes_filename_times(key: str) -> dict[str, datetime]:
     }
 
 
-def _enrich_object_metadata(obj: dict[str, Any]) -> dict[str, Any] | None:
+def _enrich_object_metadata(
+    obj: dict[str, Any],
+) -> dict[str, Any] | None:
     key = obj.get("key", "")
+
     if not key:
         return None
 
@@ -110,8 +124,12 @@ def _enrich_object_metadata(obj: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     enriched = dict(obj)
+
     for name, value in times.items():
-        enriched[f"{name}_utc"] = value.isoformat().replace("+00:00", "Z")
+        enriched[f"{name}_utc"] = (
+            value.isoformat().replace("+00:00", "Z")
+        )
+
     return enriched
 
 
@@ -125,6 +143,7 @@ def _list_candidate_objects(
         max_keys=1000,
         timeout=timeout,
     )
+
     if objects:
         return objects
 
@@ -135,10 +154,14 @@ def _list_candidate_objects(
     )
 
 
-def _normalise_reference_time(now: datetime | None) -> datetime:
+def _normalise_reference_time(
+    now: datetime | None,
+) -> datetime:
     value = now or datetime.now(timezone.utc)
+
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
+
     return value.astimezone(timezone.utc)
 
 
@@ -147,40 +170,68 @@ def latest_product_object(
     now: datetime | None = None,
     hours_back: int = 6,
 ) -> dict[str, Any] | None:
+
     if product not in PRODUCT_SPECS:
-        raise ValueError(f"Producto GOES no soportado: {product}")
+        raise ValueError(
+            f"Producto GOES no soportado: {product}"
+        )
+
     if hours_back < 0:
-        raise ValueError("hours_back no puede ser negativo")
+        raise ValueError(
+            "hours_back no puede ser negativo"
+        )
 
     reference_time = _normalise_reference_time(now)
+
     product_prefix, key_contains = PRODUCT_SPECS[product]
+
     candidates: list[dict[str, Any]] = []
 
     for offset in range(hours_back + 1):
         when = reference_time - timedelta(hours=offset)
-        objects = _list_candidate_objects(product_prefix, when)
+
+        objects = _list_candidate_objects(
+            product_prefix,
+            when,
+        )
 
         for raw_obj in objects:
             key = raw_obj.get("key", "")
+
             if key_contains and key_contains not in key:
                 continue
 
             obj = _enrich_object_metadata(raw_obj)
+
             if obj is None:
                 continue
 
             try:
-                start_time = _parse_utc(obj["start_time_utc"])
-                end_time = _parse_utc(obj["end_time_utc"])
-            except (TypeError, ValueError, KeyError):
+                start_time = _parse_utc(
+                    obj["start_time_utc"]
+                )
+
+                end_time = _parse_utc(
+                    obj["end_time_utc"]
+                )
+
+            except (
+                TypeError,
+                ValueError,
+                KeyError,
+            ):
                 continue
 
-            if end_time < start_time or end_time > reference_time:
+            if end_time < start_time:
+                continue
+
+            if end_time > reference_time:
                 continue
 
             obj["product"] = product
             obj["product_prefix"] = product_prefix
             obj["hours_back"] = offset
+
             candidates.append(obj)
 
     if not candidates:
@@ -188,7 +239,9 @@ def latest_product_object(
 
     return max(
         candidates,
-        key=lambda obj: _parse_utc(obj["end_time_utc"]),
+        key=lambda obj: _parse_utc(
+            obj["end_time_utc"]
+        ),
     )
 
 
@@ -197,7 +250,9 @@ def latest_product_objects(
     now: datetime | None = None,
     hours_back: int = 6,
 ) -> dict[str, dict[str, Any] | None]:
+
     reference_time = _normalise_reference_time(now)
+
     return {
         product: latest_product_object(
             product,
@@ -212,6 +267,7 @@ def discover_latest_products(
     now: datetime | None = None,
     hours_back: int = 6,
 ) -> dict[str, dict[str, Any] | None]:
+
     return latest_product_objects(
         list(PRODUCT_SPECS),
         now=now,
