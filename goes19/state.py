@@ -78,12 +78,51 @@ CLOUDTOP_PRODUCTS = {
 }
 
 
+def build_source_metadata(
+    product: str,
+    metadata: dict,
+) -> dict:
+    """
+    Construye la metadata temporal completa del producto GOES.
+
+    Los timestamps s/e/c provienen del nombre del producto
+    GOES y representan respectivamente:
+
+        start_time_utc    -> inicio de observación
+        end_time_utc      -> fin de observación
+        creation_time_utc -> creación del producto
+
+    last_modified_utc corresponde a S3 y se conserva
+    únicamente como metadata de publicación/modificación.
+    """
+
+    return {
+        "product": product,
+        "key": metadata["key"],
+        "url": metadata["url"],
+        "start_time_utc": metadata.get(
+            "start_time_utc"
+        ),
+        "end_time_utc": metadata.get(
+            "end_time_utc"
+        ),
+        "creation_time_utc": metadata.get(
+            "creation_time_utc"
+        ),
+        "last_modified_utc": metadata[
+            "last_modified"
+        ],
+        "size_bytes": metadata["size"],
+    }
+
+
 def download_product(
     product: str,
     destination: Path,
     when: datetime | None = None,
 ) -> dict:
     """Busca y descarga el producto GOES más reciente."""
+
     obj = latest_product_object(
         product,
         now=when,
@@ -194,13 +233,10 @@ def process_product(
 
     return {
         "status": "ok",
-        "source": {
-            "product": product,
-            "key": metadata["key"],
-            "url": metadata["url"],
-            "last_modified_utc": metadata["last_modified"],
-            "size_bytes": metadata["size"],
-        },
+        "source": build_source_metadata(
+            product,
+            metadata,
+        ),
         "domain": {
             "center_lat": RADAR_LAT,
             "center_lon": RADAR_LON,
@@ -262,13 +298,10 @@ def process_cloudtop(
 
     return {
         "status": "ok",
-        "source": {
-            "product": product,
-            "key": metadata["key"],
-            "url": metadata["url"],
-            "last_modified_utc": metadata["last_modified"],
-            "size_bytes": metadata["size"],
-        },
+        "source": build_source_metadata(
+            product,
+            metadata,
+        ),
         "domain": {
             "center_lat": RADAR_LAT,
             "center_lon": RADAR_LON,
@@ -492,15 +525,10 @@ def process_glm(
 
     return {
         "status": activity_status,
-        "source": {
-            "product": "glm",
-            "key": metadata["key"],
-            "url": metadata["url"],
-            "last_modified_utc": metadata[
-                "last_modified"
-            ],
-            "size_bytes": metadata["size"],
-        },
+        "source": build_source_metadata(
+            "glm",
+            metadata,
+        ),
         "domain": {
             "center_lat": RADAR_LAT,
             "center_lon": RADAR_LON,
@@ -663,15 +691,10 @@ def process_dmw(
 
             return {
                 "status": "ok",
-                "source": {
-                    "product": "dmw",
-                    "key": metadata["key"],
-                    "url": metadata["url"],
-                    "last_modified_utc": (
-                        metadata["last_modified"]
-                    ),
-                    "size_bytes": metadata["size"],
-                },
+                "source": build_source_metadata(
+                    "dmw",
+                    metadata,
+                ),
                 "domain": {
                     "center_lat": RADAR_LAT,
                     "center_lon": RADAR_LON,
@@ -767,7 +790,7 @@ def build_state(
     )
 
     state = {
-        "version": "1.3",
+        "version": "1.4",
         "satellite": "GOES-19",
         "generated_at_utc": generated_at,
         "reference_frame_utc": reference_time.isoformat(),
