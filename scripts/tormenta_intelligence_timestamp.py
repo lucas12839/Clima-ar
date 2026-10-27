@@ -546,7 +546,7 @@ def dmw_signal(dmw: Any, reference: datetime) -> tuple[float, dict[str, Any]]:
     for record in records:
         name = str(record.get("product") or record.get("source", {}).get("product") or record.get("name") or "").lower()
         temporal = product_temporal(record, reference)
-        status = str(record.get("status", ""))
+        status = str(record.get("status") or (dmw.get("status") if isinstance(dmw, dict) else ""))
         if status not in {"ok", "sin_actividad"} or temporal.get("temporal_validity") != "valid":
             continue
 
