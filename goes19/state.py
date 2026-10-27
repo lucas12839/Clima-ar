@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -19,149 +19,92 @@ from .geospatial import (
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-OUTPUT_FILE = (
-    BASE_DIR
-    / "data"
-    / "goes19"
-    / "goes19_state.json"
-)
-
-RADAR_TIMESTAMP_FILE = (
-    BASE_DIR
-    / "data"
-    / "radar"
-    / "radar_timestamp.txt"
-)
-
-
-def load_radar_reference_time() -> datetime:
-    if not RADAR_TIMESTAMP_FILE.exists():
-        raise RuntimeError(
-            "No existe radar_timestamp.txt. "
-            "No se puede sincronizar GOES-19 "
-            "sin el frame RMA10."
-        )
-
-    value = (
-        RADAR_TIMESTAMP_FILE
-        .read_text(encoding="utf-8")
-        .strip()
-    )
-
-    if not value:
-        raise RuntimeError(
-            "radar_timestamp.txt está vacío."
-        )
-
-    reference_time = datetime.fromisoformat(
-        value.replace("Z", "+00:00")
-    )
-
-    if reference_time.tzinfo is None:
-        reference_time = reference_time.replace(
-            tzinfo=timezone.utc
-        )
-
-    return reference_time.astimezone(timezone.utc)
-
+OUTPUT_FILE = BASE_DIR / "data" / "goes19" / "goes19_state.json"
+RADAR_TIMESTAMP_FILE = BASE_DIR / "data" / "radar" / "radar_timestamp.txt"
 
 PRODUCTS = {
     "abi_c08": "CMI",
     "abi_c13": "CMI",
 }
 
-
 CLOUDTOP_PRODUCTS = {
     "cloudtop_height": "HT",
     "cloudtop_pressure": "PRES",
 }
 
+DMW_PRODUCTS = {
+    "dmw_c02": "C02",
+    "dmw_c07": "C07",
+    "dmw_c08": "C08",
+    "dmw_c09": "C09",
+    "dmw_c10": "C10",
+    "dmw_c14": "C14",
+}
 
-def build_source_metadata(
-    product: str,
-    metadata: dict,
-) -> dict:
-    """
-    Construye la metadata temporal completa del producto GOES.
+DMWV_PRODUCTS = {
+    "dmwvf_c08": "C08",
+}
 
-    Los timestamps s/e/c provienen del nombre del producto
-    GOES y representan respectivamente:
+GOOD_DMW_DQF = {-3, -2, -1, 0}
+DMW_QUALITY_WEIGHT = {-3: 0.70, -2: 0.85, -1: 0.90, 0: 1.00}
 
-        start_time_utc    -> inicio de observación
-        end_time_utc      -> fin de observación
-        creation_time_utc -> creación del producto
 
-    last_modified_utc corresponde a S3 y se conserva
-    únicamente como metadata de publicación/modificación.
-    """
+def load_radar_reference_time() -> datetime:
+    if not RADAR_TIMESTAMP_FILE.exists():
+        raise RuntimeError("No existe radar_timestamp.txt.")
+    value = RADAR_TIMESTAMP_FILE.read_text(encoding="utf-8").strip()
+    if not value:
+        raise RuntimeError("radar_timestamp.txt está vacío.")
+    reference = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return reference.astimezone(timezone.utc)
 
+
+def build_source_metadata(product: str, metadata: dict) -> dict:
     return {
         "product": product,
         "key": metadata["key"],
         "url": metadata["url"],
-        "start_time_utc": metadata.get(
-            "start_time_utc"
-        ),
-        "end_time_utc": metadata.get(
-            "end_time_utc"
-        ),
-        "creation_time_utc": metadata.get(
-            "creation_time_utc"
-        ),
-        "last_modified_utc": metadata[
-            "last_modified"
-        ],
-        "size_bytes": metadata["size"],
+        "start_time_utc": metadata.get("start_time_utc"),
+        "end_time_utc": metadata.get("end_time_utc"),
+        "creation_time_utc": metadata.get("creation_time_utc"),
+        "last_modified_utc": metadata.get("last_modified"),
+        "size_bytes": metadata.get("size"),
     }
+
+
+def age_minutes(metadata: dict, reference_time: datetime) -> float | None:
+    value = metadata.get("end_time_utc")
+    if not value:
+        return None
+    end = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    return max(0.0, (reference_time - end.astimezone(timezone.utc)).total_seconds() / 60.0)
 
 
 def download_product(
     product: str,
     destination: Path,
-    when: datetime | None = None,
+    when: datetime,
+    hours_back: int = 6,
 ) -> dict:
-    """Busca y descarga el producto GOES más reciente."""
+    metadata = latest_product_object(product, now=when, hours_back=hours_back)
+    if metadata is None:
+        raise RuntimeError(f"No se encontró producto GOES: {product}")
 
-    obj = latest_product_object(
-        product,
-        now=when,
-        hours_back=0,
-    )
-
-    if obj is None:
-        raise RuntimeError(
-            f"No se encontró producto GOES: {product}"
-        )
-
-    response = requests.get(
-        obj["url"],
-        timeout=180,
-    )
+    response = requests.get(metadata["url"], timeout=180)
     response.raise_for_status()
-
     destination.write_bytes(response.content)
+    return metadata
 
-    return obj
 
-
-def calculate_statistics(
-    values: np.ndarray,
-) -> dict:
-    values = np.asarray(
-        values,
-        dtype=np.float64,
-    )
-
-    valid = np.isfinite(values)
-
-    if not np.any(valid):
-        raise RuntimeError(
-            "El producto GOES no contiene valores válidos."
-        )
-
-    values = values[valid]
-
+def calculate_statistics(values: np.ndarray) -> dict:
+    values = np.asarray(values, dtype=np.float64)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        raise RuntimeError("No hay valores válidos.")
     return {
         "count": int(values.size),
         "min": float(np.min(values)),
@@ -180,31 +123,18 @@ def haversine_distance_km(
     latitude: np.ndarray,
     longitude: np.ndarray,
 ) -> np.ndarray:
-    """Calcula distancia desde el centro operativo de ClimaAR."""
-
-    earth_radius_km = 6371.0
-
+    earth_radius_km = 6371.0088
     lat1 = np.radians(RADAR_LAT)
     lon1 = np.radians(RADAR_LON)
-
     lat2 = np.radians(latitude)
     lon2 = np.radians(longitude)
-
     dlat = lat2 - lat1
     dlon = lon2 - lon1
-
     a = (
         np.sin(dlat / 2.0) ** 2
-        + np.cos(lat1)
-        * np.cos(lat2)
-        * np.sin(dlon / 2.0) ** 2
+        + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
     )
-
-    return (
-        2.0
-        * earth_radius_km
-        * np.arcsin(np.sqrt(a))
-    )
+    return 2.0 * earth_radius_km * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
 
 
 def process_product(
@@ -213,37 +143,22 @@ def process_product(
     temp_dir: Path,
     reference_time: datetime,
 ) -> dict:
-
-    file_path = temp_dir / f"{product}.nc"
-
-    metadata = download_product(
-        product,
-        file_path,
-        when=reference_time,
-    )
-
-    result = prepare_goes_domain(
-        file_path,
-        variable=variable,
-    )
-
-    data = result["data"]
-
-    statistics = calculate_statistics(data)
-
+    path = temp_dir / f"{product}.nc"
+    metadata = download_product(product, path, reference_time, hours_back=6)
+    result = prepare_goes_domain(path, variable=variable)
     return {
         "status": "ok",
-        "source": build_source_metadata(
-            product,
-            metadata,
-        ),
+        "source": {
+            **build_source_metadata(product, metadata),
+            "age_minutes": age_minutes(metadata, reference_time),
+        },
         "domain": {
             "center_lat": RADAR_LAT,
             "center_lon": RADAR_LON,
             "radius_km": RADAR_RANGE_KM,
-            "points": int(len(data)),
+            "points": int(len(result["data"])),
         },
-        "statistics": statistics,
+        "statistics": calculate_statistics(result["data"]),
     }
 
 
@@ -253,168 +168,79 @@ def process_cloudtop(
     temp_dir: Path,
     reference_time: datetime,
 ) -> dict:
-
-    file_path = temp_dir / f"{product}.nc"
-
-    metadata = download_product(
-        product,
-        file_path,
-        when=reference_time,
-    )
-
-    value_result = prepare_goes_domain(
-        file_path,
-        variable=variable,
-    )
-
-    dqf_result = prepare_goes_domain(
-        file_path,
-        variable="DQF",
-    )
-
+    path = temp_dir / f"{product}.nc"
+    metadata = download_product(product, path, reference_time, hours_back=6)
     values = np.asarray(
-        value_result["data"],
+        prepare_goes_domain(path, variable=variable)["data"],
         dtype=np.float64,
     )
-
     dqf = np.asarray(
-        dqf_result["data"],
+        prepare_goes_domain(path, variable="DQF")["data"],
         dtype=np.float64,
     )
 
-    valid = (
-        np.isfinite(values)
-        & np.isfinite(dqf)
-        & (dqf == 0)
-    )
-
+    valid = np.isfinite(values) & np.isfinite(dqf) & (dqf == 0)
     usable = values[valid]
-
     if usable.size == 0:
-        raise RuntimeError(
-            f"{product}: no hay píxeles con DQF=0 "
-            "dentro del dominio ClimaAR."
-        )
+        raise RuntimeError(f"{product}: no hay píxeles DQF=0.")
 
     return {
         "status": "ok",
-        "source": build_source_metadata(
-            product,
-            metadata,
-        ),
+        "source": {
+            **build_source_metadata(product, metadata),
+            "age_minutes": age_minutes(metadata, reference_time),
+        },
         "domain": {
             "center_lat": RADAR_LAT,
             "center_lon": RADAR_LON,
             "radius_km": RADAR_RANGE_KM,
-            "points": int(len(values)),
+            "points": int(values.size),
         },
         "quality": {
             "usable_points": int(usable.size),
             "good_quality_qf": int(np.sum(dqf == 0)),
-            "non_good_quality_qf": int(
-                np.sum(
-                    np.isfinite(dqf)
-                    & (dqf != 0)
-                )
-            ),
+            "non_good_quality_qf": int(np.sum(np.isfinite(dqf) & (dqf != 0))),
         },
-        "statistics": calculate_statistics(
-            usable
-        ),
+        "statistics": calculate_statistics(usable),
     }
 
 
-def process_glm(
-    temp_dir: Path,
-    reference_time: datetime,
-) -> dict:
-    """Procesa GLM dentro del dominio operativo de ClimaAR."""
+def process_glm(temp_dir: Path, reference_time: datetime) -> dict:
+    path = temp_dir / "glm.nc"
+    metadata = download_product("glm", path, reference_time, hours_back=2)
 
-    file_path = temp_dir / "glm.nc"
-
-    metadata = download_product(
-        "glm",
-        file_path,
-        when=reference_time,
-    )
-
-    with xr.open_dataset(
-        file_path,
-        engine="netcdf4",
-        mask_and_scale=True,
-    ) as ds:
-
+    with xr.open_dataset(path, engine="netcdf4", mask_and_scale=True) as ds:
         required = [
-            "event_lat",
-            "event_lon",
-            "group_lat",
-            "group_lon",
-            "flash_lat",
-            "flash_lon",
-            "flash_energy",
-            "flash_area",
+            "event_lat", "event_lon", "group_lat", "group_lon",
+            "flash_lat", "flash_lon", "flash_energy", "flash_area",
             "flash_quality_flag",
         ]
-
-        missing = [
-            name
-            for name in required
-            if name not in ds
-        ]
-
+        missing = [name for name in required if name not in ds]
         if missing:
-            raise RuntimeError(
-                "Faltan variables GLM: "
-                + ", ".join(missing)
-            )
+            raise RuntimeError("Faltan variables GLM: " + ", ".join(missing))
 
         event_lat = ds["event_lat"].values
         event_lon = ds["event_lon"].values
-
-        event_valid = (
-            np.isfinite(event_lat)
-            & np.isfinite(event_lon)
-        )
-
-        event_distance = haversine_distance_km(
-            event_lat[event_valid],
-            event_lon[event_valid],
-        )
-
-        event_inside = (
-            event_distance <= RADAR_RANGE_KM
-        )
-
         group_lat = ds["group_lat"].values
         group_lon = ds["group_lon"].values
-
-        group_valid = (
-            np.isfinite(group_lat)
-            & np.isfinite(group_lon)
-        )
-
-        group_distance = haversine_distance_km(
-            group_lat[group_valid],
-            group_lon[group_valid],
-        )
-
-        group_inside = (
-            group_distance <= RADAR_RANGE_KM
-        )
-
         flash_lat = ds["flash_lat"].values
         flash_lon = ds["flash_lon"].values
         flash_energy = ds["flash_energy"].values
         flash_area = ds["flash_area"].values
-        flash_quality = ds[
-            "flash_quality_flag"
-        ].values
+        flash_quality = ds["flash_quality_flag"].values
 
+        event_valid = np.isfinite(event_lat) & np.isfinite(event_lon)
+        group_valid = np.isfinite(group_lat) & np.isfinite(group_lon)
         flash_valid = (
-            np.isfinite(flash_lat)
-            & np.isfinite(flash_lon)
-            & np.isfinite(flash_energy)
-            & np.isfinite(flash_area)
+            np.isfinite(flash_lat) & np.isfinite(flash_lon)
+            & np.isfinite(flash_energy) & np.isfinite(flash_area)
+        )
+
+        event_distance = haversine_distance_km(
+            event_lat[event_valid], event_lon[event_valid]
+        )
+        group_distance = haversine_distance_km(
+            group_lat[group_valid], group_lon[group_valid]
         )
 
         flash_lat = flash_lat[flash_valid]
@@ -423,376 +249,233 @@ def process_glm(
         flash_area = flash_area[flash_valid]
         flash_quality = flash_quality[flash_valid]
 
-        flash_distance = haversine_distance_km(
-            flash_lat,
-            flash_lon,
-        )
+        flash_distance = haversine_distance_km(flash_lat, flash_lon)
+        flash_inside = flash_distance <= RADAR_RANGE_KM
 
-        flash_inside = (
-            flash_distance <= RADAR_RANGE_KM
-        )
+        domain_energy = flash_energy[flash_inside]
+        domain_area = flash_area[flash_inside]
+        domain_quality = flash_quality[flash_inside]
 
-        domain_energy = flash_energy[
-            flash_inside
-        ]
+        flashes = int(domain_energy.size)
+        events = int(np.sum(event_distance <= RADAR_RANGE_KM))
+        groups = int(np.sum(group_distance <= RADAR_RANGE_KM))
 
-        domain_area = flash_area[
-            flash_inside
-        ]
-
-        domain_quality = flash_quality[
-            flash_inside
-        ]
-
-        quality_0 = int(
-            np.sum(domain_quality == 0)
-        )
-
-        quality_3 = int(
-            np.sum(domain_quality == 3)
-        )
-
-        flashes_inside = int(
-            np.sum(flash_inside)
-        )
-
-        events_inside = int(
-            np.sum(event_inside)
-        )
-
-        groups_inside = int(
-            np.sum(group_inside)
-        )
-
-        if flashes_inside == 0:
-            activity_status = "sin_actividad"
+        if flashes:
+            nearest = int(np.argmin(flash_distance[flash_inside]))
+            inside_distance = flash_distance[flash_inside]
+            inside_lat = flash_lat[flash_inside]
+            inside_lon = flash_lon[flash_inside]
+            nearest_flash = {
+                "distance_km": float(inside_distance[nearest]),
+                "latitude": float(inside_lat[nearest]),
+                "longitude": float(inside_lon[nearest]),
+            }
+            energy_stats = calculate_statistics(domain_energy)
+            area_stats = calculate_statistics(domain_area)
         else:
-            activity_status = "ok"
-
-        if flashes_inside > 0:
-
-            energy_stats = calculate_statistics(
-                domain_energy
-            )
-
-            area_stats = calculate_statistics(
-                domain_area
-            )
-
-            inside_distances = (
-                flash_distance[flash_inside]
-            )
-
-            inside_lat = flash_lat[
-                flash_inside
-            ]
-
-            inside_lon = flash_lon[
-                flash_inside
-            ]
-
-            nearest_position = int(
-                np.argmin(
-                    inside_distances
-                )
-            )
-
-            nearest_distance = float(
-                inside_distances[
-                    nearest_position
-                ]
-            )
-
-            nearest_lat = float(
-                inside_lat[
-                    nearest_position
-                ]
-            )
-
-            nearest_lon = float(
-                inside_lon[
-                    nearest_position
-                ]
-            )
-
-        else:
-
+            nearest_flash = {
+                "distance_km": None,
+                "latitude": None,
+                "longitude": None,
+            }
             energy_stats = None
             area_stats = None
-            nearest_distance = None
-            nearest_lat = None
-            nearest_lon = None
 
     return {
-        "status": activity_status,
-        "source": build_source_metadata(
-            "glm",
-            metadata,
-        ),
+        "status": "ok" if flashes else "sin_actividad",
+        "source": {
+            **build_source_metadata("glm", metadata),
+            "age_minutes": age_minutes(metadata, reference_time),
+        },
         "domain": {
             "center_lat": RADAR_LAT,
             "center_lon": RADAR_LON,
             "radius_km": RADAR_RANGE_KM,
         },
         "counts": {
-            "events": events_inside,
-            "groups": groups_inside,
-            "flashes": flashes_inside,
-            "flashes_quality_0": quality_0,
-            "flashes_quality_3": quality_3,
+            "events": events,
+            "groups": groups,
+            "flashes": flashes,
+            "flashes_quality_0": int(np.sum(domain_quality == 0)),
+            "flashes_quality_3": int(np.sum(domain_quality == 3)),
         },
         "flash_energy": energy_stats,
         "flash_area": area_stats,
-        "nearest_flash": {
-            "distance_km": nearest_distance,
-            "latitude": nearest_lat,
-            "longitude": nearest_lon,
-        },
+        "nearest_flash": nearest_flash,
+    }
+
+
+def _open_wind_arrays(ds: xr.Dataset) -> dict[str, np.ndarray]:
+    aliases = {
+        "lat": ("lat",),
+        "lon": ("lon",),
+        "speed": ("wind_speed",),
+        "direction": ("wind_direction",),
+        "pressure": ("pressure",),
+        "dqf": ("DQF",),
+    }
+    result = {}
+    for target, names in aliases.items():
+        found = next((name for name in names if name in ds), None)
+        if found is None:
+            raise RuntimeError(f"Falta variable DMW: {target}")
+        result[target] = np.asarray(ds[found].values, dtype=np.float64)
+    return result
+
+
+def _dmw_quality_weight(dqf: np.ndarray) -> np.ndarray:
+    weight = np.zeros(dqf.shape, dtype=np.float64)
+    for code, value in DMW_QUALITY_WEIGHT.items():
+        weight[dqf == code] = value
+    return weight
+
+
+def _vector_summary(speed: np.ndarray, direction_from: np.ndarray, weight: np.ndarray) -> dict:
+    # Meteorological direction = FROM. Convert to vector components toward.
+    radians = np.radians(direction_from)
+    u = -speed * np.sin(radians)
+    v = -speed * np.cos(radians)
+
+    total_weight = float(np.sum(weight))
+    if total_weight <= 0:
+        raise RuntimeError("No hay pesos DMW válidos.")
+
+    mean_u = float(np.sum(u * weight) / total_weight)
+    mean_v = float(np.sum(v * weight) / total_weight)
+    mean_speed = float(np.hypot(mean_u, mean_v))
+    mean_direction = float((np.degrees(np.arctan2(-mean_u, -mean_v)) + 360.0) % 360.0)
+
+    resultant = mean_speed / max(float(np.sum(speed * weight) / total_weight), 1e-9)
+
+    return {
+        "mean_speed": mean_speed,
+        "mean_direction_from": mean_direction,
+        "mean_u": mean_u,
+        "mean_v": mean_v,
+        "direction_resultant": resultant,
+        "speed": calculate_statistics(speed),
     }
 
 
 def process_dmw(
     temp_dir: Path,
     reference_time: datetime,
-    search_hours: int = 12,
+    search_hours: int = 3,
 ) -> dict:
-    """
-    Busca DMW hacia atrás hasta encontrar un archivo
-    con vectores de viento de buena calidad dentro
-    del dominio operativo de ClimaAR.
-    """
+    products = {**DMW_PRODUCTS, **DMWV_PRODUCTS}
+    records = []
+    downloaded_keys: set[str] = set()
 
-    for offset in range(search_hours + 1):
-
-        when = reference_time - timedelta(
-            hours=offset
-        )
-
+    for product in products:
         metadata = latest_product_object(
-            "dmw",
-            now=when,
-            hours_back=0,
+            product,
+            now=reference_time,
+            hours_back=search_hours,
         )
-
         if metadata is None:
             continue
+        if metadata["key"] in downloaded_keys:
+            continue
+        downloaded_keys.add(metadata["key"])
 
-        file_path = (
-            temp_dir
-            / f"dmw_{offset}.nc"
-        )
-
-        response = requests.get(
-            metadata["url"],
-            timeout=180,
-        )
-
+        path = temp_dir / f"{product}.nc"
+        response = requests.get(metadata["url"], timeout=180)
         response.raise_for_status()
+        path.write_bytes(response.content)
 
-        file_path.write_bytes(
-            response.content
-        )
-
-        with xr.open_dataset(
-            file_path,
-            engine="netcdf4",
-            mask_and_scale=True,
-        ) as ds:
-
-            required = [
-                "lat",
-                "lon",
-                "wind_speed",
-                "wind_direction",
-                "temperature",
-                "pressure",
-                "DQF",
-            ]
-
-            missing = [
-                name
-                for name in required
-                if name not in ds
-            ]
-
-            if missing:
-                continue
-
-            lat = ds["lat"].values
-            lon = ds["lon"].values
-            wind_speed = ds[
-                "wind_speed"
-            ].values
-            wind_direction = ds[
-                "wind_direction"
-            ].values
-            temperature = ds[
-                "temperature"
-            ].values
-            pressure = ds[
-                "pressure"
-            ].values
-            dqf = ds["DQF"].values
+        with xr.open_dataset(path, engine="netcdf4", mask_and_scale=True) as ds:
+            arrays = _open_wind_arrays(ds)
+            lat = arrays["lat"]
+            lon = arrays["lon"]
+            speed = arrays["speed"]
+            direction = arrays["direction"]
+            pressure = arrays["pressure"]
+            dqf = arrays["dqf"]
 
             valid = (
-                np.isfinite(lat)
-                & np.isfinite(lon)
-                & np.isfinite(wind_speed)
-                & np.isfinite(wind_direction)
-                & np.isfinite(temperature)
-                & np.isfinite(pressure)
-                & np.isfinite(dqf)
-                & (dqf == 0)
+                np.isfinite(lat) & np.isfinite(lon)
+                & np.isfinite(speed) & np.isfinite(direction)
+                & np.isfinite(pressure) & np.isfinite(dqf)
+                & np.isin(dqf.astype(np.int64), list(GOOD_DMW_DQF))
+                & (speed >= 0)
             )
-
-            if not np.any(valid):
-                continue
 
             lat = lat[valid]
             lon = lon[valid]
-            wind_speed = wind_speed[valid]
-            wind_direction = wind_direction[valid]
-            temperature = temperature[valid]
+            speed = speed[valid]
+            direction = direction[valid] % 360.0
             pressure = pressure[valid]
+            dqf = dqf[valid]
 
-            distance = haversine_distance_km(
-                lat,
-                lon,
-            )
+            if speed.size == 0:
+                continue
 
-            inside = (
-                distance <= RADAR_RANGE_KM
-            )
-
+            distance = haversine_distance_km(lat, lon)
+            inside = distance <= RADAR_RANGE_KM
             if not np.any(inside):
                 continue
 
-            lat_inside = lat[inside]
-            lon_inside = lon[inside]
-            speed_inside = wind_speed[
-                inside
-            ]
-            direction_inside = (
-                wind_direction[inside]
-            )
-            temperature_inside = (
-                temperature[inside]
-            )
-            pressure_inside = (
-                pressure[inside]
-            )
-            distance_inside = (
-                distance[inside]
-            )
+            lat = lat[inside]
+            lon = lon[inside]
+            speed = speed[inside]
+            direction = direction[inside]
+            pressure = pressure[inside]
+            dqf = dqf[inside]
+            distance = distance[inside]
+            weight = _dmw_quality_weight(dqf)
 
-            nearest_index = int(
-                np.argmin(distance_inside)
-            )
+            summary = _vector_summary(speed, direction, weight)
+            records.append({
+                "product": product,
+                "channel": products[product],
+                "source": {
+                    **build_source_metadata(product, metadata),
+                    "age_minutes": age_minutes(metadata, reference_time),
+                },
+                "vectors": int(speed.size),
+                "quality": {
+                    "dqf_-3": int(np.sum(dqf == -3)),
+                    "dqf_-2": int(np.sum(dqf == -2)),
+                    "dqf_-1": int(np.sum(dqf == -1)),
+                    "dqf_0": int(np.sum(dqf == 0)),
+                },
+                "summary": summary,
+                "pressure_mb": calculate_statistics(pressure),
+                "nearest_vector": {
+                    "distance_km": float(distance[np.argmin(distance)]),
+                    "latitude": float(lat[np.argmin(distance)]),
+                    "longitude": float(lon[np.argmin(distance)]),
+                    "speed": float(speed[np.argmin(distance)]),
+                    "direction_from": float(direction[np.argmin(distance)]),
+                    "pressure_mb": float(pressure[np.argmin(distance)]),
+                    "dqf": int(dqf[np.argmin(distance)]),
+                },
+            })
 
-            return {
-                "status": "ok",
-                "source": build_source_metadata(
-                    "dmw",
-                    metadata,
-                ),
-                "domain": {
-                    "center_lat": RADAR_LAT,
-                    "center_lon": RADAR_LON,
-                    "radius_km": RADAR_RANGE_KM,
-                    "measurements": int(
-                        len(speed_inside)
-                    ),
-                },
-                "search": {
-                    "hours_back": offset,
-                },
-                "wind_speed": (
-                    calculate_statistics(
-                        speed_inside
-                    )
-                ),
-                "wind_direction": (
-                    calculate_statistics(
-                        direction_inside
-                    )
-                ),
-                "temperature": (
-                    calculate_statistics(
-                        temperature_inside
-                    )
-                ),
-                "pressure": (
-                    calculate_statistics(
-                        pressure_inside
-                    )
-                ),
-                "nearest_measurement": {
-                    "distance_km": float(
-                        distance_inside[
-                            nearest_index
-                        ]
-                    ),
-                    "latitude": float(
-                        lat_inside[
-                            nearest_index
-                        ]
-                    ),
-                    "longitude": float(
-                        lon_inside[
-                            nearest_index
-                        ]
-                    ),
-                    "wind_speed": float(
-                        speed_inside[
-                            nearest_index
-                        ]
-                    ),
-                    "wind_direction": float(
-                        direction_inside[
-                            nearest_index
-                        ]
-                    ),
-                    "temperature": float(
-                        temperature_inside[
-                            nearest_index
-                        ]
-                    ),
-                    "pressure": float(
-                        pressure_inside[
-                            nearest_index
-                        ]
-                    ),
-                },
-            }
+    if not records:
+        return {
+            "status": "unavailable",
+            "reason": f"No se encontraron vectores DMW/DMWV válidos dentro de {RADAR_RANGE_KM} km.",
+            "search_hours": search_hours,
+            "products": [],
+        }
 
     return {
-        "status": "unavailable",
-        "reason": (
-            "No se encontró DMW con "
-            "mediciones DQF=0 dentro de "
-            f"{RADAR_RANGE_KM} km en las "
-            f"últimas {search_hours} horas."
-        ),
+        "status": "ok",
+        "search_hours": search_hours,
+        "products": records,
+        "total_vectors": int(sum(x["vectors"] for x in records)),
     }
 
 
-def build_state(
-    reference_time: datetime | None = None,
-) -> dict:
-
+def build_state(reference_time: datetime | None = None) -> dict:
     if reference_time is None:
         reference_time = load_radar_reference_time()
 
-    generated_at = (
-        datetime.now(
-            timezone.utc
-        ).isoformat()
-    )
-
     state = {
-        "version": "1.4",
+        "version": "1.5",
         "satellite": "GOES-19",
-        "generated_at_utc": generated_at,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "reference_frame_utc": reference_time.isoformat(),
         "status": "ok",
         "domain": {
@@ -807,284 +490,80 @@ def build_state(
         "dmw": None,
     }
 
-    with tempfile.TemporaryDirectory(
-        prefix="climaar_goes19_"
-    ) as temp:
-
+    with tempfile.TemporaryDirectory(prefix="climaar_goes19_") as temp:
         temp_dir = Path(temp)
 
-        # ABI C08 / C13
         for product, variable in PRODUCTS.items():
-
             try:
-
-                state["products"][product] = (
-                    process_product(
-                        product,
-                        variable,
-                        temp_dir,
-                        reference_time,
-                    )
+                state["products"][product] = process_product(
+                    product, variable, temp_dir, reference_time
                 )
-
             except Exception as exc:
-
                 state["products"][product] = {
                     "status": "unavailable",
                     "error": str(exc),
                 }
 
-        # Cloud Top
-        for product, variable in (
-            CLOUDTOP_PRODUCTS.items()
-        ):
-
+        for product, variable in CLOUDTOP_PRODUCTS.items():
             try:
-
-                state["cloudtop"][product] = (
-                    process_cloudtop(
-                        product,
-                        variable,
-                        temp_dir,
-                        reference_time,
-                    )
+                state["cloudtop"][product] = process_cloudtop(
+                    product, variable, temp_dir, reference_time
                 )
-
             except Exception as exc:
-
                 state["cloudtop"][product] = {
                     "status": "unavailable",
                     "error": str(exc),
                 }
 
-        # GLM
         try:
-
-            state["glm"] = process_glm(
-                temp_dir,
-                reference_time,
-            )
-
+            state["glm"] = process_glm(temp_dir, reference_time)
         except Exception as exc:
+            state["glm"] = {"status": "unavailable", "error": str(exc)}
 
-            state["glm"] = {
-                "status": "unavailable",
-                "error": str(exc),
-            }
-
-        # DMW
         try:
-
-            state["dmw"] = process_dmw(
-                temp_dir,
-                reference_time,
-            )
-
+            state["dmw"] = process_dmw(temp_dir, reference_time)
         except Exception as exc:
+            state["dmw"] = {"status": "unavailable", "error": str(exc)}
 
-            state["dmw"] = {
-                "status": "unavailable",
-                "error": str(exc),
-            }
-
-        # Estado general
-        components = []
-
-        components.extend(
-            state["products"].values()
-        )
-
-        components.extend(
-            state["cloudtop"].values()
-        )
-
-        components.append(
-            state["glm"]
-        )
-
-        components.append(
-            state["dmw"]
-        )
-
-        available_components = sum(
-            1
-            for value in components
-            if value
-            and value.get("status")
-            in {
-                "ok",
-                "sin_actividad",
-            }
-        )
-
-        total_components = len(
-            components
-        )
-
-        if available_components == 0:
-
-            state["status"] = (
-                "unavailable"
-            )
-
-        elif available_components < total_components:
-
-            state["status"] = "partial"
-
-        else:
-
-            state["status"] = "ok"
+    components = list(state["products"].values()) + list(state["cloudtop"].values())
+    components += [state["glm"], state["dmw"]]
+    if any(isinstance(item, dict) and item.get("status") == "ok" for item in components):
+        state["status"] = "ok"
+    else:
+        state["status"] = "degraded"
 
     return state
 
 
-def save_state(
-    state: dict,
-) -> None:
+def main() -> None:
+    reference_time = load_radar_reference_time()
+    state = build_state(reference_time)
 
-    OUTPUT_FILE.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    temporary_file = (
-        OUTPUT_FILE.with_suffix(".tmp")
-    )
-
-    temporary_file.write_text(
-        json.dumps(
-            state,
-            indent=2,
-            ensure_ascii=False,
-        ),
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_FILE.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
-    temporary_file.replace(
-        OUTPUT_FILE
-    )
+    print("ClimaAR GOES-19 State Engine")
+    print(f"Frame RMA10: {reference_time.isoformat()}")
+    print(f"Estado: {state['status']}")
 
+    for name, value in state["products"].items():
+        print(f"{name}: {value.get('status')}")
 
-def main() -> None:
+    for name, value in state["cloudtop"].items():
+        print(f"{name}: {value.get('status')}")
 
+    print(f"GLM: {state['glm'].get('status') if state['glm'] else 'unavailable'}")
+
+    dmw = state["dmw"] or {}
     print(
-        "ClimaAR GOES-19 State Engine"
+        f"DMW: {dmw.get('status')} - "
+        f"{dmw.get('total_vectors', 0)} vectores - "
+        f"{len(dmw.get('products', []))} productos"
     )
-
-    state = build_state()
-
-    save_state(state)
-
-    print(
-        f"Frame RMA10: "
-        f"{state['reference_frame_utc']}"
-    )
-
-    print(
-        f"Estado: {state['status']}"
-    )
-
-    for product, data in (
-        state["products"].items()
-    ):
-
-        if data.get("status") != "ok":
-
-            print(
-                f"{product}: "
-                f"{data.get('status', 'ERROR')}"
-            )
-
-            continue
-
-        points = data[
-            "domain"
-        ]["points"]
-
-        print(
-            f"{product}: OK - "
-            f"{points:,} puntos"
-        )
-
-    for product, data in (
-        state["cloudtop"].items()
-    ):
-
-        if data.get("status") != "ok":
-
-            print(
-                f"{product}: "
-                f"{data.get('status', 'ERROR')}"
-            )
-
-            continue
-
-        quality = data[
-            "quality"
-        ]
-
-        print(
-            f"{product}: OK - "
-            f"{quality['usable_points']:,} "
-            "utilizables - "
-            f"{quality['good_quality_qf']:,} "
-            "buena calidad"
-        )
-
-    glm = state.get("glm")
-
-    if glm is None:
-
-        print("GLM: NO DISPONIBLE")
-
-    elif glm.get("status") == "unavailable":
-
-        print("GLM: NO DISPONIBLE")
-
-    else:
-
-        counts = glm["counts"]
-
-        print(
-            "GLM: "
-            f"{glm['status']} - "
-            f"{counts['events']} eventos, "
-            f"{counts['groups']} grupos, "
-            f"{counts['flashes']} flashes"
-        )
-
-    dmw = state.get("dmw")
-
-    if dmw is None:
-
-        print("DMW: NO DISPONIBLE")
-
-    elif dmw.get("status") != "ok":
-
-        print(
-            "DMW: "
-            f"{dmw.get('status', 'ERROR')}"
-        )
-
-    else:
-
-        measurements = dmw[
-            "domain"
-        ]["measurements"]
-
-        hours_back = dmw[
-            "search"
-        ]["hours_back"]
-
-        print(
-            "DMW: OK - "
-            f"{measurements} mediciones - "
-            f"{hours_back} h atrás"
-        )
-
-    print(
-        "OK: GOES-19 state generado"
-    )
+    print(f"OK: GOES-19 state generado -> {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
