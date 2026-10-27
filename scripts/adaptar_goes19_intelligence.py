@@ -16,6 +16,13 @@ GOES_STATE_FILE = (
     / "goes19_state.json"
 )
 
+RADAR_NOWCAST_FILE = (
+    BASE_DIR
+    / "data"
+    / "radar"
+    / "radar_nowcast.json"
+)
+
 OUTPUT_FILE = (
     BASE_DIR
     / "data"
@@ -23,13 +30,13 @@ OUTPUT_FILE = (
     / "goes19_intelligence.json"
 )
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 
 def load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(
-            f"No existe el archivo GOES-19: {path}"
+            f"No existe el archivo: {path}"
         )
 
     with path.open("r", encoding="utf-8") as file:
@@ -37,7 +44,7 @@ def load_json(path: Path) -> dict[str, Any]:
 
     if not isinstance(data, dict):
         raise ValueError(
-            "goes19_state.json no contiene un objeto JSON."
+            f"{path.name} no contiene un objeto JSON."
         )
 
     return data
@@ -72,22 +79,64 @@ def parse_utc(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def age_minutes(value: Any) -> float | None:
+def load_reference_frame_utc() -> datetime:
+    radar = load_json(RADAR_NOWCAST_FILE)
+
+    nowcast = radar.get("nowcast")
+
+    if not isinstance(nowcast, dict):
+        raise ValueError(
+            "radar_nowcast.json no contiene el bloque 'nowcast'."
+        )
+
+    frame_value = nowcast.get("frame_actual_utc")
+
+    frame = parse_utc(frame_value)
+
+    if frame is None:
+        raise ValueError(
+            "No se pudo obtener nowcast.frame_actual_utc "
+            "desde radar_nowcast.json."
+        )
+
+    return frame
+
+
+def temporal_info(
+    value: Any,
+    reference_time: datetime,
+) -> dict[str, Any]:
     timestamp = parse_utc(value)
 
     if timestamp is None:
-        return None
+        return {
+            "age_minutes": None,
+            "offset_minutes": None,
+            "temporal_validity": "unknown",
+        }
 
-    age = (
-        datetime.now(timezone.utc) - timestamp
+    offset_minutes = (
+        reference_time - timestamp
     ).total_seconds() / 60.0
 
-    return max(0.0, age)
+    if offset_minutes < 0:
+        return {
+            "age_minutes": None,
+            "offset_minutes": round(offset_minutes, 3),
+            "temporal_validity": "future_relative_to_frame",
+        }
+
+    return {
+        "age_minutes": round(offset_minutes, 3),
+        "offset_minutes": round(offset_minutes, 3),
+        "temporal_validity": "valid",
+    }
 
 
 def product_summary(
     name: str,
     data: Any,
+    reference_time: datetime,
 ) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {
@@ -116,19 +165,54 @@ def product_summary(
         "last_modified_utc"
     )
 
+    temporal = temporal_info(
+        last_modified,
+        reference_time,
+    )
+
+    status = data.get(
+        "status",
+        "unavailable",
+    )
+
+    if (
+        temporal["temporal_validity"]
+        == "future_relative_to_frame"
+    ):
+        status = "future_relative_to_frame"
+
     return {
-        "status": data.get("status", "unavailable"),
+        "status": status,
         "source": {
-            "product": source.get("product", name),
+            "product": source.get(
+                "product",
+                name,
+            ),
             "key": source.get("key"),
             "last_modified_utc": last_modified,
-            "age_minutes": age_minutes(last_modified),
-            "size_bytes": source.get("size_bytes"),
+            "age_minutes": temporal[
+                "age_minutes"
+            ],
+            "offset_minutes": temporal[
+                "offset_minutes"
+            ],
+            "temporal_validity": temporal[
+                "temporal_validity"
+            ],
+            "size_bytes": source.get(
+                "size_bytes"
+            ),
         },
         "domain": {
-            "center_lat": domain.get("center_lat"),
-            "center_lon": domain.get("center_lon"),
-            "radius_km": domain.get("radius_km"),
+            "center_lat": domain.get(
+                "center_lat"
+            ),
+            "center_lon": domain.get(
+                "center_lon"
+            ),
+            "radius_km": domain.get(
+                "radius_km"
+            ),
             "points": domain.get("points"),
         },
         "quality": quality,
@@ -139,11 +223,19 @@ def product_summary(
 def cloudtop_summary(
     name: str,
     data: Any,
+    reference_time: datetime,
 ) -> dict[str, Any]:
-    return product_summary(name, data)
+    return product_summary(
+        name,
+        data,
+        reference_time,
+    )
 
 
-def glm_summary(data: Any) -> dict[str, Any]:
+def glm_summary(
+    data: Any,
+    reference_time: datetime,
+) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {
             "status": "unavailable",
@@ -173,19 +265,54 @@ def glm_summary(data: Any) -> dict[str, Any]:
         "last_modified_utc"
     )
 
+    temporal = temporal_info(
+        last_modified,
+        reference_time,
+    )
+
+    status = data.get(
+        "status",
+        "unavailable",
+    )
+
+    if (
+        temporal["temporal_validity"]
+        == "future_relative_to_frame"
+    ):
+        status = "future_relative_to_frame"
+
     return {
-        "status": data.get("status", "unavailable"),
+        "status": status,
         "source": {
-            "product": source.get("product", "glm"),
+            "product": source.get(
+                "product",
+                "glm",
+            ),
             "key": source.get("key"),
             "last_modified_utc": last_modified,
-            "age_minutes": age_minutes(last_modified),
-            "size_bytes": source.get("size_bytes"),
+            "age_minutes": temporal[
+                "age_minutes"
+            ],
+            "offset_minutes": temporal[
+                "offset_minutes"
+            ],
+            "temporal_validity": temporal[
+                "temporal_validity"
+            ],
+            "size_bytes": source.get(
+                "size_bytes"
+            ),
         },
         "domain": {
-            "center_lat": domain.get("center_lat"),
-            "center_lon": domain.get("center_lon"),
-            "radius_km": domain.get("radius_km"),
+            "center_lat": domain.get(
+                "center_lat"
+            ),
+            "center_lon": domain.get(
+                "center_lon"
+            ),
+            "radius_km": domain.get(
+                "radius_km"
+            ),
         },
         "counts": counts,
         "flash_energy": energy,
@@ -194,7 +321,10 @@ def glm_summary(data: Any) -> dict[str, Any]:
     }
 
 
-def dmw_summary(data: Any) -> dict[str, Any]:
+def dmw_summary(
+    data: Any,
+    reference_time: datetime,
+) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {
             "status": "unavailable",
@@ -217,26 +347,71 @@ def dmw_summary(data: Any) -> dict[str, Any]:
         "last_modified_utc"
     )
 
+    temporal = temporal_info(
+        last_modified,
+        reference_time,
+    )
+
+    status = data.get(
+        "status",
+        "unavailable",
+    )
+
+    if (
+        temporal["temporal_validity"]
+        == "future_relative_to_frame"
+    ):
+        status = "future_relative_to_frame"
+
     return {
-        "status": data.get("status", "unavailable"),
+        "status": status,
         "source": {
-            "product": source.get("product", "dmw"),
+            "product": source.get(
+                "product",
+                "dmw",
+            ),
             "key": source.get("key"),
             "last_modified_utc": last_modified,
-            "age_minutes": age_minutes(last_modified),
-            "size_bytes": source.get("size_bytes"),
+            "age_minutes": temporal[
+                "age_minutes"
+            ],
+            "offset_minutes": temporal[
+                "offset_minutes"
+            ],
+            "temporal_validity": temporal[
+                "temporal_validity"
+            ],
+            "size_bytes": source.get(
+                "size_bytes"
+            ),
         },
         "domain": {
-            "center_lat": domain.get("center_lat"),
-            "center_lon": domain.get("center_lon"),
-            "radius_km": domain.get("radius_km"),
-            "measurements": domain.get("measurements"),
+            "center_lat": domain.get(
+                "center_lat"
+            ),
+            "center_lon": domain.get(
+                "center_lon"
+            ),
+            "radius_km": domain.get(
+                "radius_km"
+            ),
+            "measurements": domain.get(
+                "measurements"
+            ),
         },
         "search": search,
-        "wind_speed": data.get("wind_speed"),
-        "wind_direction": data.get("wind_direction"),
-        "temperature": data.get("temperature"),
-        "pressure": data.get("pressure"),
+        "wind_speed": data.get(
+            "wind_speed"
+        ),
+        "wind_direction": data.get(
+            "wind_direction"
+        ),
+        "temperature": data.get(
+            "temperature"
+        ),
+        "pressure": data.get(
+            "pressure"
+        ),
         "nearest_measurement": data.get(
             "nearest_measurement"
         ),
@@ -245,6 +420,7 @@ def dmw_summary(data: Any) -> dict[str, Any]:
 
 def build_intelligence_state(
     state: dict[str, Any],
+    reference_time: datetime,
 ) -> dict[str, Any]:
     domain = state.get("domain")
 
@@ -261,30 +437,45 @@ def build_intelligence_state(
     if not isinstance(cloudtop, dict):
         cloudtop = {}
 
-    glm = glm_summary(state.get("glm"))
-    dmw = dmw_summary(state.get("dmw"))
-
     normalized_products = {
         "abi_c08": product_summary(
             "abi_c08",
             products.get("abi_c08"),
+            reference_time,
         ),
         "abi_c13": product_summary(
             "abi_c13",
             products.get("abi_c13"),
+            reference_time,
         ),
     }
 
     normalized_cloudtop = {
         "cloudtop_height": cloudtop_summary(
             "cloudtop_height",
-            cloudtop.get("cloudtop_height"),
+            cloudtop.get(
+                "cloudtop_height"
+            ),
+            reference_time,
         ),
         "cloudtop_pressure": cloudtop_summary(
             "cloudtop_pressure",
-            cloudtop.get("cloudtop_pressure"),
+            cloudtop.get(
+                "cloudtop_pressure"
+            ),
+            reference_time,
         ),
     }
+
+    glm = glm_summary(
+        state.get("glm"),
+        reference_time,
+    )
+
+    dmw = dmw_summary(
+        state.get("dmw"),
+        reference_time,
+    )
 
     components = [
         *normalized_products.values(),
@@ -297,24 +488,64 @@ def build_intelligence_state(
         1
         for component in components
         if component.get("status")
-        in {"ok", "sin_actividad"}
+        in {
+            "ok",
+            "sin_actividad",
+        }
+    )
+
+    generated_at = state.get(
+        "generated_at_utc"
+    )
+
+    state_temporal = temporal_info(
+        generated_at,
+        reference_time,
     )
 
     return {
         "version": VERSION,
-        "motor": "ClimaAR GOES-19 Intelligence Adapter",
-        "source_state_version": state.get("version"),
-        "satellite": state.get("satellite", "GOES-19"),
-        "generated_at_utc": state.get(
-            "generated_at_utc"
+        "motor": (
+            "ClimaAR GOES-19 "
+            "Intelligence Adapter"
         ),
-        "state_age_minutes": age_minutes(
-            state.get("generated_at_utc")
+        "source_state_version": state.get(
+            "version"
         ),
+        "satellite": state.get(
+            "satellite",
+            "GOES-19",
+        ),
+
+        "reference_frame": {
+            "source": (
+                "RMA10 radar_nowcast"
+            ),
+            "frame_actual_utc": (
+                reference_time.isoformat()
+                .replace("+00:00", "Z")
+            ),
+        },
+
+        "generated_at_utc": generated_at,
+
+        "state_temporal": {
+            "age_minutes": state_temporal[
+                "age_minutes"
+            ],
+            "offset_minutes": state_temporal[
+                "offset_minutes"
+            ],
+            "temporal_validity": state_temporal[
+                "temporal_validity"
+            ],
+        },
+
         "status": state.get(
             "status",
             "unavailable",
         ),
+
         "domain": {
             "type": domain.get("type"),
             "center_lat": domain.get(
@@ -327,10 +558,12 @@ def build_intelligence_state(
                 "radius_km"
             ),
         },
+
         "productos": normalized_products,
         "cloudtop": normalized_cloudtop,
         "glm": glm,
         "dmw": dmw,
+
         "calidad": {
             "componentes_disponibles": available,
             "componentes_totales": len(
@@ -338,7 +571,9 @@ def build_intelligence_state(
             ),
             "estado": (
                 "ok"
-                if available == len(components)
+                if available == len(
+                    components
+                )
                 else (
                     "partial"
                     if available > 0
@@ -378,12 +613,17 @@ def save_json(
 
 
 def main() -> None:
+    reference_frame = (
+        load_reference_frame_utc()
+    )
+
     state = load_json(
         GOES_STATE_FILE
     )
 
     adapted = build_intelligence_state(
-        state
+        state,
+        reference_frame,
     )
 
     save_json(
@@ -394,6 +634,10 @@ def main() -> None:
     print(
         "OK: GOES-19 adaptado para "
         "ClimaAR Intelligence"
+    )
+    print(
+        f"Frame RMA10: "
+        f"{adapted['reference_frame']['frame_actual_utc']}"
     )
     print(
         f"Estado: {adapted['status']}"
