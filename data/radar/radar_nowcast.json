@@ -578,11 +578,11 @@
         "minutos": 30,
         "timestamp_utc": "2026-10-27T02:30:00Z",
         "x": 280.48,
-        "y": 250.32,
-        "latitud": -38.69013,
-        "longitud": -61.895045,
-        "distancia_radar_km": 23.964,
-        "rumbo_radar_grados": 78.28,
+        "y": 250.37,
+        "latitud": -38.690552,
+        "longitud": -61.895044,
+        "distancia_radar_km": 23.954,
+        "rumbo_radar_grados": 78.39,
         "track_id": "4",
         "incertidumbre_pixeles": 22.64,
         "confianza_prediccion": 21.6,
@@ -591,7 +591,7 @@
         "rumbo_estimado_grados": 307.8,
         "calibracion_muestras": 519,
         "correccion_bias_x_pixeles": -0.14,
-        "correccion_bias_y_pixeles": 0.47
+        "correccion_bias_y_pixeles": 0.52
       }
     },
     "georreferenciacion": {
@@ -1307,11 +1307,77 @@
     "calidad_intervalo": "ACEPTABLE"
   },
   "prediccion": {
-    "disponible": false,
+    "disponible": true,
     "radar_timestamp": "2026-10-27T02:00:00Z",
-    "resumen": {}
+    "resumen": {
+      "nucleos_con_prediccion": 7,
+      "nucleos_sin_prediccion": 2,
+      "promedio_intensificacion": 55.8,
+      "promedio_debilitamiento": 44.2,
+      "promedio_confianza": 41.4,
+      "huecos_estimados": 52,
+      "predicciones_validadas_en_este_frame": 21,
+      "predicciones_validadas_normales": 11,
+      "predicciones_validadas_huecos": 10,
+      "error_medio_pixeles_validado": 38.54,
+      "metricas_por_horizonte": {
+        "5": {
+          "muestras": 0,
+          "error_medio_pixeles": null,
+          "error_mediano_pixeles": null,
+          "dentro_5_pixeles": null,
+          "dentro_10_pixeles": null,
+          "dentro_15_pixeles": null
+        },
+        "10": {
+          "muestras": 9,
+          "error_medio_pixeles": 42.56,
+          "error_mediano_pixeles": 41.03,
+          "dentro_5_pixeles": 22.2,
+          "dentro_10_pixeles": 33.3,
+          "dentro_15_pixeles": 44.4
+        },
+        "20": {
+          "muestras": 4,
+          "error_medio_pixeles": 41.62,
+          "error_mediano_pixeles": 37.21,
+          "dentro_5_pixeles": 25.0,
+          "dentro_10_pixeles": 25.0,
+          "dentro_15_pixeles": 25.0
+        },
+        "30": {
+          "muestras": 8,
+          "error_medio_pixeles": 32.48,
+          "error_mediano_pixeles": 40.52,
+          "dentro_5_pixeles": 12.5,
+          "dentro_10_pixeles": 25.0,
+          "dentro_15_pixeles": 37.5
+        }
+      }
+    }
   },
-  "calibracion": {},
+  "calibracion": {
+    "5": {
+      "muestras": 0,
+      "bias_x": 0.0,
+      "bias_y": 0.0
+    },
+    "10": {
+      "muestras": 160,
+      "bias_x": -0.56,
+      "bias_y": 0.22
+    },
+    "20": {
+      "muestras": 321,
+      "bias_x": -0.65,
+      "bias_y": -0.03
+    },
+    "30": {
+      "muestras": 519,
+      "bias_x": -0.14,
+      "bias_y": 0.52
+    }
+  },
   "escala": {
     "ancho_px": 512,
     "alto_px": 512,
