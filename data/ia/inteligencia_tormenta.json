@@ -32,23 +32,23 @@
   },
   "vigencia_radar": {
     "radar_timestamp": "2026-10-27T20:00:00Z",
-    "radar_age": 18.9,
-    "edad_radar_minutos": 18.9,
-    "modo": "radar_vigente",
-    "estimado": false
+    "radar_age": 21.4,
+    "edad_radar_minutos": 21.4,
+    "modo": "estimado_desde_ultimo_radar_valido",
+    "estimado": true
   },
   "radar_timestamp": "2026-10-27T20:00:00Z",
-  "radar_age": 18.9,
+  "radar_age": 21.4,
   "origen_datos": {
     "observacion_radar": {
       "radar_timestamp": "2026-10-27T20:00:00Z",
-      "edad_minutos": 18.9,
-      "es_actual": true,
-      "vigencia": "radar_vigente"
+      "edad_minutos": 21.4,
+      "es_actual": false,
+      "vigencia": "estimado_desde_ultimo_radar_valido"
     },
     "extrapolacion_nowcast": {
-      "aplicada": false,
-      "minutos_extrapolados": 0,
+      "aplicada": true,
+      "minutos_extrapolados": 21.4,
       "limite_minutos": 180.0
     },
     "prediccion_ml": {
@@ -75,18 +75,18 @@
     "impacto": null
   },
   "indices_heuristicos": {
-    "tormenta": 0.308,
-    "llegada_bahia": 0.062,
+    "tormenta": 0.306,
+    "llegada_bahia": 0.06,
     "fortalecimiento": 0.606,
     "debilitamiento": 0.404,
-    "impacto": 0.062,
+    "impacto": 0.06,
     "peligros": {
       "lluvia_fuerte": 0.47,
       "viento_fuerte": 0.36,
       "granizo": 0.2,
       "rayo": 0.97
     },
-    "indice_hibrido_severidad": 0.321,
+    "indice_hibrido_severidad": 0.319,
     "fuente_componente_ia": "modelo_impacto_v8_no_calibrado",
     "goes19_conveccion": 0.644,
     "goes19_rayo": 0.97
@@ -97,7 +97,7 @@
     "granizo": null,
     "rayo": null
   },
-  "indice_hibrido_severidad": 0.321,
+  "indice_hibrido_severidad": 0.319,
   "ia_v8": {
     "disponible": true,
     "probabilidad_impacto": null,
@@ -145,7 +145,7 @@
     "movimiento_hacia_centro_dominio": false,
     "eta_minutos": null,
     "eta_minutos_aproximada_centro_dominio": null,
-    "confianza_movimiento": 0.95,
+    "confianza_movimiento": 0.894,
     "estado": "actividad_detectada",
     "nucleos": [
       {
@@ -2698,12 +2698,14 @@
         30
       ]
     },
+    "distancia_km_frame": 27.41,
+    "eta_minutos_frame": null,
     "vigencia_radar": {
       "radar_timestamp": "2026-10-27T20:00:00Z",
-      "radar_age": 18.9,
-      "edad_radar_minutos": 18.9,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 21.4,
+      "edad_radar_minutos": 21.4,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true
     }
   },
   "ambiente": {
@@ -2743,7 +2745,7 @@
     "modelo_ecmwf_rafaga_10m_kmh": 13.0,
     "fuente_superficie_actual": "SAZB_AWC",
     "observacion_sazb_utc": "2026-10-27T20:00:00+00:00",
-    "observacion_sazb_edad_minutos": 17.5,
+    "observacion_sazb_edad_minutos": 20.2,
     "viento_actual_fuente": "SAZB_AWC",
     "viento_actual_kmh": 12.964,
     "direccion_viento_actual": 340.0,
@@ -2973,7 +2975,7 @@
     }
   },
   "calidad_datos": 100.0,
-  "calidad_tracking": 0.778,
+  "calidad_tracking": 0.752,
   "confianza_modelo": 0.9,
   "limitaciones": [
     "El radar actual no aporta dBZ cuantitativo validado en este motor.",
@@ -3005,7 +3007,7 @@
       "frame_actual_utc": "2026-10-27T20:00:00Z"
     },
     "acquisition": "actualizado",
-    "generated_at_utc": "2026-10-27T20:18:52.187400+00:00",
+    "generated_at_utc": "2026-10-27T20:21:21.813571+00:00",
     "source_state_version": "1.5",
     "source_state_status": "ok",
     "domain": {
@@ -3548,7 +3550,7 @@
           },
           "summary": {
             "mean_speed": 9.929498153770782,
-            "mean_direction_from": 247.89070852255287,
+            "mean_direction_from": 247.8907085225529,
             "mean_u": 9.199358398959536,
             "mean_v": 3.7372100065730884,
             "direction_resultant": 0.930251430954497,
@@ -3668,7 +3670,7 @@
             "product": "dmwvf_c08",
             "age_minutes": 50.147,
             "mean_speed_ms": 9.929498153770782,
-            "mean_direction_from_deg": 247.89070852255287,
+            "mean_direction_from_deg": 247.8907085225529,
             "direction_coherence": 0.930251430954497,
             "vectors": 9
           }
@@ -3688,7 +3690,7 @@
     "raw_state": {
       "version": "1.5",
       "satellite": "GOES-19",
-      "generated_at_utc": "2026-10-27T20:18:21.728540+00:00",
+      "generated_at_utc": "2026-10-27T20:21:04.042630+00:00",
       "reference_frame_utc": "2026-10-27T20:00:00+00:00",
       "status": "ok",
       "domain": {
@@ -4231,7 +4233,7 @@
             },
             "summary": {
               "mean_speed": 9.929498153770782,
-              "mean_direction_from": 247.89070852255287,
+              "mean_direction_from": 247.8907085225529,
               "mean_u": 9.199358398959536,
               "mean_v": 3.7372100065730884,
               "direction_resultant": 0.930251430954497,
