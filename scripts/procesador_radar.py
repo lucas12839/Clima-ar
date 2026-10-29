@@ -8,6 +8,12 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
+try:
+    from decodificador_rma10_dbz import validar_paleta, indice_a_dbz
+except ImportError:
+    validar_paleta = None
+    indice_a_dbz = None
+
 BASE = Path("data/radar")
 ACTUAL = BASE / "actual.png"
 MASCARA = BASE / "mascara_ecos_estaticos.png"
@@ -17,8 +23,6 @@ SALIDA = BASE / "resultado_procesamiento.json"
 # ============================================================
 # BLOQUE 1 - LIMPIEZA Y DETECCION OPERATIVA RMA10
 # ============================================================
-# Los ecos débiles y estáticos siguen conservándose para análisis
-# interno, pero solamente los núcleos operativos pasan a tracking/ML.
 
 INTENSIDAD_MINIMA = 3
 MIN_AREA_NUCLEO = 20
@@ -50,7 +54,8 @@ def cargar_imagen(path):
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"No existe: {path}")
-    return np.array(Image.open(path).convert("RGB"))
+    with Image.open(path) as imagen:
+        return np.array(imagen.convert("RGB"))
 
 
 def intensidad_radar(rgb):
@@ -69,6 +74,85 @@ def intensidad_radar(rgb):
     intensidad[(r > 170) & (g < 90) & (b < 100) & (r > g + 70)] = 5
     intensidad[(r > 150) & (b > 80) & (g < 100) & (r > g + 50)] = 6
     return intensidad
+
+
+def cargar_dbz_rma10(path):
+    """
+    Decodifica el mismo PNG RMA10 usado por el procesador RGB.
+
+    Si la imagen no es una paleta RMA10 validada, devuelve None para
+    mantener intacta la cadena operativa RGB.
+    """
+    if validar_paleta is None or indice_a_dbz is None:
+        print("AVISO: decodificador dBZ RMA10 no disponible.")
+        return None
+
+    try:
+        path = Path(path)
+        with Image.open(path) as imagen:
+            validar_paleta(imagen)
+            transparencia = imagen.info.get("transparency")
+            if not isinstance(transparencia, int):
+                raise ValueError("No se encontro el indice de transparencia esperado.")
+
+            indices = np.asarray(imagen.getdata(), dtype=np.int16)
+            matriz = np.fromiter(
+                (
+                    np.nan
+                    if int(indice) == transparencia
+                    else indice_a_dbz(int(indice))
+                    for indice in indices
+                ),
+                dtype=np.float32,
+                count=indices.size,
+            ).reshape(imagen.size[1], imagen.size[0])
+
+        return matriz
+    except Exception as exc:
+        print(f"AVISO: no se pudo decodificar dBZ RMA10: {exc}")
+        return None
+
+
+def resumen_dbz(matriz_dbz):
+    if matriz_dbz is None:
+        return None
+
+    validos = np.isfinite(matriz_dbz)
+    if not np.any(validos):
+        return None
+
+    valores = matriz_dbz[validos]
+    return {
+        "pixeles_validos": int(valores.size),
+        "min": round(float(np.min(valores)), 3),
+        "max": round(float(np.max(valores)), 3),
+        "media": round(float(np.mean(valores)), 3),
+        "p95": round(float(np.percentile(valores, 95)), 3),
+        "p99": round(float(np.percentile(valores, 99)), 3),
+    }
+
+
+def estadisticas_dbz_region(matriz_dbz, region):
+    if matriz_dbz is None:
+        return None
+
+    try:
+        valores = matriz_dbz[region]
+        valores = valores[np.isfinite(valores)]
+    except (IndexError, TypeError, ValueError):
+        return None
+
+    if valores.size == 0:
+        return None
+
+    return {
+        "min": round(float(np.min(valores)), 3),
+        "max": round(float(np.max(valores)), 3),
+        "media": round(float(np.mean(valores)), 3),
+        "p95": round(float(np.percentile(valores, 95)), 3),
+        "p99": round(float(np.percentile(valores, 99)), 3),
+        "pixeles": int(valores.size),
+    }
 
 
 def cargar_mascara():
@@ -205,10 +289,12 @@ def _mascara_temporal_dinamica(actual, mascara, ruta_actual=None):
         cantidad_presente <= max(0, len(previas) - TEMPORAL_NUEVO_ECO_MIN_FRAMES)
     )
     cambio_intensidad = actual_presente & (
-        np.abs(actual.astype(np.int16) - mediana_previa.astype(np.int16)) >= TEMPORAL_DELTA_INTENSIDAD
+        np.abs(actual.astype(np.int16) - mediana_previa.astype(np.int16))
+        >= TEMPORAL_DELTA_INTENSIDAD
     )
     intensificacion = actual_presente & (
-        actual.astype(np.int16) >= maximo_previo.astype(np.int16) + TEMPORAL_DELTA_INTENSIDAD
+        actual.astype(np.int16)
+        >= maximo_previo.astype(np.int16) + TEMPORAL_DELTA_INTENSIDAD
     )
 
     evidencia = mascara & (nuevo_eco | cambio_intensidad | intensificacion)
@@ -351,7 +437,7 @@ def detectar_componentes(matriz):
     return componentes
 
 
-def crear_nucleo(matriz, region):
+def crear_nucleo(matriz, region, matriz_dbz=None):
     ys, xs = np.where(region)
     area = len(xs)
     if area < MIN_AREA_NUCLEO:
@@ -375,7 +461,7 @@ def crear_nucleo(matriz, region):
     if intensidad == 3 and max(ancho, alto) < 5:
         return None
 
-    return {
+    nucleo = {
         "x": round(float(np.mean(xs)), 2),
         "y": round(float(np.mean(ys)), 2),
         "pixeles": area,
@@ -389,12 +475,21 @@ def crear_nucleo(matriz, region):
         "estado": "DINAMICO",
     }
 
+    # El dBZ se calcula sobre los píxeles EXACTOS del núcleo,
+    # no sobre su caja delimitadora.
+    if matriz_dbz is not None and matriz_dbz.shape == matriz.shape:
+        dbz = estadisticas_dbz_region(matriz_dbz, region)
+        if dbz is not None:
+            nucleo["dbz"] = dbz
 
-def detectar_nucleos(matriz):
+    return nucleo
+
+
+def detectar_nucleos(matriz, matriz_dbz=None):
     nucleos = []
     for componente in detectar_componentes(matriz):
         for region in separar_region(matriz, componente):
-            nucleo = crear_nucleo(matriz, region)
+            nucleo = crear_nucleo(matriz, region, matriz_dbz)
             if nucleo is not None:
                 nucleos.append(nucleo)
 
@@ -477,6 +572,23 @@ def main():
     imagen = cargar_imagen(ACTUAL)
     print("Tamaño radar actual:", imagen.shape)
 
+    # --------------------------------------------------------
+    # dBZ: mismo frame, segundo canal de lectura.
+    # Si falla la validación cuantitativa, el procesador RGB
+    # continúa exactamente como antes.
+    # --------------------------------------------------------
+    matriz_dbz = cargar_dbz_rma10(ACTUAL)
+    resumen = resumen_dbz(matriz_dbz)
+
+    if matriz_dbz is not None and matriz_dbz.shape == imagen.shape[:2]:
+        print("dBZ RMA10: OK")
+        print("dBZ global:", resumen)
+    else:
+        if matriz_dbz is not None:
+            print("AVISO: tamaño dBZ diferente al RGB. Se ignora dBZ.")
+        matriz_dbz = None
+        resumen = None
+
     matriz_original = intensidad_radar(imagen)
     pixeles_originales = int(np.sum(matriz_original > 0))
 
@@ -507,7 +619,10 @@ def main():
     # 1) Ecos estáticos: se identifican en el frame original,
     #    se conservan en el JSON interno y NO pasan downstream.
     # --------------------------------------------------------
-    nucleos_candidatos_originales = detectar_nucleos(matriz_original)
+    nucleos_candidatos_originales = detectar_nucleos(
+        matriz_original,
+        matriz_dbz=matriz_dbz,
+    )
     nucleos_estaticos = []
     for nucleo in nucleos_candidatos_originales:
         estado, confianza_base = analizar_mascara(
@@ -523,7 +638,10 @@ def main():
     # --------------------------------------------------------
     # 2) Solo la matriz limpia entra en detección operativa.
     # --------------------------------------------------------
-    nucleos_operativos = detectar_nucleos(matriz_dinamica)
+    nucleos_operativos = detectar_nucleos(
+        matriz_dinamica,
+        matriz_dbz=matriz_dbz,
+    )
     nucleos_dinamicos = []
 
     for nucleo in nucleos_operativos:
@@ -545,8 +663,12 @@ def main():
         )
         nucleos_dinamicos.append(nucleo)
 
-    nucleos_estaticos.sort(key=lambda n: (-n.get("intensidad", 0), -n.get("pixeles", 0)))
-    nucleos_dinamicos.sort(key=lambda n: (-n.get("intensidad", 0), -n.get("pixeles", 0)))
+    nucleos_estaticos.sort(
+        key=lambda n: (-n.get("intensidad", 0), -n.get("pixeles", 0))
+    )
+    nucleos_dinamicos.sort(
+        key=lambda n: (-n.get("intensidad", 0), -n.get("pixeles", 0))
+    )
 
     # ESTE es el único conjunto que recibe tracking/ML/Intelligence.
     nucleos = nucleos_dinamicos
@@ -554,7 +676,7 @@ def main():
     radar_estado = clasificacion_radar(nucleos)
 
     resultado = {
-        "version": "RMA10-procesador-11.0-bloque1",
+        "version": "RMA10-procesador-11.1-dbz",
         "timestamp_procesamiento": datetime.now(timezone.utc).isoformat(),
         "fuente": "SMN RMA10",
         "metodo_segmentacion": "mascara_estatica_temporal_conectividad_coherencia_operativa",
@@ -584,6 +706,11 @@ def main():
         "recuperacion_de_ecos_nuevos": True,
         "mascara_estatica_externa": True,
         "historiales_reprocesados": False,
+        "dbz_decodificado": matriz_dbz is not None,
+        "dbz_global": resumen,
+        "dbz_fuente": "paleta_RMA10_ZH_MAX_validada",
+        "dbz_metodo": "interpolacion_lineal_indice_64_207_a_-15_75",
+        "dbz_por_nucleo": matriz_dbz is not None,
     }
 
     SALIDA.parent.mkdir(parents=True, exist_ok=True)
