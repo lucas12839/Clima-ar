@@ -1,6 +1,6 @@
 {
   "version": "ClimaAR-final-3.0",
-  "actualizado_utc": "2026-10-30T23:07:59.320113+00:00",
+  "actualizado_utc": "2026-10-30T23:18:22.097126+00:00",
   "fuente_radar": "RMA10",
   "motor_decision": {
     "estado": "fortaleciendose",
@@ -1553,23 +1553,23 @@
     },
     "vigencia_radar": {
       "radar_timestamp": "2026-10-30T22:50:00Z",
-      "radar_age": 18.0,
-      "edad_radar_minutos": 18.0,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 28.3,
+      "edad_radar_minutos": 28.3,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true
     },
     "radar_timestamp": "2026-10-30T22:50:00Z",
-    "radar_age": 18.0,
+    "radar_age": 28.3,
     "origen_datos": {
       "observacion_radar": {
         "radar_timestamp": "2026-10-30T22:50:00Z",
-        "edad_minutos": 18.0,
-        "es_actual": true,
-        "vigencia": "radar_vigente"
+        "edad_minutos": 28.3,
+        "es_actual": false,
+        "vigencia": "estimado_desde_ultimo_radar_valido"
       },
       "extrapolacion_nowcast": {
-        "aplicada": false,
-        "minutos_extrapolados": 0,
+        "aplicada": true,
+        "minutos_extrapolados": 28.3,
         "limite_minutos": 180.0
       },
       "prediccion_ml": {
@@ -1596,18 +1596,18 @@
       "impacto": null
     },
     "indices_heuristicos": {
-      "tormenta": 0.248,
-      "llegada_bahia": 0.05,
+      "tormenta": 0.246,
+      "llegada_bahia": 0.048,
       "fortalecimiento": 0.815,
       "debilitamiento": 0.185,
-      "impacto": 0.05,
+      "impacto": 0.048,
       "peligros": {
         "lluvia_fuerte": 0.285,
         "viento_fuerte": 0.212,
         "granizo": 0.066,
         "rayo": 0.076
       },
-      "indice_hibrido_severidad": 0.32,
+      "indice_hibrido_severidad": 0.317,
       "fuente_componente_ia": "modelo_impacto_v8_no_calibrado",
       "goes19_conveccion": 0.45,
       "goes19_rayo": 0.0
@@ -1618,7 +1618,7 @@
       "granizo": null,
       "rayo": null
     },
-    "indice_hibrido_severidad": 0.32,
+    "indice_hibrido_severidad": 0.317,
     "ia_v8": {
       "disponible": true,
       "probabilidad_impacto": null,
@@ -1666,7 +1666,7 @@
       "movimiento_hacia_centro_dominio": false,
       "eta_minutos": null,
       "eta_minutos_aproximada_centro_dominio": null,
-      "confianza_movimiento": 0.95,
+      "confianza_movimiento": 0.875,
       "estado": "actividad_detectada",
       "nucleos": [
         {
@@ -2955,12 +2955,14 @@
           30
         ]
       },
+      "distancia_km_frame": 84.32,
+      "eta_minutos_frame": null,
       "vigencia_radar": {
         "radar_timestamp": "2026-10-30T22:50:00Z",
-        "radar_age": 18.0,
-        "edad_radar_minutos": 18.0,
-        "modo": "radar_vigente",
-        "estimado": false
+        "radar_age": 28.3,
+        "edad_radar_minutos": 28.3,
+        "modo": "estimado_desde_ultimo_radar_valido",
+        "estimado": true
       }
     },
     "ambiente": {
@@ -3000,12 +3002,12 @@
       "modelo_ecmwf_rafaga_10m_kmh": 28.1,
       "fuente_superficie_actual": "SAZB_AWC",
       "observacion_sazb_utc": "2026-10-30T23:00:00+00:00",
-      "observacion_sazb_edad_minutos": 7.2,
+      "observacion_sazb_edad_minutos": 17.3,
       "viento_actual_fuente": "SAZB_AWC",
       "viento_actual_kmh": 18.52,
       "direccion_viento_actual": 110.0,
-      "estado_observacion_actual": "observacion_reciente",
-      "observacion_sazb_fresca": true
+      "estado_observacion_actual": "ultima_observacion_disponible",
+      "observacion_sazb_fresca": false
     },
     "ambiente_en_trayectoria": {
       "5": {
@@ -3227,7 +3229,7 @@
       }
     },
     "calidad_datos": 100.0,
-    "calidad_tracking": 0.628,
+    "calidad_tracking": 0.594,
     "confianza_modelo": 0.9,
     "limitaciones": [
       "El radar actual no aporta dBZ cuantitativo validado en este motor.",
@@ -3260,7 +3262,7 @@
         "frame_actual_utc": "2026-10-30T22:50:00Z"
       },
       "acquisition": "actualizado",
-      "generated_at_utc": "2026-10-30T23:07:57.830482+00:00",
+      "generated_at_utc": "2026-10-30T23:18:20.433804+00:00",
       "source_state_version": "1.5",
       "source_state_status": "ok",
       "domain": {
@@ -3657,7 +3659,7 @@
             },
             "summary": {
               "mean_speed": 9.724380029295144,
-              "mean_direction_from": 226.05157447908476,
+              "mean_direction_from": 226.05157447908474,
               "mean_u": 7.001211339629742,
               "mean_v": 6.748822618204908,
               "direction_resultant": 0.9301213009171043,
@@ -3761,7 +3763,7 @@
               "product": "dmwvf_c08",
               "age_minutes": 40.142,
               "mean_speed_ms": 9.724380029295144,
-              "mean_direction_from_deg": 226.05157447908476,
+              "mean_direction_from_deg": 226.05157447908474,
               "direction_coherence": 0.9301213009171043,
               "vectors": 32
             }
@@ -3781,7 +3783,7 @@
       "raw_state": {
         "version": "1.5",
         "satellite": "GOES-19",
-        "generated_at_utc": "2026-10-30T23:07:43.197423+00:00",
+        "generated_at_utc": "2026-10-30T23:18:01.338904+00:00",
         "reference_frame_utc": "2026-10-30T22:50:00+00:00",
         "status": "ok",
         "domain": {
@@ -4178,7 +4180,7 @@
               },
               "summary": {
                 "mean_speed": 9.724380029295144,
-                "mean_direction_from": 226.05157447908476,
+                "mean_direction_from": 226.05157447908474,
                 "mean_u": 7.001211339629742,
                 "mean_v": 6.748822618204908,
                 "direction_resultant": 0.9301213009171043,
@@ -4243,7 +4245,7 @@
   "meteorologia": {
     "version": "1.1.0",
     "motor": "ClimaAR Intelligence",
-    "actualizado_utc": "2026-10-30T23:07:42.499476+00:00",
+    "actualizado_utc": "2026-10-30T23:18:00.785483+00:00",
     "ubicacion": {
       "ciudad": "Bahia Blanca",
       "latitud": -38.71,
@@ -4635,7 +4637,7 @@
       "fuente": "Aviation Weather Center",
       "estacion": "SAZB",
       "obsTime_utc": "2026-10-30T23:00:00+00:00",
-      "edad_minutos": 7.2,
+      "edad_minutos": 17.3,
       "temperatura_c": 17,
       "punto_rocio_c": 13,
       "viento_kt": 10,
@@ -4680,12 +4682,12 @@
       "modelo_ecmwf_rafaga_10m_kmh": 28.1,
       "fuente_superficie_actual": "SAZB_AWC",
       "observacion_sazb_utc": "2026-10-30T23:00:00+00:00",
-      "observacion_sazb_edad_minutos": 7.2,
+      "observacion_sazb_edad_minutos": 17.3,
       "viento_actual_fuente": "SAZB_AWC",
       "viento_actual_kmh": 18.52,
       "direccion_viento_actual": 110.0,
-      "estado_observacion_actual": "observacion_reciente",
-      "observacion_sazb_fresca": true
+      "estado_observacion_actual": "ultima_observacion_disponible",
+      "observacion_sazb_fresca": false
     },
     "ambiente_futuro": {
       "modelo": "ECMWF IFS HRES",
@@ -9503,8 +9505,8 @@
     "proxima_etapa": "Motor IA de evolucion, trayectoria, fortalecimiento, debilitamiento, ETA, duracion y peligros."
   },
   "senales_heuristicas": {
-    "tormenta": 0.248,
-    "llegada_bahia": 0.05,
+    "tormenta": 0.246,
+    "llegada_bahia": 0.048,
     "fortalecimiento": 0.815,
     "debilitamiento": 0.185,
     "lluvia_fuerte": 0.285,
@@ -9533,10 +9535,10 @@
     },
     "vigencia_radar": {
       "radar_timestamp": "2026-10-30T22:50:00Z",
-      "radar_age": 18.0,
-      "edad_radar_minutos": 18.0,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 28.3,
+      "edad_radar_minutos": 28.3,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true
     }
   }
 }
