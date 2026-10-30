@@ -1,694 +1,379 @@
 #!/usr/bin/env python3
 """
-RMA10 VISUAL/TEMPORAL AI - V3
-
-Entrena directamente sobre secuencias temporales de imágenes RMA10.
-
-Objetivos:
-- aprender evolución visual del núcleo;
-- usar hasta 6 imágenes temporales reales;
-- aceptar secuencias de 3 a 6 observaciones;
-- predecir fortalecimiento, debilitamiento y movimiento hacia Bahía Blanca;
-- horizontes 5/10/20/30 min;
-- separar train/test por track_id;
-- no modificar Storm Engine, GOES ni fusion_multimodal.
-
-La secuencia usa:
-  - imágenes absolutas en dBZ;
-  - diferencias temporales;
-  - estadísticas por frame;
-  - evolución de media y p95.
-
-Las secuencias incompletas se completan repitiendo
-la primera imagen REAL disponible. No se inventan imágenes.
+RMA10 VISUAL/TEMPORAL AI - V5
+Secuencias causales construidas únicamente con imágenes RMA10 reales.
 """
-
 from __future__ import annotations
 
 import json
+import re
+from bisect import bisect_right
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-import re
 
 import joblib
 import numpy as np
 import pandas as pd
 from PIL import Image
-
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import (
-    balanced_accuracy_score,
-    roc_auc_score,
-    brier_score_loss,
-)
+from sklearn.metrics import balanced_accuracy_score, roc_auc_score, brier_score_loss
 from sklearn.model_selection import GroupShuffleSplit
 
-
 ROOT = Path(__file__).resolve().parents[1]
-
 DATASET = ROOT / "data/radar/rma10_dataset_historico.csv"
 RADAR_DIR = ROOT / "data/radar/historico"
-
 MODEL_PATH = ROOT / "data/models/rma10_visual_temporal_model.joblib"
 METRICS_PATH = ROOT / "data/models/rma10_visual_temporal_model_metrics.json"
 
-MODEL_VERSION = "rma10-visual-temporal-v3"
-
+MODEL_VERSION = "rma10-visual-temporal-v5-causal-real-sequences"
 SEQUENCE_LEN = 6
 MIN_SEQUENCE_LEN = 3
-
-MAX_GAP_MIN = 20.0
-MAX_IMAGE_MATCH_MIN = 10.0
+MAX_SEQUENCE_WINDOW_MIN = 120.0
+MAX_IMAGE_GAP_MIN = 45.0
 
 PATCH_SIZE = 64
 DOWNSAMPLE_SIZE = 16
-
 HORIZONS = [5, 10, 20, 30]
-TARGETS = [
-    "strengthened",
-    "weakened",
-    "toward_bahia",
-]
-
+TARGETS = ["strengthened", "weakened", "toward_bahia"]
 RANDOM_STATE = 42
-
-
-# ---------------------------------------------------------------------------
-# RMA10 dBZ palette
-# ---------------------------------------------------------------------------
 
 DBZ_MIN = -15.0
 DBZ_MAX = 75.0
-
 PALETTE_START = 64
 PALETTE_END = 207
+_TIMESTAMP_RE = re.compile(r"^(\d{14})$")
 
 
 def decode_rma10_dbz(image: Image.Image) -> np.ndarray:
-    """
-    Decodifica la paleta operacional RMA10 a dBZ.
-
-    Los índices de color válidos del producto RMA10 están
-    entre 64 y 207.
-    """
     img = image.convert("P")
-
-    palette = img.getpalette()
-    if palette is None:
+    if img.getpalette() is None:
         raise ValueError("Imagen RMA10 sin paleta")
-
     indices = np.asarray(img, dtype=np.uint8)
-
     dbz = np.full(indices.shape, np.nan, dtype=np.float32)
-
-    valid = (
-        (indices >= PALETTE_START)
-        & (indices <= PALETTE_END)
-    )
-
+    valid = (indices >= PALETTE_START) & (indices <= PALETTE_END)
     if np.any(valid):
         values = indices[valid].astype(np.float32)
-
-        dbz_values = (
-            DBZ_MIN
-            + (
-                (values - PALETTE_START)
-                / float(PALETTE_END - PALETTE_START)
-            )
-            * (DBZ_MAX - DBZ_MIN)
-        )
-
-        dbz[valid] = dbz_values
-
+        dbz[valid] = DBZ_MIN + (
+            (values - PALETTE_START) / float(PALETTE_END - PALETTE_START)
+        ) * (DBZ_MAX - DBZ_MIN)
     return dbz
 
 
-# ---------------------------------------------------------------------------
-# Timestamp handling
-# ---------------------------------------------------------------------------
-
-_TIMESTAMP_RE = re.compile(r"(?<!\d)(\d{14})(?!\d)")
-
-
 def parse_timestamp_from_name(path: Path) -> datetime | None:
-    """
-    Extrae YYYYMMDDHHMMSS desde cualquier parte del nombre.
-    """
-    match = _TIMESTAMP_RE.search(path.name)
-
-    if not match:
+    m = _TIMESTAMP_RE.fullmatch(path.stem)
+    if not m:
         return None
-
     try:
-        dt = datetime.strptime(
-            match.group(1),
-            "%Y%m%d%H%M%S",
-        )
-
-        return dt.replace(tzinfo=timezone.utc)
-
+        dt = datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
     except ValueError:
         return None
+    if not 2020 <= dt.year <= 2035:
+        return None
+    return dt.replace(tzinfo=timezone.utc)
 
 
 def parse_dataset_timestamp(value) -> datetime | None:
     if value is None:
         return None
+    dt = pd.to_datetime(str(value).strip(), utc=True, errors="coerce")
+    return None if pd.isna(dt) else dt.to_pydatetime()
 
-    try:
-        text = str(value).strip()
-
-        dt = pd.to_datetime(
-            text,
-            utc=True,
-            errors="coerce",
-        )
-
-        if pd.isna(dt):
-            return None
-
-        return dt.to_pydatetime()
-
-    except Exception:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Image index
-# ---------------------------------------------------------------------------
 
 def build_image_index():
-    """
-    Indexa TODAS las imágenes PNG del histórico.
+    by_timestamp = {}
+    rejected_name = unreadable = duplicate_timestamp = 0
 
-    Se usa rglob para no depender de que el histórico esté
-    necesariamente en un único directorio plano.
-    """
-
-    index = []
-
-    for path in RADAR_DIR.rglob("*.png"):
-        timestamp = parse_timestamp_from_name(path)
-
-        if timestamp is None:
+    for path in sorted(RADAR_DIR.rglob("*.png")):
+        ts = parse_timestamp_from_name(path)
+        if ts is None:
+            rejected_name += 1
+            continue
+        try:
+            with Image.open(path) as image:
+                image.verify()
+        except Exception:
+            unreadable += 1
             continue
 
-        index.append(
-            (
-                timestamp,
-                path,
-            )
-        )
+        key = ts.timestamp()
+        if key in by_timestamp:
+            duplicate_timestamp += 1
+            old = by_timestamp[key]
+            if path.stat().st_size > old.stat().st_size:
+                by_timestamp[key] = path
+        else:
+            by_timestamp[key] = path
 
-    index.sort(key=lambda item: item[0])
+    index = sorted(
+        [(datetime.fromtimestamp(ts, tz=timezone.utc), path)
+         for ts, path in by_timestamp.items()],
+        key=lambda item: item[0],
+    )
 
     print(f"Imágenes indexadas: {len(index)}")
-
+    print(f"Nombres rechazados: {rejected_name}")
+    print(f"Imágenes ilegibles: {unreadable}")
+    print(f"Timestamps duplicados: {duplicate_timestamp}")
     if index:
-        print(
-            "Rango imágenes:",
-            index[0][0].isoformat(),
-            "->",
-            index[-1][0].isoformat(),
-        )
-
+        print(f"Rango imágenes: {index[0][0].isoformat()} -> {index[-1][0].isoformat()}")
     return index
 
 
-def resolve_image(
-    target_timestamp: datetime,
-    image_index,
-):
-    """
-    Busca la imagen temporalmente más cercana.
-
-    Solo acepta una imagen si está dentro de
-    MAX_IMAGE_MATCH_MIN.
-    """
-
-    if not image_index:
-        return None
-
-    target_ts = target_timestamp.timestamp()
-
-    best_path = None
-    best_delta = float("inf")
-
-    # El corpus histórico no es gigantesco; mantenerlo simple
-    # evita dependencias adicionales.
-    for timestamp, path in image_index:
-        delta = abs(timestamp.timestamp() - target_ts)
-
-        if delta < best_delta:
-            best_delta = delta
-            best_path = path
-
-    if best_path is None:
-        return None
-
-    if best_delta > MAX_IMAGE_MATCH_MIN * 60.0:
-        return None
-
-    return best_path
-
-
-# ---------------------------------------------------------------------------
-# Cached radar decoding
-# ---------------------------------------------------------------------------
-
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=64)
 def load_dbz(path_string: str) -> np.ndarray:
-    path = Path(path_string)
-
-    with Image.open(path) as image:
+    with Image.open(path_string) as image:
         return decode_rma10_dbz(image)
 
 
-# ---------------------------------------------------------------------------
-# Spatial extraction
-# ---------------------------------------------------------------------------
-
-def extract_patch(
-    dbz: np.ndarray,
-    x: float,
-    y: float,
-) -> np.ndarray:
-    """
-    Extrae un parche centrado en x/y y lo reduce a 16x16.
-    """
-
+def extract_patch(dbz: np.ndarray, x: float, y: float) -> np.ndarray:
     height, width = dbz.shape
-
-    cx = int(round(float(x)))
-    cy = int(round(float(y)))
-
+    cx, cy = int(round(float(x))), int(round(float(y)))
     half = PATCH_SIZE // 2
+    x0, y0 = cx - half, cy - half
+    x1, y1 = x0 + PATCH_SIZE, y0 + PATCH_SIZE
 
-    x0 = cx - half
-    y0 = cy - half
-    x1 = x0 + PATCH_SIZE
-    y1 = y0 + PATCH_SIZE
+    patch = np.full((PATCH_SIZE, PATCH_SIZE), DBZ_MIN, dtype=np.float32)
+    sx0, sy0 = max(0, x0), max(0, y0)
+    sx1, sy1 = min(width, x1), min(height, y1)
 
-    patch = np.full(
-        (PATCH_SIZE, PATCH_SIZE),
-        np.nan,
-        dtype=np.float32,
-    )
+    if sx1 > sx0 and sy1 > sy0:
+        dx0, dy0 = sx0 - x0, sy0 - y0
+        dx1, dy1 = dx0 + sx1 - sx0, dy0 + sy1 - sy0
+        source = dbz[sy0:sy1, sx0:sx1]
+        finite = np.isfinite(source)
+        fill = float(np.nanmedian(source)) if np.any(finite) else DBZ_MIN
+        patch[dy0:dy1, dx0:dx1] = np.where(finite, source, fill)
 
-    src_x0 = max(0, x0)
-    src_y0 = max(0, y0)
-    src_x1 = min(width, x1)
-    src_y1 = min(height, y1)
-
-    if src_x1 > src_x0 and src_y1 > src_y0:
-
-        dst_x0 = src_x0 - x0
-        dst_y0 = src_y0 - y0
-        dst_x1 = dst_x0 + (src_x1 - src_x0)
-        dst_y1 = dst_y0 + (src_y1 - src_y0)
-
-        patch[
-            dst_y0:dst_y1,
-            dst_x0:dst_x1,
-        ] = dbz[
-            src_y0:src_y1,
-            src_x0:src_x1,
-        ]
-
-    # NaN -> valor neutro para el modelo.
-    finite = np.isfinite(patch)
-
-    if np.any(finite):
-        fill = float(np.nanmedian(patch))
-    else:
-        fill = DBZ_MIN
-
-    patch[~finite] = fill
-
-    # Reducción 64 -> 16.
-    small = Image.fromarray(
-        patch.astype(np.float32),
-        mode="F",
-    ).resize(
+    small = Image.fromarray(patch, mode="F").resize(
         (DOWNSAMPLE_SIZE, DOWNSAMPLE_SIZE),
         Image.Resampling.BILINEAR,
     )
+    return np.asarray(small, dtype=np.float32)
 
-    return np.asarray(
-        small,
-        dtype=np.float32,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Feature extraction
-# ---------------------------------------------------------------------------
 
 def frame_stats(frame: np.ndarray) -> np.ndarray:
-    values = frame.astype(np.float32).ravel()
-
-    return np.asarray(
-        [
-            float(np.mean(values)),
-            float(np.std(values)),
-            float(np.min(values)),
-            float(np.max(values)),
-            float(np.percentile(values, 50)),
-            float(np.percentile(values, 75)),
-            float(np.percentile(values, 90)),
-            float(np.percentile(values, 95)),
-            float(np.percentile(values, 99)),
-            float(np.mean(values > 40.0)),
-        ],
-        dtype=np.float32,
-    )
+    v = frame.ravel().astype(np.float32)
+    return np.asarray([
+        np.mean(v), np.std(v), np.min(v), np.max(v),
+        np.percentile(v, 50), np.percentile(v, 75),
+        np.percentile(v, 90), np.percentile(v, 95),
+        np.percentile(v, 99), np.mean(v > 40.0),
+    ], dtype=np.float32)
 
 
-def feature_vector(frames: list[np.ndarray]) -> np.ndarray:
-    """
-    Vector:
-      6 frames absolutas       = 1536
-      5 diferencias            = 1280
-      estadísticas 6 frames   =   60
-      evolución media/p95     =   12
-      --------------------------------
-                                2888
-    """
+def feature_vector(frames, valid_mask, elapsed_min, gaps_min):
+    absolute = np.concatenate([f.ravel() for f in frames])
 
-    absolute = [
-        frame.ravel()
-        for frame in frames
-    ]
+    diffs = []
+    for i in range(1, SEQUENCE_LEN):
+        if valid_mask[i] and valid_mask[i - 1]:
+            diffs.append(frames[i] - frames[i - 1])
+        else:
+            diffs.append(np.zeros_like(frames[i]))
+    diff_vec = np.concatenate([d.ravel() for d in diffs])
 
-    diffs = [
-        frames[i] - frames[i - 1]
-        for i in range(1, len(frames))
-    ]
+    stats = np.concatenate([
+        frame_stats(f) if valid_mask[i] else np.zeros(10, dtype=np.float32)
+        for i, f in enumerate(frames)
+    ])
 
-    stats = [
-        frame_stats(frame)
-        for frame in frames
-    ]
+    means = np.asarray([
+        float(np.mean(f)) if valid_mask[i] else 0.0
+        for i, f in enumerate(frames)
+    ], dtype=np.float32)
 
-    means = np.asarray(
-        [
-            float(np.mean(frame))
-            for frame in frames
-        ],
-        dtype=np.float32,
-    )
+    p95 = np.asarray([
+        float(np.percentile(f, 95)) if valid_mask[i] else 0.0
+        for i, f in enumerate(frames)
+    ], dtype=np.float32)
 
-    p95 = np.asarray(
-        [
-            float(np.percentile(frame, 95))
-            for frame in frames
-        ],
-        dtype=np.float32,
-    )
+    mean_diff = np.asarray([
+        means[i] - means[i - 1]
+        if valid_mask[i] and valid_mask[i - 1] else 0.0
+        for i in range(1, SEQUENCE_LEN)
+    ], dtype=np.float32)
 
-    mean_diff = np.diff(means)
-    p95_diff = np.diff(p95)
+    p95_diff = np.asarray([
+        p95[i] - p95[i - 1]
+        if valid_mask[i] and valid_mask[i - 1] else 0.0
+        for i in range(1, SEQUENCE_LEN)
+    ], dtype=np.float32)
 
-    vector = np.concatenate(
-        [
-            np.concatenate(absolute),
-            np.concatenate(
-                [
-                    diff.ravel()
-                    for diff in diffs
-                ]
-            ),
-            np.concatenate(stats),
-            mean_diff,
-            p95_diff,
-        ]
-    )
-
-    return vector.astype(np.float32)
+    return np.concatenate([
+        absolute, diff_vec, stats, mean_diff, p95_diff,
+        np.asarray(valid_mask, dtype=np.float32),
+        np.asarray(elapsed_min, dtype=np.float32),
+        np.asarray(gaps_min, dtype=np.float32),
+    ]).astype(np.float32)
 
 
-# ---------------------------------------------------------------------------
-# Dataset histories
-# ---------------------------------------------------------------------------
-
-def build_histories(df: pd.DataFrame):
-    """
-    Construye una historia única por track.
-
-    Se eliminan duplicados de track/frame porque el CSV
-    contiene varias filas por horizonte.
-    """
-
-    required = {
-        "frame_utc",
-        "track_id",
-        "x",
-        "y",
-    }
-
+def build_histories(df):
+    required = {"frame_utc", "track_id", "x", "y"}
     missing = required - set(df.columns)
-
     if missing:
-        raise ValueError(
-            f"Faltan columnas requeridas: {sorted(missing)}"
-        )
+        raise ValueError(f"Faltan columnas requeridas: {sorted(missing)}")
 
     histories = {}
+    clean = df.drop_duplicates(subset=["track_id", "frame_utc"])
 
-    clean = df.drop_duplicates(
-        subset=["track_id", "frame_utc"]
-    ).copy()
-
-    for track_id, group in clean.groupby(
-        "track_id",
-        sort=False,
-    ):
-
-        observations = []
-
+    for track_id, group in clean.groupby("track_id", sort=False):
+        obs = []
         for row in group.itertuples(index=False):
-
-            timestamp = parse_dataset_timestamp(
-                getattr(row, "frame_utc")
-            )
-
-            if timestamp is None:
+            ts = parse_dataset_timestamp(getattr(row, "frame_utc"))
+            if ts is None:
                 continue
-
             try:
-                x = float(getattr(row, "x"))
-                y = float(getattr(row, "y"))
+                x, y = float(getattr(row, "x")), float(getattr(row, "y"))
             except Exception:
                 continue
-
-            observations.append(
-                {
-                    "timestamp": timestamp,
-                    "x": x,
-                    "y": y,
-                }
-            )
-
-        observations.sort(
-            key=lambda item: item["timestamp"]
-        )
-
-        if observations:
-            histories[track_id] = observations
-
+            obs.append({"timestamp": ts, "x": x, "y": y})
+        obs.sort(key=lambda item: item["timestamp"])
+        if obs:
+            histories[track_id] = obs
     return histories
 
 
-# ---------------------------------------------------------------------------
-# Sequence construction
-# ---------------------------------------------------------------------------
+def causal_position(history, timestamp):
+    prior = [o for o in history if o["timestamp"] <= timestamp]
+    if not prior:
+        return None
+    if len(prior) == 1:
+        return prior[-1]["x"], prior[-1]["y"]
 
-def build_sequence_samples(
-    df: pd.DataFrame,
-    histories,
-    image_index,
-):
-    X = []
-    metadata = []
+    a, b = prior[-2], prior[-1]
+    dt = (b["timestamp"] - a["timestamp"]).total_seconds() / 60.0
+    if dt <= 0:
+        return b["x"], b["y"]
 
+    elapsed = (timestamp - b["timestamp"]).total_seconds() / 60.0
+    elapsed = max(0.0, min(elapsed, MAX_IMAGE_GAP_MIN))
+    vx = (b["x"] - a["x"]) / dt
+    vy = (b["y"] - a["y"]) / dt
+    return b["x"] + vx * elapsed, b["y"] + vy * elapsed
+
+
+def select_real_images(target_timestamp, image_index):
+    if not image_index:
+        return []
+
+    times = [ts.timestamp() for ts, _ in image_index]
+    end = bisect_right(times, target_timestamp.timestamp()) - 1
+    if end < 0:
+        return []
+
+    window_start = target_timestamp.timestamp() - MAX_SEQUENCE_WINDOW_MIN * 60.0
+    selected = []
+
+    for i in range(end, -1, -1):
+        ts, path = image_index[i]
+        if ts.timestamp() < window_start:
+            break
+        selected.append((ts, path))
+        if len(selected) == SEQUENCE_LEN:
+            break
+
+    selected.reverse()
+    return selected
+
+
+def build_sequence_samples(df, histories, image_index):
+    X, metadata = [], []
     counters = {
-        "rows": 0,
-        "no_history": 0,
-        "short_history": 0,
-        "bad_gap": 0,
-        "missing_images": 0,
-        "valid": 0,
+        "rows": 0, "no_history": 0, "short_history": 0,
+        "bad_gap": 0, "missing_images": 0, "valid": 0,
+    }
+    sequence_len_counts = {
+        str(i): 0 for i in range(MIN_SEQUENCE_LEN, SEQUENCE_LEN + 1)
     }
 
     for row in df.itertuples(index=False):
-
         counters["rows"] += 1
-
         track_id = getattr(row, "track_id")
-
         history = histories.get(track_id)
 
         if not history:
             counters["no_history"] += 1
             continue
 
-        current_timestamp = parse_dataset_timestamp(
-            getattr(row, "frame_utc")
-        )
-
-        if current_timestamp is None:
+        target_ts = parse_dataset_timestamp(getattr(row, "frame_utc"))
+        if target_ts is None:
             counters["no_history"] += 1
             continue
 
-        # Todas las observaciones hasta el frame actual.
-        previous = [
-            item
-            for item in history
-            if item["timestamp"] <= current_timestamp
-        ]
-
-        if len(previous) < MIN_SEQUENCE_LEN:
+        selected = select_real_images(target_ts, image_index)
+        if len(selected) < MIN_SEQUENCE_LEN:
             counters["short_history"] += 1
             continue
 
-        # Usamos como máximo las últimas 6 observaciones reales.
-        sequence = previous[-SEQUENCE_LEN:]
+        gaps = [
+            (selected[i][0] - selected[i - 1][0]).total_seconds() / 60.0
+            for i in range(1, len(selected))
+        ]
 
-        # Validación temporal.
-        bad_gap = False
-
-        for i in range(1, len(sequence)):
-            gap = (
-                sequence[i]["timestamp"]
-                - sequence[i - 1]["timestamp"]
-            ).total_seconds() / 60.0
-
-            if gap <= 0 or gap > MAX_GAP_MIN:
-                bad_gap = True
-                break
-
-        if bad_gap:
+        if any(g <= 0 or g > MAX_IMAGE_GAP_MIN for g in gaps):
             counters["bad_gap"] += 1
             continue
 
-        # Resolver imágenes.
-        resolved = []
+        frames = [
+            np.zeros((DOWNSAMPLE_SIZE, DOWNSAMPLE_SIZE), dtype=np.float32)
+            for _ in range(SEQUENCE_LEN)
+        ]
+        valid_mask = [False] * SEQUENCE_LEN
+        elapsed = [MAX_SEQUENCE_WINDOW_MIN] * SEQUENCE_LEN
+        feature_gaps = [MAX_IMAGE_GAP_MIN] * (SEQUENCE_LEN - 1)
 
-        for observation in sequence:
+        start = SEQUENCE_LEN - len(selected)
+        ok = True
 
-            path = resolve_image(
-                observation["timestamp"],
-                image_index,
-            )
-
-            if path is None:
-                resolved = []
+        for j, (image_ts, path) in enumerate(selected):
+            pos = causal_position(history, image_ts)
+            if pos is None:
+                ok = False
                 break
 
-            resolved.append(
-                (
-                    observation,
-                    path,
-                )
+            try:
+                dbz = load_dbz(str(path.resolve()))
+                frames[start + j] = extract_patch(dbz, pos[0], pos[1])
+            except Exception:
+                ok = False
+                break
+
+            valid_mask[start + j] = True
+            elapsed[start + j] = max(
+                0.0,
+                (target_ts - image_ts).total_seconds() / 60.0,
             )
 
-        if not resolved:
+        if not ok:
             counters["missing_images"] += 1
             continue
 
-        # Si tenemos menos de 6 frames, repetimos el primer
-        # frame REAL para mantener una entrada de tamaño fijo.
-        while len(resolved) < SEQUENCE_LEN:
-            resolved.insert(
-                0,
-                resolved[0],
-            )
+        for j, gap in enumerate(gaps):
+            feature_gaps[start + j] = gap
 
-        frames = []
-
-        try:
-            for observation, path in resolved:
-
-                dbz = load_dbz(
-                    str(path.resolve())
-                )
-
-                frame = extract_patch(
-                    dbz,
-                    observation["x"],
-                    observation["y"],
-                )
-
-                frames.append(frame)
-
-        except Exception:
-            counters["missing_images"] += 1
-            continue
-
-        if len(frames) != SEQUENCE_LEN:
-            counters["missing_images"] += 1
-            continue
-
-        X.append(
-            feature_vector(frames)
-        )
-
-        metadata.append(
-            {
-                "track_id": track_id,
-                "frame_utc": str(
-                    getattr(row, "frame_utc")
-                ),
-            }
-        )
+        X.append(feature_vector(frames, valid_mask, elapsed, feature_gaps))
+        metadata.append({
+            "track_id": track_id,
+            "frame_utc": str(getattr(row, "frame_utc")),
+        })
 
         counters["valid"] += 1
+        sequence_len_counts[str(len(selected))] += 1
 
-    print(
-        "rows:",
-        counters["rows"],
-    )
-    print(
-        "no_history:",
-        counters["no_history"],
-    )
-    print(
-        "short_history:",
-        counters["short_history"],
-    )
-    print(
-        "bad_gap:",
-        counters["bad_gap"],
-    )
-    print(
-        "missing_images:",
-        counters["missing_images"],
-    )
-    print(
-        "valid:",
-        counters["valid"],
-    )
+    for key in counters:
+        print(f"{key}: {counters[key]}")
+    print(f"Longitudes de secuencia: {sequence_len_counts}")
 
     return (
         np.asarray(X, dtype=np.float32),
         pd.DataFrame(metadata),
         counters,
+        sequence_len_counts,
     )
 
 
-# ---------------------------------------------------------------------------
-# Training
-# ---------------------------------------------------------------------------
-
-def train_one(
-    X,
-    y,
-    groups,
-    target,
-    horizon,
-):
-
+def train_one(X, y, groups, target, horizon):
     result = {
         "target": target,
         "horizon_min": horizon,
@@ -696,20 +381,12 @@ def train_one(
         "samples": int(len(y)),
     }
 
-    if len(y) < 6:
+    if len(y) < 20:
         result["status"] = "insufficient_data"
         return None, result
 
-    unique_classes = np.unique(y)
-
-    if len(unique_classes) < 2:
-        result["status"] = "insufficient_classes"
-        return None, result
-
-    unique_groups = np.unique(groups)
-
-    if len(unique_groups) < 2:
-        result["status"] = "insufficient_groups"
+    if len(np.unique(y)) < 2 or len(np.unique(groups)) < 2:
+        result["status"] = "insufficient_classes_or_groups"
         return None, result
 
     splitter = GroupShuffleSplit(
@@ -719,34 +396,20 @@ def train_one(
     )
 
     try:
-        train_idx, test_idx = next(
-            splitter.split(
-                X,
-                y,
-                groups,
-            )
-        )
+        train_idx, test_idx = next(splitter.split(X, y, groups))
     except Exception:
         result["status"] = "invalid_split"
         return None, result
 
     if (
-        len(train_idx) == 0
-        or len(test_idx) == 0
+        len(np.unique(y[train_idx])) < 2
+        or len(np.unique(y[test_idx])) < 2
     ):
-        result["status"] = "invalid_split"
-        return None, result
-
-    if len(np.unique(y[train_idx])) < 2:
-        result["status"] = "invalid_train_split"
-        return None, result
-
-    if len(np.unique(y[test_idx])) < 1:
-        result["status"] = "invalid_test_split"
+        result["status"] = "invalid_class_split"
         return None, result
 
     model = RandomForestClassifier(
-        n_estimators=400,
+        n_estimators=500,
         max_depth=16,
         min_samples_leaf=2,
         class_weight="balanced_subsample",
@@ -754,236 +417,115 @@ def train_one(
         n_jobs=-1,
     )
 
-    model.fit(
-        X[train_idx],
-        y[train_idx],
-    )
-
-    predictions = model.predict(
-        X[test_idx]
-    )
-
-    probabilities = model.predict_proba(
-        X[test_idx]
-    )
-
-    classes = model.classes_
-
-    positive_probability = None
-
-    if len(classes) == 2:
-        positive_index = list(classes).index(1)
-
-        positive_probability = probabilities[
-            :,
-            positive_index,
-        ]
-
-    bal_acc = balanced_accuracy_score(
-        y[test_idx],
-        predictions,
-    )
+    model.fit(X[train_idx], y[train_idx])
+    pred = model.predict(X[test_idx])
+    prob = model.predict_proba(X[test_idx])
+    pos_idx = list(model.classes_).index(1)
 
     result["status"] = "ok"
     result["balanced_accuracy"] = float(
-        bal_acc
+        balanced_accuracy_score(y[test_idx], pred)
     )
-
-    if positive_probability is not None:
-
-        try:
-            if len(np.unique(y[test_idx])) == 2:
-                result["auc"] = float(
-                    roc_auc_score(
-                        y[test_idx],
-                        positive_probability,
-                    )
-                )
-
-                result["brier"] = float(
-                    brier_score_loss(
-                        y[test_idx],
-                        positive_probability,
-                    )
-                )
-            else:
-                result["auc"] = None
-                result["brier"] = None
-
-        except Exception:
-            result["auc"] = None
-            result["brier"] = None
-
-    else:
-        result["auc"] = None
-        result["brier"] = None
+    result["auc"] = float(
+        roc_auc_score(y[test_idx], prob[:, pos_idx])
+    )
+    result["brier"] = float(
+        brier_score_loss(y[test_idx], prob[:, pos_idx])
+    )
+    result["test_samples"] = int(len(test_idx))
 
     return model, result
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main():
-
     print("=== RMA10 VISUAL/TEMPORAL AI ===")
     print(f"Version: {MODEL_VERSION}")
 
     if not DATASET.exists():
-        raise FileNotFoundError(
-            f"No existe dataset: {DATASET}"
-        )
-
+        raise FileNotFoundError(DATASET)
     if not RADAR_DIR.exists():
-        raise FileNotFoundError(
-            f"No existe histórico radar: {RADAR_DIR}"
-        )
+        raise FileNotFoundError(RADAR_DIR)
 
     df = pd.read_csv(DATASET)
 
-    print(
-        f"Dataset: {DATASET}"
-    )
-
-    print(
-        f"Radar:   {RADAR_DIR}"
-    )
-
+    print(f"Dataset: {DATASET}")
+    print(f"Radar:   {RADAR_DIR}")
     print(
         f"Filas dataset: {len(df)} | "
         f"tracks: {df['track_id'].nunique()}"
     )
 
     histories = build_histories(df)
-
-    print(
-        f"Historias construidas: {len(histories)}"
-    )
+    print(f"Historias construidas: {len(histories)}")
 
     image_index = build_image_index()
-
     if not image_index:
+        raise RuntimeError("No se encontraron imágenes RMA10 válidas.")
+
+    X, metadata, counters, seq_counts = build_sequence_samples(
+        df, histories, image_index
+    )
+
+    print(f"Secuencias visuales válidas: {len(X)}")
+
+    # No pisa el modelo anterior si la construcción de datos falla.
+    if len(X) < 300:
         raise RuntimeError(
-            "No se encontraron imágenes RMA10 con timestamp."
+            f"Solo se construyeron {len(X)} secuencias; "
+            "se aborta para no reemplazar el modelo con un entrenamiento pobre."
         )
 
-    X, metadata, counters = (
-        build_sequence_samples(
-            df,
-            histories,
-            image_index,
-        )
-    )
-
-    print(
-        f"Secuencias visuales válidas: {len(X)}"
-    )
-
-    if len(X) == 0:
-        raise RuntimeError(
-            "No hay secuencias visuales válidas."
-        )
-
-    print(
-        f"Features por secuencia: {X.shape[1]}"
-    )
+    print(f"Features por secuencia: {X.shape[1]}")
 
     models = {}
     metrics = {
         "version": MODEL_VERSION,
-        "generated_at": datetime.now(
-            timezone.utc
-        ).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "dataset_rows": int(len(df)),
-        "tracks_total": int(
-            df["track_id"].nunique()
-        ),
+        "tracks_total": int(df["track_id"].nunique()),
         "sequences_valid": int(len(X)),
-        "features_per_sequence": int(
-            X.shape[1]
-        ),
+        "features_per_sequence": int(X.shape[1]),
         "counters": counters,
+        "sequence_length_counts": seq_counts,
+        "image_range": {
+            "start": image_index[0][0].isoformat(),
+            "end": image_index[-1][0].isoformat(),
+        },
         "models": {},
+    }
+
+    lookup = {
+        (item["track_id"], str(item["frame_utc"])): idx
+        for idx, item in metadata.iterrows()
     }
 
     trained = 0
 
     for horizon in HORIZONS:
-
-        horizon_df = df[
-            df["horizonte_min"] == horizon
-        ].copy()
-
-        if horizon_df.empty:
-            for target in TARGETS:
-                print(
-                    f"Entrenando {target} "
-                    f"{horizon} min..."
-                )
-
-                metrics["models"][
-                    f"{target}_{horizon}"
-                ] = {
-                    "target": target,
-                    "horizon_min": horizon,
-                    "status": "no_horizon_data",
-                }
-
-            continue
-
-        # Metadata identifica cada secuencia por track/frame.
-        lookup = {}
-
-        for idx, item in metadata.iterrows():
-            lookup[
-                (
-                    item["track_id"],
-                    str(item["frame_utc"]),
-                )
-            ] = idx
+        horizon_df = df[df["horizonte_min"] == horizon]
 
         for target in TARGETS:
-
-            print(
-                f"Entrenando {target} "
-                f"{horizon} min..."
-            )
+            print(f"Entrenando {target} {horizon} min...")
 
             indices = []
             labels = []
 
-            for row in horizon_df.itertuples(
-                index=False
-            ):
-
+            for row in horizon_df.itertuples(index=False):
                 key = (
                     getattr(row, "track_id"),
-                    str(
-                        getattr(
-                            row,
-                            "frame_utc",
-                        )
-                    ),
+                    str(getattr(row, "frame_utc")),
                 )
 
                 idx = lookup.get(key)
-
                 if idx is None:
                     continue
 
-                value = getattr(
-                    row,
-                    target,
-                )
-
+                value = getattr(row, target)
                 if pd.isna(value):
                     continue
 
                 indices.append(idx)
-                labels.append(
-                    int(bool(value))
-                )
+                labels.append(int(bool(value)))
 
             if not indices:
                 result = {
@@ -992,70 +534,46 @@ def main():
                     "status": "insufficient_data",
                     "samples": 0,
                 }
-
-                print(
-                    "NO ENTRENADO | "
-                    "status=insufficient_data"
-                )
-
-                metrics["models"][
-                    f"{target}_{horizon}"
-                ] = result
-
+                metrics["models"][f"{target}_{horizon}"] = result
+                print("NO ENTRENADO | status=insufficient_data")
                 continue
 
-            indices = np.asarray(
-                indices,
-                dtype=np.int64,
-            )
-
-            y = np.asarray(
-                labels,
-                dtype=np.int8,
-            )
-
-            X_target = X[indices]
-
-            groups = metadata.iloc[
-                indices
-            ]["track_id"].to_numpy()
+            idx_arr = np.asarray(indices, dtype=np.int64)
+            y = np.asarray(labels, dtype=np.int8)
+            groups = metadata.iloc[idx_arr]["track_id"].to_numpy()
 
             model, result = train_one(
-                X_target,
+                X[idx_arr],
                 y,
                 groups,
                 target,
                 horizon,
             )
 
-            metrics["models"][
-                f"{target}_{horizon}"
-            ] = result
+            metrics["models"][f"{target}_{horizon}"] = result
 
             if model is None:
-
                 print(
-                    "NO ENTRENADO | "
-                    f"status={result['status']}"
+                    f"NO ENTRENADO | status={result['status']} | "
+                    f"samples={result['samples']}"
                 )
-
                 continue
 
-            models[
-                (
-                    target,
-                    horizon,
-                )
-            ] = model
-
+            models[(target, horizon)] = model
             trained += 1
 
             print(
-                "OK | "
-                f"samples={result['samples']} | "
-                f"bal_acc={result.get('balanced_accuracy')} | "
-                f"AUC={result.get('auc')}"
+                f"OK | samples={result['samples']} | "
+                f"bal_acc={result['balanced_accuracy']:.4f} | "
+                f"AUC={result['auc']:.4f}"
             )
+
+    if trained < 9:
+        raise RuntimeError(
+            f"Solo {trained}/12 modelos entrenados; "
+            "se aborta para no reemplazar el modelo visual "
+            "con cobertura insuficiente."
+        )
 
     payload = {
         "version": MODEL_VERSION,
@@ -1063,10 +581,11 @@ def main():
         "feature_config": {
             "sequence_len": SEQUENCE_LEN,
             "min_sequence_len": MIN_SEQUENCE_LEN,
+            "max_sequence_window_min": MAX_SEQUENCE_WINDOW_MIN,
+            "max_image_gap_min": MAX_IMAGE_GAP_MIN,
             "patch_size": PATCH_SIZE,
             "downsample_size": DOWNSAMPLE_SIZE,
-            "max_gap_min": MAX_GAP_MIN,
-            "max_image_match_min": MAX_IMAGE_MATCH_MIN,
+            "feature_count": int(X.shape[1]),
             "dbz_min": DBZ_MIN,
             "dbz_max": DBZ_MAX,
         },
@@ -1074,36 +593,19 @@ def main():
         "horizons": HORIZONS,
     }
 
-    MODEL_PATH.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    joblib.dump(
-        payload,
-        MODEL_PATH,
-    )
+    joblib.dump(payload, MODEL_PATH)
 
     METRICS_PATH.write_text(
-        json.dumps(
-            metrics,
-            indent=2,
-            ensure_ascii=False,
-        ),
+        json.dumps(metrics, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
     print("=== FINALIZADO ===")
-    print(
-        f"Modelo:   {MODEL_PATH}"
-    )
-    print(
-        f"Métricas: {METRICS_PATH}"
-    )
-    print(
-        f"Modelos entrenados: "
-        f"{trained}/12"
-    )
+    print(f"Modelo: {MODEL_PATH}")
+    print(f"Métricas: {METRICS_PATH}")
+    print(f"Modelos entrenados: {trained}/12")
 
 
 if __name__ == "__main__":
