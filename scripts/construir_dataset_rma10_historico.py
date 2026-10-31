@@ -129,7 +129,7 @@ def build_tracks(frames):
 def nearest_future(obs, target, max_error):
     best=None; besterr=None
     for o in obs:
-        if o['dt']<=target: continue
+        if o['dt']<target: continue
         err=abs((o['dt']-target).total_seconds()/60)
         if err<=max_error and (besterr is None or err<besterr): best=o; besterr=err
     return best
