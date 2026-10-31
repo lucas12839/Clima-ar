@@ -454,9 +454,6 @@ def nearest_future(
     best_error = None
 
     for observation in obs:
-        # IMPORTANTE:
-        # permite usar una observación exactamente
-        # en el instante objetivo del horizonte.
         if observation["dt"] < target:
             continue
 
@@ -479,6 +476,72 @@ def nearest_future(
             best_error = error
 
     return best
+
+
+def interpolate_future_5min(
+    current,
+    observations,
+    target,
+):
+    """
+    Estima T+5 entre T0 y el siguiente frame real.
+
+    Solo se utiliza cuando el siguiente frame está
+    entre 8 y 15 minutos después de T0.
+    """
+
+    next_observation = None
+
+    for observation in observations:
+        if observation["dt"] <= current["dt"]:
+            continue
+
+        next_observation = observation
+        break
+
+    if next_observation is None:
+        return None
+
+    interval_min = (
+        next_observation["dt"]
+        - current["dt"]
+    ).total_seconds() / 60.0
+
+    if interval_min < 8.0 or interval_min > 15.0:
+        return None
+
+    elapsed_min = (
+        target - current["dt"]
+    ).total_seconds() / 60.0
+
+    if elapsed_min <= 0.0 or elapsed_min >= interval_min:
+        return None
+
+    alpha = elapsed_min / interval_min
+
+    future = dict(next_observation)
+
+    future["dt"] = target
+
+    future["intensidad"] = (
+        current["intensidad"]
+        + alpha
+        * (
+            next_observation["intensidad"]
+            - current["intensidad"]
+        )
+    )
+
+    future["pixeles"] = (
+        current["pixeles"]
+        + alpha
+        * (
+            next_observation["pixeles"]
+            - current["pixeles"]
+        )
+    )
+
+    return future
 
 
 def label_evolution(
@@ -631,13 +694,22 @@ def main():
                     )
                 )
 
-                future = nearest_future(
-                    observations,
-                    target,
-                    MAX_LABEL_ERROR_MIN[
-                        horizon
-                    ],
-                )
+                if horizon == 5:
+                    # T+5 no tiene frame observado directamente.
+                    # Se estima entre T0 y el siguiente frame real.
+                    future = interpolate_future_5min(
+                        observation,
+                        observations,
+                        target,
+                    )
+                else:
+                    # Horizontes observables: solo frame real
+                    # dentro de ±4 minutos del objetivo.
+                    future = nearest_future(
+                        observations,
+                        target,
+                        4.0,
+                    )
 
                 if future is None:
                     continue
