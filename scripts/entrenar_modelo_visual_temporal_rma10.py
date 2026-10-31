@@ -324,17 +324,24 @@ def build_sequence_samples(df, histories, image_index):
         feature_gaps = [MAX_IMAGE_GAP_MIN] * (SEQUENCE_LEN - 1)
 
         start = SEQUENCE_LEN - len(selected)
-        ok = True
+
+        # Referencia espacial única: todos los frames se recortan
+        # sobre la posición causal del núcleo en el instante objetivo.
+        # Así el movimiento real queda visible dentro del parche.
+        anchor_pos = causal_position(history, target_ts)
+        ok = anchor_pos is not None
 
         for j, (image_ts, path) in enumerate(selected):
-            pos = causal_position(history, image_ts)
-            if pos is None:
-                ok = False
+            if not ok:
                 break
 
             try:
                 dbz = load_dbz(str(path.resolve()))
-                frames[start + j] = extract_patch(dbz, pos[0], pos[1])
+                frames[start + j] = extract_patch(
+                    dbz,
+                    anchor_pos[0],
+                    anchor_pos[1],
+                )
             except Exception:
                 ok = False
                 break
