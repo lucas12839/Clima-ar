@@ -31,23 +31,23 @@
   },
   "vigencia_radar": {
     "radar_timestamp": "2026-10-31T15:00:00Z",
-    "radar_age": 15.2,
-    "edad_radar_minutos": 15.2,
-    "modo": "radar_vigente",
-    "estimado": false
+    "radar_age": 22.1,
+    "edad_radar_minutos": 22.1,
+    "modo": "estimado_desde_ultimo_radar_valido",
+    "estimado": true
   },
   "radar_timestamp": "2026-10-31T15:00:00Z",
-  "radar_age": 15.2,
+  "radar_age": 22.1,
   "origen_datos": {
     "observacion_radar": {
       "radar_timestamp": "2026-10-31T15:00:00Z",
-      "edad_minutos": 15.2,
-      "es_actual": true,
-      "vigencia": "radar_vigente"
+      "edad_minutos": 22.1,
+      "es_actual": false,
+      "vigencia": "estimado_desde_ultimo_radar_valido"
     },
     "extrapolacion_nowcast": {
-      "aplicada": false,
-      "minutos_extrapolados": 0,
+      "aplicada": true,
+      "minutos_extrapolados": 22.1,
       "limite_minutos": 180.0
     },
     "prediccion_ml": {
@@ -74,18 +74,18 @@
     "impacto": null
   },
   "indices_heuristicos": {
-    "tormenta": 0.222,
-    "llegada_bahia": 0.062,
+    "tormenta": 0.22,
+    "llegada_bahia": 0.06,
     "fortalecimiento": 0.596,
     "debilitamiento": 0.404,
-    "impacto": 0.062,
+    "impacto": 0.06,
     "peligros": {
       "lluvia_fuerte": 0.275,
       "viento_fuerte": 0.204,
       "granizo": 0.059,
       "rayo": 0.069
     },
-    "indice_hibrido_severidad": 0.226,
+    "indice_hibrido_severidad": 0.224,
     "fuente_componente_ia": "modelo_impacto_v8_no_calibrado",
     "goes19_conveccion": 0.45,
     "goes19_rayo": 0.0
@@ -96,7 +96,7 @@
     "granizo": null,
     "rayo": null
   },
-  "indice_hibrido_severidad": 0.226,
+  "indice_hibrido_severidad": 0.224,
   "ia_v8": {
     "disponible": true,
     "probabilidad_impacto": null,
@@ -144,7 +144,7 @@
     "movimiento_hacia_centro_dominio": false,
     "eta_minutos": null,
     "eta_minutos_aproximada_centro_dominio": null,
-    "confianza_movimiento": 0.95,
+    "confianza_movimiento": 0.892,
     "estado": "actividad_detectada",
     "nucleos": [
       {
@@ -1161,12 +1161,14 @@
         30
       ]
     },
+    "distancia_km_frame": 64.68,
+    "eta_minutos_frame": null,
     "vigencia_radar": {
       "radar_timestamp": "2026-10-31T15:00:00Z",
-      "radar_age": 15.2,
-      "edad_radar_minutos": 15.2,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 22.1,
+      "edad_radar_minutos": 22.1,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true
     }
   },
   "ambiente": {
@@ -1206,12 +1208,12 @@
     "modelo_ecmwf_rafaga_10m_kmh": 17.3,
     "fuente_superficie_actual": "SAZB_AWC",
     "observacion_sazb_utc": "2026-10-31T15:00:00+00:00",
-    "observacion_sazb_edad_minutos": 14.4,
+    "observacion_sazb_edad_minutos": 21.4,
     "viento_actual_fuente": "SAZB_AWC",
     "viento_actual_kmh": 11.112,
     "direccion_viento_actual": 60.0,
-    "estado_observacion_actual": "observacion_reciente",
-    "observacion_sazb_fresca": true
+    "estado_observacion_actual": "ultima_observacion_disponible",
+    "observacion_sazb_fresca": false
   },
   "ambiente_en_trayectoria": {
     "5": {
@@ -1436,7 +1438,7 @@
     }
   },
   "calidad_datos": 100.0,
-  "calidad_tracking": 0.778,
+  "calidad_tracking": 0.751,
   "confianza_modelo": 0.9,
   "limitaciones": [
     "El radar actual no aporta dBZ cuantitativo validado en este motor.",
@@ -1454,7 +1456,7 @@
     "IA V8 impacto 3-6h: 10%.",
     "CAPE ECMWF: 0 J/kg.",
     "Rafaga prevista ECMWF: 17.3 km/h.",
-    "Indice hibrido de severidad: 23%.",
+    "Indice hibrido de severidad: 22%.",
     "Impacto inmediato estimado por radar: 6%.",
     "Radar, evolucion, meteorologia, IA e historial se combinan en un unico Storm Engine.",
     "La estimacion no reemplaza avisos oficiales y requiere validacion continua."
@@ -1468,7 +1470,7 @@
       "frame_actual_utc": "2026-10-31T15:00:00Z"
     },
     "acquisition": "actualizado",
-    "generated_at_utc": "2026-10-31T15:15:09.519393+00:00",
+    "generated_at_utc": "2026-10-31T15:22:06.457190+00:00",
     "source_state_version": "1.5",
     "source_state_status": "ok",
     "domain": {
@@ -2129,7 +2131,7 @@
     "raw_state": {
       "version": "1.5",
       "satellite": "GOES-19",
-      "generated_at_utc": "2026-10-31T15:15:01.471548+00:00",
+      "generated_at_utc": "2026-10-31T15:21:45.618239+00:00",
       "reference_frame_utc": "2026-10-31T15:00:00+00:00",
       "status": "ok",
       "domain": {
