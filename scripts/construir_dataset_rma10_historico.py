@@ -454,7 +454,10 @@ def nearest_future(
     best_error = None
 
     for observation in obs:
-        if observation["dt"] <= target:
+        # IMPORTANTE:
+        # permite usar una observación exactamente
+        # en el instante objetivo del horizonte.
+        if observation["dt"] < target:
             continue
 
         error = abs(
