@@ -105,6 +105,21 @@ def parse_dataset_timestamp(value) -> datetime | None:
     return dt.to_pydatetime()
 
 
+def parse_bool_label(value) -> int:
+    if isinstance(value, (bool, np.bool_)):
+        return int(value)
+    if pd.isna(value):
+        raise ValueError("Etiqueta nula")
+    if isinstance(value, (int, np.integer, float, np.floating)):
+        return int(float(value) != 0.0)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "t", "yes", "y", "si", "sí"}:
+        return 1
+    if text in {"0", "false", "f", "no", "n"}:
+        return 0
+    raise ValueError(f"Etiqueta booleana inválida: {value!r}")
+
+
 def decode_rma10_dbz(image: Image.Image) -> np.ndarray:
     image = image.convert("P")
 
@@ -1118,6 +1133,12 @@ def main():
             f"{sorted(missing)}"
         )
 
+    df["horizonte_min"] = pd.to_numeric(
+        df["horizonte_min"],
+        errors="coerce",
+    )
+    df = df[df["horizonte_min"].isin(HORIZONS)].copy()
+
     print(
         f"Dataset: {len(df)} filas | "
         f"tracks: {df['track_id'].nunique()}"
@@ -1178,7 +1199,7 @@ def main():
             continue
         lookup[
             (
-                item["track_id"],
+                str(item["track_id"]),
                 timestamp,
             )
         ] = index
@@ -1237,10 +1258,7 @@ def main():
                     continue
 
                 key = (
-                    getattr(
-                        row,
-                        "track_id",
-                    ),
+                    str(getattr(row, "track_id")),
                     row_timestamp,
                 )
 
@@ -1326,7 +1344,7 @@ def main():
                 f"{result['auc']:.4f}"
             )
 
-    if trained < 9:
+    if trained != 12:
         raise RuntimeError(
             f"Solo {trained}/12 modelos "
             "entrenados. "
