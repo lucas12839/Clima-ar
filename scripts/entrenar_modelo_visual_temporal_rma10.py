@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-ClimaAR — RMA10 Visual/Temporal AI V6
+ClimaAR — RMA10 Visual/Temporal AI — MODELO DEFINITIVO
 
-Mejoras sobre V5:
-- Mantiene el anclaje espacial causal único de V5.
-- Secuencias de imágenes RMA10 reales, sin repetir frames.
-- Representación multiescala 32x32 + 16x16.
-- Diferencias temporales multiescala.
-- Descriptores visuales de estructura/intensidad por umbrales.
-- Ensemble RF + ExtraTrees + HistGradientBoosting.
-- Validación separada por track_id.
-- Escritura atómica del modelo y métricas.
-- No modifica el decoder operativo ni la lógica RGB histórica.
+Integra:
+- Variables V1.
+- Secuencia visual causal de hasta 6 radares.
+- Características multiescala.
+- Diferencias temporales.
+- PCA visual.
+- Ensemble RF + ExtraTrees + HistGradientBoosting + LogisticRegression.
+
+No utiliza información futura.
+El modelo operativo final se guarda en:
+data/models/rma10_visual_temporal_model.joblib
 """
 
 from __future__ import annotations
@@ -27,18 +28,23 @@ import joblib
 import numpy as np
 import pandas as pd
 from PIL import Image
+
+from sklearn.decomposition import PCA
 from sklearn.ensemble import (
     ExtraTreesClassifier,
     HistGradientBoostingClassifier,
     RandomForestClassifier,
-    VotingClassifier,
 )
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     balanced_accuracy_score,
     brier_score_loss,
     roc_auc_score,
 )
 from sklearn.model_selection import GroupShuffleSplit
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,72 +52,80 @@ ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "data/radar/rma10_dataset_historico.csv"
 RADAR_DIR = ROOT / "data/radar/historico"
 
-MODEL_PATH = ROOT / "data/models/rma10_visual_temporal_model.joblib"
-METRICS_PATH = ROOT / "data/models/rma10_visual_temporal_model_metrics.json"
+MODEL_DIR = ROOT / "data/models"
+MODEL_PATH = MODEL_DIR / "rma10_visual_temporal_model.joblib"
+METRICS_PATH = MODEL_DIR / "rma10_visual_temporal_model_metrics.json"
 
-MODEL_VERSION = "rma10-visual-temporal-v6-multiscale-ensemble-final-repair2"
+MODEL_VERSION = "rma10-visual-temporal-final-ensemble-1"
+
+HORIZONS = (5, 10, 20, 30)
+
+TARGETS = (
+    "strengthened",
+    "weakened",
+    "toward_bahia",
+)
+
+V1_FEATURES = (
+    "intensity",
+    "area_px",
+    "width_px",
+    "height_px",
+    "lat",
+    "lon",
+    "distance_km",
+    "bearing_to_bahia_deg",
+    "displacement_px",
+    "speed_px_min",
+    "motion_bearing_deg",
+)
 
 SEQUENCE_LEN = 6
 MIN_SEQUENCE_LEN = 3
-MAX_SEQUENCE_WINDOW_MIN = 120.0
+
 MAX_IMAGE_GAP_MIN = 45.0
+MAX_SEQUENCE_WINDOW_MIN = 120.0
 
 PATCH_SIZE = 64
-DOWNSAMPLE_SIZES = (32, 16)
-
-HORIZONS = (5, 10, 20, 30)
-TARGETS = ("strengthened", "weakened", "toward_bahia")
-
-RANDOM_STATE = 42
+PCA_COMPONENTS = 64
 
 DBZ_MIN = -15.0
 DBZ_MAX = 75.0
+
 PALETTE_START = 64
 PALETTE_END = 207
+
+RANDOM_STATE = 42
 
 _TIMESTAMP_RE = re.compile(r"^(\d{14})$")
 
 
-def parse_timestamp_from_name(path: Path) -> datetime | None:
-    match = _TIMESTAMP_RE.fullmatch(path.stem)
-
-    if not match:
-        return None
-
-    try:
-        dt = datetime.strptime(match.group(1), "%Y%m%d%H%M%S")
-    except ValueError:
-        return None
-
-    if not 2020 <= dt.year <= 2035:
-        return None
-
-    return dt.replace(tzinfo=timezone.utc)
-
-
 def canonical_track_id(value) -> str:
-    """Normaliza track_id para que int/float/string representen la misma pista."""
     if value is None or pd.isna(value):
         return ""
+
     if isinstance(value, (int, np.integer)):
         return str(int(value))
+
     if isinstance(value, (float, np.floating)):
         if not np.isfinite(value):
             return ""
         if float(value).is_integer():
             return str(int(value))
-        return str(value).strip()
+
     text = str(value).strip()
+
     try:
         numeric = float(text)
         if np.isfinite(numeric) and numeric.is_integer():
             return str(int(numeric))
     except (TypeError, ValueError):
         pass
+
     return text
 
 
-def parse_dataset_timestamp(value) -> datetime | None:
+def parse_timestamp(value):
     if value is None:
         return None
 
@@ -127,28 +141,126 @@ def parse_dataset_timestamp(value) -> datetime | None:
     return dt.to_pydatetime()
 
 
-def parse_bool_label(value) -> int:
-    if isinstance(value, (bool, np.bool_)):
-        return int(value)
-    if pd.isna(value):
-        raise ValueError("Etiqueta nula")
-    if isinstance(value, (int, np.integer, float, np.floating)):
-        return int(float(value) != 0.0)
-    text = str(value).strip().lower()
-    if text in {"1", "true", "t", "yes", "y", "si", "sí"}:
-        return 1
-    if text in {"0", "false", "f", "no", "n"}:
-        return 0
-    raise ValueError(f"Etiqueta booleana inválida: {value!r}")
+def parse_timestamp_from_name(path: Path):
+    match = _TIMESTAMP_RE.fullmatch(path.stem)
+
+    if not match:
+        return None
+
+    try:
+        dt = datetime.strptime(
+            match.group(1),
+            "%Y%m%d%H%M%S",
+        )
+    except ValueError:
+        return None
+
+    return dt.replace(tzinfo=timezone.utc)
 
 
-def decode_rma10_dbz(image: Image.Image) -> np.ndarray:
-    image = image.convert("P")
+def safe_auc(y_true, probability):
+    if len(np.unique(y_true)) < 2:
+        return None
 
-    if image.getpalette() is None:
-        raise ValueError("Imagen RMA10 sin paleta")
+    return float(
+        roc_auc_score(
+            y_true,
+            probability,
+        )
+    )
 
-    indices = np.asarray(image, dtype=np.uint8)
+
+def build_image_index():
+
+    by_timestamp = {}
+
+    rejected = 0
+    unreadable = 0
+    duplicated = 0
+
+    for path in sorted(
+        RADAR_DIR.rglob("*.png")
+    ):
+
+        timestamp = parse_timestamp_from_name(
+            path
+        )
+
+        if timestamp is None:
+            rejected += 1
+            continue
+
+        try:
+            with Image.open(path) as image:
+                image.verify()
+        except Exception:
+            unreadable += 1
+            continue
+
+        key = timestamp.timestamp()
+
+        if key in by_timestamp:
+            duplicated += 1
+
+            old = by_timestamp[key]
+
+            if path.stat().st_size > old.stat().st_size:
+                by_timestamp[key] = path
+        else:
+            by_timestamp[key] = path
+
+    index = sorted(
+        [
+            (
+                datetime.fromtimestamp(
+                    timestamp,
+                    tz=timezone.utc,
+                ),
+                path,
+            )
+            for timestamp, path in by_timestamp.items()
+        ],
+        key=lambda item: item[0],
+    )
+
+    if not index:
+        raise RuntimeError(
+            "No se encontraron imágenes RMA10 válidas."
+        )
+
+    print(
+        f"Imágenes indexadas: {len(index)}"
+        f" | rechazadas: {rejected}"
+        f" | ilegibles: {unreadable}"
+        f" | duplicadas: {duplicated}"
+    )
+
+    print(
+        "Rango imágenes: "
+        f"{index[0][0].isoformat()} -> "
+        f"{index[-1][0].isoformat()}"
+    )
+
+    return index
+
+
+@lru_cache(maxsize=128)
+def load_dbz(path_string):
+
+    with Image.open(path_string) as image:
+        image = image.convert("P")
+
+        palette = image.getpalette()
+
+        if palette is None:
+            raise ValueError(
+                "Imagen RMA10 sin paleta."
+            )
+
+        indices = np.asarray(
+            image,
+            dtype=np.uint8,
+        )
 
     dbz = np.full(
         indices.shape,
@@ -162,101 +274,39 @@ def decode_rma10_dbz(image: Image.Image) -> np.ndarray:
     )
 
     if np.any(valid):
-        values = indices[valid].astype(np.float32)
+
+        values = indices[valid].astype(
+            np.float32
+        )
 
         dbz[valid] = (
             DBZ_MIN
             + (
-                (values - PALETTE_START)
-                / float(PALETTE_END - PALETTE_START)
+                (
+                    values
+                    - PALETTE_START
+                )
+                / float(
+                    PALETTE_END
+                    - PALETTE_START
+                )
             )
-            * (DBZ_MAX - DBZ_MIN)
+            * (
+                DBZ_MAX
+                - DBZ_MIN
+            )
         )
 
     return dbz
 
 
-def build_image_index():
-    by_timestamp = {}
-
-    rejected_name = 0
-    unreadable = 0
-    duplicate_timestamp = 0
-
-    for path in sorted(RADAR_DIR.rglob("*.png")):
-        timestamp = parse_timestamp_from_name(path)
-
-        if timestamp is None:
-            rejected_name += 1
-            continue
-
-        try:
-            with Image.open(path) as image:
-                image.verify()
-        except Exception:
-            unreadable += 1
-            continue
-
-        key = timestamp.timestamp()
-
-        if key in by_timestamp:
-            duplicate_timestamp += 1
-
-            old = by_timestamp[key]
-
-            if path.stat().st_size > old.stat().st_size:
-                by_timestamp[key] = path
-
-        else:
-            by_timestamp[key] = path
-
-    index = sorted(
-        (
-            (
-                datetime.fromtimestamp(
-                    timestamp,
-                    tz=timezone.utc,
-                ),
-                path,
-            )
-            for timestamp, path in by_timestamp.items()
-        ),
-        key=lambda item: item[0],
-    )
-
-    if not index:
-        raise RuntimeError(
-            "No se encontraron imágenes RMA10 válidas."
-        )
-
-    print(
-        f"Imágenes indexadas: {len(index)}"
-        f" | rechazadas: {rejected_name}"
-        f" | ilegibles: {unreadable}"
-        f" | duplicadas: {duplicate_timestamp}"
-    )
-
-    print(
-        f"Rango imágenes: "
-        f"{index[0][0].isoformat()} -> "
-        f"{index[-1][0].isoformat()}"
-    )
-
-    return index
-
-
-@lru_cache(maxsize=96)
-def load_dbz(path_string: str) -> np.ndarray:
-    with Image.open(path_string) as image:
-        return decode_rma10_dbz(image)
-
-
 def extract_patch(
-    dbz: np.ndarray,
-    x: float,
-    y: float,
-    size: int,
-) -> np.ndarray:
+    dbz,
+    x,
+    y,
+    size,
+):
+
     height, width = dbz.shape
 
     cx = int(round(float(x)))
@@ -266,6 +316,7 @@ def extract_patch(
 
     x0 = cx - half
     y0 = cy - half
+
     x1 = x0 + size
     y1 = y0 + size
 
@@ -277,28 +328,33 @@ def extract_patch(
 
     sx0 = max(0, x0)
     sy0 = max(0, y0)
+
     sx1 = min(width, x1)
     sy1 = min(height, y1)
 
     if sx1 <= sx0 or sy1 <= sy0:
         return patch
 
-    source = dbz[sy0:sy1, sx0:sx1]
+    source = dbz[
+        sy0:sy1,
+        sx0:sx1,
+    ]
 
     finite = np.isfinite(source)
 
-    fill = (
-        float(np.nanmedian(source))
-        if np.any(finite)
-        else DBZ_MIN
-    )
+    if np.any(finite):
+        fill = float(
+            np.nanmedian(source)
+        )
+    else:
+        fill = DBZ_MIN
 
     dx0 = sx0 - x0
     dy0 = sy0 - y0
 
     patch[
-        dy0 : dy0 + source.shape[0],
-        dx0 : dx0 + source.shape[1],
+        dy0:dy0 + source.shape[0],
+        dx0:dx0 + source.shape[1],
     ] = np.where(
         finite,
         source,
@@ -309,13 +365,16 @@ def extract_patch(
 
 
 def resize_field(
-    field: np.ndarray,
-    size: int,
-) -> np.ndarray:
-    resized = Image.fromarray(
+    field,
+    size,
+):
+
+    image = Image.fromarray(
         field,
         mode="F",
-    ).resize(
+    )
+
+    resized = image.resize(
         (size, size),
         Image.Resampling.BILINEAR,
     )
@@ -326,8 +385,11 @@ def resize_field(
     )
 
 
-def frame_stats(frame: np.ndarray) -> np.ndarray:
-    values = frame.ravel().astype(np.float32)
+def frame_stats(frame):
+
+    values = frame.ravel().astype(
+        np.float32
+    )
 
     percentiles = np.percentile(
         values,
@@ -349,7 +411,8 @@ def frame_stats(frame: np.ndarray) -> np.ndarray:
     )
 
 
-def shape_features(frame: np.ndarray) -> np.ndarray:
+def shape_features(frame):
+
     features = []
 
     for threshold in (
@@ -359,7 +422,9 @@ def shape_features(frame: np.ndarray) -> np.ndarray:
         50.0,
         60.0,
     ):
+
         mask = frame >= threshold
+
         count = int(mask.sum())
 
         if count == 0:
@@ -407,43 +472,59 @@ def shape_features(frame: np.ndarray) -> np.ndarray:
 def feature_vector(
     frames,
     valid_mask,
-    elapsed_min,
-    gaps_min,
-) -> np.ndarray:
-    absolute_32 = np.concatenate(
-        [
-            frame.ravel()
-            for frame in frames["32"]
-        ]
-    )
+    elapsed,
+    gaps,
+):
 
-    absolute_16 = np.concatenate(
-        [
-            frame.ravel()
-            for frame in frames["16"]
-        ]
-    )
-
-    diffs_32 = []
-    diffs_16 = []
+    abs32 = []
+    abs16 = []
 
     stats = []
     shapes = []
 
-    for index in range(SEQUENCE_LEN):
-        if valid_mask[index]:
+    diff32 = []
+    diff16 = []
+
+    for i in range(SEQUENCE_LEN):
+
+        if valid_mask[i]:
+
+            abs32.append(
+                frames["32"][i].ravel()
+            )
+
+            abs16.append(
+                frames["16"][i].ravel()
+            )
+
             stats.append(
                 frame_stats(
-                    frames["16"][index]
+                    frames["16"][i]
                 )
             )
 
             shapes.append(
                 shape_features(
-                    frames["16"][index]
+                    frames["16"][i]
                 )
             )
+
         else:
+
+            abs32.append(
+                np.zeros(
+                    32 * 32,
+                    dtype=np.float32,
+                )
+            )
+
+            abs16.append(
+                np.zeros(
+                    16 * 16,
+                    dtype=np.float32,
+                )
+            )
+
             stats.append(
                 np.zeros(
                     12,
@@ -458,33 +539,40 @@ def feature_vector(
                 )
             )
 
-    for index in range(1, SEQUENCE_LEN):
+    for i in range(
+        1,
+        SEQUENCE_LEN,
+    ):
+
         if (
-            valid_mask[index]
-            and valid_mask[index - 1]
+            valid_mask[i]
+            and valid_mask[i - 1]
         ):
-            diffs_32.append(
+
+            diff32.append(
                 (
-                    frames["32"][index]
-                    - frames["32"][index - 1]
+                    frames["32"][i]
+                    - frames["32"][i - 1]
                 ).ravel()
             )
 
-            diffs_16.append(
+            diff16.append(
                 (
-                    frames["16"][index]
-                    - frames["16"][index - 1]
+                    frames["16"][i]
+                    - frames["16"][i - 1]
                 ).ravel()
             )
+
         else:
-            diffs_32.append(
+
+            diff32.append(
                 np.zeros(
                     32 * 32,
                     dtype=np.float32,
                 )
             )
 
-            diffs_16.append(
+            diff16.append(
                 np.zeros(
                     16 * 16,
                     dtype=np.float32,
@@ -493,10 +581,10 @@ def feature_vector(
 
     return np.concatenate(
         [
-            absolute_32,
-            absolute_16,
-            np.concatenate(diffs_32),
-            np.concatenate(diffs_16),
+            np.concatenate(abs32),
+            np.concatenate(abs16),
+            np.concatenate(diff32),
+            np.concatenate(diff16),
             np.concatenate(stats),
             np.concatenate(shapes),
             np.asarray(
@@ -504,55 +592,60 @@ def feature_vector(
                 dtype=np.float32,
             ),
             np.asarray(
-                elapsed_min,
+                elapsed,
                 dtype=np.float32,
             ),
             np.asarray(
-                gaps_min,
+                gaps,
                 dtype=np.float32,
             ),
         ]
-    ).astype(np.float32)
+    ).astype(
+        np.float32
+    )
 
 
-def build_histories(df: pd.DataFrame):
-    required = {
-        "frame_utc",
-        "track_id",
-        "x",
-        "y",
-    }
-
-    missing = required - set(df.columns)
-
-    if missing:
-        raise ValueError(
-            f"Faltan columnas requeridas: {sorted(missing)}"
-        )
+def build_histories(df):
 
     histories = {}
 
     clean = df.drop_duplicates(
-        subset=["track_id", "frame_utc"]
+        subset=[
+            "track_id",
+            "frame_utc",
+        ]
     )
 
     for track_id, group in clean.groupby(
         "track_id",
         sort=False,
     ):
+
         observations = []
 
-        for row in group.itertuples(index=False):
-            timestamp = parse_dataset_timestamp(
-                getattr(row, "frame_utc")
+        for row in group.itertuples(
+            index=False
+        ):
+
+            timestamp = parse_timestamp(
+                getattr(
+                    row,
+                    "frame_utc",
+                )
             )
 
             if timestamp is None:
                 continue
 
             try:
-                x = float(getattr(row, "x"))
-                y = float(getattr(row, "y"))
+                x = float(
+                    getattr(row, "x")
+                )
+
+                y = float(
+                    getattr(row, "y")
+                )
+
             except Exception:
                 continue
 
@@ -569,7 +662,12 @@ def build_histories(df: pd.DataFrame):
         )
 
         if observations:
-            histories[track_id] = observations
+
+            histories[
+                canonical_track_id(
+                    track_id
+                )
+            ] = observations
 
     return histories
 
@@ -578,15 +676,15 @@ def causal_position(
     history,
     timestamp,
 ):
+
     timestamps = [
         item[0]
         for item in history
     ]
 
-    index = np.searchsorted(
+    index = bisect_right(
         timestamps,
         timestamp,
-        side="right",
     ) - 1
 
     if index < 0:
@@ -598,8 +696,13 @@ def causal_position(
             history[0][2],
         )
 
-    previous = history[index - 1]
-    current = history[index]
+    previous = history[
+        index - 1
+    ]
+
+    current = history[
+        index
+    ]
 
     dt = (
         current[0]
@@ -641,530 +744,370 @@ def causal_position(
     )
 
 
-def select_real_images(
-    target_timestamp,
+def find_visual_sequence(
+    timestamp,
+    position,
     image_index,
-    image_times,
 ):
-    if not image_index:
-        return []
 
-    end = bisect_right(
-        image_times,
-        target_timestamp.timestamp(),
+    if position is None:
+        return None
+
+    x, y = position
+
+    timestamps = [
+        item[0]
+        for item in image_index
+    ]
+
+    index = bisect_right(
+        timestamps,
+        timestamp,
     ) - 1
 
-    if end < 0:
-        return []
-
-    window_start = (
-        target_timestamp.timestamp()
-        - MAX_SEQUENCE_WINDOW_MIN * 60.0
-    )
+    if index < 0:
+        return None
 
     selected = []
 
-    for index in range(
-        end,
-        -1,
-        -1,
-    ):
-        timestamp, path = image_index[index]
+    current_index = index
 
-        if timestamp.timestamp() < window_start:
+    while (
+        current_index >= 0
+        and len(selected)
+        < SEQUENCE_LEN
+    ):
+
+        frame_time, path = image_index[
+            current_index
+        ]
+
+        delta = (
+            timestamp
+            - frame_time
+        ).total_seconds() / 60.0
+
+        if delta < 0:
+            current_index -= 1
+            continue
+
+        if delta > MAX_SEQUENCE_WINDOW_MIN:
             break
 
         selected.append(
             (
-                timestamp,
+                frame_time,
                 path,
             )
         )
 
-        if len(selected) == SEQUENCE_LEN:
-            break
+        current_index -= 1
 
     selected.reverse()
 
-    return selected
+    if len(selected) < MIN_SEQUENCE_LEN:
+        return None
+
+    frames32 = []
+    frames16 = []
+
+    elapsed = []
+    gaps = []
+
+    last_time = None
+
+    for frame_time, path in selected:
+
+        dbz = load_dbz(
+            str(path)
+        )
+
+        patch = extract_patch(
+            dbz,
+            x,
+            y,
+            PATCH_SIZE,
+        )
+
+        frames32.append(
+            resize_field(
+                patch,
+                32,
+            )
+        )
+
+        frames16.append(
+            resize_field(
+                patch,
+                16,
+            )
+        )
+
+        elapsed.append(
+            (
+                timestamp
+                - frame_time
+            ).total_seconds()
+            / 60.0
+        )
+
+        if last_time is None:
+            gaps.append(0.0)
+        else:
+            gaps.append(
+                (
+                    frame_time
+                    - last_time
+                ).total_seconds()
+                / 60.0
+            )
+
+        last_time = frame_time
+
+    while len(frames32) < SEQUENCE_LEN:
+
+        frames32.insert(
+            0,
+            np.zeros(
+                (32, 32),
+                dtype=np.float32,
+            ),
+        )
+
+        frames16.insert(
+            0,
+            np.zeros(
+                (16, 16),
+                dtype=np.float32,
+            ),
+        )
+
+        elapsed.insert(
+            0,
+            0.0,
+        )
+
+        gaps.insert(
+            0,
+            0.0,
+        )
+
+    valid_mask = [
+        0.0
+        if i < SEQUENCE_LEN - len(selected)
+        else 1.0
+        for i in range(
+            SEQUENCE_LEN
+        )
+    ]
+
+    return (
+        {
+            "32": frames32,
+            "16": frames16,
+        },
+        valid_mask,
+        elapsed,
+        gaps,
+    )
 
 
-def build_sequence_samples(
+def build_visual_dataset(
     df,
     histories,
     image_index,
 ):
-    image_times = [
-        timestamp.timestamp()
-        for timestamp, _ in image_index
-    ]
 
-    features = []
-    metadata = []
+    visual_rows = []
 
-    counters = {
-        "rows": 0,
-        "short_history": 0,
-        "bad_gap": 0,
-        "missing_images": 0,
-        "valid": 0,
-    }
+    for row_index, row in df.iterrows():
 
-    sequence_length_counts = {
-        str(length): 0
-        for length in range(
-            MIN_SEQUENCE_LEN,
-            SEQUENCE_LEN + 1,
+        track_id = canonical_track_id(
+            row["track_id"]
         )
-    }
 
-    for row in df.itertuples(
-        index=False
-    ):
-        counters["rows"] += 1
-
-        track_id = getattr(
-            row,
-            "track_id",
+        timestamp = parse_timestamp(
+            row["frame_utc"]
         )
+
+        if timestamp is None:
+            continue
 
         history = histories.get(
             track_id
         )
 
-        target_timestamp = parse_dataset_timestamp(
-            getattr(row, "frame_utc")
-        )
-
-        if not history or target_timestamp is None:
+        if not history:
             continue
 
-        selected = select_real_images(
-            target_timestamp,
-            image_index,
-            image_times,
-        )
-
-        if len(selected) < MIN_SEQUENCE_LEN:
-            counters["short_history"] += 1
-            continue
-
-        gaps = [
-            (
-                selected[index][0]
-                - selected[index - 1][0]
-            ).total_seconds() / 60.0
-            for index in range(
-                1,
-                len(selected),
-            )
-        ]
-
-        if any(
-            gap <= 0
-            or gap > MAX_IMAGE_GAP_MIN
-            for gap in gaps
-        ):
-            counters["bad_gap"] += 1
-            continue
-
-        # Una única referencia espacial causal:
-        # todos los frames miran el mismo punto.
-        # El desplazamiento del núcleo queda visible.
-        anchor = causal_position(
+        position = causal_position(
             history,
-            target_timestamp,
+            timestamp,
         )
 
-        if anchor is None:
-            counters["missing_images"] += 1
+        sequence = find_visual_sequence(
+            timestamp,
+            position,
+            image_index,
+        )
+
+        if sequence is None:
             continue
 
-        frames_32 = [
-            np.zeros(
-                (32, 32),
-                dtype=np.float32,
+        frames, mask, elapsed, gaps = sequence
+
+        features = feature_vector(
+            frames,
+            mask,
+            elapsed,
+            gaps,
+        )
+
+        visual_rows.append(
+            (
+                row_index,
+                features,
             )
-            for _ in range(SEQUENCE_LEN)
-        ]
-
-        frames_16 = [
-            np.zeros(
-                (16, 16),
-                dtype=np.float32,
-            )
-            for _ in range(SEQUENCE_LEN)
-        ]
-
-        valid_mask = [
-            False
-        ] * SEQUENCE_LEN
-
-        elapsed_min = [
-            MAX_SEQUENCE_WINDOW_MIN
-        ] * SEQUENCE_LEN
-
-        feature_gaps = [
-            MAX_IMAGE_GAP_MIN
-        ] * (SEQUENCE_LEN - 1)
-
-        start = (
-            SEQUENCE_LEN
-            - len(selected)
-        )
-
-        ok = True
-
-        for index, (
-            image_timestamp,
-            path,
-        ) in enumerate(selected):
-            if not ok:
-                break
-
-            try:
-                dbz = load_dbz(
-                    str(path.resolve())
-                )
-
-                patch = extract_patch(
-                    dbz,
-                    anchor[0],
-                    anchor[1],
-                    PATCH_SIZE,
-                )
-
-                slot = start + index
-
-                frames_32[slot] = resize_field(
-                    patch,
-                    32,
-                )
-
-                frames_16[slot] = resize_field(
-                    patch,
-                    16,
-                )
-
-                valid_mask[slot] = True
-
-                elapsed_min[slot] = max(
-                    0.0,
-                    (
-                        target_timestamp
-                        - image_timestamp
-                    ).total_seconds() / 60.0,
-                )
-
-            except Exception:
-                ok = False
-
-        if not ok:
-            counters["missing_images"] += 1
-            continue
-
-        for index, gap in enumerate(gaps):
-            feature_gaps[
-                start + index
-            ] = gap
-
-        vector = feature_vector(
-            {
-                "32": frames_32,
-                "16": frames_16,
-            },
-            valid_mask,
-            elapsed_min,
-            feature_gaps,
-        )
-
-        features.append(vector)
-
-        metadata.append(
-            {
-                "track_id": track_id,
-                "frame_utc": str(
-                    getattr(
-                        row,
-                        "frame_utc",
-                    )
-                ),
-            }
-        )
-
-        counters["valid"] += 1
-
-        sequence_length_counts[
-            str(len(selected))
-        ] += 1
-
-    for key, value in counters.items():
-        print(
-            f"{key}: {value}"
         )
 
     print(
-        "Longitudes de secuencia: "
-        f"{sequence_length_counts}"
+        f"Secuencias visuales válidas: "
+        f"{len(visual_rows)}"
     )
 
-    return (
-        np.asarray(
-            features,
-            dtype=np.float32,
-        ),
-        pd.DataFrame(metadata),
-        counters,
-        sequence_length_counts,
-    )
+    return visual_rows
 
 
-def make_model():
-    random_forest = RandomForestClassifier(
-        n_estimators=500,
-        max_depth=None,
-        min_samples_leaf=2,
-        max_features="sqrt",
-        class_weight="balanced_subsample",
-        random_state=RANDOM_STATE,
-        n_jobs=-1,
-    )
+def make_ensemble():
 
-    extra_trees = ExtraTreesClassifier(
-        n_estimators=500,
-        max_depth=None,
-        min_samples_leaf=2,
-        max_features="sqrt",
-        class_weight="balanced",
-        random_state=43,
-        n_jobs=-1,
-    )
-
-    histogram_gradient_boosting = (
-        HistGradientBoostingClassifier(
-            max_iter=300,
-            learning_rate=0.04,
-            max_leaf_nodes=31,
-            l2_regularization=1.0,
-            random_state=44,
-        )
-    )
-
-    return VotingClassifier(
-        estimators=[
-            ("rf", random_forest),
-            ("et", extra_trees),
-            (
-                "hgb",
-                histogram_gradient_boosting,
+    return [
+        (
+            "rf",
+            RandomForestClassifier(
+                n_estimators=700,
+                max_depth=14,
+                min_samples_leaf=2,
+                max_features="sqrt",
+                class_weight="balanced_subsample",
+                random_state=RANDOM_STATE,
+                n_jobs=-1,
             ),
-        ],
-        voting="soft",
-        weights=[1, 1, 1],
-    )
-
-
-def train_one(
-    X,
-    y,
-    groups,
-    target,
-    horizon,
-):
-    result = {
-        "target": target,
-        "horizon_min": horizon,
-        "status": None,
-        "samples": int(len(y)),
-    }
-
-    if (
-        len(y) < 40
-        or len(np.unique(y)) < 2
-        or len(np.unique(groups)) < 2
-    ):
-        result["status"] = (
-            "insufficient_data"
-        )
-        return None, result
-
-    splitter = GroupShuffleSplit(
-        n_splits=1,
-        test_size=0.25,
-        random_state=RANDOM_STATE,
-    )
-
-    try:
-        train_index, test_index = next(
-            splitter.split(
-                X,
-                y,
-                groups,
-            )
-        )
-    except Exception:
-        result["status"] = (
-            "invalid_split"
-        )
-        return None, result
-
-    if (
-        len(np.unique(y[train_index])) < 2
-        or len(np.unique(y[test_index])) < 2
-    ):
-        result["status"] = (
-            "invalid_class_split"
-        )
-        return None, result
-
-    model = make_model()
-
-    try:
-        model.fit(
-            X[train_index],
-            y[train_index],
-        )
-
-        probabilities = model.predict_proba(
-            X[test_index]
-        )
-    except Exception as exc:
-        result["status"] = (
-            "training_error:"
-            f"{type(exc).__name__}: {exc}"
-        )
-        return None, result
-
-    positive_index = list(
-        model.classes_
-    ).index(1)
-
-    positive_probability = probabilities[
-        :,
-        positive_index,
+            0.20,
+        ),
+        (
+            "extra",
+            ExtraTreesClassifier(
+                n_estimators=700,
+                max_depth=16,
+                min_samples_leaf=2,
+                max_features="sqrt",
+                class_weight="balanced",
+                random_state=RANDOM_STATE,
+                n_jobs=-1,
+            ),
+            0.30,
+        ),
+        (
+            "hist",
+            HistGradientBoostingClassifier(
+                max_iter=350,
+                learning_rate=0.045,
+                max_leaf_nodes=31,
+                min_samples_leaf=12,
+                l2_regularization=1.0,
+                random_state=RANDOM_STATE,
+            ),
+            0.30,
+        ),
+        (
+            "logistic",
+            Pipeline(
+                [
+                    (
+                        "imputer",
+                        SimpleImputer(
+                            strategy="median"
+                        ),
+                    ),
+                    (
+                        "scaler",
+                        StandardScaler(),
+                    ),
+                    (
+                        "model",
+                        LogisticRegression(
+                            max_iter=2000,
+                            C=0.7,
+                            class_weight="balanced",
+                            random_state=RANDOM_STATE,
+                        ),
+                    ),
+                ]
+            ),
+            0.20,
+        ),
     ]
-
-    predictions = (
-        positive_probability >= 0.5
-    ).astype(np.int8)
-
-    result["status"] = "ok"
-
-    result["balanced_accuracy"] = float(
-        balanced_accuracy_score(
-            y[test_index],
-            predictions,
-        )
-    )
-
-    result["auc"] = float(
-        roc_auc_score(
-            y[test_index],
-            positive_probability,
-        )
-    )
-
-    result["brier"] = float(
-        brier_score_loss(
-            y[test_index],
-            positive_probability,
-        )
-    )
-
-    result["test_samples"] = int(
-        len(test_index)
-    )
-
-    return model, result
-
-
-def atomic_joblib_dump(
-    payload,
-    destination: Path,
-):
-    temporary = destination.with_suffix(
-        destination.suffix + ".tmp"
-    )
-
-    joblib.dump(
-        payload,
-        temporary,
-    )
-
-    temporary.replace(
-        destination
-    )
-
-
-def atomic_text_write(
-    text: str,
-    destination: Path,
-):
-    temporary = destination.with_suffix(
-        destination.suffix + ".tmp"
-    )
-
-    temporary.write_text(
-        text,
-        encoding="utf-8",
-    )
-
-    temporary.replace(
-        destination
-    )
 
 
 def main():
-    print(
-        "=== RMA10 VISUAL/TEMPORAL AI V6 ==="
-    )
 
     print(
-        f"Version: {MODEL_VERSION}"
+        "=== CLIMAAR RMA10 — MODELO DEFINITIVO ==="
     )
 
     if not DATASET.exists():
-        raise FileNotFoundError(
-            DATASET
+        raise SystemExit(
+            f"No existe dataset: {DATASET}"
         )
 
     if not RADAR_DIR.exists():
-        raise FileNotFoundError(
-            RADAR_DIR
+        raise SystemExit(
+            f"No existe radar: {RADAR_DIR}"
         )
 
     df = pd.read_csv(
         DATASET
     )
 
-    required = {
-        "frame_utc",
-        "track_id",
-        "x",
-        "y",
-        "horizonte_min",
-    } | set(TARGETS)
+    required = (
+        set(V1_FEATURES)
+        | set(TARGETS)
+        | {
+            "track_id",
+            "horizonte_min",
+            "frame_utc",
+            "x",
+            "y",
+        }
+    )
 
-    missing = required - set(
-        df.columns
+    missing = sorted(
+        required - set(df.columns)
     )
 
     if missing:
-        raise ValueError(
-            f"Faltan columnas: "
-            f"{sorted(missing)}"
+        raise SystemExit(
+            f"Faltan columnas obligatorias: {missing}"
         )
 
-    df["horizonte_min"] = pd.to_numeric(
-        df["horizonte_min"],
-        errors="coerce",
+    df = df.replace(
+        [np.inf, -np.inf],
+        np.nan,
     )
-    df = df[df["horizonte_min"].isin(HORIZONS)].copy()
+
+    df["track_id"] = df[
+        "track_id"
+    ].map(
+        canonical_track_id
+    )
 
     print(
-        f"Dataset: {len(df)} filas | "
-        f"tracks: {df['track_id'].nunique()}"
+        f"Dataset: {len(df)} filas"
+        f" | tracks: "
+        f"{df['track_id'].nunique()}"
     )
+
+    image_index = build_image_index()
 
     histories = build_histories(
         df
@@ -1175,317 +1118,401 @@ def main():
         f"{len(histories)}"
     )
 
-    image_index = build_image_index()
-
-    (
-        X,
-        metadata,
-        counters,
-        sequence_counts,
-    ) = build_sequence_samples(
+    visual_rows = build_visual_dataset(
         df,
         histories,
         image_index,
     )
 
-    print(
-        f"Secuencias visuales válidas: "
-        f"{len(X)}"
+    visual_map = {
+        index: features
+        for index, features
+        in visual_rows
+    }
+
+    visual_dim = (
+        len(next(iter(visual_map.values())))
+        if visual_map
+        else 0
     )
 
-    if len(X) < 300:
-        raise RuntimeError(
-            f"Solo se construyeron "
-            f"{len(X)} secuencias. "
-            "Se aborta para no "
-            "reemplazar el modelo."
-        )
-
-    if X.ndim != 2:
-        raise RuntimeError(
-            f"Forma de features inválida: "
-            f"{X.shape}"
-        )
-
     print(
-        f"Features por secuencia: "
-        f"{X.shape[1]}"
+        f"Features visuales: {visual_dim}"
     )
 
-    # Índice único de las muestras visuales. La clave se normaliza
-    # exactamente igual que las filas del dataset para impedir fallos
-    # por diferencias de tipo en track_id o timezone en frame_utc.
-    lookup = {}
-    duplicate_sample_keys = 0
+    splitter = GroupShuffleSplit(
+        n_splits=1,
+        test_size=0.25,
+        random_state=RANDOM_STATE,
+    )
 
-    for index, item in metadata.iterrows():
-        timestamp = parse_dataset_timestamp(
-            item["frame_utc"]
+    train_idx, test_idx = next(
+        splitter.split(
+            df,
+            groups=df["track_id"],
         )
-        track_key = canonical_track_id(
-            item["track_id"]
-        )
+    )
 
-        if timestamp is None or not track_key:
-            continue
+    train_indices = set(
+        df.index[train_idx]
+    )
 
-        key = (track_key, timestamp)
-
-        if key in lookup:
-            duplicate_sample_keys += 1
-            continue
-
-        lookup[key] = int(index)
-
-    if not lookup:
-        raise RuntimeError(
-            "El índice visual quedó vacío. "
-            "No se puede asociar ninguna secuencia "
-            "con el dataset; se aborta sin tocar el modelo."
-        )
+    test_indices = set(
+        df.index[test_idx]
+    )
 
     print(
-        f"Muestras visuales indexadas: {len(lookup)} | "
-        f"duplicados ignorados: {duplicate_sample_keys}"
+        f"Tracks train: "
+        f"{df.iloc[train_idx]['track_id'].nunique()}"
+        f" | test: "
+        f"{df.iloc[test_idx]['track_id'].nunique()}"
+    )
+
+    visual_train = [
+        visual_map[index]
+        for index in train_indices
+        if index in visual_map
+    ]
+
+    if not visual_train:
+        raise RuntimeError(
+            "No hay secuencias visuales "
+            "válidas en entrenamiento."
+        )
+
+    visual_train_matrix = np.vstack(
+        visual_train
+    )
+
+    components = min(
+        PCA_COMPONENTS,
+        visual_train_matrix.shape[0],
+        visual_train_matrix.shape[1],
+    )
+
+    pca = PCA(
+        n_components=components,
+        random_state=RANDOM_STATE,
+    )
+
+    pca.fit(
+        visual_train_matrix
+    )
+
+    print(
+        f"PCA visual: {components} componentes"
+    )
+
+    base_matrix = df[
+        list(V1_FEATURES)
+    ].astype(
+        float
+    ).to_numpy(
+        dtype=np.float32
+    )
+
+    index_positions = {
+        index: position
+        for position, index
+        in enumerate(df.index)
+    }
+
+    final_rows = []
+
+    for index in df.index:
+
+        base = base_matrix[
+            index_positions[index]
+        ]
+
+        if index in visual_map:
+
+            visual = pca.transform(
+                visual_map[index].reshape(
+                    1,
+                    -1,
+                )
+            )[0]
+
+            mask = np.array(
+                [1.0],
+                dtype=np.float32,
+            )
+
+        else:
+
+            visual = np.zeros(
+                components,
+                dtype=np.float32,
+            )
+
+            mask = np.array(
+                [0.0],
+                dtype=np.float32,
+            )
+
+        final_rows.append(
+            np.concatenate(
+                [
+                    base,
+                    visual,
+                    mask,
+                ]
+            )
+        )
+
+    X = np.vstack(
+        final_rows
+    ).astype(
+        np.float32
+    )
+
+    print(
+        f"Features finales: {X.shape[1]}"
     )
 
     models = {}
 
     metrics = {
-        "version": MODEL_VERSION,
-        "generated_at": datetime.now(
+        "model_version": MODEL_VERSION,
+        "generated_utc": datetime.now(
             timezone.utc
         ).isoformat(),
         "dataset_rows": int(len(df)),
         "tracks_total": int(
             df["track_id"].nunique()
         ),
-        "sequences_valid": int(
-            len(X)
+        "tracks_train": int(
+            df.iloc[train_idx][
+                "track_id"
+            ].nunique()
         ),
-        "features_per_sequence": int(
+        "tracks_test": int(
+            df.iloc[test_idx][
+                "track_id"
+            ].nunique()
+        ),
+        "v1_features": list(
+            V1_FEATURES
+        ),
+        "visual_raw_features": int(
+            visual_dim
+        ),
+        "pca_features": int(
+            components
+        ),
+        "final_features": int(
             X.shape[1]
         ),
-        "counters": counters,
-        "sequence_length_counts":
-            sequence_counts,
+        "horizons": list(
+            HORIZONS
+        ),
+        "targets": list(
+            TARGETS
+        ),
         "models": {},
     }
 
-    trained = 0
-
-    horizon_values = pd.to_numeric(
-        df["horizonte_min"],
-        errors="coerce",
-    )
-
-    # Validación explícita de la asociación dataset -> muestra visual.
-    # No se permite entrenar a ciegas si las claves dejan de coincidir.
-    total_dataset_rows = int(len(df))
-    total_matched_rows = 0
-
     for horizon in HORIZONS:
-        horizon_df = df[
-            horizon_values == horizon
-        ]
-
-        print(
-            f"Dataset horizonte {horizon} min: "
-            f"{len(horizon_df)} filas"
-        )
 
         for target in TARGETS:
-            print(
-                f"Entrenando "
-                f"{target} {horizon} min..."
+
+            key = f"{horizon}m_{target}"
+
+            mask = (
+                df["horizonte_min"]
+                == horizon
+            ).to_numpy()
+
+            mask &= (
+                df[target]
+                .notna()
+                .to_numpy()
             )
 
-            indices = []
-            labels = []
-            seen_labels = {}
+            mask &= (
+                df["track_id"]
+                != ""
+            ).to_numpy()
 
-            for row in horizon_df.itertuples(
-                index=False
+            positions = np.flatnonzero(
+                mask
+            )
+
+            train_positions = [
+                pos
+                for pos in positions
+                if df.index[pos]
+                in train_indices
+            ]
+
+            test_positions = [
+                pos
+                for pos in positions
+                if df.index[pos]
+                in test_indices
+            ]
+
+            if (
+                len(train_positions) < 20
+                or len(test_positions) < 10
             ):
-                row_timestamp = parse_dataset_timestamp(
-                    getattr(
-                        row,
-                        "frame_utc",
+                raise RuntimeError(
+                    f"Datos insuficientes "
+                    f"{key}: "
+                    f"train={len(train_positions)} "
+                    f"test={len(test_positions)}"
+                )
+
+            X_train = X[
+                train_positions
+            ]
+
+            X_test = X[
+                test_positions
+            ]
+
+            y_train = (
+                df.iloc[
+                    train_positions
+                ][target]
+                .astype(int)
+                .to_numpy()
+            )
+
+            y_test = (
+                df.iloc[
+                    test_positions
+                ][target]
+                .astype(int)
+                .to_numpy()
+            )
+
+            if len(np.unique(y_train)) < 2:
+                raise RuntimeError(
+                    f"Una sola clase en "
+                    f"entrenamiento: {key}"
+                )
+
+            trained_models = []
+
+            probabilities = []
+
+            for (
+                name,
+                model,
+                weight,
+            ) in make_ensemble():
+
+                model.fit(
+                    X_train,
+                    y_train,
+                )
+
+                probability = model.predict_proba(
+                    X_test
+                )[:, 1]
+
+                trained_models.append(
+                    (
+                        name,
+                        model,
+                        weight,
                     )
                 )
 
-                track_key = canonical_track_id(
-                    getattr(row, "track_id")
+                probabilities.append(
+                    probability * weight
                 )
 
-                if row_timestamp is None or not track_key:
-                    continue
+            total_weight = sum(
+                item[2]
+                for item in trained_models
+            )
 
-                key = (
-                    track_key,
-                    row_timestamp,
+            probability = (
+                np.sum(
+                    probabilities,
+                    axis=0,
                 )
+                / total_weight
+            )
 
-                index = lookup.get(key)
+            prediction = (
+                probability >= 0.5
+            ).astype(int)
 
-                if index is None:
-                    continue
+            auc = safe_auc(
+                y_test,
+                probability,
+            )
 
-                value = getattr(
-                    row,
-                    target,
+            brier = float(
+                brier_score_loss(
+                    y_test,
+                    probability,
                 )
+            )
 
-                if pd.isna(value):
-                    continue
+            balanced = float(
+                balanced_accuracy_score(
+                    y_test,
+                    prediction,
+                )
+            )
 
-                label = parse_bool_label(value)
+            models[key] = trained_models
 
-                # Una misma muestra visual no se pondera varias veces
-                # si el CSV contiene filas repetidas.
-                previous = seen_labels.get(index)
-                if previous is not None:
-                    if previous != label:
-                        raise RuntimeError(
-                            "Etiquetas conflictivas para la misma "
-                            f"muestra: target={target}, "
-                            f"horizonte={horizon}, "
-                            f"track_id={track_key}, "
-                            f"frame_utc={row_timestamp.isoformat()}"
-                        )
-                    continue
-
-                seen_labels[index] = label
-                indices.append(index)
-                labels.append(label)
-
-            matched = len(indices)
-            total_matched_rows += matched
-
-            track_count = len(
-                {
-                    canonical_track_id(value)
-                    for value in metadata.iloc[
-                        indices
-                    ]["track_id"].to_numpy()
-                }
-            ) if indices else 0
+            metrics["models"][key] = {
+                "samples_train": int(
+                    len(y_train)
+                ),
+                "samples_test": int(
+                    len(y_test)
+                ),
+                "positive_train": int(
+                    y_train.sum()
+                ),
+                "positive_test": int(
+                    y_test.sum()
+                ),
+                "roc_auc": auc,
+                "brier": brier,
+                "balanced_accuracy": balanced,
+            }
 
             print(
-                f"  MATCH={matched} | "
-                f"positivos={sum(labels)} | "
-                f"negativos={len(labels) - sum(labels)} | "
-                f"tracks={track_count}"
+                f"{key}: "
+                f"AUC={auc:.4f} "
+                f"bal_acc={balanced:.4f} "
+                f"Brier={brier:.4f}"
             )
 
-            if not indices:
-                metrics["models"][
-                    f"{target}_{horizon}"
-                ] = {
-                    "target": target,
-                    "horizon_min": horizon,
-                    "status":
-                        "no_matching_samples",
-                    "samples": 0,
-                }
-
-                continue
-
-            index_array = np.asarray(
-                indices,
-                dtype=np.int64,
-            )
-
-            y = np.asarray(
-                labels,
-                dtype=np.int8,
-            )
-
-            groups = np.asarray(
-                [
-                    canonical_track_id(value)
-                    for value in metadata.iloc[
-                        index_array
-                    ]["track_id"].to_numpy()
-                ],
-                dtype=object,
-            )
-
-            model, result = train_one(
-                X[index_array],
-                y,
-                groups,
-                target,
-                horizon,
-            )
-
-            metrics["models"][
-                f"{target}_{horizon}"
-            ] = result
-
-            if model is None:
-                print(
-                    "NO ENTRENADO | "
-                    f"status={result['status']} "
-                    f"| samples={result['samples']}"
-                )
-                continue
-
-            models[
-                (target, horizon)
-            ] = model
-
-            trained += 1
-
-            print(
-                "OK | "
-                f"samples={result['samples']} | "
-                f"bal_acc="
-                f"{result['balanced_accuracy']:.4f} | "
-                f"AUC="
-                f"{result['auc']:.4f}"
-            )
-
-    print(
-        f"Filas dataset: {total_dataset_rows} | "
-        f"asociaciones únicas usadas: {total_matched_rows}"
-    )
-
-    if total_matched_rows == 0:
-        raise RuntimeError(
-            "No hubo ninguna asociación entre dataset y "
-            "secuencias visuales. Se aborta sin reemplazar el modelo."
-        )
-
-    if trained != 12:
-        failed = {
-            key: value
-            for key, value in metrics["models"].items()
-            if value.get("status") != "ok"
-        }
-        raise RuntimeError(
-            f"Solo {trained}/12 modelos entrenados. "
-            f"Fallidos: {failed}. "
-            "Se aborta para no reemplazar el modelo."
-        )
-
-    payload = {
-        "version": MODEL_VERSION,
+    bundle = {
+        "model_version": MODEL_VERSION,
+        "features_v1": list(V1_FEATURES),
+        "visual_raw_features": int(
+            visual_dim
+        ),
+        "pca_components": int(
+            components
+        ),
+        "sequence_len": SEQUENCE_LEN,
+        "min_sequence_len": MIN_SEQUENCE_LEN,
+        "horizons_min": list(
+            HORIZONS
+        ),
+        "targets": list(
+            TARGETS
+        ),
+        "pca": pca,
         "models": models,
-        "feature_config": {
-            "sequence_len": SEQUENCE_LEN,
-            "min_sequence_len":
-                MIN_SEQUENCE_LEN,
-            "max_sequence_window_min":
-                MAX_SEQUENCE_WINDOW_MIN,
+        "config": {
+            "patch_size": PATCH_SIZE,
             "max_image_gap_min":
                 MAX_IMAGE_GAP_MIN,
-            "patch_size": PATCH_SIZE,
-            "downsample_sizes":
-                DOWNSAMPLE_SIZES,
-            "feature_count": int(
-                X.shape[1]
-            ),
+            "max_sequence_window_min":
+                MAX_SEQUENCE_WINDOW_MIN,
             "dbz_min": DBZ_MIN,
             "dbz_max": DBZ_MAX,
             "palette_start":
@@ -1493,48 +1520,49 @@ def main():
             "palette_end":
                 PALETTE_END,
         },
-        "targets": list(TARGETS),
-        "horizons": list(HORIZONS),
     }
 
-    MODEL_PATH.parent.mkdir(
+    MODEL_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    atomic_joblib_dump(
-        payload,
-        MODEL_PATH,
+    tmp_model = MODEL_PATH.with_suffix(
+        ".tmp.joblib"
     )
 
-    atomic_text_write(
+    joblib.dump(
+        bundle,
+        tmp_model,
+        compress=3,
+    )
+
+    tmp_model.replace(
+        MODEL_PATH
+    )
+
+    METRICS_PATH.write_text(
         json.dumps(
             metrics,
-            indent=2,
             ensure_ascii=False,
+            indent=2,
         ),
-        METRICS_PATH,
+        encoding="utf-8",
     )
 
+    print()
     print(
-        "=== FINALIZADO ==="
+        "=== MODELO DEFINITIVO ENTRENADO ==="
     )
-
     print(
         f"Modelo: {MODEL_PATH}"
     )
-
     print(
         f"Métricas: {METRICS_PATH}"
     )
-
     print(
-        f"Modelos entrenados: "
-        f"{trained}/12"
-    )
-
-    print(
-        f"Features: {X.shape[1]}"
+        "Modelos entrenados: "
+        f"{len(models)}/12"
     )
 
 
