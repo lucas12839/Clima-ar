@@ -49,7 +49,7 @@ RADAR_DIR = ROOT / "data/radar/historico"
 MODEL_PATH = ROOT / "data/models/rma10_visual_temporal_model.joblib"
 METRICS_PATH = ROOT / "data/models/rma10_visual_temporal_model_metrics.json"
 
-MODEL_VERSION = "rma10-visual-temporal-v6-multiscale-ensemble-final"
+MODEL_VERSION = "rma10-visual-temporal-v6-multiscale-ensemble-final-repair2"
 
 SEQUENCE_LEN = 6
 MIN_SEQUENCE_LEN = 3
@@ -87,6 +87,28 @@ def parse_timestamp_from_name(path: Path) -> datetime | None:
         return None
 
     return dt.replace(tzinfo=timezone.utc)
+
+
+def canonical_track_id(value) -> str:
+    """Normaliza track_id para que int/float/string representen la misma pista."""
+    if value is None or pd.isna(value):
+        return ""
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)):
+        if not np.isfinite(value):
+            return ""
+        if float(value).is_integer():
+            return str(int(value))
+        return str(value).strip()
+    text = str(value).strip()
+    try:
+        numeric = float(text)
+        if np.isfinite(numeric) and numeric.is_integer():
+            return str(int(numeric))
+    except (TypeError, ValueError):
+        pass
+    return text
 
 
 def parse_dataset_timestamp(value) -> datetime | None:
@@ -1190,19 +1212,42 @@ def main():
         f"{X.shape[1]}"
     )
 
+    # Índice único de las muestras visuales. La clave se normaliza
+    # exactamente igual que las filas del dataset para impedir fallos
+    # por diferencias de tipo en track_id o timezone en frame_utc.
     lookup = {}
+    duplicate_sample_keys = 0
+
     for index, item in metadata.iterrows():
         timestamp = parse_dataset_timestamp(
             item["frame_utc"]
         )
-        if timestamp is None:
+        track_key = canonical_track_id(
+            item["track_id"]
+        )
+
+        if timestamp is None or not track_key:
             continue
-        lookup[
-            (
-                str(item["track_id"]),
-                timestamp,
-            )
-        ] = index
+
+        key = (track_key, timestamp)
+
+        if key in lookup:
+            duplicate_sample_keys += 1
+            continue
+
+        lookup[key] = int(index)
+
+    if not lookup:
+        raise RuntimeError(
+            "El índice visual quedó vacío. "
+            "No se puede asociar ninguna secuencia "
+            "con el dataset; se aborta sin tocar el modelo."
+        )
+
+    print(
+        f"Muestras visuales indexadas: {len(lookup)} | "
+        f"duplicados ignorados: {duplicate_sample_keys}"
+    )
 
     models = {}
 
@@ -1229,11 +1274,25 @@ def main():
 
     trained = 0
 
+    horizon_values = pd.to_numeric(
+        df["horizonte_min"],
+        errors="coerce",
+    )
+
+    # Validación explícita de la asociación dataset -> muestra visual.
+    # No se permite entrenar a ciegas si las claves dejan de coincidir.
+    total_dataset_rows = int(len(df))
+    total_matched_rows = 0
+
     for horizon in HORIZONS:
         horizon_df = df[
-            df["horizonte_min"]
-            == horizon
+            horizon_values == horizon
         ]
+
+        print(
+            f"Dataset horizonte {horizon} min: "
+            f"{len(horizon_df)} filas"
+        )
 
         for target in TARGETS:
             print(
@@ -1243,6 +1302,7 @@ def main():
 
             indices = []
             labels = []
+            seen_labels = {}
 
             for row in horizon_df.itertuples(
                 index=False
@@ -1254,17 +1314,19 @@ def main():
                     )
                 )
 
-                if row_timestamp is None:
+                track_key = canonical_track_id(
+                    getattr(row, "track_id")
+                )
+
+                if row_timestamp is None or not track_key:
                     continue
 
                 key = (
-                    str(getattr(row, "track_id")),
+                    track_key,
                     row_timestamp,
                 )
 
-                index = lookup.get(
-                    key
-                )
+                index = lookup.get(key)
 
                 if index is None:
                     continue
@@ -1277,10 +1339,44 @@ def main():
                 if pd.isna(value):
                     continue
 
+                label = parse_bool_label(value)
+
+                # Una misma muestra visual no se pondera varias veces
+                # si el CSV contiene filas repetidas.
+                previous = seen_labels.get(index)
+                if previous is not None:
+                    if previous != label:
+                        raise RuntimeError(
+                            "Etiquetas conflictivas para la misma "
+                            f"muestra: target={target}, "
+                            f"horizonte={horizon}, "
+                            f"track_id={track_key}, "
+                            f"frame_utc={row_timestamp.isoformat()}"
+                        )
+                    continue
+
+                seen_labels[index] = label
                 indices.append(index)
-                labels.append(
-                    parse_bool_label(value)
-                )
+                labels.append(label)
+
+            matched = len(indices)
+            total_matched_rows += matched
+
+            track_count = len(
+                {
+                    canonical_track_id(value)
+                    for value in metadata.iloc[
+                        indices
+                    ]["track_id"].to_numpy()
+                }
+            ) if indices else 0
+
+            print(
+                f"  MATCH={matched} | "
+                f"positivos={sum(labels)} | "
+                f"negativos={len(labels) - sum(labels)} | "
+                f"tracks={track_count}"
+            )
 
             if not indices:
                 metrics["models"][
@@ -1289,7 +1385,7 @@ def main():
                     "target": target,
                     "horizon_min": horizon,
                     "status":
-                        "insufficient_data",
+                        "no_matching_samples",
                     "samples": 0,
                 }
 
@@ -1305,9 +1401,15 @@ def main():
                 dtype=np.int8,
             )
 
-            groups = metadata.iloc[
-                index_array
-            ]["track_id"].to_numpy()
+            groups = np.asarray(
+                [
+                    canonical_track_id(value)
+                    for value in metadata.iloc[
+                        index_array
+                    ]["track_id"].to_numpy()
+                ],
+                dtype=object,
+            )
 
             model, result = train_one(
                 X[index_array],
@@ -1344,12 +1446,27 @@ def main():
                 f"{result['auc']:.4f}"
             )
 
-    if trained != 12:
+    print(
+        f"Filas dataset: {total_dataset_rows} | "
+        f"asociaciones únicas usadas: {total_matched_rows}"
+    )
+
+    if total_matched_rows == 0:
         raise RuntimeError(
-            f"Solo {trained}/12 modelos "
-            "entrenados. "
-            "Se aborta para no "
-            "reemplazar el modelo."
+            "No hubo ninguna asociación entre dataset y "
+            "secuencias visuales. Se aborta sin reemplazar el modelo."
+        )
+
+    if trained != 12:
+        failed = {
+            key: value
+            for key, value in metrics["models"].items()
+            if value.get("status") != "ok"
+        }
+        raise RuntimeError(
+            f"Solo {trained}/12 modelos entrenados. "
+            f"Fallidos: {failed}. "
+            "Se aborta para no reemplazar el modelo."
         )
 
     payload = {
