@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from sklearn.decomposition import PCA
+from sklearn.decomposition import IncrementalPCA
 from sklearn.ensemble import (
     ExtraTreesClassifier,
     HistGradientBoostingClassifier,
@@ -244,7 +244,7 @@ def build_image_index():
     return index
 
 
-@lru_cache(maxsize=128)
+@lru_cache(maxsize=16)
 def load_dbz(path_string):
 
     with Image.open(path_string) as image:
@@ -912,70 +912,72 @@ def find_visual_sequence(
     )
 
 
-def build_visual_dataset(
-    df,
+def build_visual_feature(
+    row_index,
+    row,
     histories,
     image_index,
 ):
+    track_id = canonical_track_id(
+        row["track_id"]
+    )
 
-    visual_rows = []
+    timestamp = parse_timestamp(
+        row["frame_utc"]
+    )
 
-    for row_index, row in df.iterrows():
+    if timestamp is None:
+        return None
 
-        track_id = canonical_track_id(
-            row["track_id"]
-        )
+    history = histories.get(
+        track_id
+    )
 
-        timestamp = parse_timestamp(
-            row["frame_utc"]
-        )
+    if not history:
+        return None
 
-        if timestamp is None:
-            continue
+    position = causal_position(
+        history,
+        timestamp,
+    )
 
-        history = histories.get(
-            track_id
-        )
+    sequence = find_visual_sequence(
+        timestamp,
+        position,
+        image_index,
+    )
 
-        if not history:
-            continue
+    if sequence is None:
+        return None
 
-        position = causal_position(
-            history,
-            timestamp,
-        )
+    frames, mask, elapsed, gaps = sequence
 
-        sequence = find_visual_sequence(
-            timestamp,
-            position,
+    return feature_vector(
+        frames,
+        mask,
+        elapsed,
+        gaps,
+    )
+
+
+def iter_visual_features(
+    df,
+    indices,
+    histories,
+    image_index,
+):
+    for index in indices:
+        row = df.loc[index]
+
+        features = build_visual_feature(
+            index,
+            row,
+            histories,
             image_index,
         )
 
-        if sequence is None:
-            continue
-
-        frames, mask, elapsed, gaps = sequence
-
-        features = feature_vector(
-            frames,
-            mask,
-            elapsed,
-            gaps,
-        )
-
-        visual_rows.append(
-            (
-                row_index,
-                features,
-            )
-        )
-
-    print(
-        f"Secuencias visuales válidas: "
-        f"{len(visual_rows)}"
-    )
-
-    return visual_rows
+        if features is not None:
+            yield index, features
 
 
 def make_ensemble():
@@ -1118,27 +1120,48 @@ def main():
         f"{len(histories)}"
     )
 
-    visual_rows = build_visual_dataset(
-        df,
-        histories,
-        image_index,
+    # El dataset visual es grande (~14.350 features por secuencia).
+    # No se mantiene completo en RAM: las features se regeneran en lotes.
+    # Esto evita varios GB de memoria y conserva la representación visual causal.
+
+    # Split temporal por bloques de evento.
+    # Cada track permanece íntegramente en un único bloque.
+    # Los tracks que se solapan temporalmente quedan en el mismo evento.
+    track_events = (
+        df.groupby("track_id")["frame_utc"]
+        .agg(["min", "max"])
+        .copy()
     )
 
-    visual_map = {
-        index: features
-        for index, features
-        in visual_rows
-    }
-
-    visual_dim = (
-        len(next(iter(visual_map.values())))
-        if visual_map
-        else 0
+    track_events["min"] = pd.to_datetime(
+        track_events["min"], utc=True
+    )
+    track_events["max"] = pd.to_datetime(
+        track_events["max"], utc=True
     )
 
-    print(
-        f"Features visuales: {visual_dim}"
-    )
+    # Construir eventos uniendo tracks cuyos intervalos temporales
+    # se solapan o están separados por <= 30 minutos.
+    event_id = 0
+    current_end = None
+    track_event = {}
+
+    for track_id, row in track_events.sort_values("min").iterrows():
+        start = row["min"]
+        end = row["max"]
+
+        if (
+            current_end is None
+            or start > current_end + pd.Timedelta(minutes=30)
+        ):
+            event_id += 1
+            current_end = end
+        else:
+            current_end = max(current_end, end)
+
+        track_event[track_id] = event_id
+
+    event_groups = df["track_id"].map(track_event)
 
     splitter = GroupShuffleSplit(
         n_splits=1,
@@ -1149,7 +1172,7 @@ def main():
     train_idx, test_idx = next(
         splitter.split(
             df,
-            groups=df["track_id"],
+            groups=event_groups,
         )
     )
 
@@ -1168,39 +1191,102 @@ def main():
         f"{df.iloc[test_idx]['track_id'].nunique()}"
     )
 
-    visual_train = [
-        visual_map[index]
-        for index in train_indices
-        if index in visual_map
-    ]
+    # Obtener una sola secuencia para conocer la dimensión visual.
+    first_visual = None
+    first_visual_index = None
 
-    if not visual_train:
+    for index, features in iter_visual_features(
+        df,
+        train_indices,
+        histories,
+        image_index,
+    ):
+        first_visual_index = index
+        first_visual = features
+        break
+
+    if first_visual is None:
         raise RuntimeError(
             "No hay secuencias visuales "
             "válidas en entrenamiento."
         )
 
-    visual_train_matrix = np.vstack(
-        visual_train
-    )
+    visual_feature_dim = len(first_visual)
 
     components = min(
         PCA_COMPONENTS,
-        visual_train_matrix.shape[0],
-        visual_train_matrix.shape[1],
+        visual_feature_dim,
     )
 
-    pca = PCA(
+    # PCA incremental: nunca se construye en RAM la matriz completa
+    # de decenas de miles x miles de features.
+    pca = IncrementalPCA(
         n_components=components,
-        random_state=RANDOM_STATE,
+        batch_size=512,
     )
 
-    pca.fit(
-        visual_train_matrix
+    batch_features = [first_visual]
+    train_visual_count = 1
+
+    for index, features in iter_visual_features(
+        df,
+        train_indices,
+        histories,
+        image_index,
+    ):
+        if index == first_visual_index:
+            continue
+
+        batch_features.append(features)
+        train_visual_count += 1
+
+        if len(batch_features) >= 512:
+            batch = np.asarray(
+                batch_features,
+                dtype=np.float32,
+            )
+
+            pca.partial_fit(batch)
+
+            del batch
+            batch_features.clear()
+
+    pca_fit_count = train_visual_count - len(batch_features)
+
+    if len(batch_features) >= components:
+        batch = np.asarray(
+            batch_features,
+            dtype=np.float32,
+        )
+
+        pca.partial_fit(batch)
+        pca_fit_count += len(batch_features)
+
+        del batch
+
+    # Si el último lote tiene menos de n_components muestras,
+    # se descarta solo ese remanente para evitar una operación
+    # inválida de IncrementalPCA. El impacto es mínimo (<64 filas).
+    batch_features.clear()
+
+    if pca_fit_count < components:
+        raise RuntimeError(
+            "Hay menos secuencias visuales de entrenamiento "
+            "que componentes PCA solicitados."
+        )
+
+    print(
+        f"Secuencias visuales train: {train_visual_count}"
+        f" | usadas en PCA: {pca_fit_count}"
     )
 
     print(
-        f"PCA visual: {components} componentes"
+        f"Features visuales: {visual_feature_dim}"
+    )
+
+    print(
+        f"PCA visual: {components} componentes "
+        f"(IncrementalPCA, batch=512)"
     )
 
     base_matrix = df[
@@ -1217,59 +1303,97 @@ def main():
         in enumerate(df.index)
     }
 
-    final_rows = []
+    final_feature_dim = (
+        len(V1_FEATURES)
+        + components
+        + 1
+    )
 
-    for index in df.index:
+    X = np.zeros(
+        (len(df), final_feature_dim),
+        dtype=np.float32,
+    )
 
-        base = base_matrix[
-            index_positions[index]
-        ]
+    visual_valid_count = 0
+    transform_indices = []
+    transform_features = []
 
-        if index in visual_map:
+    def flush_visual_transform():
+        nonlocal visual_valid_count
 
-            visual = pca.transform(
-                visual_map[index].reshape(
-                    1,
-                    -1,
-                )
-            )[0]
+        if not transform_features:
+            return
 
-            mask = np.array(
-                [1.0],
-                dtype=np.float32,
-            )
-
-        else:
-
-            visual = np.zeros(
-                components,
-                dtype=np.float32,
-            )
-
-            mask = np.array(
-                [0.0],
-                dtype=np.float32,
-            )
-
-        final_rows.append(
-            np.concatenate(
-                [
-                    base,
-                    visual,
-                    mask,
-                ]
-            )
+        batch = np.asarray(
+            transform_features,
+            dtype=np.float32,
         )
 
-    X = np.vstack(
-        final_rows
-    ).astype(
-        np.float32
+        transformed = pca.transform(batch)
+
+        for offset, index in enumerate(
+            transform_indices
+        ):
+            position = index_positions[index]
+
+            X[
+                position,
+                len(V1_FEATURES):
+                len(V1_FEATURES) + components,
+            ] = transformed[offset]
+
+            X[position, -1] = 1.0
+
+        visual_valid_count += len(
+            transform_features
+        )
+
+        del batch
+        transform_indices.clear()
+        transform_features.clear()
+
+    # Segunda pasada causal: se calcula cada secuencia cuando
+    # hace falta para transformarla con la PCA ya entrenada.
+    for index in df.index:
+        position = index_positions[index]
+
+        X[
+            position,
+            :len(V1_FEATURES),
+        ] = base_matrix[position]
+
+        visual_feature = build_visual_feature(
+            index,
+            df.loc[index],
+            histories,
+            image_index,
+        )
+
+        if visual_feature is None:
+            continue
+
+        transform_indices.append(index)
+        transform_features.append(
+            visual_feature
+        )
+
+        if len(transform_features) >= 512:
+            flush_visual_transform()
+
+    flush_visual_transform()
+
+    print(
+        f"Secuencias visuales usadas en X: "
+        f"{visual_valid_count}"
     )
 
     print(
         f"Features finales: {X.shape[1]}"
     )
+
+    # Liberar memoria de imágenes radar antes de entrenar los ensembles.
+    load_dbz.cache_clear()
+
 
     models = {}
 
@@ -1322,7 +1446,7 @@ def main():
             mask = (
                 df["horizonte_min"]
                 == horizon
-            ).to_numpy()
+            ).to_numpy(copy=True)
 
             mask &= (
                 df[target]
