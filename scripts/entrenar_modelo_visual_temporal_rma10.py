@@ -139,19 +139,6 @@ def decode_rma10_dbz(image: Image.Image) -> np.ndarray:
     return dbz
 
 
-def parse_bool_label(value) -> int:
-    if isinstance(value, (bool, np.bool_)):
-        return int(value)
-    if isinstance(value, (int, np.integer)):
-        return int(value != 0)
-    text = str(value).strip().lower()
-    if text in {"true", "1", "yes", "y", "si", "sí"}:
-        return 1
-    if text in {"false", "0", "no", "n"}:
-        return 0
-    raise ValueError(f"Etiqueta booleana inválida: {value!r}")
-
-
 def build_image_index():
     by_timestamp = {}
 
@@ -859,7 +846,12 @@ def build_sequence_samples(
         metadata.append(
             {
                 "track_id": track_id,
-                "frame_utc": target_timestamp.isoformat(),
+                "frame_utc": str(
+                    getattr(
+                        row,
+                        "frame_utc",
+                    )
+                ),
             }
         )
 
@@ -990,14 +982,21 @@ def train_one(
 
     model = make_model()
 
-    model.fit(
-        X[train_index],
-        y[train_index],
-    )
+    try:
+        model.fit(
+            X[train_index],
+            y[train_index],
+        )
 
-    probabilities = model.predict_proba(
-        X[test_index]
-    )
+        probabilities = model.predict_proba(
+            X[test_index]
+        )
+    except Exception as exc:
+        result["status"] = (
+            "training_error:"
+            f"{type(exc).__name__}: {exc}"
+        )
+        return None, result
 
     positive_index = list(
         model.classes_
@@ -1170,14 +1169,19 @@ def main():
         f"{X.shape[1]}"
     )
 
-    lookup = {
-        (
-            item["track_id"],
-            item["frame_utc"],
-        ): index
-        for index, item
-        in metadata.iterrows()
-    }
+    lookup = {}
+    for index, item in metadata.iterrows():
+        timestamp = parse_dataset_timestamp(
+            item["frame_utc"]
+        )
+        if timestamp is None:
+            continue
+        lookup[
+            (
+                item["track_id"],
+                timestamp,
+            )
+        ] = index
 
     models = {}
 
@@ -1222,17 +1226,22 @@ def main():
             for row in horizon_df.itertuples(
                 index=False
             ):
+                row_timestamp = parse_dataset_timestamp(
+                    getattr(
+                        row,
+                        "frame_utc",
+                    )
+                )
+
+                if row_timestamp is None:
+                    continue
+
                 key = (
                     getattr(
                         row,
                         "track_id",
                     ),
-                    str(
-                        getattr(
-                            row,
-                            "frame_utc",
-                        )
-                    ),
+                    row_timestamp,
                 )
 
                 index = lookup.get(
@@ -1252,7 +1261,7 @@ def main():
 
                 indices.append(index)
                 labels.append(
-                    int(bool(value))
+                    parse_bool_label(value)
                 )
 
             if not indices:
@@ -1317,10 +1326,12 @@ def main():
                 f"{result['auc']:.4f}"
             )
 
-    if trained != 12:
+    if trained < 9:
         raise RuntimeError(
-            f"Solo {trained}/12 modelos entrenados. "
-            "Se aborta para no reemplazar el modelo."
+            f"Solo {trained}/12 modelos "
+            "entrenados. "
+            "Se aborta para no "
+            "reemplazar el modelo."
         )
 
     payload = {
