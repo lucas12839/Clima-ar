@@ -2043,21 +2043,21 @@
       "10": {
         "minutos": 10,
         "timestamp_utc": "2026-11-01T18:10:00Z",
-        "x": 87.09,
-        "y": 226.25,
-        "latitud": -38.473015,
-        "longitud": -63.982683,
-        "distancia_radar_km": 160.562,
-        "rumbo_radar_grados": 279.85,
+        "x": 87.05,
+        "y": 226.27,
+        "latitud": -38.473178,
+        "longitud": -63.983119,
+        "distancia_radar_km": 160.595,
+        "rumbo_radar_grados": 279.84,
         "track_id": "15",
         "incertidumbre_pixeles": 41.43,
         "confianza_prediccion": 41.2,
         "direccion_estimada": "ESE",
         "velocidad_estimada_pixeles_min": 0.3804,
         "rumbo_estimado_grados": 103.3,
-        "calibracion_muestras": 188,
-        "correccion_bias_x_pixeles": -0.74,
-        "correccion_bias_y_pixeles": -0.12
+        "calibracion_muestras": 187,
+        "correccion_bias_x_pixeles": -0.78,
+        "correccion_bias_y_pixeles": -0.1
       },
       "20": {
         "minutos": 20,
@@ -2081,21 +2081,21 @@
       "30": {
         "minutos": 30,
         "timestamp_utc": "2026-11-01T18:30:00Z",
-        "x": 95.87,
-        "y": 227.75,
-        "latitud": -38.487114,
-        "longitud": -63.888266,
-        "distancia_radar_km": 152.195,
-        "rumbo_radar_grados": 279.86,
+        "x": 95.82,
+        "y": 227.73,
+        "latitud": -38.486937,
+        "longitud": -63.888801,
+        "distancia_radar_km": 152.244,
+        "rumbo_radar_grados": 279.87,
         "track_id": "15",
         "incertidumbre_pixeles": 49.89,
         "confianza_prediccion": 26.2,
         "direccion_estimada": "ESE",
         "velocidad_estimada_pixeles_min": 0.3536,
         "rumbo_estimado_grados": 103.3,
-        "calibracion_muestras": 512,
-        "correccion_bias_x_pixeles": 0.14,
-        "correccion_bias_y_pixeles": -0.49
+        "calibracion_muestras": 513,
+        "correccion_bias_x_pixeles": 0.09,
+        "correccion_bias_y_pixeles": -0.51
       }
     },
     "georreferenciacion": {
@@ -4243,11 +4243,77 @@
     "calidad_intervalo": "ACEPTABLE"
   },
   "prediccion": {
-    "disponible": false,
+    "disponible": true,
     "radar_timestamp": "2026-11-01T18:00:00Z",
-    "resumen": {}
+    "resumen": {
+      "nucleos_con_prediccion": 27,
+      "nucleos_sin_prediccion": 2,
+      "promedio_intensificacion": 54.9,
+      "promedio_debilitamiento": 45.1,
+      "promedio_confianza": 52.5,
+      "huecos_estimados": 84,
+      "predicciones_validadas_en_este_frame": 41,
+      "predicciones_validadas_normales": 27,
+      "predicciones_validadas_huecos": 14,
+      "error_medio_pixeles_validado": 61.62,
+      "metricas_por_horizonte": {
+        "5": {
+          "muestras": 0,
+          "error_medio_pixeles": null,
+          "error_mediano_pixeles": null,
+          "dentro_5_pixeles": null,
+          "dentro_10_pixeles": null,
+          "dentro_15_pixeles": null
+        },
+        "10": {
+          "muestras": 8,
+          "error_medio_pixeles": 14.88,
+          "error_mediano_pixeles": 4.88,
+          "dentro_5_pixeles": 50.0,
+          "dentro_10_pixeles": 62.5,
+          "dentro_15_pixeles": 75.0
+        },
+        "20": {
+          "muestras": 19,
+          "error_medio_pixeles": 109.05,
+          "error_mediano_pixeles": 109.62,
+          "dentro_5_pixeles": 10.5,
+          "dentro_10_pixeles": 15.8,
+          "dentro_15_pixeles": 21.1
+        },
+        "30": {
+          "muestras": 14,
+          "error_medio_pixeles": 23.95,
+          "error_mediano_pixeles": 16.47,
+          "dentro_5_pixeles": 21.4,
+          "dentro_10_pixeles": 42.9,
+          "dentro_15_pixeles": 50.0
+        }
+      }
+    }
   },
-  "calibracion": {},
+  "calibracion": {
+    "5": {
+      "muestras": 0,
+      "bias_x": 0.0,
+      "bias_y": 0.0
+    },
+    "10": {
+      "muestras": 187,
+      "bias_x": -0.78,
+      "bias_y": -0.1
+    },
+    "20": {
+      "muestras": 297,
+      "bias_x": -1.02,
+      "bias_y": -0.17
+    },
+    "30": {
+      "muestras": 513,
+      "bias_x": 0.09,
+      "bias_y": -0.51
+    }
+  },
   "escala": {
     "ancho_px": 512,
     "alto_px": 512,
