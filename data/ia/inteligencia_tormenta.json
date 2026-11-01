@@ -31,23 +31,23 @@
   },
   "vigencia_radar": {
     "radar_timestamp": "2026-11-01T08:10:00Z",
-    "radar_age": 14.9,
-    "edad_radar_minutos": 14.9,
-    "modo": "radar_vigente",
-    "estimado": false
+    "radar_age": 21.5,
+    "edad_radar_minutos": 21.5,
+    "modo": "estimado_desde_ultimo_radar_valido",
+    "estimado": true
   },
   "radar_timestamp": "2026-11-01T08:10:00Z",
-  "radar_age": 14.9,
+  "radar_age": 21.5,
   "origen_datos": {
     "observacion_radar": {
       "radar_timestamp": "2026-11-01T08:10:00Z",
-      "edad_minutos": 14.9,
-      "es_actual": true,
-      "vigencia": "radar_vigente"
+      "edad_minutos": 21.5,
+      "es_actual": false,
+      "vigencia": "estimado_desde_ultimo_radar_valido"
     },
     "extrapolacion_nowcast": {
-      "aplicada": false,
-      "minutos_extrapolados": 0,
+      "aplicada": true,
+      "minutos_extrapolados": 21.5,
       "limite_minutos": 180.0
     },
     "prediccion_ml": {
@@ -74,18 +74,18 @@
     "impacto": null
   },
   "indices_heuristicos": {
-    "tormenta": 0.257,
-    "llegada_bahia": 0.062,
+    "tormenta": 0.255,
+    "llegada_bahia": 0.06,
     "fortalecimiento": 0.644,
     "debilitamiento": 0.356,
-    "impacto": 0.062,
+    "impacto": 0.06,
     "peligros": {
       "lluvia_fuerte": 0.352,
       "viento_fuerte": 0.266,
       "granizo": 0.115,
       "rayo": 0.125
     },
-    "indice_hibrido_severidad": 0.31,
+    "indice_hibrido_severidad": 0.308,
     "fuente_componente_ia": "modelo_impacto_v8_no_calibrado",
     "goes19_conveccion": 0.45,
     "goes19_rayo": 0.0
@@ -96,7 +96,7 @@
     "granizo": null,
     "rayo": null
   },
-  "indice_hibrido_severidad": 0.31,
+  "indice_hibrido_severidad": 0.308,
   "ia_v8": {
     "disponible": true,
     "probabilidad_impacto": null,
@@ -144,7 +144,7 @@
     "movimiento_hacia_centro_dominio": false,
     "eta_minutos": null,
     "eta_minutos_aproximada_centro_dominio": null,
-    "confianza_movimiento": 0.95,
+    "confianza_movimiento": 0.893,
     "estado": "actividad_detectada",
     "nucleos": [
       {
@@ -2113,16 +2113,18 @@
         30
       ]
     },
+    "distancia_km_frame": 40.29,
+    "eta_minutos_frame": null,
     "vigencia_radar": {
       "radar_timestamp": "2026-11-01T08:10:00Z",
-      "radar_age": 14.9,
-      "edad_radar_minutos": 14.9,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 21.5,
+      "edad_radar_minutos": 21.5,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true
     }
   },
   "ambiente": {
-    "tiempo_utc": "2026-11-01T08:00",
+    "tiempo_utc": "2026-11-01T09:00",
     "punto": "BB_CENTRO",
     "latitud": -38.71,
     "longitud": -62.26,
@@ -2134,31 +2136,31 @@
     "precipitation": 0.0,
     "rain": 0.0,
     "showers": 0.0,
-    "cloud_cover": 93.0,
+    "cloud_cover": 81.0,
     "cloud_cover_low": 0.0,
-    "cloud_cover_mid": 41.0,
-    "cloud_cover_high": 90.0,
+    "cloud_cover_mid": 53.0,
+    "cloud_cover_high": 78.0,
     "visibility": null,
     "wind_speed_10m": 12.964,
     "wind_direction_10m": 330.0,
     "wind_gusts_10m": 29.9,
-    "wind_speed_100m": 32.3,
-    "wind_direction_100m": 349.0,
+    "wind_speed_100m": 31.9,
+    "wind_direction_100m": 344.0,
     "wind_speed_200m": null,
     "wind_direction_200m": null,
     "cape": 230.0,
     "convective_inhibition": null,
-    "vapour_pressure_deficit": 0.61,
+    "vapour_pressure_deficit": 0.63,
     "boundary_layer_height": null,
-    "total_column_integrated_water_vapour": 25.2,
+    "total_column_integrated_water_vapour": 25.1,
     "freezing_level_height": null,
     "lightning_density": null,
-    "modelo_ecmwf_viento_10m_kmh": 16.2,
-    "modelo_ecmwf_direccion_10m": 356.0,
+    "modelo_ecmwf_viento_10m_kmh": 16.1,
+    "modelo_ecmwf_direccion_10m": 350.0,
     "modelo_ecmwf_rafaga_10m_kmh": 29.9,
     "fuente_superficie_actual": "SAZB_AWC",
     "observacion_sazb_utc": "2026-11-01T08:00:00+00:00",
-    "observacion_sazb_edad_minutos": 24.2,
+    "observacion_sazb_edad_minutos": 30.8,
     "viento_actual_fuente": "SAZB_AWC",
     "viento_actual_kmh": 12.964,
     "direccion_viento_actual": 330.0,
@@ -2388,7 +2390,7 @@
     }
   },
   "calidad_datos": 100.0,
-  "calidad_tracking": 0.778,
+  "calidad_tracking": 0.752,
   "confianza_modelo": 0.9,
   "limitaciones": [
     "El radar actual no aporta dBZ cuantitativo validado en este motor.",
@@ -2420,7 +2422,7 @@
       "frame_actual_utc": "2026-11-01T08:10:00Z"
     },
     "acquisition": "actualizado",
-    "generated_at_utc": "2026-11-01T08:24:52.240162+00:00",
+    "generated_at_utc": "2026-11-01T08:31:30.063301+00:00",
     "source_state_version": "1.5",
     "source_state_status": "ok",
     "domain": {
@@ -2675,65 +2677,65 @@
           "channel": "C14",
           "source": {
             "product": "dmw_c14",
-            "key": "ABI-L2-DMWF/2026/305/07/OR_ABI-L2-DMWF-M6C14_G19_s20263050700210_e20263050709519_c20263050725433.nc",
-            "url": "https://noaa-goes19.s3.us-east-1.amazonaws.com/ABI-L2-DMWF/2026/305/07/OR_ABI-L2-DMWF-M6C14_G19_s20263050700210_e20263050709519_c20263050725433.nc",
-            "start_time_utc": "2026-11-01T07:00:21Z",
-            "end_time_utc": "2026-11-01T07:09:51.900000Z",
-            "creation_time_utc": "2026-11-01T07:25:43.300000Z",
-            "last_modified_utc": "2026-11-01T07:25:50.000Z",
-            "size_bytes": 1064536,
-            "age_minutes": 60.135
+            "key": "ABI-L2-DMWF/2026/305/08/OR_ABI-L2-DMWF-M6C14_G19_s20263050800210_e20263050809519_c20263050825415.nc",
+            "url": "https://noaa-goes19.s3.us-east-1.amazonaws.com/ABI-L2-DMWF/2026/305/08/OR_ABI-L2-DMWF-M6C14_G19_s20263050800210_e20263050809519_c20263050825415.nc",
+            "start_time_utc": "2026-11-01T08:00:21Z",
+            "end_time_utc": "2026-11-01T08:09:51.900000Z",
+            "creation_time_utc": "2026-11-01T08:25:41.500000Z",
+            "last_modified_utc": "2026-11-01T08:25:50.000Z",
+            "size_bytes": 1051815,
+            "age_minutes": 0.13499999999999998
           },
-          "vectors": 59,
+          "vectors": 53,
           "quality": {
             "dqf_-3": 0,
             "dqf_-2": 0,
             "dqf_-1": 0,
-            "dqf_0": 59
+            "dqf_0": 53
           },
           "summary": {
-            "mean_speed": 17.859615966773774,
-            "mean_direction_from": 315.88128758508134,
-            "mean_u": 12.432923339230271,
-            "mean_v": -12.821400068692341,
-            "direction_resultant": 0.9837544701879971,
+            "mean_speed": 17.916950467289528,
+            "mean_direction_from": 316.262828078765,
+            "mean_u": 12.386907119196945,
+            "mean_v": -12.945332984040794,
+            "direction_resultant": 0.9688474827820742,
             "speed": {
-              "count": 59,
-              "min": 8.214770317077637,
-              "max": 33.40065002441406,
-              "mean": 18.154546188095868,
-              "median": 18.044330596923828,
-              "std": 6.091477953159071,
-              "p10": 10.409875869750977,
-              "p25": 13.66037368774414,
-              "p75": 21.49782657623291,
-              "p90": 25.583619308471686
+              "count": 53,
+              "min": 7.053676128387451,
+              "max": 28.520845413208008,
+              "mean": 18.49305570350503,
+              "median": 18.844572067260742,
+              "std": 5.620632678259275,
+              "p10": 9.390313529968262,
+              "p25": 15.799911499023438,
+              "p75": 22.9868106842041,
+              "p90": 25.875448989868165
             }
           },
           "pressure_mb": {
-            "count": 59,
-            "min": 262.13385009765625,
-            "max": 422.224853515625,
-            "mean": 323.04914623195845,
-            "median": 312.6078186035156,
-            "std": 47.74065662686355,
-            "p10": 267.21437377929686,
-            "p25": 282.4619598388672,
-            "p75": 358.8400573730469,
-            "p90": 399.6719482421875
+            "count": 53,
+            "min": 224.69607543945312,
+            "max": 429.0793151855469,
+            "mean": 331.7340994780918,
+            "median": 337.13604736328125,
+            "std": 53.259851203184,
+            "p10": 262.80804443359375,
+            "p25": 288.416259765625,
+            "p75": 367.90863037109375,
+            "p90": 411.1357727050781
           },
           "nearest_vector": {
-            "distance_km": 22.62824200868753,
-            "latitude": -38.53774642944336,
-            "longitude": -62.23336410522461,
-            "speed": 29.329509735107422,
-            "direction_from": 311.68896484375,
-            "pressure_mb": 283.6739196777344,
+            "distance_km": 24.28073687464369,
+            "latitude": -38.59822082519531,
+            "longitude": -61.94657897949219,
+            "speed": 20.00565528869629,
+            "direction_from": 312.303466796875,
+            "pressure_mb": 309.4712829589844,
             "dqf": 0
           }
         }
       ],
-      "total_vectors": 103
+      "total_vectors": 97
     },
     "senales": {
       "conveccion_satelital": 0.45,
@@ -2779,29 +2781,29 @@
           },
           {
             "product": "dmw_c14",
-            "age_minutes": 60.135,
-            "mean_speed_ms": 17.859615966773774,
-            "mean_direction_from_deg": 315.88128758508134,
-            "direction_coherence": 0.9837544701879971,
-            "vectors": 59
+            "age_minutes": 0.135,
+            "mean_speed_ms": 17.916950467289528,
+            "mean_direction_from_deg": 316.262828078765,
+            "direction_coherence": 0.9688474827820742,
+            "vectors": 53
           }
         ],
         "dmw_products": 2,
         "dmwv_products": 0,
-        "mean_speed_ms": 20.48,
-        "mean_direction_from_deg": 316.48,
-        "mean_direction_circular_deg": 316.48,
-        "mean_coherence": 0.984,
-        "steering_quality": 0.894,
-        "mean_direction_toward_deg": 136.48,
-        "radar_direction_agreement": 0.856
+        "mean_speed_ms": 20.5,
+        "mean_direction_from_deg": 316.67,
+        "mean_direction_circular_deg": 316.67,
+        "mean_coherence": 0.977,
+        "steering_quality": 0.889,
+        "mean_direction_toward_deg": 136.67,
+        "radar_direction_agreement": 0.857
       },
       "calidad_goes": 1.0
     },
     "raw_state": {
       "version": "1.5",
       "satellite": "GOES-19",
-      "generated_at_utc": "2026-11-01T08:24:36.780461+00:00",
+      "generated_at_utc": "2026-11-01T08:31:24.348036+00:00",
       "reference_frame_utc": "2026-11-01T08:10:00+00:00",
       "status": "ok",
       "domain": {
@@ -3056,65 +3058,65 @@
             "channel": "C14",
             "source": {
               "product": "dmw_c14",
-              "key": "ABI-L2-DMWF/2026/305/07/OR_ABI-L2-DMWF-M6C14_G19_s20263050700210_e20263050709519_c20263050725433.nc",
-              "url": "https://noaa-goes19.s3.us-east-1.amazonaws.com/ABI-L2-DMWF/2026/305/07/OR_ABI-L2-DMWF-M6C14_G19_s20263050700210_e20263050709519_c20263050725433.nc",
-              "start_time_utc": "2026-11-01T07:00:21Z",
-              "end_time_utc": "2026-11-01T07:09:51.900000Z",
-              "creation_time_utc": "2026-11-01T07:25:43.300000Z",
-              "last_modified_utc": "2026-11-01T07:25:50.000Z",
-              "size_bytes": 1064536,
-              "age_minutes": 60.135
+              "key": "ABI-L2-DMWF/2026/305/08/OR_ABI-L2-DMWF-M6C14_G19_s20263050800210_e20263050809519_c20263050825415.nc",
+              "url": "https://noaa-goes19.s3.us-east-1.amazonaws.com/ABI-L2-DMWF/2026/305/08/OR_ABI-L2-DMWF-M6C14_G19_s20263050800210_e20263050809519_c20263050825415.nc",
+              "start_time_utc": "2026-11-01T08:00:21Z",
+              "end_time_utc": "2026-11-01T08:09:51.900000Z",
+              "creation_time_utc": "2026-11-01T08:25:41.500000Z",
+              "last_modified_utc": "2026-11-01T08:25:50.000Z",
+              "size_bytes": 1051815,
+              "age_minutes": 0.13499999999999998
             },
-            "vectors": 59,
+            "vectors": 53,
             "quality": {
               "dqf_-3": 0,
               "dqf_-2": 0,
               "dqf_-1": 0,
-              "dqf_0": 59
+              "dqf_0": 53
             },
             "summary": {
-              "mean_speed": 17.859615966773774,
-              "mean_direction_from": 315.88128758508134,
-              "mean_u": 12.432923339230271,
-              "mean_v": -12.821400068692341,
-              "direction_resultant": 0.9837544701879971,
+              "mean_speed": 17.916950467289528,
+              "mean_direction_from": 316.262828078765,
+              "mean_u": 12.386907119196945,
+              "mean_v": -12.945332984040794,
+              "direction_resultant": 0.9688474827820742,
               "speed": {
-                "count": 59,
-                "min": 8.214770317077637,
-                "max": 33.40065002441406,
-                "mean": 18.154546188095868,
-                "median": 18.044330596923828,
-                "std": 6.091477953159071,
-                "p10": 10.409875869750977,
-                "p25": 13.66037368774414,
-                "p75": 21.49782657623291,
-                "p90": 25.583619308471686
+                "count": 53,
+                "min": 7.053676128387451,
+                "max": 28.520845413208008,
+                "mean": 18.49305570350503,
+                "median": 18.844572067260742,
+                "std": 5.620632678259275,
+                "p10": 9.390313529968262,
+                "p25": 15.799911499023438,
+                "p75": 22.9868106842041,
+                "p90": 25.875448989868165
               }
             },
             "pressure_mb": {
-              "count": 59,
-              "min": 262.13385009765625,
-              "max": 422.224853515625,
-              "mean": 323.04914623195845,
-              "median": 312.6078186035156,
-              "std": 47.74065662686355,
-              "p10": 267.21437377929686,
-              "p25": 282.4619598388672,
-              "p75": 358.8400573730469,
-              "p90": 399.6719482421875
+              "count": 53,
+              "min": 224.69607543945312,
+              "max": 429.0793151855469,
+              "mean": 331.7340994780918,
+              "median": 337.13604736328125,
+              "std": 53.259851203184,
+              "p10": 262.80804443359375,
+              "p25": 288.416259765625,
+              "p75": 367.90863037109375,
+              "p90": 411.1357727050781
             },
             "nearest_vector": {
-              "distance_km": 22.62824200868753,
-              "latitude": -38.53774642944336,
-              "longitude": -62.23336410522461,
-              "speed": 29.329509735107422,
-              "direction_from": 311.68896484375,
-              "pressure_mb": 283.6739196777344,
+              "distance_km": 24.28073687464369,
+              "latitude": -38.59822082519531,
+              "longitude": -61.94657897949219,
+              "speed": 20.00565528869629,
+              "direction_from": 312.303466796875,
+              "pressure_mb": 309.4712829589844,
               "dqf": 0
             }
           }
         ],
-        "total_vectors": 103
+        "total_vectors": 97
       }
     }
   },
