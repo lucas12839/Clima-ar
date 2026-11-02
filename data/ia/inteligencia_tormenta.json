@@ -12,9 +12,9 @@
   "clasificacion_meteorologica": "tormenta",
   "amenaza_bahia": {
     "amenaza": true,
-    "nivel": "baja",
-    "motivo": "trayectoria_hacia_bahia_blanca",
-    "distancia_km": 37.24,
+    "nivel": "alta",
+    "motivo": "sobre_o_muy_cerca_de_la_ciudad",
+    "distancia_km": 0.0,
     "eta_minutos": null
   },
   "clasificacion_historica": {
@@ -32,23 +32,23 @@
   },
   "vigencia_radar": {
     "radar_timestamp": "2026-11-02T03:40:00Z",
-    "radar_age": 15.6,
-    "edad_radar_minutos": 15.6,
-    "modo": "radar_vigente",
-    "estimado": false
+    "radar_age": 20.6,
+    "edad_radar_minutos": 20.6,
+    "modo": "estimado_desde_ultimo_radar_valido",
+    "estimado": true
   },
   "radar_timestamp": "2026-11-02T03:40:00Z",
-  "radar_age": 15.6,
+  "radar_age": 20.6,
   "origen_datos": {
     "observacion_radar": {
       "radar_timestamp": "2026-11-02T03:40:00Z",
-      "edad_minutos": 15.6,
-      "es_actual": true,
-      "vigencia": "radar_vigente"
+      "edad_minutos": 20.6,
+      "es_actual": false,
+      "vigencia": "estimado_desde_ultimo_radar_valido"
     },
     "extrapolacion_nowcast": {
-      "aplicada": false,
-      "minutos_extrapolados": 0,
+      "aplicada": true,
+      "minutos_extrapolados": 20.6,
       "limite_minutos": 180.0
     },
     "prediccion_ml": {
@@ -75,18 +75,18 @@
     "impacto": null
   },
   "indices_heuristicos": {
-    "tormenta": 0.617,
-    "llegada_bahia": 0.864,
+    "tormenta": 0.662,
+    "llegada_bahia": 0.949,
     "fortalecimiento": 0.644,
     "debilitamiento": 0.356,
-    "impacto": 0.864,
+    "impacto": 0.949,
     "peligros": {
       "lluvia_fuerte": 0.385,
       "viento_fuerte": 0.292,
       "granizo": 0.139,
       "rayo": 0.149
     },
-    "indice_hibrido_severidad": 0.409,
+    "indice_hibrido_severidad": 0.42,
     "fuente_componente_ia": "modelo_impacto_v8_no_calibrado",
     "goes19_conveccion": 0.45,
     "goes19_rayo": 0.0
@@ -97,7 +97,7 @@
     "granizo": null,
     "rayo": null
   },
-  "indice_hibrido_severidad": 0.409,
+  "indice_hibrido_severidad": 0.42,
   "ia_v8": {
     "disponible": true,
     "probabilidad_impacto": null,
@@ -133,7 +133,7 @@
     "intensidad_escala": "RMA10_0_6",
     "dbz_max": null,
     "dbz_mean": null,
-    "distancia_km": 37.24,
+    "distancia_km": 0.0,
     "distancia_tipo": "georreferenciada_por_nucleo_validada",
     "fortalecimiento": "fortaleciendose",
     "cambio_area_pct": -0.76,
@@ -145,7 +145,7 @@
     "movimiento_hacia_centro_dominio": false,
     "eta_minutos": null,
     "eta_minutos_aproximada_centro_dominio": null,
-    "confianza_movimiento": 0.95,
+    "confianza_movimiento": 0.896,
     "estado": "actividad_detectada",
     "nucleos": [
       {
@@ -2398,27 +2398,27 @@
         "direccion_estimada": "SSO",
         "velocidad_estimada_pixeles_min": 0.966,
         "rumbo_estimado_grados": 202.3,
-        "calibracion_muestras": 274,
+        "calibracion_muestras": 276,
         "correccion_bias_x_pixeles": 0.57,
         "correccion_bias_y_pixeles": 0.06
       },
       "30": {
         "minutos": 30,
         "timestamp_utc": "2026-11-02T04:10:00Z",
-        "x": 211.78,
+        "x": 211.71,
         "y": 251.06,
-        "latitud": -38.695738,
-        "longitud": -62.638613,
-        "distancia_radar_km": 41.279,
-        "rumbo_radar_grados": 275.8,
+        "latitud": -38.695735,
+        "longitud": -62.639371,
+        "distancia_radar_km": 41.344,
+        "rumbo_radar_grados": 275.79,
         "track_id": "23",
         "incertidumbre_pixeles": 50.45,
         "confianza_prediccion": 25.1,
         "direccion_estimada": "SSO",
         "velocidad_estimada_pixeles_min": 0.966,
         "rumbo_estimado_grados": 202.3,
-        "calibracion_muestras": 570,
-        "correccion_bias_x_pixeles": 0.28,
+        "calibracion_muestras": 568,
+        "correccion_bias_x_pixeles": 0.21,
         "correccion_bias_y_pixeles": 1.94
       }
     },
@@ -4698,12 +4698,14 @@
         30
       ]
     },
+    "distancia_km_frame": 37.24,
+    "eta_minutos_frame": null,
     "vigencia_radar": {
       "radar_timestamp": "2026-11-02T03:40:00Z",
-      "radar_age": 15.6,
-      "edad_radar_minutos": 15.6,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 20.6,
+      "edad_radar_minutos": 20.6,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true
     }
   },
   "ambiente": {
@@ -4743,7 +4745,7 @@
     "modelo_ecmwf_rafaga_10m_kmh": 22.3,
     "fuente_superficie_actual": "SAZB_AWC",
     "observacion_sazb_utc": "2026-11-02T03:00:00+00:00",
-    "observacion_sazb_edad_minutos": 54.1,
+    "observacion_sazb_edad_minutos": 59.3,
     "viento_actual_fuente": "SAZB_AWC",
     "viento_actual_kmh": 11.112,
     "direccion_viento_actual": 340.0,
@@ -4915,38 +4917,38 @@
     },
     "30": {
       "minutos": 30,
-      "latitud": -38.695738,
-      "longitud": -62.638613,
+      "latitud": -38.695735,
+      "longitud": -62.639371,
       "ambiente": {
         "tiempo_utc": "2026-11-02T04:10:00+00:00",
         "punto": "INTERPOLADO_GRILLA_ECMWF",
-        "latitud": -38.695738,
-        "longitud": -62.638613,
-        "temperature_2m": 16.058396221300622,
-        "relative_humidity_2m": 62.48629357263578,
-        "dew_point_2m": 8.861855620056394,
-        "pressure_msl": 1010.3313351361205,
-        "surface_pressure": 1006.8995894688519,
+        "latitud": -38.695735,
+        "longitud": -62.639371,
+        "temperature_2m": 16.057286638830007,
+        "relative_humidity_2m": 62.47412997538397,
+        "dew_point_2m": 8.857635473257785,
+        "pressure_msl": 1010.3316707899857,
+        "surface_pressure": 1006.8843590640289,
         "precipitation": 0.0,
         "rain": 0.0,
         "showers": 0.0,
-        "cloud_cover": 11.357832017512672,
+        "cloud_cover": 11.352547539331967,
         "cloud_cover_low": 0.0,
         "cloud_cover_mid": 0.0,
-        "cloud_cover_high": 11.357832017512672,
+        "cloud_cover_high": 11.352547539331967,
         "visibility": null,
-        "wind_speed_10m": 14.26803062761751,
-        "wind_direction_10m": 304.400043140989,
-        "wind_gusts_10m": 24.515993837565205,
-        "wind_speed_100m": 30.97154877161794,
-        "wind_direction_100m": 297.22402343978547,
+        "wind_speed_10m": 14.26639128854962,
+        "wind_direction_10m": 304.40464199283724,
+        "wind_gusts_10m": 24.513187778308737,
+        "wind_speed_100m": 30.969488430678773,
+        "wind_direction_100m": 297.22063358424,
         "wind_speed_200m": null,
         "wind_direction_200m": null,
         "cape": 0.0,
         "convective_inhibition": null,
-        "vapour_pressure_deficit": 0.6862320081502142,
+        "vapour_pressure_deficit": 0.6863999699033962,
         "boundary_layer_height": null,
-        "total_column_integrated_water_vapour": 9.801956852848177,
+        "total_column_integrated_water_vapour": 9.802234911842929,
         "freezing_level_height": null,
         "lightning_density": null,
         "interpolacion_temporal": 1.0,
@@ -4961,16 +4963,16 @@
           "BB_CENTRO"
         ],
         "distancias_puntos_km": {
-          "BB_O": 11.273,
-          "BB_NO": 28.498,
-          "BB_SO": 31.426,
-          "BB_CENTRO": 32.893
+          "BB_O": 11.338,
+          "BB_NO": 28.523,
+          "BB_SO": 31.449,
+          "BB_CENTRO": 32.959
         }
       }
     }
   },
   "calidad_datos": 100.0,
-  "calidad_tracking": 0.878,
+  "calidad_tracking": 0.853,
   "confianza_modelo": 0.9,
   "limitaciones": [
     "El radar actual no aporta dBZ cuantitativo validado en este motor.",
@@ -4988,8 +4990,8 @@
     "IA V8 impacto 3-6h: 10%.",
     "CAPE ECMWF: 0 J/kg.",
     "Rafaga prevista ECMWF: 22.3 km/h.",
-    "Indice hibrido de severidad: 41%.",
-    "Impacto inmediato estimado por radar: 86%.",
+    "Indice hibrido de severidad: 42%.",
+    "Impacto inmediato estimado por radar: 95%.",
     "Radar, evolucion, meteorologia, IA e historial se combinan en un unico Storm Engine.",
     "La estimacion no reemplaza avisos oficiales y requiere validacion continua."
   ],
@@ -5002,7 +5004,7 @@
       "frame_actual_utc": "2026-11-02T03:40:00Z"
     },
     "acquisition": "actualizado",
-    "generated_at_utc": "2026-11-02T03:55:34.604555+00:00",
+    "generated_at_utc": "2026-11-02T04:00:34.961168+00:00",
     "source_state_version": "1.5",
     "source_state_status": "ok",
     "domain": {
@@ -5383,7 +5385,7 @@
     "raw_state": {
       "version": "1.5",
       "satellite": "GOES-19",
-      "generated_at_utc": "2026-11-02T03:55:09.517431+00:00",
+      "generated_at_utc": "2026-11-02T04:00:13.584369+00:00",
       "reference_frame_utc": "2026-11-02T03:40:00+00:00",
       "status": "ok",
       "domain": {
