@@ -1703,49 +1703,49 @@
       "10": {
         "minutos": 10,
         "timestamp_utc": "2026-11-05T02:20:00Z",
-        "x": 166.52,
-        "y": 222.65,
-        "latitud": -38.452764,
-        "longitud": -63.125252,
-        "distancia_radar_km": 89.096,
-        "rumbo_radar_grados": 290.26,
+        "x": 166.53,
+        "y": 222.6,
+        "latitud": -38.452342,
+        "longitud": -63.125139,
+        "distancia_radar_km": 89.104,
+        "rumbo_radar_grados": 290.29,
         "track_id": "8",
         "incertidumbre_pixeles": 95.5,
         "confianza_prediccion": 36.4,
         "direccion_estimada": "ONO",
         "velocidad_estimada_pixeles_min": 0.3263,
         "rumbo_estimado_grados": 294.4,
-        "calibracion_muestras": 165,
-        "correccion_bias_x_pixeles": 0.37,
-        "correccion_bias_y_pixeles": 0.04
+        "calibracion_muestras": 162,
+        "correccion_bias_x_pixeles": 0.38,
+        "correccion_bias_y_pixeles": -0.01
       },
       "20": {
         "minutos": 20,
         "timestamp_utc": "2026-11-05T02:30:00Z",
-        "x": 163.11,
-        "y": 221.51,
-        "latitud": -38.442827,
-        "longitud": -63.161901,
-        "distancia_radar_km": 92.472,
-        "rumbo_radar_grados": 290.2,
+        "x": 163.36,
+        "y": 221.49,
+        "latitud": -38.442681,
+        "longitud": -63.159202,
+        "distancia_radar_km": 92.258,
+        "rumbo_radar_grados": 290.26,
         "track_id": "8",
         "incertidumbre_pixeles": 98.8,
         "confianza_prediccion": 28.9,
         "direccion_estimada": "ONO",
         "velocidad_estimada_pixeles_min": 0.3263,
         "rumbo_estimado_grados": 294.4,
-        "calibracion_muestras": 314,
-        "correccion_bias_x_pixeles": -0.07,
-        "correccion_bias_y_pixeles": 0.25
+        "calibracion_muestras": 309,
+        "correccion_bias_x_pixeles": 0.18,
+        "correccion_bias_y_pixeles": 0.23
       },
       "30": {
         "minutos": 30,
         "timestamp_utc": "2026-11-05T02:40:00Z",
-        "x": 159.85,
-        "y": 220.58,
-        "latitud": -38.434667,
-        "longitud": -63.196947,
-        "distancia_radar_km": 95.648,
+        "x": 159.83,
+        "y": 220.56,
+        "latitud": -38.434497,
+        "longitud": -63.19716,
+        "distancia_radar_km": 95.672,
         "rumbo_radar_grados": 290.06,
         "track_id": "8",
         "incertidumbre_pixeles": 102.11,
@@ -1753,9 +1753,9 @@
         "direccion_estimada": "ONO",
         "velocidad_estimada_pixeles_min": 0.3263,
         "rumbo_estimado_grados": 294.4,
-        "calibracion_muestras": 519,
-        "correccion_bias_x_pixeles": -0.36,
-        "correccion_bias_y_pixeles": 0.67
+        "calibracion_muestras": 526,
+        "correccion_bias_x_pixeles": -0.38,
+        "correccion_bias_y_pixeles": 0.65
       }
     },
     "georreferenciacion": {
@@ -3563,11 +3563,77 @@
     "calidad_intervalo": "BAJA"
   },
   "prediccion": {
-    "disponible": false,
+    "disponible": true,
     "radar_timestamp": "2026-11-05T02:10:00Z",
-    "resumen": {}
+    "resumen": {
+      "nucleos_con_prediccion": 22,
+      "nucleos_sin_prediccion": 2,
+      "promedio_intensificacion": 51.5,
+      "promedio_debilitamiento": 48.5,
+      "promedio_confianza": 38.2,
+      "huecos_estimados": 152,
+      "predicciones_validadas_en_este_frame": 53,
+      "predicciones_validadas_normales": 25,
+      "predicciones_validadas_huecos": 28,
+      "error_medio_pixeles_validado": 66.81,
+      "metricas_por_horizonte": {
+        "5": {
+          "muestras": 0,
+          "error_medio_pixeles": null,
+          "error_mediano_pixeles": null,
+          "dentro_5_pixeles": null,
+          "dentro_10_pixeles": null,
+          "dentro_15_pixeles": null
+        },
+        "10": {
+          "muestras": 4,
+          "error_medio_pixeles": 127.03,
+          "error_mediano_pixeles": 132.37,
+          "dentro_5_pixeles": 0.0,
+          "dentro_10_pixeles": 0.0,
+          "dentro_15_pixeles": 25.0
+        },
+        "20": {
+          "muestras": 10,
+          "error_medio_pixeles": 49.93,
+          "error_mediano_pixeles": 50.34,
+          "dentro_5_pixeles": 10.0,
+          "dentro_10_pixeles": 20.0,
+          "dentro_15_pixeles": 20.0
+        },
+        "30": {
+          "muestras": 38,
+          "error_medio_pixeles": 64.86,
+          "error_mediano_pixeles": 34.8,
+          "dentro_5_pixeles": 2.6,
+          "dentro_10_pixeles": 2.6,
+          "dentro_15_pixeles": 7.9
+        }
+      }
+    }
   },
-  "calibracion": {},
+  "calibracion": {
+    "5": {
+      "muestras": 0,
+      "bias_x": 0.0,
+      "bias_y": 0.0
+    },
+    "10": {
+      "muestras": 162,
+      "bias_x": 0.38,
+      "bias_y": -0.01
+    },
+    "20": {
+      "muestras": 309,
+      "bias_x": 0.18,
+      "bias_y": 0.23
+    },
+    "30": {
+      "muestras": 526,
+      "bias_x": -0.38,
+      "bias_y": 0.65
+    }
+  },
   "escala": {
     "ancho_px": 512,
     "alto_px": 512,
