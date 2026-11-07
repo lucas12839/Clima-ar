@@ -885,6 +885,72 @@ def main() -> None:
 
     apply_goes_to_intelligence(goes_intelligence, radar_timestamp)
 
+    # RMA10 Visual/Temporal V6: ejecución única por ciclo, después de Intelligence.
+    visual_runtime = BASE / "scripts" / "rma10_visual_temporal_runtime.py"
+    if not visual_runtime.exists():
+        raise RuntimeError(f"No existe runtime visual/temporal: {visual_runtime}")
+    print("RMA10 Visual/Temporal V6 ejecutándose...")
+    visual_result = subprocess.run(
+        [sys.executable, str(visual_runtime)],
+        cwd=BASE,
+        text=True,
+        check=False,
+    )
+    if visual_result.returncode != 0:
+        raise RuntimeError(
+            "RMA10 Visual/Temporal V6 falló; se aborta el ciclo para no publicar un resultado incompleto."
+        )
+    print("RMA10 Visual/Temporal V6 integrado correctamente.")
+    try:
+        from fusion_multimodal import fuse
+
+        intelligence = load_json(INTELLIGENCE_FILE)
+
+        radar = intelligence.get("radar") or {}
+        vigencia = intelligence.get("vigencia_radar") or {}
+        indices = intelligence.get("indices_heuristicos") or {}
+        ambiente = intelligence.get("ambiente") or {}
+
+        rma10 = radar_data.get("prediccion") or {}
+        if not isinstance(rma10, dict) or not rma10.get("disponible"):
+            rma10 = {}
+
+        fusion_inputs = {
+            "radar": {
+                **radar,
+                "radar_age": vigencia.get("radar_age"),
+            },
+            "rma10": rma10,
+            "environment": {
+                "impacto": indices.get("impacto"),
+                "intensificacion": indices.get("fortalecimiento"),
+                "formacion": indices.get("tormenta"),
+            },
+            "convective": {
+                "cape": ambiente.get("cape"),
+                "lifted_index": ambiente.get("lifted_index"),
+                "convective_inhibition": ambiente.get("convective_inhibition"),
+            },
+            "goes": {
+                "goes19_conveccion": indices.get("goes19_conveccion", 0.0),
+                "goes19_rayo": indices.get("goes19_rayo", 0.0),
+            },
+        }
+
+        fusion_result = fuse(fusion_inputs)
+
+        intelligence["fusion_multimodal"] = fusion_result
+        save_json(INTELLIGENCE_FILE, intelligence)
+
+        print(
+            "Fusion multimodal ejecutada en modo diagnostico: "
+            f"evidence={fusion_result['evidence_score']:.3f} "
+            f"confidence={fusion_result['confidence']:.3f}"
+        )
+    except Exception as exc:
+        print(f"AVISO: fusion multimodal no disponible: {exc}")
+
+
     print("GOES-19 aplicado al Storm Engine.")
     print("Storm Engine finalizado correctamente.")
     return result
