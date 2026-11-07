@@ -197,6 +197,22 @@ def main():
     intensity = radar_intensity(nowcast)
     ia_score = intelligence_score(intel)
 
+    # RMA10 Visual/Temporal V6: evidencia adicional.
+    visual = intel.get("ia_visual_temporal", {})
+    visual_probs = visual.get("probabilidades", {}) if isinstance(visual, dict) else {}
+    visual_scores = []
+
+    for h in ("5", "10", "20", "30"):
+        row = visual_probs.get(h, {})
+        if isinstance(row, dict):
+            for key in ("strengthened", "toward_bahia"):
+                value = finite(row.get(key))
+                if value is not None:
+                    visual_scores.append(value)
+
+    visual_score = max(visual_scores) if visual_scores else 0.0
+    ia_score = clamp(0.75 * ia_score + 0.25 * visual_score)
+
     model_conf = clamp(
         intel.get("confianza_modelo", intel.get("confianza", 0.0))
     )

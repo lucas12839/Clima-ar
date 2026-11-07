@@ -878,7 +878,7 @@ def get_calibrated_probability(
     calibration,
 ):
     if not isinstance(calibration, dict) or calibration.get("enabled") is not True:
-        return None
+        return probability
 
     return apply_probability_calibration(
         probability,

@@ -119,7 +119,17 @@ def fuse(inputs: dict[str, Any]) -> dict[str, Any]:
 
     age = _num(radar.get("radar_age"))
     w_radar = freshness_weight(age)
-    intensity = radar_intensity_score(radar.get("nucleo_principal") or radar)
+    principal = radar.get("nucleo_principal")
+    if isinstance(principal, dict):
+        radar_principal = principal
+    else:
+        principal_id = radar.get("nucleo_principal_id")
+        radar_principal = next(
+            (n for n in radar.get("nucleos", [])
+             if str(n.get("nucleo_id")) == str(principal_id)),
+            radar,
+        )
+    intensity = radar_intensity_score(radar_principal)
     strength, weaken, toward = radar_evolution_score(rma)
     conv_score, conv_conf = convective_context(conv)
     env_impact = _num(env.get("impacto"))
