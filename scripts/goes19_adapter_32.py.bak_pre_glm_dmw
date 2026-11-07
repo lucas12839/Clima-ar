@@ -1,0 +1,337 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+import xarray as xr
+
+from goes19.geospatial import (
+    RADAR_LAT,
+    RADAR_LON,
+    RADAR_RANGE_KM,
+    prepare_goes_domain,
+)
+
+
+GRID_SIZE = 64
+
+# Orden fijo del tensor:
+# 0 C08
+# 1 C13
+# 2 Cloud Top Height
+# 3 Cloud Top Pressure
+# 4 GLM
+# 5 DMW speed
+# 6 DMW direction sin
+# 7 DMW direction cos
+# 8 DMW u
+# 9 DMW v
+CHANNEL_NAMES = (
+    "abi_c08",
+    "abi_c13",
+    "cloudtop_height",
+    "cloudtop_pressure",
+    "glm",
+    "dmw_speed",
+    "dmw_direction_sin",
+    "dmw_direction_cos",
+    "dmw_u",
+    "dmw_v",
+)
+
+
+def _normalize(values: np.ndarray, low: float, high: float) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float32)
+    result = (values - low) / (high - low)
+    return np.clip(result, 0.0, 1.0)
+
+
+def _bilinear_grid(
+    latitude: np.ndarray,
+    longitude: np.ndarray,
+    values: np.ndarray,
+    grid_size: int = GRID_SIZE,
+) -> np.ndarray:
+    """Rasteriza puntos GOES sobre una grilla regular local."""
+    lat = np.asarray(latitude, dtype=np.float64).ravel()
+    lon = np.asarray(longitude, dtype=np.float64).ravel()
+    val = np.asarray(values, dtype=np.float64).ravel()
+
+    valid = (
+        np.isfinite(lat)
+        & np.isfinite(lon)
+        & np.isfinite(val)
+    )
+
+    lat = lat[valid]
+    lon = lon[valid]
+    val = val[valid]
+
+    if val.size == 0:
+        return np.zeros((grid_size, grid_size), dtype=np.float32)
+
+    lat_edges = np.linspace(
+        RADAR_LAT - 2.25,
+        RADAR_LAT + 2.25,
+        grid_size + 1,
+    )
+    lon_edges = np.linspace(
+        RADAR_LON - 3.0,
+        RADAR_LON + 3.0,
+        grid_size + 1,
+    )
+
+    iy = np.searchsorted(lat_edges, lat, side="right") - 1
+    ix = np.searchsorted(lon_edges, lon, side="right") - 1
+
+    inside = (
+        (iy >= 0)
+        & (iy < grid_size)
+        & (ix >= 0)
+        & (ix < grid_size)
+    )
+
+    iy = iy[inside]
+    ix = ix[inside]
+    val = val[inside]
+
+    if val.size == 0:
+        return np.zeros((grid_size, grid_size), dtype=np.float32)
+
+    result = np.zeros((grid_size, grid_size), dtype=np.float64)
+    count = np.zeros((grid_size, grid_size), dtype=np.float64)
+
+    np.add.at(result, (iy, ix), val)
+    np.add.at(count, (iy, ix), 1.0)
+
+    valid_cells = count > 0
+    result[valid_cells] /= count[valid_cells]
+
+    return result.astype(np.float32)
+
+
+def _read_goes_product(
+    path: Path,
+    variable: str,
+) -> dict[str, np.ndarray]:
+    result = prepare_goes_domain(path, variable=variable)
+
+    return {
+        "data": np.asarray(result["data"], dtype=np.float32),
+        "latitude": np.asarray(result["latitude"], dtype=np.float32),
+        "longitude": np.asarray(result["longitude"], dtype=np.float32),
+    }
+
+
+def _cloudtop_quality(
+    path: Path,
+    variable: str,
+) -> dict[str, np.ndarray]:
+    with xr.open_dataset(
+        path,
+        engine="netcdf4",
+        mask_and_scale=True,
+    ) as ds:
+        values = np.asarray(ds[variable].values, dtype=np.float32)
+        dqf = np.asarray(ds["DQF"].values, dtype=np.float32)
+
+        while values.ndim > 2:
+            values = values[0]
+
+        while dqf.ndim > 2:
+            dqf = dqf[0]
+
+        x = np.asarray(ds["x"].values)
+        y = np.asarray(ds["y"].values)
+
+    xx, yy = np.meshgrid(x, y)
+
+    # Reutilizamos la misma proyección oficial del módulo GOES.
+    from goes19.geospatial import (
+        get_projection,
+        fixed_grid_to_latlon,
+        haversine_km,
+    )
+
+    with xr.open_dataset(
+        path,
+        engine="netcdf4",
+    ) as ds:
+        lambda_0, r_eq, r_pol, h = get_projection(ds)
+
+    lat, lon = fixed_grid_to_latlon(
+        xx,
+        yy,
+        lambda_0=lambda_0,
+        r_eq=r_eq,
+        r_pol=r_pol,
+        h=h,
+    )
+
+    distance = haversine_km(
+        lat,
+        lon,
+        RADAR_LAT,
+        RADAR_LON,
+    )
+
+    mask = (
+        (distance <= RADAR_RANGE_KM)
+        & np.isfinite(values)
+        & np.isfinite(dqf)
+        & (dqf == 0)
+    )
+
+    return {
+        "data": values[mask],
+        "latitude": lat[mask],
+        "longitude": lon[mask],
+    }
+
+
+def build_goes_tensor(
+    c08_path: Path,
+    c13_path: Path,
+    cth_path: Path,
+    ctp_path: Path,
+    glm: dict[str, Any] | None = None,
+    dmw: dict[str, Any] | None = None,
+    grid_size: int = GRID_SIZE,
+) -> dict[str, Any]:
+
+    c08 = _read_goes_product(c08_path, "CMI")
+    c13 = _read_goes_product(c13_path, "CMI")
+
+    cth = _cloudtop_quality(
+        cth_path,
+        "HT",
+    )
+    ctp = _cloudtop_quality(
+        ctp_path,
+        "PRES",
+    )
+
+    fields = []
+
+    fields.append(
+        _bilinear_grid(
+            c08["latitude"],
+            c08["longitude"],
+            _normalize(c08["data"], 180.0, 330.0),
+            grid_size,
+        )
+    )
+
+    fields.append(
+        _bilinear_grid(
+            c13["latitude"],
+            c13["longitude"],
+            _normalize(c13["data"], 180.0, 330.0),
+            grid_size,
+        )
+    )
+
+    fields.append(
+        _bilinear_grid(
+            cth["latitude"],
+            cth["longitude"],
+            _normalize(cth["data"], 0.0, 18000.0),
+            grid_size,
+        )
+    )
+
+    fields.append(
+        _bilinear_grid(
+            ctp["latitude"],
+            ctp["longitude"],
+            _normalize(ctp["data"], 100.0, 1050.0),
+            grid_size,
+        )
+    )
+
+    # GLM
+    if glm and glm.get("latitude") is not None:
+        glm_field = _bilinear_grid(
+            glm["latitude"],
+            glm["longitude"],
+            glm["value"],
+            grid_size,
+        )
+    else:
+        glm_field = np.zeros(
+            (grid_size, grid_size),
+            dtype=np.float32,
+        )
+
+    fields.append(glm_field)
+
+    # DMW
+    if dmw and dmw.get("latitude") is not None:
+        lat = np.asarray(dmw["latitude"])
+        lon = np.asarray(dmw["longitude"])
+        speed = np.asarray(dmw["speed"])
+        direction = np.radians(np.asarray(dmw["direction"]))
+
+        u = -speed * np.sin(direction)
+        v = -speed * np.cos(direction)
+
+        fields.extend(
+            [
+                _bilinear_grid(
+                    lat, lon,
+                    _normalize(speed, 0.0, 100.0),
+                    grid_size,
+                ),
+                _bilinear_grid(
+                    lat, lon,
+                    np.sin(direction),
+                    grid_size,
+                ),
+                _bilinear_grid(
+                    lat, lon,
+                    np.cos(direction),
+                    grid_size,
+                ),
+                _bilinear_grid(
+                    lat, lon,
+                    _normalize(u, -100.0, 100.0),
+                    grid_size,
+                ),
+                _bilinear_grid(
+                    lat, lon,
+                    _normalize(v, -100.0, 100.0),
+                    grid_size,
+                ),
+            ]
+        )
+    else:
+        fields.extend(
+            [
+                np.zeros((grid_size, grid_size), dtype=np.float32)
+                for _ in range(5)
+            ]
+        )
+
+    tensor = np.stack(fields, axis=0).astype(np.float32)
+
+    return {
+        "tensor": torch.from_numpy(tensor).unsqueeze(0),
+        "channels": CHANNEL_NAMES,
+        "shape": tuple(tensor.shape),
+        "center": (RADAR_LAT, RADAR_LON),
+        "radius_km": RADAR_RANGE_KM,
+    }
+
+
+def main() -> None:
+    print("GOES-19 ADAPTER 3.2")
+    print(f"grid={GRID_SIZE}x{GRID_SIZE}")
+    print(f"channels={len(CHANNEL_NAMES)}")
+    print(f"domain={RADAR_RANGE_KM} km")
+    print("OK")
+
+
+if __name__ == "__main__":
+    main()
