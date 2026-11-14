@@ -8,6 +8,10 @@ import requests
 
 BASE_URL = "https://info.bcp.org.ar/Estaciones/Mapa_NvoBCP.asp?Estacion={}"
 MAX_AGE = 15
+
+
+def is_fresh_age(age):
+    return age is not None and 0 <= age <= MAX_AGE
 OUTPUT = Path("/opt/Clima-ar/data/ia/estaciones/observaciones/bcp_actual.json")
 
 STATIONS = {
@@ -102,18 +106,21 @@ def collect(sid, name):
         }
 
     now = datetime.now(timezone.utc)
-    age = max(0, (now - obs_time).total_seconds() / 60)
+    age = (now - obs_time).total_seconds() / 60
 
     rafaga_ts = find_timestamp(
         text,
         r"M[aá]xima R[aá]faga.*?15 min|M&aacute;xima R&aacute;faga.*?15 min"
     )
     rafaga_val = number(find_value(text, r"M[aá]xima R[aá]faga.*?15 min|M&aacute;xima R&aacute;faga.*?15 min"))
-    if rafaga_ts:
-        rafaga_dt = parse_dt(rafaga_ts)
-        if rafaga_dt is None or rafaga_dt > obs_time or (obs_time - rafaga_dt).total_seconds() > 15 * 60:
-            rafaga_val = None
-            rafaga_ts = None
+    rafaga_dt = parse_dt(rafaga_ts) if rafaga_ts else None
+    if (
+        rafaga_dt is None
+        or not 0 <= (now - rafaga_dt).total_seconds() <= MAX_AGE * 60
+        or rafaga_dt > obs_time
+    ):
+        rafaga_val = None
+        rafaga_ts = None
     variables = {
         "temperatura_c": number(find_value(text, r"Última Temperatura|&Uacute;ltima Temperatura")),
         "precipitacion_dia_mm": number(find_value(text, r"Precipitaciones del d")),
@@ -131,8 +138,10 @@ def collect(sid, name):
         "nombre": name,
         "observation_time": obs_time.isoformat(),
         "edad_minutos": round(age, 2),
-        "fresh": age < MAX_AGE,
-        "estado": "valida" if age < MAX_AGE else "descartada_por_antiguedad",
+        "fresh": is_fresh_age(age),
+        "estado": "valida" if is_fresh_age(age) else (
+            "timestamp_futuro" if age < 0 else "descartada_por_antiguedad"
+        ),
         "variables": variables,
         "timestamps": {
             "rafaga_15min": rafaga_ts,
