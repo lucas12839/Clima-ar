@@ -290,6 +290,9 @@ class EdadRadarEIATest(unittest.TestCase):
             (tmp / "data/radar").mkdir(parents=True)
             shutil.copy(ROOT / "data/radar/radar_nowcast.json", tmp / "data/radar")
             shutil.copy(ROOT / "data/radar/estado_radar.json", tmp / "data/radar")
+            expected_collector_timestamp = json.loads(
+                (ia / "inteligencia_tormenta.json").read_text(encoding="utf-8")
+            )["origen_datos"]["collector"]["last_processed_radar_timestamp"]
             os.chdir(tmp)
             with mock.patch.multiple(
                 engine,
@@ -312,7 +315,7 @@ class EdadRadarEIATest(unittest.TestCase):
         self.assertIn("prediccion_ml", out["origen_datos"])
         self.assertEqual(
             out["origen_datos"]["collector"]["last_processed_radar_timestamp"],
-            "2026-10-22T01:10:00+00:00",
+            expected_collector_timestamp,
         )
         if out["radar_age"] > engine.RADAR_ESTIMACION_MAX_MIN:
             self.assertEqual(out["vigencia_radar"]["modo"], "radar_obsoleto")
