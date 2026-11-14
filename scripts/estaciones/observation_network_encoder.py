@@ -7,6 +7,7 @@ No produce predicciones meteorológicas.
 
 import json
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -154,19 +155,45 @@ def _smn_values(record):
     ]
 
 
+def _observation_age_minutes(record, now):
+    if not isinstance(record, dict):
+        return None
+    raw = record.get("observation_time")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        value = raw.strip()
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        observed = datetime.fromisoformat(value)
+        if observed.tzinfo is None:
+            return None
+        observed = observed.astimezone(timezone.utc)
+        return (now - observed).total_seconds() / 60.0
+    except (TypeError, ValueError):
+        return None
+
+
 def build_observation_batch(
     catalog_path=CATALOG,
     bcp_path=BCP_FILE,
     smn_path=SMN_FILE,
+    now=None,
 ):
     """Construye tensores para las estaciones del catálogo.
 
-    La frescura se determina con los campos calculados por los colectores:
-    fresh, estado y edad_minutos. Una estación vencida nunca aporta valores.
+    La frescura se recalcula desde observation_time en el encoder.
+    Los flags/edades cacheados de los colectores no son fuente de verdad.
     """
     catalog = _read_json(Path(catalog_path))
     bcp = _read_json(Path(bcp_path))
     smn = _read_json(Path(smn_path))
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        raise ValueError("now debe incluir zona horaria.")
+    else:
+        now = now.astimezone(timezone.utc)
 
     bcp_by_id = {str(x.get("station_id")): x for x in bcp.get("stations", [])}
     smn_by_id = {str(x.get("wigos")): x for x in smn.get("stations", [])}
@@ -180,14 +207,12 @@ def build_observation_batch(
         elif station.get("network") == "smn":
             record = smn_by_id.get(str(station.get("wigos")))
 
-        age = _number(record.get("edad_minutos")) if record else None
+        age = _observation_age_minutes(record, now)
         valid = bool(
             station.get("active")
             and record
-            and record.get("fresh") is True
-            and record.get("estado") == "valida"
             and age is not None
-            and 0 <= age < MAX_AGE_MINUTES
+            and 0.0 <= age <= MAX_AGE_MINUTES
         )
 
         values = (
