@@ -195,6 +195,8 @@ def build_observation_batch(
     else:
         now = now.astimezone(timezone.utc)
 
+    # Las claves deben coincidir con el contrato real del catálogo:
+    # BCP usa collector_id (no station_number); SMN usa wigos_id.
     bcp_by_id = {str(x.get("station_id")): x for x in bcp.get("stations", [])}
     smn_by_id = {str(x.get("wigos")): x for x in smn.get("stations", [])}
 
@@ -203,9 +205,9 @@ def build_observation_batch(
     for station in catalog.get("stations", []):
         record = None
         if station.get("network") == "bcp":
-            record = bcp_by_id.get(str(station.get("station_number")))
+            record = bcp_by_id.get(str(station.get("collector_id")))
         elif station.get("network") == "smn":
-            record = smn_by_id.get(str(station.get("wigos")))
+            record = smn_by_id.get(str(station.get("wigos_id")))
 
         age = _observation_age_minutes(record, now)
         valid = bool(
