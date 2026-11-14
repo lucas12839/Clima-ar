@@ -59,7 +59,8 @@ class MeteorologiaCalidadTests(unittest.TestCase):
 
     def test_sazb_sin_timestamp_no_se_considera_fresco(self):
         out = fusion.calcular_calidad(
-            self.radar, {"disponible": True}, self.ambiente, now=self.now
+            self.radar, {"disponible": True, "edad_minutos": 1},
+            self.ambiente, now=self.now
         )
         self.assertEqual(out["score"], 80)
         self.assertFalse(out["sazb_fresco"])
@@ -71,14 +72,49 @@ class MeteorologiaCalidadTests(unittest.TestCase):
         self.assertEqual(out["score"], 80)
         self.assertFalse(out["sazb_disponible"])
 
+
+    def test_sazb_vencida_no_reemplaza_superficie_ecmwf(self):
+        sazb = self.sazb(25.6)
+        sazb.update({
+            "temperatura_c": 5,
+            "punto_rocio_c": 4,
+            "presion_hpa": 990,
+            "viento_kt": 30,
+            "direccion_viento": 270,
+        })
+        actual = {
+            "temperature_2m": 18,
+            "dew_point_2m": 12,
+            "pressure_msl": 1015,
+            "wind_speed_10m": 20,
+            "wind_direction_10m": 180,
+            "wind_gusts_10m": 28,
+        }
+        out = fusion.fusionar_actual_ecmwf_sazb(actual, sazb, now=self.now)
+        self.assertEqual(out["fuente_superficie_actual"], "ECMWF")
+        self.assertEqual(out["estado_observacion_actual"], "observacion_sazb_vencida")
+        self.assertEqual(out["temperature_2m"], 18)
+        self.assertEqual(out["wind_speed_10m"], 20)
+        self.assertFalse(out["observacion_sazb_fresca"])
+        self.assertEqual(out["observacion_sazb_edad_minutos"], 25.6)
+
+    def test_sazb_exactamente_15_minutos_sigue_vigente(self):
+        sazb = self.sazb(15)
+        out = fusion.calcular_calidad(
+            self.radar, sazb, self.ambiente, now=self.now
+        )
+        self.assertTrue(out["sazb_fresco"])
+        self.assertEqual(out["score"], 100)
+
     def test_fusion_marca_observacion_futura_como_no_fresca(self):
         sazb = self.sazb(-4)
         out = fusion.fusionar_actual_ecmwf_sazb(
-            {"wind_speed_10m": 12, "wind_direction_10m": 180}, sazb
+            {"wind_speed_10m": 12, "wind_direction_10m": 180},
+            sazb, now=self.now
         )
         self.assertFalse(out["observacion_sazb_fresca"])
         self.assertEqual(
-            out["estado_observacion_actual"], "ultima_observacion_disponible"
+            out["estado_observacion_actual"], "observacion_sazb_vencida"
         )
 
 
