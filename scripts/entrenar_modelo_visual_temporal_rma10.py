@@ -155,6 +155,10 @@ def parse_timestamp_from_name(path: Path):
     except ValueError:
         return None
 
+    # Reject syntactically valid but impossible legacy radar years (e.g. 1791).
+    if not 2000 <= dt.year <= 2100:
+        return None
+
     return dt.replace(tzinfo=timezone.utc)
 
 
