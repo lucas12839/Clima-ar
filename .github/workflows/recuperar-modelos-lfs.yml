@@ -14,8 +14,9 @@ jobs:
   recuperar-modelos:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
     steps:
-      - name: Checkout con Git LFS
+      - name: Descargar repositorio y modelos LFS
         uses: actions/checkout@v4
         with:
           lfs: true
@@ -26,7 +27,7 @@ jobs:
           git lfs install --local
           git lfs pull
 
-      - name: Detectar, verificar y empaquetar modelos
+      - name: Verificar y dividir modelos
         shell: bash
         run: |
           python - <<'PY'
@@ -38,106 +39,103 @@ jobs:
           import zipfile
           from pathlib import Path
 
-          listing = subprocess.check_output(
+          files = subprocess.check_output(
               ["git", "ls-tree", "-r", "--name-only", "HEAD"],
               text=True
           ).splitlines()
 
           models = []
-          for rel in listing:
+          for rel in files:
               if not rel.lower().endswith((".joblib", ".pkl", ".pt", ".pth")):
                   continue
 
-              result = subprocess.run(
-                  ["git", "show", f"HEAD:{rel}"],
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.DEVNULL
+              raw = subprocess.check_output(
+                  ["git", "show", f"HEAD:{rel}"]
               )
-              raw = result.stdout
 
               if not raw.startswith(
                   b"version https://git-lfs.github.com/spec/v1"
               ):
                   continue
 
-              pointer = raw.decode("utf-8", errors="replace")
+              pointer = raw.decode()
               oid = re.search(r"(?m)^oid sha256:([0-9a-f]{64})$", pointer)
               size = re.search(r"(?m)^size ([0-9]+)$", pointer)
 
               if not oid or not size:
-                  raise SystemExit(f"Puntero LFS inválido: {rel}")
+                  raise SystemExit(f"Puntero inválido: {rel}")
 
               models.append((rel, oid.group(1), int(size.group(1))))
 
           if not models:
-              raise SystemExit("No se detectaron modelos LFS.")
+              raise SystemExit("No se encontraron modelos LFS.")
 
-          failures = []
           verified = []
 
           for rel, expected_hash, expected_size in models:
               path = Path(rel)
-
               if not path.is_file():
-                  failures.append(f"ARCHIVO AUSENTE: {rel}")
-                  continue
+                  raise SystemExit(f"Falta archivo: {rel}")
 
               h = hashlib.sha256()
               total = 0
 
               with path.open("rb") as f:
-                  first = f.read(128)
-
-                  if first.startswith(
-                      b"version https://git-lfs.github.com/spec/v1"
-                  ):
-                      failures.append(f"SIGUE SIENDO PUNTERO: {rel}")
-                      continue
-
-                  h.update(first)
-                  total += len(first)
-
-                  for chunk in iter(
-                      lambda: f.read(8 * 1024 * 1024), b""
-                  ):
+                  for chunk in iter(lambda: f.read(8 * 1024 * 1024), b""):
                       h.update(chunk)
                       total += len(chunk)
 
               if total != expected_size:
-                  failures.append(f"TAMAÑO INCORRECTO: {rel}")
-              elif h.hexdigest() != expected_hash:
-                  failures.append(f"SHA256 INCORRECTO: {rel}")
-              else:
-                  verified.append(rel)
-                  print(f"OK: {rel} ({total} bytes)")
+                  raise SystemExit(f"Tamaño incorrecto: {rel}")
 
-          if failures:
-              print("\n".join(failures), file=sys.stderr)
-              raise SystemExit(1)
+              if h.hexdigest() != expected_hash:
+                  raise SystemExit(f"SHA256 incorrecto: {rel}")
 
-          output = "modelos_climaar_lfs_verificados.zip"
+              verified.append((rel, total))
+              print(f"OK: {rel} - {total} bytes")
 
-          with zipfile.ZipFile(
-              output, "w", compression=zipfile.ZIP_STORED
-          ) as archive:
-              for rel in verified:
-                  archive.write(rel, arcname=rel)
+          # El archivo individual más grande queda en el ZIP 1.
+          largest = max(verified, key=lambda x: x[1])
+          others = [x for x in verified if x != largest]
+
+          groups = [[largest[0]], [x[0] for x in others]]
+
+          for index, group in enumerate(groups, 1):
+              output = f"modelos_climaar_parte_{index}.zip"
+              with zipfile.ZipFile(
+                  output, "w", compression=zipfile.ZIP_STORED
+              ) as archive:
+                  for rel in group:
+                      archive.write(rel, arcname=rel)
+
+              print(
+                  f"PARTE {index}: {len(group)} archivos, "
+                  f"{os.path.getsize(output)} bytes"
+              )
 
           print(f"VERIFICADOS: {len(verified)}/{len(models)}")
 
-          with open(
-              os.environ["GITHUB_STEP_SUMMARY"], "a"
-          ) as summary:
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
               summary.write(
                   f"Modelos verificados: {len(verified)}/{len(models)}\n"
               )
+              summary.write("Se generaron dos ZIP independientes.\n")
           PY
 
-      - name: Publicar ZIP recuperado
+      - name: Publicar parte 1
         uses: actions/upload-artifact@v4
         with:
-          name: modelos-climaar-lfs-verificados
-          path: modelos_climaar_lfs_verificados.zip
+          name: modelos-climaar-parte-1
+          path: modelos_climaar_parte_1.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Publicar parte 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: modelos-climaar-parte-2
+          path: modelos_climaar_parte_2.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
