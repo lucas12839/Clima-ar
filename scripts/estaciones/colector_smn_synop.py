@@ -17,6 +17,10 @@ STATIONS = {
 }
 
 MAX_AGE = 15
+
+
+def is_fresh_age(age):
+    return age is not None and 0 <= age <= MAX_AGE
 LOOKBACK = 120
 OUTPUT = Path("data/ia/estaciones/observaciones/smn_synop_actual.json")
 
@@ -28,7 +32,10 @@ def parse_time(value):
     if "/" in value:
         value = value.split("/")[-1]
     try:
-        return datetime.fromisoformat(value).astimezone(timezone.utc)
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except ValueError:
         return None
 
@@ -85,7 +92,7 @@ def collect(wigos, name):
         }
 
     obs_time, report_id, items = max(candidates, key=lambda x: x[0])
-    age = max(0, (now - obs_time).total_seconds() / 60)
+    age = (now - obs_time).total_seconds() / 60
 
     variables = {}
 
@@ -94,10 +101,18 @@ def collect(wigos, name):
         if not var:
             continue
 
+        variable_time = parse_time(p.get("phenomenonTime"))
+        variable_age = (
+            (now - variable_time).total_seconds() / 60
+            if variable_time is not None else None
+        )
+        if variable_age is None or not 0 <= variable_age <= MAX_AGE:
+            continue
         variables.setdefault(var, []).append({
             "value": p.get("value"),
             "units": p.get("units"),
             "phenomenonTime": p.get("phenomenonTime"),
+            "edad_minutos": round(variable_age, 2),
         })
 
     return {
@@ -107,8 +122,10 @@ def collect(wigos, name):
         "reportId": report_id,
         "observation_time": obs_time.isoformat(),
         "edad_minutos": round(age, 2),
-        "fresh": age < MAX_AGE,
-        "estado": "valida" if age < MAX_AGE else "descartada_por_antiguedad",
+        "fresh": is_fresh_age(age),
+        "estado": "valida" if is_fresh_age(age) else (
+            "timestamp_futuro" if age < 0 else "descartada_por_antiguedad"
+        ),
         "variables": variables,
     }
 
