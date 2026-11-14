@@ -1,0 +1,143 @@
+name: Recuperar modelos LFS ClimaAR
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/recuperar-modelos-lfs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  recuperar-modelos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout con Git LFS
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 1
+
+      - name: Descargar objetos LFS
+        run: |
+          git lfs install --local
+          git lfs pull
+
+      - name: Detectar, verificar y empaquetar modelos
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          import re
+          import subprocess
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          listing = subprocess.check_output(
+              ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+              text=True
+          ).splitlines()
+
+          models = []
+          for rel in listing:
+              if not rel.lower().endswith((".joblib", ".pkl", ".pt", ".pth")):
+                  continue
+
+              result = subprocess.run(
+                  ["git", "show", f"HEAD:{rel}"],
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.DEVNULL
+              )
+              raw = result.stdout
+
+              if not raw.startswith(
+                  b"version https://git-lfs.github.com/spec/v1"
+              ):
+                  continue
+
+              pointer = raw.decode("utf-8", errors="replace")
+              oid = re.search(r"(?m)^oid sha256:([0-9a-f]{64})$", pointer)
+              size = re.search(r"(?m)^size ([0-9]+)$", pointer)
+
+              if not oid or not size:
+                  raise SystemExit(f"Puntero LFS inválido: {rel}")
+
+              models.append((rel, oid.group(1), int(size.group(1))))
+
+          if not models:
+              raise SystemExit("No se detectaron modelos LFS.")
+
+          failures = []
+          verified = []
+
+          for rel, expected_hash, expected_size in models:
+              path = Path(rel)
+
+              if not path.is_file():
+                  failures.append(f"ARCHIVO AUSENTE: {rel}")
+                  continue
+
+              h = hashlib.sha256()
+              total = 0
+
+              with path.open("rb") as f:
+                  first = f.read(128)
+
+                  if first.startswith(
+                      b"version https://git-lfs.github.com/spec/v1"
+                  ):
+                      failures.append(f"SIGUE SIENDO PUNTERO: {rel}")
+                      continue
+
+                  h.update(first)
+                  total += len(first)
+
+                  for chunk in iter(
+                      lambda: f.read(8 * 1024 * 1024), b""
+                  ):
+                      h.update(chunk)
+                      total += len(chunk)
+
+              if total != expected_size:
+                  failures.append(f"TAMAÑO INCORRECTO: {rel}")
+              elif h.hexdigest() != expected_hash:
+                  failures.append(f"SHA256 INCORRECTO: {rel}")
+              else:
+                  verified.append(rel)
+                  print(f"OK: {rel} ({total} bytes)")
+
+          if failures:
+              print("\n".join(failures), file=sys.stderr)
+              raise SystemExit(1)
+
+          output = "modelos_climaar_lfs_verificados.zip"
+
+          with zipfile.ZipFile(
+              output, "w", compression=zipfile.ZIP_STORED
+          ) as archive:
+              for rel in verified:
+                  archive.write(rel, arcname=rel)
+
+          print(f"VERIFICADOS: {len(verified)}/{len(models)}")
+
+          with open(
+              os.environ["GITHUB_STEP_SUMMARY"], "a"
+          ) as summary:
+              summary.write(
+                  f"Modelos verificados: {len(verified)}/{len(models)}\n"
+              )
+          PY
+
+      - name: Publicar ZIP recuperado
+        uses: actions/upload-artifact@v4
+        with:
+          name: modelos-climaar-lfs-verificados
+          path: modelos_climaar_lfs_verificados.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
