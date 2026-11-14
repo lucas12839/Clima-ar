@@ -240,6 +240,10 @@ def radar_timestamps():
         except ValueError:
             continue
 
+        # Exclude malformed archive names that parse as dates centuries ago.
+        if not 2000 <= dt.year <= 2100:
+            continue
+
         result.append(dt)
 
     return sorted(set(result))
