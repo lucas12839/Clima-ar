@@ -19,6 +19,21 @@ from scripts.tormenta_intelligence_timestamp import temporal_interpolation
 from scraper import capturar_radar_smn
 
 
+
+
+class RadarFilenameTimestampTests(unittest.TestCase):
+    def test_rejects_implausible_1791_radar_timestamp(self):
+        from scripts import entrenar_modelo_visual_temporal_rma10 as visual_trainer
+        self.assertIsNone(
+            visual_trainer.parse_timestamp_from_name(Path("17910104082000.png"))
+        )
+
+    def test_accepts_valid_operational_radar_timestamp(self):
+        from scripts import entrenar_modelo_visual_temporal_rma10 as visual_trainer
+        parsed = visual_trainer.parse_timestamp_from_name(Path("20261012065000.png"))
+        self.assertEqual(parsed, datetime(2026, 10, 12, 6, 50, tzinfo=timezone.utc))
+
+
 class EvolutionGapTests(unittest.TestCase):
     def test_short_gap_keeps_motion_forecast(self):
         start = datetime(2026, 10, 21, 19, 0, tzinfo=timezone.utc)
