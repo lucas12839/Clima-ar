@@ -35,9 +35,16 @@ def timestamp_archivo(path):
     try:
         nombre = path.stem
         if len(nombre) == 14 and nombre.isdigit():
-            return datetime.strptime(nombre, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-        if len(nombre) == 15 and nombre[8] == "_":
-            return datetime.strptime(nombre, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(nombre, "%Y%m%d%H%M%S")
+        elif len(nombre) == 15 and nombre[8] == "_":
+            dt = datetime.strptime(nombre, "%Y%m%d_%H%M%S")
+        else:
+            return None
+
+        if not 2000 <= dt.year <= 2100:
+            return None
+
+        return dt.replace(tzinfo=timezone.utc)
     except Exception:
         pass
     return None
