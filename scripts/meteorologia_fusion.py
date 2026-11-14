@@ -553,22 +553,24 @@ def _parse_utc_timestamp(value):
         return None
 
 
-def obtener_edad_sazb_minutos(sazb):
-    edad = finite(sazb.get("edad_minutos"))
-
-    if edad is not None:
-        return max(0.0, edad)
-
+def obtener_edad_sazb_minutos(sazb, now=None):
+    # El timestamp de observacion es la fuente de verdad. El campo
+    # edad_minutos puede haber quedado cacheado desde una ejecucion anterior.
     obs_time = _parse_utc_timestamp(sazb.get("obsTime_utc"))
 
-    if obs_time is None:
-        return None
+    if obs_time is not None:
+        if now is None:
+            now = datetime.now(timezone.utc)
+        elif now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        else:
+            now = now.astimezone(timezone.utc)
 
-    edad = (
-        datetime.now(timezone.utc) - obs_time
-    ).total_seconds() / 60.0
+        return (now - obs_time).total_seconds() / 60.0
 
-    return max(0.0, edad)
+    # Compatibilidad con estados historicos que no guardaban obsTime_utc.
+    edad = finite(sazb.get("edad_minutos"))
+    return edad
 
 
 def fusionar_actual_ecmwf_sazb(actual, sazb):
@@ -648,17 +650,19 @@ def fusionar_actual_ecmwf_sazb(actual, sazb):
     resultado["viento_actual_kmh"] = viento_kmh
     resultado["direccion_viento_actual"] = direccion
 
-    if edad_minutos is not None and edad_minutos <= SAZB_FRESH_MAX_MINUTES:
+    sazb_fresca = bool(
+        edad_minutos is not None
+        and 0.0 <= edad_minutos <= SAZB_FRESH_MAX_MINUTES
+    )
+
+    if sazb_fresca:
         resultado["estado_observacion_actual"] = "observacion_reciente"
     else:
         resultado["estado_observacion_actual"] = (
             "ultima_observacion_disponible"
         )
 
-    resultado["observacion_sazb_fresca"] = bool(
-        edad_minutos is not None
-        and edad_minutos <= SAZB_FRESH_MAX_MINUTES
-    )
+    resultado["observacion_sazb_fresca"] = sazb_fresca
 
     return resultado
 
@@ -667,35 +671,39 @@ def fusionar_actual_ecmwf_sazb(actual, sazb):
 # CALIDAD DE DATOS
 # ============================================================
 
-def calcular_calidad(radar, sazb, ambiente):
-    puntos_validos = len(
-        [
-            punto
-            for punto in ambiente
-            if punto.get("datos")
-        ]
+def calcular_calidad(radar, sazb, ambiente, now=None):
+    """Calcula calidad de fuentes sin confundir disponibilidad con vigencia."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+
+    puntos_validos = sum(
+        1 for punto in ambiente
+        if isinstance(punto, dict) and punto.get("datos")
     )
 
     tiles_ok = radar.get("tiles_ok")
-
     radar_ok = (
         radar.get("disponible", False)
-        and (
-            tiles_ok is True
-            or tiles_ok == 9
-        )
+        and (tiles_ok is True or tiles_ok == 9)
     )
 
-    sazb_ok = sazb.get("disponible", False)
+    sazb_disponible = bool(sazb.get("disponible", False))
+    sazb_edad = obtener_edad_sazb_minutos(sazb, now=now)
+    sazb_fresco = bool(
+        sazb_disponible
+        and sazb_edad is not None
+        and 0.0 <= sazb_edad <= SAZB_FRESH_MAX_MINUTES
+    )
 
     score = 0
-
     if radar_ok:
         score += 40
-
-    if sazb_ok:
+    if sazb_fresco:
         score += 20
-
     if puntos_validos >= 9:
         score += 40
     elif puntos_validos >= 6:
@@ -704,7 +712,6 @@ def calcular_calidad(radar, sazb, ambiente):
         score += 15
 
     score = min(100, score)
-
     if score >= 85:
         nivel = "alto"
     elif score >= 60:
@@ -716,7 +723,10 @@ def calcular_calidad(radar, sazb, ambiente):
         "score": score,
         "nivel": nivel,
         "radar_valido": radar_ok,
-        "sazb_valido": sazb_ok,
+        "sazb_valido": sazb_fresco,
+        "sazb_disponible": sazb_disponible,
+        "sazb_fresco": sazb_fresco,
+        "sazb_edad_minutos": round(sazb_edad, 1) if sazb_edad is not None else None,
         "puntos_ecmwf_validos": puntos_validos,
     }
 
