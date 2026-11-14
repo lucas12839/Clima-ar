@@ -12,7 +12,8 @@ MAX_AGE = 15
 
 def is_fresh_age(age):
     return age is not None and 0 <= age <= MAX_AGE
-OUTPUT = Path("/opt/Clima-ar/data/ia/estaciones/observaciones/bcp_actual.json")
+BASE = Path(__file__).resolve().parents[2]
+OUTPUT = BASE / "data/ia/estaciones/observaciones/bcp_actual.json"
 
 STATIONS = {
     1: "GRUMBEIN",
