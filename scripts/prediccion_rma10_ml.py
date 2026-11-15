@@ -40,7 +40,7 @@ RADAR_TIMESTAMP_PATH = ROOT / "data/radar/radar_timestamp.txt"
 FEATURES = list(V1_FEATURES)
 HORIZONS = (5, 10, 20, 30)
 TARGETS = ("strengthened", "weakened", "toward_bahia")
-MODEL_VERSION = "rma10-v1-causal-2"
+MODEL_VERSION = "rma10-v1-causal-3-holdout-isolated"
 CALIBRATION_EPS = 1e-6
 CALIBRATION_MIN_SAMPLES = 100
 
