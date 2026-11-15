@@ -24,7 +24,8 @@ _FEATURE_COLUMNS = {
 }
 
 
-def _event_table(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
+def _track_table(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray, pd.Series]:
+    """Return whole-track time bounds; tracks remain independent identities."""
     missing = _REQUIRED_EVENT_COLUMNS - set(df.columns)
     if missing:
         raise ValueError(f"Faltan columnas para split cronológico: {sorted(missing)}")
@@ -35,105 +36,94 @@ def _event_table(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
     if tracks.eq("").any() or timestamps.isna().any():
         raise ValueError("track_id/frame_utc contienen valores vacíos o inválidos")
     work = pd.DataFrame({"track_id": tracks.to_numpy(), "timestamp": timestamps.to_numpy()})
-    events = (
-        work.groupby("track_id", sort=False)["timestamp"]
-        .min()
-        .sort_values(kind="stable")
-        .rename("first_timestamp")
-        .reset_index()
-    )
-    event_order = {track: i for i, track in enumerate(events["track_id"].tolist())}
-    event_ids = tracks.map(event_order).to_numpy(dtype=int)
-    return events, event_ids
+    table = work.groupby("track_id", sort=False)["timestamp"].agg(first_timestamp="min", last_timestamp="max")
+    table = table.sort_values(["first_timestamp", "last_timestamp"], kind="stable")
+    return table, tracks.to_numpy(), timestamps
 
 
-def _masks(
-    event_ids: np.ndarray,
-    train_events: set[int],
-    cal_events: set[int],
-    test_events: set[int],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    return (
-        np.isin(event_ids, list(train_events)),
-        np.isin(event_ids, list(cal_events)),
-        np.isin(event_ids, list(test_events)),
-    )
+def _masks_for_tracks(track_values: np.ndarray, groups: tuple[set[str], set[str], set[str]]):
+    return tuple(np.isin(track_values, list(group)) for group in groups)
+
+
+def _counts_by_horizon(df: pd.DataFrame, masks: tuple[np.ndarray, ...], min_rows: int) -> bool:
+    if "horizonte_min" not in df.columns:
+        return all(int(mask.sum()) >= min_rows for mask in masks)
+    horizons = pd.to_numeric(df["horizonte_min"], errors="coerce").to_numpy()
+    required = sorted(pd.Series(horizons).dropna().unique().tolist())
+    return all(int((mask & (horizons == h)).sum()) >= min_rows for mask in masks for h in required)
 
 
 def chronological_event_split(df: pd.DataFrame) -> dict[str, Any]:
-    """Chronological 60/20/20 split with whole tracks assigned to one partition."""
-    events, event_ids = _event_table(df)
-    count = len(events)
-    if count < 5:
-        raise ValueError(
-            f"Se requieren al menos 5 tracks/eventos independientes; encontrados={count}"
-        )
-    train_end = max(1, int(math.floor(count * 0.60)))
-    cal_end = max(train_end + 1, int(math.floor(count * 0.80)))
-    cal_end = min(cal_end, count - 1)
-    train_set = set(range(0, train_end))
-    cal_set = set(range(train_end, cal_end))
-    test_set = set(range(cal_end, count))
-    train_mask, calibration_mask, test_mask = _masks(
-        event_ids, train_set, cal_set, test_set
-    )
-    if not train_mask.any() or not calibration_mask.any() or not test_mask.any():
-        raise ValueError("Split cronológico produjo una partición vacía")
+    """Chronological 60/20/20 split; whole tracks crossing a boundary are excluded."""
+    table, track_values, timestamps = _track_table(df)
+    starts = table["first_timestamp"].sort_values().reset_index(drop=True)
+    if len(table) < 5:
+        raise ValueError(f"Se requieren al menos 5 tracks independientes; encontrados={len(table)}")
+    start_boundary = starts.iloc[max(1, int(len(starts) * .60))]
+    test_boundary = starts.iloc[max(2, int(len(starts) * .80))]
+    train_ids = set(table.index[table["last_timestamp"] < start_boundary])
+    cal_ids = set(table.index[(table["first_timestamp"] >= start_boundary) & (table["last_timestamp"] < test_boundary)])
+    test_ids = set(table.index[table["first_timestamp"] >= test_boundary])
+    masks = _masks_for_tracks(track_values, (train_ids, cal_ids, test_ids))
+    if any(not m.any() for m in masks):
+        raise ValueError("Split cronológico produjo una partición vacía tras excluir tracks que cruzan límites")
+    # Strict temporal separation is checked on observation timestamps, not track start alone.
+    max_train = timestamps[masks[0]].max(); min_cal = timestamps[masks[1]].min()
+    max_cal = timestamps[masks[1]].max(); min_test = timestamps[masks[2]].min()
+    if not (max_train < min_cal and max_cal < min_test):
+        raise RuntimeError("Fuga temporal detectada entre particiones")
     return {
-        "train_mask": train_mask,
-        "calibration_mask": calibration_mask,
-        "test_mask": test_mask,
-        "event_by_track": dict(zip(events["track_id"], range(count))),
-        "event_count": count,
-        "train_events": len(train_set),
-        "calibration_events": len(cal_set),
-        "test_events": len(test_set),
-        "train_rows": int(train_mask.sum()),
-        "calibration_rows": int(calibration_mask.sum()),
-        "test_rows": int(test_mask.sum()),
-        "first_event_utc": events.iloc[0]["first_timestamp"].isoformat(),
-        "last_event_utc": events.iloc[-1]["first_timestamp"].isoformat(),
+        "train_mask": masks[0], "calibration_mask": masks[1], "test_mask": masks[2],
+        "event_by_track": {track: i for i, track in enumerate(table.index)},
+        "event_count": len(table), "train_events": len(train_ids),
+        "calibration_events": len(cal_ids), "test_events": len(test_ids),
+        "train_rows": int(masks[0].sum()), "calibration_rows": int(masks[1].sum()),
+        "test_rows": int(masks[2].sum()),
+        "first_event_utc": table.iloc[0]["first_timestamp"].isoformat(),
+        "last_event_utc": table.iloc[-1]["first_timestamp"].isoformat(),
     }
 
 
 def rolling_origin_event_splits(
     df: pd.DataFrame, n_last_events: int = 4, min_rows: int = 100
 ) -> list[dict[str, Any]]:
-    """Expanding-window folds: past tracks=train, prior track=calibration, next=test."""
+    """Expanding temporal windows; each full track belongs to one split only.
+
+    Calibration and test use consecutive two-day windows. Tracks crossing either
+    boundary are excluded rather than split. No cells are merged into episodes.
+    """
     if n_last_events < 1 or min_rows < 1:
         raise ValueError("n_last_events y min_rows deben ser positivos")
-    events, event_ids = _event_table(df)
-    count = len(events)
-    first_test = max(2, count - int(n_last_events))
+    table, track_values, timestamps = _track_table(df)
+    if len(table) < 5:
+        return []
+    first_day = table["first_timestamp"].min().ceil("D")
+    last_day = table["last_timestamp"].max().floor("D")
+    candidates = pd.date_range(first_day + pd.Timedelta(days=2), last_day - pd.Timedelta(days=4), freq="D")
     folds: list[dict[str, Any]] = []
-    for test_event in range(first_test, count):
-        calibration_event = test_event - 1
-        train_set = set(range(0, calibration_event))
-        cal_set = {calibration_event}
-        test_set = {test_event}
-        train_mask, calibration_mask, test_mask = _masks(
-            event_ids, train_set, cal_set, test_set
-        )
-        if min(
-            int(train_mask.sum()),
-            int(calibration_mask.sum()),
-            int(test_mask.sum()),
-        ) < min_rows:
+    for cal_start in candidates:
+        test_start = cal_start + pd.Timedelta(days=2)
+        test_end = test_start + pd.Timedelta(days=2)
+        train_ids = set(table.index[table["last_timestamp"] < cal_start])
+        cal_ids = set(table.index[(table["first_timestamp"] >= cal_start) & (table["last_timestamp"] < test_start)])
+        test_ids = set(table.index[(table["first_timestamp"] >= test_start) & (table["last_timestamp"] < test_end)])
+        masks = _masks_for_tracks(track_values, (train_ids, cal_ids, test_ids))
+        if not _counts_by_horizon(df, masks, min_rows):
             continue
-        folds.append(
-            {
-                "train_mask": train_mask,
-                "calibration_mask": calibration_mask,
-                "test_mask": test_mask,
-                "test_event": str(events.iloc[test_event]["track_id"]),
-                "calibration_event": str(events.iloc[calibration_event]["track_id"]),
-                "train_events": len(train_set),
-                "train_samples": int(train_mask.sum()),
-                "calibration_samples": int(calibration_mask.sum()),
-                "test_samples": int(test_mask.sum()),
-            }
-        )
-    return folds
+        max_train = timestamps[masks[0]].max(); min_cal = timestamps[masks[1]].min()
+        max_cal = timestamps[masks[1]].max(); min_test = timestamps[masks[2]].min()
+        if not (max_train < min_cal and max_cal < min_test):
+            continue
+        folds.append({
+            "train_mask": masks[0], "calibration_mask": masks[1], "test_mask": masks[2],
+            "test_event": f"{test_start.isoformat()}..{test_end.isoformat()}",
+            "calibration_event": f"{cal_start.isoformat()}..{test_start.isoformat()}",
+            "train_events": len(train_ids), "train_samples": int(masks[0].sum()),
+            "calibration_samples": int(masks[1].sum()), "test_samples": int(masks[2].sum()),
+            "train_max_utc": max_train.isoformat(), "calibration_min_utc": min_cal.isoformat(),
+            "calibration_max_utc": max_cal.isoformat(), "test_min_utc": min_test.isoformat(),
+        })
+    return folds[-max(2, int(n_last_events)):]
 
 
 def classification_metrics(y_true: Any, probability: Any) -> dict[str, Any]:
