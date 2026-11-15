@@ -1,6 +1,5 @@
 import json
 import math
-import heapq
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -278,11 +277,18 @@ def _mascara_temporal_dinamica(actual, mascara, ruta_actual=None):
     if not previas:
         return np.zeros(actual.shape, dtype=bool), 0
 
-    apilado = np.stack(previas, axis=0)
-    presentes = apilado > 0
-    cantidad_presente = np.sum(presentes, axis=0)
-    mediana_previa = np.median(apilado, axis=0)
-    maximo_previo = np.max(apilado, axis=0)
+    # La mediana de hasta tres frames se calcula por operaciones elementales.
+    # np.median(axis=0) generaba picos de CPU muy altos en algunas imágenes.
+    cantidad_presente = np.add.reduce([frame > 0 for frame in previas])
+    minimo_previo = np.minimum.reduce(previas)
+    maximo_previo = np.maximum.reduce(previas)
+    if len(previas) == 1:
+        mediana_previa = previas[0].astype(np.float32)
+    elif len(previas) == 2:
+        mediana_previa = (minimo_previo.astype(np.float32) + maximo_previo.astype(np.float32)) / 2.0
+    else:
+        suma_previa = np.add.reduce([frame.astype(np.uint16) for frame in previas])
+        mediana_previa = (suma_previa - minimo_previo.astype(np.uint16) - maximo_previo.astype(np.uint16)).astype(np.float32)
     actual_presente = actual > 0
 
     nuevo_eco = actual_presente & (
@@ -301,23 +307,35 @@ def _mascara_temporal_dinamica(actual, mascara, ruta_actual=None):
     return evidencia, len(previas)
 
 
-def aplicar_mascara_estatica(actual, ruta_actual=None):
-    mascara = cargar_mascara()
+def aplicar_mascara_estatica(
+    actual,
+    ruta_actual=None,
+    *,
+    mascara=None,
+    evidencia_temporal=None,
+    frames_temporales=None,
+    quiet=False,
+):
+    mascara = cargar_mascara() if mascara is None else mascara
     if mascara is None:
-        print("AVISO: se procesa el radar sin máscara estática.")
+        if not quiet:
+            print("AVISO: se procesa el radar sin máscara estática.")
         return actual.copy(), 0, 0
 
     if mascara.shape != actual.shape:
-        print("AVISO: tamaño de máscara diferente al radar actual.")
-        print("Máscara:", mascara.shape)
-        print("Radar:", actual.shape)
-        print("Se ignora la máscara para no producir un error.")
+        if not quiet:
+            print("AVISO: tamaño de máscara diferente al radar actual.")
+            print("Máscara:", mascara.shape)
+            print("Radar:", actual.shape)
+            print("Se ignora la máscara para no producir un error.")
         return actual.copy(), 0, 0
 
     estaticos = mascara & (actual > 0)
-    evidencia_temporal, frames_temporales = _mascara_temporal_dinamica(
-        actual, mascara, ruta_actual
-    )
+    if evidencia_temporal is None:
+        evidencia_temporal, frames_temporales = _mascara_temporal_dinamica(
+            actual, mascara, ruta_actual
+        )
+    frames_temporales = int(frames_temporales or 0)
     eliminar = estaticos & ~evidencia_temporal
 
     resultado = actual.copy()
@@ -328,11 +346,12 @@ def aplicar_mascara_estatica(actual, ruta_actual=None):
     cantidad = int(np.sum(eliminar))
     rescatados = int(np.sum(evidencia_temporal & estaticos))
 
-    print("Máscara estática externa utilizada.")
-    print("Píxeles estáticos eliminados:", cantidad)
-    print("Píxeles dinámicos dentro de máscara conservados:", rescatados)
-    print("Frames temporales comparados:", frames_temporales)
-    print("Frames utilizados para máscara:", frames_mascara)
+    if not quiet:
+        print("Máscara estática externa utilizada.")
+        print("Píxeles estáticos eliminados:", cantidad)
+        print("Píxeles dinámicos dentro de máscara conservados:", rescatados)
+        print("Frames temporales comparados:", frames_temporales)
+        print("Frames utilizados para máscara:", frames_mascara)
 
     return resultado, cantidad, frames_mascara
 
@@ -341,9 +360,10 @@ def distancia_px(x1, y1, x2, y2):
     return math.hypot(x2 - x1, y2 - y1)
 
 
-def detectar_semillas(matriz, componente):
+def detectar_semillas(matriz, componente, maximo=None):
     semillas = []
-    maximo = ndimage.maximum_filter(matriz, size=21, mode="constant", cval=0)
+    if maximo is None:
+        maximo = ndimage.maximum_filter(matriz, size=21, mode="constant", cval=0)
 
     for nivel in (6, 5, 4, 3):
         candidatos = componente & (matriz >= nivel) & (matriz == maximo)
@@ -363,50 +383,46 @@ def detectar_semillas(matriz, componente):
     return semillas
 
 
-def separar_region(matriz, componente):
+def separar_region(matriz, componente, maximo=None):
     area = int(np.sum(componente))
     if area < UMBRAL_REGION_GRANDE:
         return [componente]
 
-    semillas = detectar_semillas(matriz, componente)
+    semillas = detectar_semillas(matriz, componente, maximo=maximo)
     if len(semillas) <= 1:
         return [componente]
 
-    h, w = matriz.shape
-    etiquetas = np.zeros((h, w), dtype=np.int32)
-    heap = []
+    # Watershed de SciPy ejecutado en C: conserva la separación por máximos
+    # locales sin el heap Python que se volvía muy lento en ecos extensos.
+    y_coords, x_coords = np.where(componente)
+    y1, y2 = int(y_coords.min()), int(y_coords.max()) + 1
+    x1, x2 = int(x_coords.min()), int(x_coords.max()) + 1
+    component_crop = componente[y1:y2, x1:x2]
+    matrix_crop = matriz[y1:y2, x1:x2]
+    markers = np.zeros(component_crop.shape, dtype=np.int32)
 
     for indice, (_, y, x) in enumerate(semillas, start=1):
-        etiquetas[y, x] = indice
-        heapq.heappush(heap, (-int(matriz[y, x]), 0.0, y, x, indice))
+        markers[y - y1, x - x1] = indice
 
-    vecinos = (
-        (-1, -1), (-1, 0), (-1, 1),
-        (0, -1), (0, 1),
-        (1, -1), (1, 0), (1, 1),
-    )
-
-    while heap:
-        _, distancia, y, x, etiqueta = heapq.heappop(heap)
-        intensidad_actual = int(matriz[y, x])
-
-        for dy, dx in vecinos:
-            ny, nx = y + dy, x + dx
-            if not (0 <= ny < h and 0 <= nx < w):
-                continue
-            if not componente[ny, nx] or matriz[ny, nx] <= 0 or etiquetas[ny, nx] != 0:
-                continue
-
-            nueva = int(matriz[ny, nx])
-            nuevo_costo = distancia + 1 + abs(intensidad_actual - nueva) * 100
-            etiquetas[ny, nx] = etiqueta
-            heapq.heappush(heap, (-nueva, nuevo_costo, ny, nx, etiqueta))
+    topography = (255 - np.clip(matrix_crop, 0, 255)).astype(np.uint8)
+    topography[~component_crop] = 255
+    try:
+        labels = ndimage.watershed_ift(
+            topography,
+            markers,
+            structure=np.ones((3, 3), dtype=np.uint8),
+        )
+    except Exception:
+        return [componente]
 
     regiones = []
     for etiqueta in range(1, len(semillas) + 1):
-        region = etiquetas == etiqueta
-        if int(np.sum(region)) >= MIN_AREA_CELDA_GRANDE:
-            regiones.append(region)
+        local_region = (labels == etiqueta) & component_crop
+        if int(np.sum(local_region)) < MIN_AREA_CELDA_GRANDE:
+            continue
+        region = np.zeros(matriz.shape, dtype=bool)
+        region[y1:y2, x1:x2] = local_region
+        regiones.append(region)
 
     return regiones if regiones else [componente]
 
@@ -487,8 +503,12 @@ def crear_nucleo(matriz, region, matriz_dbz=None):
 
 def detectar_nucleos(matriz, matriz_dbz=None):
     nucleos = []
-    for componente in detectar_componentes(matriz):
-        for region in separar_region(matriz, componente):
+    componentes = detectar_componentes(matriz)
+    maximo = None
+    if any(int(np.sum(componente)) >= UMBRAL_REGION_GRANDE for componente in componentes):
+        maximo = ndimage.maximum_filter(matriz, size=21, mode="constant", cval=0)
+    for componente in componentes:
+        for region in separar_region(matriz, componente, maximo=maximo):
             nucleo = crear_nucleo(matriz, region, matriz_dbz)
             if nucleo is not None:
                 nucleos.append(nucleo)
