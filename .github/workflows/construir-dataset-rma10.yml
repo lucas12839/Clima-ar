@@ -2,6 +2,11 @@ name: Construir Dataset RMA10 Historico
 
 on:
   workflow_dispatch:
+    inputs:
+      publicar:
+        description: "Publicar (commit + push a main). Por defecto NO: solo genera artefacto."
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -138,6 +143,24 @@ jobs:
                   f"ERROR: faltan campos del resumen: {sorted(missing_summary)}"
               )
 
+          # --- Contrato causal v2: debe coincidir con scripts/entrenar_modelo_rma10.py ---
+          import sys
+          sys.path.insert(0, ".")
+          from scripts.rma10_features import V1_FEATURES
+
+          if summary.get("schema_version") != "rma10-causal-v2":
+              raise SystemExit("ERROR: resumen sin schema_version rma10-causal-v2.")
+          if summary.get("migration_version") != "rma10-causal-migration-2":
+              raise SystemExit("ERROR: resumen sin migration_version rma10-causal-migration-2.")
+          if summary.get("features_causales") != list(V1_FEATURES):
+              raise SystemExit("ERROR: features_causales del resumen no coinciden con V1_FEATURES.")
+          if float(summary.get("radio_operativo_km", 0)) != 240.0:
+              raise SystemExit("ERROR: radio_operativo_km distinto de 240.")
+
+          faltan_features = (set(V1_FEATURES) | {"horizonte_min", "track_id", "frame_utc", "strengthened", "weakened", "toward_bahia", "label_valid"}) - set(rows[0])
+          if faltan_features:
+              raise SystemExit(f"ERROR: el CSV no tiene columnas requeridas por el entrenador: {sorted(faltan_features)}")
+
           if summary["frames_validos"] < 3:
               raise SystemExit("ERROR: muy pocos frames validos.")
 
@@ -160,6 +183,7 @@ jobs:
           PY
 
       - name: Persistir dataset
+        if: ${{ inputs.publicar }}
         run: |
           set -e
 
@@ -179,24 +203,4 @@ jobs:
 
           for intento in 1 2 3; do
             if git push origin HEAD:main; then
-              echo "Dataset RMA10 guardado."
-              exit 0
-            fi
-
-            if [ "$intento" -lt 3 ]; then
-              git pull --rebase --autostash origin main
-            fi
-          done
-
-          echo "ERROR: no se pudo guardar el dataset."
-          exit 1
-
-      - name: Publicar dataset
-        uses: actions/upload-artifact@v4
-        with:
-          name: rma10-dataset-historico
-          path: |
-            data/radar/rma10_dataset_historico.csv
-            data/radar/rma10_dataset_resumen.json
-          if-no-files-found: error
-          retention-days: 30
+              echo "Data
