@@ -164,8 +164,20 @@ def build_final_vector(track, history, radar_dt, image_index, payload, width, he
 def validate_bundle(payload):
     if not isinstance(payload, dict):
         raise RuntimeError("Payload del modelo visual inválido")
-    if payload.get("model_version") != trainer.MODEL_VERSION:
-        raise RuntimeError(f"Versión de modelo incompatible: {payload.get('model_version')!r}")
+
+    # The deployed production bundle may predate the current trainer version.
+    # Accept only the two explicitly known versions, then enforce the complete
+    # structural contract below. Unknown versions remain rejected.
+    supported_versions = {
+        trainer.MODEL_VERSION,
+        "rma10-visual-temporal-final-ensemble-1",
+    }
+    model_version = payload.get("model_version")
+    if model_version not in supported_versions:
+        raise RuntimeError(
+            f"Versión de modelo incompatible: {model_version!r}; "
+            f"versiones admitidas: {sorted(supported_versions)!r}"
+        )
     if payload.get("features_v1") != list(trainer.V1_FEATURES):
         raise RuntimeError("Features V1 del modelo visual no coinciden con el runtime")
     if payload.get("features_version") != "rma10-causal-features-v2":
@@ -176,8 +188,25 @@ def validate_bundle(payload):
         raise RuntimeError("Mínimo de secuencia incompatible")
     if payload.get("horizons_min") != list(trainer.HORIZONS) or payload.get("targets") != list(trainer.TARGETS):
         raise RuntimeError("Horizontes/targets incompatibles")
-    if not hasattr(payload.get("pca"), "transform"):
+    pca = payload.get("pca")
+    if not hasattr(pca, "transform"):
         raise RuntimeError("PCA ausente o inválido")
+
+    try:
+        raw_features = int(payload["visual_raw_features"])
+        pca_components = int(payload["pca_components"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("Dimensiones visuales ausentes o inválidas en el bundle") from exc
+
+    if raw_features <= 0 or pca_components <= 0:
+        raise RuntimeError("Dimensiones visuales deben ser positivas")
+    if getattr(pca, "n_features_in_", raw_features) != raw_features:
+        raise RuntimeError("PCA entrenado con una cantidad de features visuales distinta")
+    if getattr(pca, "n_components_", pca_components) != pca_components:
+        raise RuntimeError("Cantidad de componentes PCA no coincide con el bundle")
+    if getattr(pca, "components_", np.empty((pca_components,))).shape[0] != pca_components:
+        raise RuntimeError("Estructura interna PCA incompatible")
+
     models = payload.get("models")
     calibration = payload.get("calibration")
     expected = {f"{h}m_{target}" for h in trainer.HORIZONS for target in trainer.TARGETS}
@@ -185,6 +214,29 @@ def validate_bundle(payload):
         raise RuntimeError("El modelo visual no contiene exactamente 12 ensembles")
     if not isinstance(calibration, dict) or set(calibration) != expected:
         raise RuntimeError("El modelo visual no contiene exactamente 12 calibraciones")
+
+    expected_model_features = len(trainer.V1_FEATURES) + pca_components + 1
+    for key in sorted(expected):
+        ensemble = models[key]
+        if not isinstance(ensemble, (list, tuple)) or not ensemble:
+            raise RuntimeError(f"Ensemble visual inválido: {key}")
+        for item in ensemble:
+            if not isinstance(item, (list, tuple)) or len(item) != 3:
+                raise RuntimeError(f"Componente de ensemble inválido: {key}")
+            _, estimator, weight = item
+            try:
+                numeric_weight = float(weight)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f"Peso inválido en ensemble: {key}") from exc
+            if not math.isfinite(numeric_weight) or numeric_weight <= 0:
+                raise RuntimeError(f"Peso no positivo o no finito en ensemble: {key}")
+            fitted_features = getattr(estimator, "n_features_in_", None)
+            if fitted_features is not None and int(fitted_features) != expected_model_features:
+                raise RuntimeError(
+                    f"Dimensión incompatible en {key}: modelo={fitted_features}, "
+                    f"runtime={expected_model_features}"
+                )
+
     if not payload.get("config", {}).get("motion_compensated"):
         raise RuntimeError("El modelo no declara secuencia visual compensada por movimiento")
     return models, calibration
