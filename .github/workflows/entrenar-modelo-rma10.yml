@@ -2,6 +2,11 @@ name: ClimaAR Entrenamiento Modelo RMA10
 
 on:
   workflow_dispatch:
+    inputs:
+      publicar:
+        description: "Publicar (commit + push a main). Por defecto NO: solo genera artefacto."
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -10,17 +15,24 @@ concurrency:
   group: climaar-modelos-rma10
   cancel-in-progress: false
 
+env:
+  DATASET_CSV: data/radar/rma10_dataset_historico.csv
+  DATASET_SUMMARY: data/radar/rma10_dataset_resumen.json
+  MODEL_FILE: data/models/rma10_model.joblib
+  METRICS_FILE: data/models/rma10_model_metrics.json
+
 jobs:
   entrenamiento-rma10:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
-      - name: Checkout
+      - name: Checkout (con LFS)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: main
+          lfs: true
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -30,217 +42,137 @@ jobs:
       - name: Instalar dependencias
         run: |
           set -euo pipefail
-
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Preparar directorios
+      - name: Test de contrato entrenador-predictor
         run: |
           set -euo pipefail
+          pip install pytest
+          python -m pytest tests/test_rma10_contract.py -q
 
-          mkdir -p \
-            modelo \
-            data/radar \
-            data/radar/historico \
-            data/radar/seguimiento \
-            logs
-
-      - name: Verificar dataset RMA10
+      - name: Verificar dataset causal (sin inventar metadatos)
         run: |
           set -euo pipefail
+          python - <<'PY'
+          import json, sys
+          import pandas as pd
+          from pathlib import Path
+          sys.path.insert(0, ".")
+          from scripts.rma10_features import V1_FEATURES
 
-          encontrados=0
+          csv_path = Path("data/radar/rma10_dataset_historico.csv")
+          summary_path = Path("data/radar/rma10_dataset_resumen.json")
+          if not csv_path.is_file() or csv_path.stat().st_size == 0:
+              raise SystemExit("ERROR: falta rma10_dataset_historico.csv. Ejecutar 'Construir Dataset RMA10 Historico'.")
+          if not summary_path.is_file():
+              raise SystemExit("ERROR: falta rma10_dataset_resumen.json. Ejecutar 'Construir Dataset RMA10 Historico'.")
 
-          for archivo in \
-            data/radar/radar_features_rma10.csv \
-            data/radar/seguimiento/radar_features_rma10.csv \
-            data/radar/historico/radar_features_rma10.csv
-          do
-            if [ -s "$archivo" ]; then
-              echo "Dataset RMA10 encontrado: $archivo"
-              echo "DATASET=$archivo" >> "$GITHUB_ENV"
-              encontrados=$((encontrados + 1))
-              break
-            fi
-          done
+          summary = json.loads(summary_path.read_text(encoding="utf-8"))
+          problemas = []
+          if summary.get("schema_version") != "rma10-causal-v2":
+              problemas.append("schema_version != rma10-causal-v2")
+          if summary.get("migration_version") != "rma10-causal-migration-2":
+              problemas.append("migration_version != rma10-causal-migration-2")
+          if summary.get("features_causales") != list(V1_FEATURES):
+              problemas.append("features_causales no coincide con V1_FEATURES")
+          if float(summary.get("radio_operativo_km", 0)) != 240.0:
+              problemas.append("radio_operativo_km != 240")
 
-          if [ "$encontrados" -eq 0 ]; then
-            echo "ERROR: no se encontró un dataset RMA10 válido."
-            exit 1
-          fi
+          cols = set(pd.read_csv(csv_path, nrows=1).columns)
+          requeridas = set(V1_FEATURES) | {"horizonte_min", "track_id", "frame_utc",
+                                            "strengthened", "weakened", "toward_bahia", "label_valid"}
+          faltan = sorted(requeridas - cols)
+          if faltan:
+              problemas.append(f"CSV sin columnas: {faltan}")
 
-      - name: Buscar entrenador RMA10
-        run: |
-          set -euo pipefail
-
-          candidatos=(
-            scripts/entrenar_modelo_rma10.py
-            scripts/entrenamiento_rma10.py
-            scripts/entrenar_rma10.py
-          )
-
-          for archivo in "${candidatos[@]}"; do
-            if [ -f "$archivo" ]; then
-              echo "ENTRENADOR=$archivo" >> "$GITHUB_ENV"
-              echo "Entrenador seleccionado: $archivo"
-              exit 0
-            fi
-          done
-
-          echo "ERROR: no se encontró el entrenador RMA10."
-          exit 1
+          if problemas:
+              print("ERROR: dataset RMA10 no es causal v2:")
+              for p in problemas:
+                  print(" -", p)
+              print("Regenerar con el workflow 'Construir Dataset RMA10 Historico'. No se entrena.")
+              raise SystemExit(1)
+          print("Dataset causal v2 OK")
+          PY
 
       - name: Entrenar modelo RMA10
         run: |
           set -euo pipefail
+          rm -f "$MODEL_FILE" "$METRICS_FILE"
+          python scripts/entrenar_modelo_rma10.py
 
-          python "$ENTRENADOR"
-
-      - name: Verificar archivos generados
+      - name: Validar bundle con el validador del predictor
         run: |
           set -euo pipefail
-
-          encontrados=0
-
-          while IFS= read -r -d '' archivo; do
-            echo "Archivo generado: $archivo"
-            encontrados=$((encontrados + 1))
-          done < <(
-            find modelo \
-              -type f \
-              \( \
-                -name "*.joblib" \
-                -o -name "*.pkl" \
-                -o -name "*.json" \
-              \) \
-              -print0
-          )
-
-          if [ "$encontrados" -eq 0 ]; then
-            echo "ERROR: el entrenamiento RMA10 no generó modelos."
-            exit 1
-          fi
-
-          echo "Archivos generados: $encontrados"
-
-      - name: Validar modelo RMA10
-        run: |
-          set -euo pipefail
-
           python - <<'PY'
-          import json
-          import pickle
+          import json, sys
           from pathlib import Path
+          import joblib
+          sys.path.insert(0, ".")
+          from scripts import prediccion_rma10_ml as pred
+          from scripts import entrenar_modelo_rma10 as train
 
-          try:
-              import joblib
-          except ImportError:
-              joblib = None
+          model_path = Path("data/models/rma10_model.joblib")
+          metrics_path = Path("data/models/rma10_model_metrics.json")
+          if not model_path.is_file() or model_path.stat().st_size < 1024:
+              raise SystemExit("ERROR: el entrenador no generó un bundle válido en data/models/")
+          if not metrics_path.is_file():
+              raise SystemExit("ERROR: falta rma10_model_metrics.json")
 
-          modelos = []
+          bundle = joblib.load(model_path)
+          # Mismo validador que usa el predictor en producción
+          pred.validate_bundle(bundle)
 
-          for path in Path("modelo").rglob("*"):
-              if not path.is_file():
-                  continue
+          if bundle["model_version"] != train.MODEL_VERSION or train.MODEL_VERSION != pred.MODEL_VERSION:
+              raise SystemExit("ERROR: versiones entrenador/predictor/bundle no coinciden")
 
-              if path.suffix == ".json":
-                  try:
-                      data = json.loads(
-                          path.read_text(
-                              encoding="utf-8"
-                          )
-                      )
-                  except Exception as exc:
-                      raise SystemExit(
-                          f"ERROR: JSON inválido: {path}: {exc}"
-                      ) from exc
+          metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+          if metrics.get("model_version") != pred.MODEL_VERSION:
+              raise SystemExit("ERROR: métricas con otra versión de modelo")
 
-                  if not isinstance(data, (dict, list)):
-                      raise SystemExit(
-                          f"ERROR: estructura JSON inválida: {path}"
-                      )
-
-                  print(f"OK JSON: {path}")
-                  modelos.append(path)
-
-              elif path.suffix in {".joblib", ".pkl"}:
-                  try:
-                      if path.suffix == ".joblib" and joblib:
-                          objeto = joblib.load(path)
-                      else:
-                          with path.open("rb") as archivo:
-                              objeto = pickle.load(archivo)
-                  except Exception as exc:
-                      raise SystemExit(
-                          f"ERROR: modelo corrupto: {path}: {exc}"
-                      ) from exc
-
-                  if objeto is None:
-                      raise SystemExit(
-                          f"ERROR: modelo vacío: {path}"
-                      )
-
-                  print(f"OK modelo: {path}")
-                  modelos.append(path)
-
-          if not modelos:
-              raise SystemExit(
-                  "ERROR: no se validó ningún archivo del modelo RMA10."
-              )
-
-          print(
-              f"Archivos RMA10 válidos: {len(modelos)}"
-          )
+          print(f"Bundle OK: {bundle['model_version']} | aprobados {bundle['approved_models']}/{bundle['total_models']}")
+          if bundle["approved_models"] == 0:
+              print("AVISO: ningún modelo superó la validación rolling-origin; el predictor emitirá probabilidades sin calibrar (None).")
           PY
-
-      - name: Validar integridad ClimaAR
-        run: |
-          set -euo pipefail
-
-          test -f scripts/validar_integridad_climaar.py
-
-          python scripts/validar_integridad_climaar.py
 
       - name: Publicar artefacto RMA10
         uses: actions/upload-artifact@v4
         with:
           name: climaar-modelo-rma10
-          path: modelo/
+          path: |
+            data/models/rma10_model.joblib
+            data/models/rma10_model_metrics.json
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Persistir modelo RMA10
+      - name: Persistir modelo RMA10 (solo si todo lo anterior pasó)
+        if: ${{ inputs.publicar }}
         run: |
           set -euo pipefail
+          git lfs install
 
-          git config user.name \
-            "github-actions[bot]"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add modelo/
+          git add -f "$MODEL_FILE" "$METRICS_FILE"
 
           if git diff --cached --quiet; then
             echo "No hay cambios para publicar."
             exit 0
           fi
 
-          git commit \
-            -m "ClimaAR: actualizar modelo RMA10"
+          git commit -m "ClimaAR: actualizar modelo RMA10 (rma10-v1-causal-3-holdout-isolated)"
 
           for intento in 1 2 3; do
             echo "Intento de sincronización: $intento"
-
             git fetch origin main
 
             if ! git rebase origin/main; then
               git rebase --abort 2>/dev/null || true
-
               if [ "$intento" -eq 3 ]; then
                 echo "ERROR: rebase falló definitivamente."
                 exit 1
               fi
-
               sleep 2
               continue
             fi
@@ -254,6 +186,5 @@ jobs:
               echo "ERROR: push falló definitivamente."
               exit 1
             fi
-
             sleep 2
           done
