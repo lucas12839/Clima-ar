@@ -43,6 +43,21 @@ def clamp(v, lo=0.0, hi=1.0):
     return max(lo, min(hi, x))
 
 
+def timestamp_key(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return None
+    return dt.astimezone(timezone.utc)
+
+
 def first_number(*values):
     for v in values:
         x = finite(v)
@@ -184,6 +199,37 @@ def intelligence_score(intel):
     return max(vals) if vals else 0.0
 
 
+def calibrated_visual_evidence(intel):
+    visual = intel.get("ia_visual_temporal", {}) if isinstance(intel, dict) else {}
+    visual_probs = visual.get("probabilidades", {}) if isinstance(visual, dict) else {}
+    calibration_flags = visual.get("calibracion_por_modelo", {}) if isinstance(visual, dict) else {}
+    intel_radar = intel.get("radar", {}) if isinstance(intel, dict) else {}
+    intel_radar_timestamp = (
+        intel.get("radar_timestamp")
+        or (intel_radar.get("frame_actual_utc") if isinstance(intel_radar, dict) else None)
+    )
+    visual_sync = (
+        isinstance(visual, dict)
+        and timestamp_key(visual.get("radar_timestamp")) == timestamp_key(intel_radar_timestamp)
+        and visual.get("secuencia_compensada_por_movimiento") is True
+    )
+    scores = []
+    if visual_sync:
+        for horizon in ("5", "10", "20", "30"):
+            row = visual_probs.get(horizon, {})
+            if not isinstance(row, dict):
+                continue
+            for target in ("strengthened", "toward_bahia"):
+                key = f"{horizon}m_{target}"
+                flag = calibration_flags.get(key, {})
+                if not isinstance(flag, dict) or flag.get("aplicada") is not True:
+                    continue
+                value = finite(row.get(target))
+                if value is not None and 0.0 <= value <= 1.0:
+                    scores.append(value)
+    return (max(scores) if scores else 0.0), bool(scores)
+
+
 def main():
     radar = load(RADAR)
     pred = load(PRED)
@@ -197,21 +243,10 @@ def main():
     intensity = radar_intensity(nowcast)
     ia_score = intelligence_score(intel)
 
-    # RMA10 Visual/Temporal V6: evidencia adicional.
-    visual = intel.get("ia_visual_temporal", {})
-    visual_probs = visual.get("probabilidades", {}) if isinstance(visual, dict) else {}
-    visual_scores = []
-
-    for h in ("5", "10", "20", "30"):
-        row = visual_probs.get(h, {})
-        if isinstance(row, dict):
-            for key in ("strengthened", "toward_bahia"):
-                value = finite(row.get(key))
-                if value is not None:
-                    visual_scores.append(value)
-
-    visual_score = max(visual_scores) if visual_scores else 0.0
-    ia_score = clamp(0.75 * ia_score + 0.25 * visual_score)
+    # La evidencia visual solo influye si está calibrada y sincronizada.
+    visual_score, visual_incorporated = calibrated_visual_evidence(intel)
+    if visual_incorporated:
+        ia_score = clamp(0.75 * ia_score + 0.25 * visual_score)
 
     model_conf = clamp(
         intel.get("confianza_modelo", intel.get("confianza", 0.0))
@@ -348,6 +383,8 @@ def main():
                 "ia": round(ia_score, 3),
                 "ia_tipo_salida": "indice_heuristico",
                 "ia_confianza": model_conf,
+                "ia_visual_temporal_incorporada": visual_incorporated,
+                "ia_visual_temporal_score": round(visual_score, 4),
             },
             "regla": (
                 "La intensidad RMA10 es una señal; la severidad meteorológica "
