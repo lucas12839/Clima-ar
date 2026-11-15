@@ -103,7 +103,7 @@ def validate_radar_nowcast_ml(radar_timestamp: datetime) -> None:
     ml_data = load_json(ML_FILE)
     if ml_data.get("ok") is not True:
         raise RuntimeError("ERROR: predicción ML no válida.")
-    if ml_data.get("modelo") != "rma10-v1-causal-2":
+    if ml_data.get("modelo") != "rma10-v1-causal-3-holdout-isolated":
         raise RuntimeError("ERROR: versión del modelo V1 incompatible.")
     for prediction in ml_data.get("predicciones", []):
         if not isinstance(prediction, dict):
