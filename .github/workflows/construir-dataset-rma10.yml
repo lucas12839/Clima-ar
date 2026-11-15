@@ -203,4 +203,24 @@ jobs:
 
           for intento in 1 2 3; do
             if git push origin HEAD:main; then
-              echo "Data
+              echo "Dataset RMA10 guardado."
+              exit 0
+            fi
+
+            if [ "$intento" -lt 3 ]; then
+              git pull --rebase --autostash origin main
+            fi
+          done
+
+          echo "ERROR: no se pudo guardar el dataset."
+          exit 1
+
+      - name: Publicar dataset
+        uses: actions/upload-artifact@v4
+        with:
+          name: rma10-dataset-historico
+          path: |
+            data/radar/rma10_dataset_historico.csv
+            data/radar/rma10_dataset_resumen.json
+          if-no-files-found: error
+          retention-days: 30
