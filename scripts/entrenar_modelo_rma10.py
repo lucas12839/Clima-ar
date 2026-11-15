@@ -34,7 +34,7 @@ MODEL_DIR = ROOT / "data/models"
 MODEL_PATH = MODEL_DIR / "rma10_model.joblib"
 METRICS_PATH = MODEL_DIR / "rma10_model_metrics.json"
 
-MODEL_VERSION = "rma10-v1-causal-2"
+MODEL_VERSION = "rma10-v1-causal-3-holdout-isolated"
 FEATURES = list(V1_FEATURES)
 HORIZONS = (5, 10, 20, 30)
 TARGETS = ("strengthened", "weakened", "toward_bahia")
@@ -182,12 +182,8 @@ def train_one(df, split, horizon: int, target: str, rolling_folds):
         and baseline_metrics["balanced_accuracy"] is not None
         and raw_metrics["balanced_accuracy"] >= baseline_metrics["balanced_accuracy"]
     )
-    if not beats_baseline:
-        calibration["enabled"] = False
-        calibration["reason"] = "MODEL_DID_NOT_BEAT_CAUSAL_PERSISTENCE_BASELINE"
-    if calibrated_metrics is not None and not calibration.get("enabled"):
-        calibrated_metrics = None
-
+    # The final holdout is reporting-only. It must never select or disable
+    # calibration/model approval; that decision comes from rolling-origin folds.
     rolling_metrics = evaluate_rolling_origin(df, horizon, target, rolling_folds)
     rolling_passes = sum(bool(item["approved"]) for item in rolling_metrics)
     rolling_ok = len(rolling_metrics) >= 2 and rolling_passes == len(rolling_metrics)
@@ -196,7 +192,7 @@ def train_one(df, split, horizon: int, target: str, rolling_folds):
         calibration["reason"] = "ROLLING_ORIGIN_VALIDATION_NOT_PASSED"
     calibration["rolling_origin_folds"] = len(rolling_metrics)
     calibration["rolling_origin_passes"] = rolling_passes
-    calibration["approved"] = bool(calibration.get("enabled") and rolling_ok and beats_baseline)
+    calibration["approved"] = bool(calibration.get("enabled") and rolling_ok)
     if not calibration.get("enabled"):
         calibrated_metrics = None
 
