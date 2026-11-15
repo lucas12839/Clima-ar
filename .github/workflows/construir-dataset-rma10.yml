@@ -190,26 +190,40 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -f \
-            data/radar/rma10_dataset_historico.csv \
-            data/radar/rma10_dataset_resumen.json
-
-          if git diff --cached --quiet; then
-            echo "No hay cambios para guardar."
-            exit 0
-          fi
-
-          git commit -m "ClimaAR: generar dataset historico RMA10"
+          # Guardar los archivos finales fuera del arbol de trabajo
+          mkdir -p /tmp/dataset-final
+          cp data/radar/rma10_dataset_historico.csv data/radar/rma10_dataset_resumen.json /tmp/dataset-final/
 
           for intento in 1 2 3; do
+            echo "Intento de guardado: $intento"
+
+            git fetch origin main
+
+            # Los PNG del artefacto quedaron sin trackear y pueden chocar
+            # con los que el ciclo automatico ya subio a main.
+            git clean -fdq data/radar/historico
+            git reset --hard origin/main
+
+            cp /tmp/dataset-final/rma10_dataset_historico.csv data/radar/
+            cp /tmp/dataset-final/rma10_dataset_resumen.json data/radar/
+
+            git add -f \
+              data/radar/rma10_dataset_historico.csv \
+              data/radar/rma10_dataset_resumen.json
+
+            if git diff --cached --quiet; then
+              echo "No hay cambios para guardar."
+              exit 0
+            fi
+
+            git commit -m "ClimaAR: generar dataset historico RMA10"
+
             if git push origin HEAD:main; then
               echo "Dataset RMA10 guardado."
               exit 0
             fi
 
-            if [ "$intento" -lt 3 ]; then
-              git pull --rebase --autostash origin main
-            fi
+            sleep 3
           done
 
           echo "ERROR: no se pudo guardar el dataset."
