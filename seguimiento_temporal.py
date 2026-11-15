@@ -3,6 +3,11 @@ import math
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
+try:
+    from scripts.rma10_features import bahia_pixel_position
+except ImportError:
+    from rma10_features import bahia_pixel_position
+
 BASE = Path("data/radar")
 RESULTADO = BASE / "resultado_procesamiento.json"
 SEGUIMIENTO = BASE / "seguimiento"
@@ -1943,19 +1948,11 @@ def seleccionar_track_principal(tracks, radar_ts=None):
 
     candidatos = []
 
-    # Centro aproximado del RMA10 en píxeles. El radar trabaja en 512x512.
-    # x crece hacia el este; y crece hacia el sur.
+    # Geometría RMA10 compartida: radio operativo 240 km y coordenadas
+    # reales de Bahía Blanca respecto del centro del radar.
     centro_x = 255.5
     centro_y = 255.5
-
-    # Bahía Blanca respecto del centro del RMA10. El vector real se resolverá
-    # después con georreferenciación; aquí solamente evitamos que el candidato
-    # quede condicionado exclusivamente por intensidad/área.
-    pixel_km = 480.0 / 511.0
-    bahia_dx_km = -107.4
-    bahia_dy_km = 1.6
-    bahia_x = centro_x + bahia_dx_km / pixel_km
-    bahia_y = centro_y + bahia_dy_km / pixel_km
+    bahia_x, bahia_y = bahia_pixel_position(512, 512)
 
     for track in tracks:
         if not isinstance(track, dict):
@@ -2764,98 +2761,67 @@ def nucleos_desde_imagen(
     detectar_func,
     analizar_func,
     confianza_func,
-    aplicar_mascara_func
+    aplicar_mascara_func,
+    evidencia_func=None,
 ):
+    from scripts.procesador_radar import cargar_imagen, intensidad_radar
 
-    from scripts.procesador_radar import (
-        cargar_imagen,
-        intensidad_radar,
-    )
+    matriz = intensidad_radar(cargar_imagen(path))
+    evidencia_temporal = None
+    frames_temporales = 0
 
-    matriz = intensidad_radar(
-        cargar_imagen(
-            path
-        )
-    )
+    if aplicar_mascara_func is not None and mascara is not None:
+        if evidencia_func is not None:
+            evidencia_temporal, frames_temporales = evidencia_func(
+                matriz, mascara, path
+            )
+        else:
+            try:
+                from scripts.procesador_radar import _mascara_temporal_dinamica
+                evidencia_temporal, frames_temporales = _mascara_temporal_dinamica(
+                    matriz, mascara, ruta_actual=path
+                )
+            except Exception:
+                evidencia_temporal = None
 
     if aplicar_mascara_func is not None:
-
-        matriz, _, _ = (
-            aplicar_mascara_func(
+        try:
+            matriz, _, _ = aplicar_mascara_func(
                 matriz,
-                ruta_actual=path
+                ruta_actual=path,
+                mascara=mascara,
+                evidencia_temporal=evidencia_temporal,
+                frames_temporales=frames_temporales,
+                quiet=True,
             )
-        )
-
-    elif (
-        mascara is not None
-        and
-        getattr(
-            mascara,
-            "shape",
-            None
-        ) == matriz.shape
-    ):
-
+        except TypeError:
+            matriz, _, _ = aplicar_mascara_func(matriz, ruta_actual=path)
+    elif mascara is not None and getattr(mascara, "shape", None) == matriz.shape:
         matriz = matriz.copy()
+        matriz[mascara] = 0
 
-        matriz[
-            mascara
-        ] = 0
-
-    detectados = detectar_func(
-        matriz
-    )
-
+    detectados = detectar_func(matriz)
     salida = []
 
-    for indice, nucleo in enumerate(
-        detectados
-    ):
-
-        estado_nucleo, confianza_base = (
-            analizar_func(
-                nucleo,
-                mascara
+    for indice, nucleo in enumerate(detectados):
+        try:
+            estado_nucleo, confianza_base = analizar_func(
+                nucleo, mascara, evidencia_temporal
             )
+        except TypeError:
+            estado_nucleo, confianza_base = analizar_func(nucleo, mascara)
+
+        item = dict(nucleo)
+        item["indice"] = indice
+        item["estado"] = estado_nucleo
+        item["confianza"] = confianza_func(
+            item, estado_nucleo, confianza_base
         )
-
-        item = dict(
-            nucleo
-        )
-
-        item[
-            "indice"
-        ] = indice
-
-        item[
-            "estado"
-        ] = estado_nucleo
-
-        item[
-            "confianza"
-        ] = confianza_func(
-            item,
-            estado_nucleo,
-            confianza_base
-        )
-
-        salida.append(
-            normalizar_nucleo(
-                item,
-                indice
-            )
-        )
+        salida.append(normalizar_nucleo(item, indice))
 
     return [
-
-        nucleo
-
-        for nucleo in salida
-
-        if nucleo.get(
-            "estado"
-        ) != "ECO_ESTATICO"
+        nucleo for nucleo in salida
+        if nucleo.get("estado") != "ECO_ESTATICO"
     ]
 
 
