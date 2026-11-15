@@ -20,9 +20,10 @@ TIMESTAMP = BASE / "radar_timestamp.txt"
 SALIDA = BASE / "radar_nowcast.json"
 
 
-RADAR_DIAMETRO_KM_APROX = 240.0
+RADAR_RADIUS_KM = 240.0
+RADAR_DIAMETER_KM = 480.0
 MAX_TRACK_MATCH_DISTANCE_PX = 45.0
-MAX_INTERVALO_TRACKING = 200.0
+MAX_INTERVALO_TRACKING = 45.0
 
 ESTADOS_EXCLUIDOS = {
     "ECO_ESTATICO",
@@ -804,12 +805,8 @@ def main():
     )
 
     km_per_px = (
-        RADAR_DIAMETRO_KM_APROX
-        /
-        max(
-            width,
-            height
-        )
+        RADAR_RADIUS_KM
+        / max((max(width, height) - 1) / 2.0, 1.0)
     )
 
     nucleos = resultado.get(
@@ -1412,8 +1409,8 @@ def main():
                     5
                 ),
 
-            "rango_diametro_km_aproximado":
-                RADAR_DIAMETRO_KM_APROX,
+            "rango_radio_km": RADAR_RADIUS_KM,
+            "rango_diametro_km_aproximado": RADAR_RADIUS_KM * 2.0,
         },
     }
 
