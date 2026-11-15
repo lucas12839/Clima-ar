@@ -8,8 +8,15 @@ import re
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from PIL import Image
+
+from scripts.rma10_features import V1_FEATURES, build_v1_feature_dict, pixel_to_latlon
 
 ROOT = Path(".")
 HIST = ROOT / "data" / "radar" / "historico"
@@ -159,40 +166,17 @@ def ts_from(path):
     if not match:
         return None
 
-    return datetime.strptime(
-        match.group(1),
-        "%Y%m%d%H%M%S",
-    ).replace(tzinfo=timezone.utc)
+    try:
+        dt = datetime.strptime(match.group(1), "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+    if not 2000 <= dt.year <= 2100:
+        return None
+    return dt.replace(tzinfo=timezone.utc)
 
 
 def xy_to_geo(x, y, w, h):
-    cx = w / 2.0
-    cy = h / 2.0
-
-    dx = (
-        (x - cx)
-        / max(w / 2.0, 1)
-        * RANGE_KM
-    )
-
-    dy = (
-        (cy - y)
-        / max(h / 2.0, 1)
-        * RANGE_KM
-    )
-
-    km_lat = 110.574
-    km_lon = (
-        111.320
-        * math.cos(
-            math.radians(RADAR_LAT)
-        )
-    )
-
-    return (
-        RADAR_LAT + dy / km_lat,
-        RADAR_LON + dx / km_lon,
-    )
+    return pixel_to_latlon(x, y, w, h)
 
 
 def distance_km(lat1, lon1, lat2, lon2):
@@ -522,6 +506,8 @@ def interpolate_future_5min(
     future = dict(next_observation)
 
     future["dt"] = target
+    future["x"] = current["x"] + alpha * (next_observation["x"] - current["x"])
+    future["y"] = current["y"] + alpha * (next_observation["y"] - current["y"])
 
     future["intensidad"] = (
         current["intensidad"]
@@ -664,6 +650,26 @@ def main():
 
             if frame is None:
                 continue
+
+            history = [
+                {
+                    "dt": item["dt"],
+                    "x": item["x"],
+                    "y": item["y"],
+                    "intensidad": item["intensidad"],
+                    "pixeles": item["pixeles"],
+                    "ancho": item["ancho"],
+                    "alto": item["alto"],
+                }
+                for item in observations
+                if item["dt"] <= observation["dt"]
+            ]
+            current_features = build_v1_feature_dict(
+                {**observation, "timestamp": observation["dt"]},
+                history,
+                frame["w"],
+                frame["h"],
+            )
 
             lat, lon = xy_to_geo(
                 observation["x"],
@@ -822,22 +828,10 @@ def main():
                         "intensity": observation[
                             "intensidad"
                         ],
-                        "lat": round(
-                            lat,
-                            6,
-                        ),
-                        "lon": round(
-                            lon,
-                            6,
-                        ),
-                        "distance_km": round(
-                            distance,
-                            3,
-                        ),
-                        "bearing_to_bahia_deg": round(
-                            bearing_to_bahia,
-                            2,
-                        ),
+                        "lat": round(current_features["lat"], 6),
+                        "lon": round(current_features["lon"], 6),
+                        "distance_km": round(current_features["distance_km"], 3),
+                        "bearing_to_bahia_deg": round(current_features["bearing_to_bahia_deg"], 2),
                         "future_intensity": future[
                             "intensidad"
                         ],
@@ -858,18 +852,20 @@ def main():
                             future["y"],
                             3,
                         ),
-                        "displacement_px": round(
-                            displacement,
-                            3,
-                        ),
-                        "speed_px_min": round(
-                            speed,
-                            4,
-                        ),
-                        "motion_bearing_deg": round(
-                            motion_bearing,
-                            2,
-                        ),
+                        "displacement_px": round(current_features["displacement_px"], 3),
+                        "speed_px_min": round(current_features["speed_px_min"], 4),
+                        "motion_bearing_deg": round(current_features["motion_bearing_deg"], 2),
+                        "motion_valid": int(current_features["motion_valid"]),
+                        "motion_interval_min": round(current_features["motion_interval_min"], 3),
+                        "past_intensity_delta": round(current_features["past_intensity_delta"], 3),
+                        "past_area_ratio": round(current_features["past_area_ratio"], 4),
+                        "future_displacement_px": round(displacement, 3),
+                        "future_speed_px_min": round(speed, 4),
+                        "future_motion_bearing_deg": round(motion_bearing, 2),
+                        "future_timestamp_utc": future["dt"].isoformat().replace("+00:00", "Z"),
+                        "label_elapsed_min": round(elapsed, 3),
+                        "label_error_min": round(abs(elapsed - horizon), 3),
+                        "label_source": "INTERPOLATED_5M" if horizon == 5 else "OBSERVED",
                         "toward_bahia": (
                             toward_bahia
                         ),
@@ -915,6 +911,11 @@ def main():
         writer.writerows(rows)
 
     summary = {
+        "schema_version": "rma10-causal-v2",
+        "features_version": "rma10-causal-features-v2",
+        "radio_operativo_km": 240.0,
+        "features_causales": list(V1_FEATURES),
+        "tracking_source": "HISTORICAL_LEGACY_TRACKER",
         "frames_encontrados": len(files),
         "frames_validos": len(valid),
         "frames_descartados": skipped,
