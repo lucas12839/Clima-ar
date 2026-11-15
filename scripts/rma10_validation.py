@@ -47,7 +47,12 @@ def _event_table(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
     return events, event_ids
 
 
-def _masks(event_ids: np.ndarray, train_events: set[int], cal_events: set[int], test_events: set[int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _masks(
+    event_ids: np.ndarray,
+    train_events: set[int],
+    cal_events: set[int],
+    test_events: set[int],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return (
         np.isin(event_ids, list(train_events)),
         np.isin(event_ids, list(cal_events)),
@@ -60,14 +65,18 @@ def chronological_event_split(df: pd.DataFrame) -> dict[str, Any]:
     events, event_ids = _event_table(df)
     count = len(events)
     if count < 5:
-        raise ValueError(f"Se requieren al menos 5 tracks/eventos independientes; encontrados={count}")
+        raise ValueError(
+            f"Se requieren al menos 5 tracks/eventos independientes; encontrados={count}"
+        )
     train_end = max(1, int(math.floor(count * 0.60)))
     cal_end = max(train_end + 1, int(math.floor(count * 0.80)))
     cal_end = min(cal_end, count - 1)
     train_set = set(range(0, train_end))
     cal_set = set(range(train_end, cal_end))
     test_set = set(range(cal_end, count))
-    train_mask, calibration_mask, test_mask = _masks(event_ids, train_set, cal_set, test_set)
+    train_mask, calibration_mask, test_mask = _masks(
+        event_ids, train_set, cal_set, test_set
+    )
     if not train_mask.any() or not calibration_mask.any() or not test_mask.any():
         raise ValueError("Split cronológico produjo una partición vacía")
     return {
@@ -87,8 +96,10 @@ def chronological_event_split(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def rolling_origin_event_splits(df: pd.DataFrame, n_last_events: int = 4, min_rows: int = 100) -> list[dict[str, Any]]:
-    """Expanding-window folds: past tracks=train, prior track=calibration, next= test."""
+def rolling_origin_event_splits(
+    df: pd.DataFrame, n_last_events: int = 4, min_rows: int = 100
+) -> list[dict[str, Any]]:
+    """Expanding-window folds: past tracks=train, prior track=calibration, next=test."""
     if n_last_events < 1 or min_rows < 1:
         raise ValueError("n_last_events y min_rows deben ser positivos")
     events, event_ids = _event_table(df)
@@ -100,20 +111,28 @@ def rolling_origin_event_splits(df: pd.DataFrame, n_last_events: int = 4, min_ro
         train_set = set(range(0, calibration_event))
         cal_set = {calibration_event}
         test_set = {test_event}
-        train_mask, calibration_mask, test_mask = _masks(event_ids, train_set, cal_set, test_set)
-        if min(int(train_mask.sum()), int(calibration_mask.sum()), int(test_mask.sum())) < min_rows:
+        train_mask, calibration_mask, test_mask = _masks(
+            event_ids, train_set, cal_set, test_set
+        )
+        if min(
+            int(train_mask.sum()),
+            int(calibration_mask.sum()),
+            int(test_mask.sum()),
+        ) < min_rows:
             continue
-        folds.append({
-            "train_mask": train_mask,
-            "calibration_mask": calibration_mask,
-            "test_mask": test_mask,
-            "test_event": str(events.iloc[test_event]["track_id"]),
-            "calibration_event": str(events.iloc[calibration_event]["track_id"]),
-            "train_events": len(train_set),
-            "train_samples": int(train_mask.sum()),
-            "calibration_samples": int(calibration_mask.sum()),
-            "test_samples": int(test_mask.sum()),
-        })
+        folds.append(
+            {
+                "train_mask": train_mask,
+                "calibration_mask": calibration_mask,
+                "test_mask": test_mask,
+                "test_event": str(events.iloc[test_event]["track_id"]),
+                "calibration_event": str(events.iloc[calibration_event]["track_id"]),
+                "train_events": len(train_set),
+                "train_samples": int(train_mask.sum()),
+                "calibration_samples": int(calibration_mask.sum()),
+                "test_samples": int(test_mask.sum()),
+            }
+        )
     return folds
 
 
@@ -148,72 +167,121 @@ def persistence_baseline(features: Any, target: str) -> np.ndarray:
     missing = _FEATURE_COLUMNS - set(features.columns)
     if missing:
         raise ValueError(f"Faltan features para baseline de persistencia: {sorted(missing)}")
-    intensity = pd.to_numeric(features["past_intensity_delta"], errors="coerce").fillna(0).to_numpy(float)
-    area = pd.to_numeric(features["past_area_ratio"], errors="coerce").fillna(1).to_numpy(float)
-    valid = pd.to_numeric(features["motion_valid"], errors="coerce").fillna(0).to_numpy(float) > 0.5
+    intensity = (
+        pd.to_numeric(features["past_intensity_delta"], errors="coerce")
+        .fillna(0)
+        .to_numpy(float)
+    )
+    area = (
+        pd.to_numeric(features["past_area_ratio"], errors="coerce")
+        .fillna(1)
+        .to_numpy(float)
+    )
+    valid = (
+        pd.to_numeric(features["motion_valid"], errors="coerce")
+        .fillna(0)
+        .to_numpy(float)
+        > 0.5
+    )
     if target == "strengthened":
-        return np.where((intensity >= 1.0) & (area >= 0.80), 0.80, np.where(intensity > 0, 0.60, 0.20))
+        return np.where(
+            (intensity >= 1.0) & (area >= 0.80),
+            0.80,
+            np.where(intensity > 0, 0.60, 0.20),
+        )
     if target == "weakened":
-        return np.where((intensity <= -1.0) & (area <= 1.25), 0.80, np.where(intensity < 0, 0.60, 0.20))
-    motion = pd.to_numeric(features["motion_bearing_deg"], errors="coerce").fillna(0).to_numpy(float)
-    bearing = pd.to_numeric(features["bearing_to_bahia_deg"], errors="coerce").fillna(0).to_numpy(float)
+        return np.where(
+            (intensity <= -1.0) & (area <= 1.25),
+            0.80,
+            np.where(intensity < 0, 0.60, 0.20),
+        )
+    motion = (
+        pd.to_numeric(features["motion_bearing_deg"], errors="coerce")
+        .fillna(0)
+        .to_numpy(float)
+    )
+    bearing = (
+        pd.to_numeric(features["bearing_to_bahia_deg"], errors="coerce")
+        .fillna(0)
+        .to_numpy(float)
+    )
     delta = np.abs((motion - bearing + 180.0) % 360.0 - 180.0)
     directional_score = np.clip(1.0 - delta / 90.0, 0.0, 1.0)
     return np.where(valid, directional_score, 0.20)
 
 
-def fit_platt_calibration(raw_cal: Any, y_cal: Any, raw_test: Any, y_test: Any, min_samples: int = 100) -> dict[str, Any]:
-    """Fit sigmoid calibration on calibration partition and assess on held-out test."""
+def fit_platt_calibration(
+    raw_cal: Any,
+    y_cal: Any,
+    raw_test: Any,
+    y_test: Any,
+    min_samples: int = 100,
+) -> dict[str, Any]:
+    """Fit Platt scaling on calibration data only.
+
+    raw_test and y_test remain in the signature for backwards compatibility with
+    existing trainers, but are deliberately not inspected here. The held-out
+    test partition must only be used by the trainer for final reporting and
+    model-vs-persistence evaluation, never to fit or enable calibration.
+    """
     cal_p = np.asarray(raw_cal, dtype=float).reshape(-1)
     cal_y = np.asarray(y_cal, dtype=int).reshape(-1)
-    test_p = np.asarray(raw_test, dtype=float).reshape(-1)
-    test_y = np.asarray(y_test, dtype=int).reshape(-1)
+
+    try:
+        test_samples = int(np.asarray(raw_test).reshape(-1).size)
+    except (TypeError, ValueError):
+        test_samples = 0
+
     result: dict[str, Any] = {
         "enabled": False,
         "approved": False,
         "method": "PLATT_LOGIT",
         "reason": None,
         "calibration_samples": int(cal_y.size),
-        "test_samples": int(test_y.size),
+        "test_samples": test_samples,
         "a": None,
         "b": None,
         "brier_raw_test": None,
         "brier_calibrated_test": None,
     }
-    if cal_p.size != cal_y.size or test_p.size != test_y.size or not cal_y.size or not test_y.size:
+
+    if cal_p.size != cal_y.size or not cal_y.size:
         result["reason"] = "INVALID_CALIBRATION_ARRAY_LENGTHS"
         return result
-    if not np.isfinite(cal_p).all() or not np.isfinite(test_p).all() or not np.isin(cal_y, [0, 1]).all() or not np.isin(test_y, [0, 1]).all():
-        result["reason"] = "NONFINITE_OR_NONBINARY_CALIBRATION_DATA"
+    if (
+        not np.isfinite(cal_p).all()
+        or not np.isin(cal_y, [0, 1]).all()
+        or (cal_p < 0.0).any()
+        or (cal_p > 1.0).any()
+    ):
+        result["reason"] = "NONFINITE_OR_INVALID_CALIBRATION_DATA"
         return result
     if cal_y.size < min_samples or np.unique(cal_y).size < 2:
         result["reason"] = "INSUFFICIENT_CALIBRATION_SAMPLES_OR_CLASSES"
         return result
-    if test_y.size < min_samples or np.unique(test_y).size < 2:
-        result["reason"] = "INSUFFICIENT_TEST_SAMPLES_OR_CLASSES"
-        return result
+
     eps = 1e-6
-    cal_logits = np.log(np.clip(cal_p, eps, 1 - eps) / (1 - np.clip(cal_p, eps, 1 - eps))).reshape(-1, 1)
-    test_clipped = np.clip(test_p, eps, 1 - eps)
-    test_logits = np.log(test_clipped / (1 - test_clipped)).reshape(-1, 1)
-    model = LogisticRegression(C=1e6, solver="lbfgs", max_iter=1000, random_state=42)
+    clipped = np.clip(cal_p, eps, 1.0 - eps)
+    cal_logits = np.log(clipped / (1.0 - clipped)).reshape(-1, 1)
+    model = LogisticRegression(
+        C=1e6,
+        solver="lbfgs",
+        max_iter=1000,
+        random_state=42,
+    )
     try:
         model.fit(cal_logits, cal_y)
     except (ValueError, FloatingPointError) as exc:
         result["reason"] = f"PLATT_FIT_FAILED: {type(exc).__name__}"
         return result
-    a = float(model.coef_[0, 0])
-    b = float(model.intercept_[0])
-    calibrated = model.predict_proba(test_logits)[:, list(model.classes_).index(1)]
-    raw_brier = float(brier_score_loss(test_y, test_clipped))
-    calibrated_brier = float(brier_score_loss(test_y, calibrated))
-    result.update({
-        "a": a,
-        "b": b,
-        "brier_raw_test": raw_brier,
-        "brier_calibrated_test": calibrated_brier,
-        "enabled": bool(calibrated_brier < raw_brier),
-        "approved": bool(calibrated_brier < raw_brier),
-        "reason": None if calibrated_brier < raw_brier else "CALIBRATION_DID_NOT_IMPROVE_HELDOUT_BRIER",
-    })
+
+    result.update(
+        {
+            "a": float(model.coef_[0, 0]),
+            "b": float(model.intercept_[0]),
+            "enabled": True,
+            "approved": False,
+            "reason": None,
+        }
+    )
     return result
