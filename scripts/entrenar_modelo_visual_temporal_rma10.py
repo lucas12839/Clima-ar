@@ -3,14 +3,14 @@
 ClimaAR — RMA10 Visual/Temporal AI — MODELO DEFINITIVO
 
 Integra:
-- Variables V1.
-- Secuencia visual causal de hasta 6 radares.
-- Características multiescala.
-- Diferencias temporales.
-- PCA visual.
-- Ensemble RF + ExtraTrees + HistGradientBoosting + LogisticRegression.
+- Las mismas 15 variables causales que V1.
+- Secuencia visual causal de hasta 6 radares, compensada por movimiento.
+- Características multiescala y diferencias temporales.
+- PCA ajustado exclusivamente con eventos de entrenamiento.
+- Ensemble ExtraTrees + LogisticRegression.
+- Calibración y evaluación cronológica contra persistencia.
 
-No utiliza información futura.
+No utiliza información futura y no publica probabilidades sin calibración aprobada.
 El modelo operativo final se guarda en:
 data/models/rma10_visual_temporal_model.joblib
 """
@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import re
+import sys
+import hashlib
 from bisect import bisect_right
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -29,20 +31,25 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from sklearn.decomposition import IncrementalPCA, PCA
-from sklearn.ensemble import (
-    ExtraTreesClassifier,
-    HistGradientBoostingClassifier,
-    RandomForestClassifier,
+if str(ROOT := Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.decodificador_rma10_dbz import validar_paleta
+from scripts.rma10_features import V1_FEATURES
+from scripts.rma10_validation import (
+    classification_metrics,
+    chronological_event_split,
+    fit_platt_calibration,
+    persistence_baseline,
+    rolling_origin_event_splits,
 )
+
+from sklearn.decomposition import PCA
+from sklearn.ensemble import ExtraTreesClassifier
+from sklearn.dummy import DummyClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    balanced_accuracy_score,
-    brier_score_loss,
-    roc_auc_score,
-)
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -56,7 +63,7 @@ MODEL_DIR = ROOT / "data/models"
 MODEL_PATH = MODEL_DIR / "rma10_visual_temporal_model.joblib"
 METRICS_PATH = MODEL_DIR / "rma10_visual_temporal_model_metrics.json"
 
-MODEL_VERSION = "rma10-visual-temporal-final-ensemble-1"
+MODEL_VERSION = "rma10-visual-temporal-causal-3"
 
 HORIZONS = (5, 10, 20, 30)
 
@@ -66,19 +73,7 @@ TARGETS = (
     "toward_bahia",
 )
 
-V1_FEATURES = (
-    "intensity",
-    "area_px",
-    "width_px",
-    "height_px",
-    "lat",
-    "lon",
-    "distance_km",
-    "bearing_to_bahia_deg",
-    "displacement_px",
-    "speed_px_min",
-    "motion_bearing_deg",
-)
+V1_FEATURES = tuple(V1_FEATURES)
 
 SEQUENCE_LEN = 6
 MIN_SEQUENCE_LEN = 3
@@ -197,6 +192,8 @@ def build_image_index():
         try:
             with Image.open(path) as image:
                 image.verify()
+            with Image.open(path) as image:
+                validar_paleta(image)
         except Exception:
             unreadable += 1
             continue
@@ -248,23 +245,12 @@ def build_image_index():
     return index
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=128)
 def load_dbz(path_string):
-
     with Image.open(path_string) as image:
-        image = image.convert("P")
-
-        palette = image.getpalette()
-
-        if palette is None:
-            raise ValueError(
-                "Imagen RMA10 sin paleta."
-            )
-
-        indices = np.asarray(
-            image,
-            dtype=np.uint8,
-        )
+        validar_paleta(image)
+        transparency = image.info.get("transparency")
+        indices = np.asarray(image, dtype=np.uint8)
 
     dbz = np.full(
         indices.shape,
@@ -275,6 +261,7 @@ def load_dbz(path_string):
     valid = (
         (indices >= PALETTE_START)
         & (indices <= PALETTE_END)
+        & (indices != transparency)
     )
 
     if np.any(valid):
@@ -345,13 +332,7 @@ def extract_patch(
     ]
 
     finite = np.isfinite(source)
-
-    if np.any(finite):
-        fill = float(
-            np.nanmedian(source)
-        )
-    else:
-        fill = DBZ_MIN
+    fill = DBZ_MIN
 
     dx0 = sx0 - x0
     dy0 = sy0 - y0
@@ -424,7 +405,6 @@ def shape_features(frame):
         30.0,
         40.0,
         50.0,
-        60.0,
     ):
 
         mask = frame >= threshold
@@ -473,1158 +453,561 @@ def shape_features(frame):
     )
 
 
-def feature_vector(
-    frames,
-    valid_mask,
-    elapsed,
-    gaps,
-):
-
-    abs32 = []
-    abs16 = []
-
+def feature_vector(frames, valid_mask, elapsed, gaps):
+    absolute = []
     stats = []
     shapes = []
+    differences = []
 
-    diff32 = []
-    diff16 = []
-
-    for i in range(SEQUENCE_LEN):
-
-        if valid_mask[i]:
-
-            abs32.append(
-                frames["32"][i].ravel()
-            )
-
-            abs16.append(
-                frames["16"][i].ravel()
-            )
-
-            stats.append(
-                frame_stats(
-                    frames["16"][i]
-                )
-            )
-
-            shapes.append(
-                shape_features(
-                    frames["16"][i]
-                )
-            )
-
+    for index in range(SEQUENCE_LEN):
+        if valid_mask[index]:
+            frame = frames["16"][index]
+            absolute.append(frame.ravel())
+            stats.append(frame_stats(frame))
+            shapes.append(shape_features(frame))
         else:
+            absolute.append(np.zeros(16 * 16, dtype=np.float32))
+            stats.append(np.zeros(12, dtype=np.float32))
+            shapes.append(np.zeros(24, dtype=np.float32))
 
-            abs32.append(
-                np.zeros(
-                    32 * 32,
-                    dtype=np.float32,
-                )
-            )
-
-            abs16.append(
-                np.zeros(
-                    16 * 16,
-                    dtype=np.float32,
-                )
-            )
-
-            stats.append(
-                np.zeros(
-                    12,
-                    dtype=np.float32,
-                )
-            )
-
-            shapes.append(
-                np.zeros(
-                    30,
-                    dtype=np.float32,
-                )
-            )
-
-    for i in range(
-        1,
-        SEQUENCE_LEN,
-    ):
-
-        if (
-            valid_mask[i]
-            and valid_mask[i - 1]
-        ):
-
-            diff32.append(
-                (
-                    frames["32"][i]
-                    - frames["32"][i - 1]
-                ).ravel()
-            )
-
-            diff16.append(
-                (
-                    frames["16"][i]
-                    - frames["16"][i - 1]
-                ).ravel()
-            )
-
+    for index in range(1, SEQUENCE_LEN):
+        if valid_mask[index] and valid_mask[index - 1]:
+            differences.append((frames["16"][index] - frames["16"][index - 1]).ravel())
         else:
+            differences.append(np.zeros(16 * 16, dtype=np.float32))
 
-            diff32.append(
-                np.zeros(
-                    32 * 32,
-                    dtype=np.float32,
-                )
-            )
-
-            diff16.append(
-                np.zeros(
-                    16 * 16,
-                    dtype=np.float32,
-                )
-            )
-
-    return np.concatenate(
-        [
-            np.concatenate(abs32),
-            np.concatenate(abs16),
-            np.concatenate(diff32),
-            np.concatenate(diff16),
-            np.concatenate(stats),
-            np.concatenate(shapes),
-            np.asarray(
-                valid_mask,
-                dtype=np.float32,
-            ),
-            np.asarray(
-                elapsed,
-                dtype=np.float32,
-            ),
-            np.asarray(
-                gaps,
-                dtype=np.float32,
-            ),
-        ]
-    ).astype(
-        np.float32
-    )
-
+    return np.concatenate([
+        np.concatenate(absolute),
+        np.concatenate(differences),
+        np.concatenate(stats),
+        np.concatenate(shapes),
+        np.asarray(valid_mask, dtype=np.float32),
+        np.asarray(elapsed, dtype=np.float32),
+        np.asarray(gaps, dtype=np.float32),
+    ]).astype(np.float32)
 
 def build_histories(df):
-
     histories = {}
-
-    clean = df.drop_duplicates(
-        subset=[
-            "track_id",
-            "frame_utc",
-        ]
-    )
-
-    for track_id, group in clean.groupby(
-        "track_id",
-        sort=False,
-    ):
-
+    columns = [
+        "track_id", "frame_utc", "x", "y", "intensity",
+        "area_px", "width_px", "height_px",
+    ]
+    clean = df.drop_duplicates(subset=["track_id", "frame_utc"])
+    for track_id, group in clean.groupby("track_id", sort=False):
         observations = []
-
-        for row in group.itertuples(
-            index=False
-        ):
-
-            timestamp = parse_timestamp(
-                getattr(
-                    row,
-                    "frame_utc",
-                )
-            )
-
+        for row in group[columns].itertuples(index=False, name=None):
+            track_value, frame_utc, x, y, intensity, area, width, height = row
+            timestamp = parse_timestamp(frame_utc)
             if timestamp is None:
                 continue
-
             try:
-                x = float(
-                    getattr(row, "x")
-                )
-
-                y = float(
-                    getattr(row, "y")
-                )
-
-            except Exception:
+                values = [float(x), float(y), float(intensity), float(area), float(width), float(height)]
+            except (TypeError, ValueError):
                 continue
-
-            observations.append(
-                (
-                    timestamp,
-                    x,
-                    y,
-                )
-            )
-
-        observations.sort(
-            key=lambda item: item[0]
-        )
-
+            if not np.isfinite(values).all():
+                continue
+            observations.append({
+                "timestamp": timestamp,
+                "x": values[0],
+                "y": values[1],
+                "intensidad": values[2],
+                "pixeles": values[3],
+                "ancho": values[4],
+                "alto": values[5],
+            })
+        observations.sort(key=lambda item: item["timestamp"])
         if observations:
-
-            histories[
-                canonical_track_id(
-                    track_id
-                )
-            ] = observations
-
+            histories[canonical_track_id(track_id)] = observations
     return histories
 
 
-def causal_position(
-    history,
-    timestamp,
-):
-
-    timestamps = [
-        item[0]
-        for item in history
-    ]
-
-    index = bisect_right(
-        timestamps,
-        timestamp,
-    ) - 1
-
+def causal_position(history, timestamp):
+    if not history:
+        return None
+    timestamps = [item["timestamp"] for item in history]
+    index = bisect_right(timestamps, timestamp) - 1
     if index < 0:
         return None
-
+    current = history[index]
     if index == 0:
-        return (
-            history[0][1],
-            history[0][2],
-        )
-
-    previous = history[
-        index - 1
-    ]
-
-    current = history[
-        index
-    ]
-
-    dt = (
-        current[0]
-        - previous[0]
-    ).total_seconds() / 60.0
-
-    if dt <= 0:
-        return (
-            current[1],
-            current[2],
-        )
-
-    elapsed = (
-        timestamp
-        - current[0]
-    ).total_seconds() / 60.0
-
-    elapsed = max(
-        0.0,
-        min(
-            elapsed,
-            MAX_IMAGE_GAP_MIN,
-        ),
-    )
-
-    vx = (
-        current[1]
-        - previous[1]
-    ) / dt
-
-    vy = (
-        current[2]
-        - previous[2]
-    ) / dt
-
-    return (
-        current[1] + vx * elapsed,
-        current[2] + vy * elapsed,
-    )
+        return current["x"], current["y"]
+    previous = history[index - 1]
+    dt = (current["timestamp"] - previous["timestamp"]).total_seconds() / 60.0
+    if dt <= 0 or dt > MAX_IMAGE_GAP_MIN:
+        return current["x"], current["y"]
+    elapsed = (timestamp - current["timestamp"]).total_seconds() / 60.0
+    elapsed = max(0.0, min(elapsed, MAX_IMAGE_GAP_MIN))
+    vx = (current["x"] - previous["x"]) / dt
+    vy = (current["y"] - previous["y"]) / dt
+    return current["x"] + vx * elapsed, current["y"] + vy * elapsed
 
 
-def find_visual_sequence(
-    timestamp,
-    position,
-    image_index,
-):
-
-    if position is None:
+def find_visual_sequence(timestamp, history, image_index, image_times=None):
+    """Motion-compensated, causal image sequence centered on each past track position."""
+    if not history or not image_index:
         return None
-
-    x, y = position
-
-    timestamps = [
-        item[0]
-        for item in image_index
-    ]
-
-    index = bisect_right(
-        timestamps,
-        timestamp,
-    ) - 1
-
+    if image_times is None:
+        image_times = [item[0] for item in image_index]
+    index = bisect_right(image_times, timestamp) - 1
     if index < 0:
         return None
 
     selected = []
-
+    later_time = None
     current_index = index
-
-    while (
-        current_index >= 0
-        and len(selected)
-        < SEQUENCE_LEN
-    ):
-
-        frame_time, path = image_index[
-            current_index
-        ]
-
-        delta = (
-            timestamp
-            - frame_time
-        ).total_seconds() / 60.0
-
-        if delta < 0:
+    while current_index >= 0 and len(selected) < SEQUENCE_LEN:
+        frame_time, path = image_index[current_index]
+        age = (timestamp - frame_time).total_seconds() / 60.0
+        if age < 0:
             current_index -= 1
             continue
-
-        if delta > MAX_SEQUENCE_WINDOW_MIN:
+        if age > MAX_SEQUENCE_WINDOW_MIN:
             break
-
-        selected.append(
-            (
-                frame_time,
-                path,
-            )
-        )
-
+        position = causal_position(history, frame_time)
+        if position is not None:
+            if later_time is not None:
+                gap = (later_time - frame_time).total_seconds() / 60.0
+                if gap > MAX_IMAGE_GAP_MIN:
+                    break
+            selected.append((frame_time, path, position))
+            later_time = frame_time
         current_index -= 1
 
     selected.reverse()
-
     if len(selected) < MIN_SEQUENCE_LEN:
         return None
+    if (timestamp - selected[-1][0]).total_seconds() / 60.0 > 15.0:
+        return None
 
-    frames32 = []
-    frames16 = []
-
-    elapsed = []
-    gaps = []
-
+    frames16, elapsed, gaps = [], [], []
     last_time = None
-
-    for frame_time, path in selected:
-
-        dbz = load_dbz(
-            str(path)
-        )
-
-        patch = extract_patch(
-            dbz,
-            x,
-            y,
-            PATCH_SIZE,
-        )
-
-        frames32.append(
-            resize_field(
-                patch,
-                32,
-            )
-        )
-
-        frames16.append(
-            resize_field(
-                patch,
-                16,
-            )
-        )
-
-        elapsed.append(
-            (
-                timestamp
-                - frame_time
-            ).total_seconds()
-            / 60.0
-        )
-
-        if last_time is None:
-            gaps.append(0.0)
-        else:
-            gaps.append(
-                (
-                    frame_time
-                    - last_time
-                ).total_seconds()
-                / 60.0
-            )
-
+    for frame_time, path, position in selected:
+        dbz = load_dbz(str(path))
+        patch = extract_patch(dbz, position[0], position[1], PATCH_SIZE)
+        frames16.append(resize_field(patch, 16))
+        elapsed.append((timestamp - frame_time).total_seconds() / 60.0)
+        gaps.append(0.0 if last_time is None else (frame_time - last_time).total_seconds() / 60.0)
         last_time = frame_time
 
-    while len(frames32) < SEQUENCE_LEN:
+    valid_count = len(frames16)
+    while len(frames16) < SEQUENCE_LEN:
+        frames16.insert(0, np.zeros((16, 16), dtype=np.float32))
+        elapsed.insert(0, 0.0)
+        gaps.insert(0, 0.0)
 
-        frames32.insert(
-            0,
-            np.zeros(
-                (32, 32),
-                dtype=np.float32,
-            ),
-        )
+    valid_mask = [0.0] * (SEQUENCE_LEN - valid_count) + [1.0] * valid_count
+    return {"16": frames16}, valid_mask, elapsed, gaps, selected
 
-        frames16.insert(
-            0,
-            np.zeros(
-                (16, 16),
-                dtype=np.float32,
-            ),
-        )
-
-        elapsed.insert(
-            0,
-            0.0,
-        )
-
-        gaps.insert(
-            0,
-            0.0,
-        )
-
-    valid_mask = [
-        0.0
-        if i < SEQUENCE_LEN - len(selected)
-        else 1.0
-        for i in range(
-            SEQUENCE_LEN
-        )
-    ]
-
-    return (
-        {
-            "32": frames32,
-            "16": frames16,
-        },
-        valid_mask,
-        elapsed,
-        gaps,
-    )
-
-
-def iter_visual_features(
-    df,
-    histories,
-    image_index,
-    allowed_indices=None,
-):
-    """Genera features visuales una por una, sin retenerlas en RAM."""
-
-    valid_count = 0
-
-    for row_index, row in df.iterrows():
-
-        if (
-            allowed_indices is not None
-            and row_index not in allowed_indices
-        ):
-            continue
-
-        track_id = canonical_track_id(
-            row["track_id"]
-        )
-
-        timestamp = parse_timestamp(
-            row["frame_utc"]
-        )
-
+def iter_visual_features(df, histories, image_index, allowed_indices=None, image_times=None):
+    """Compute one sequence per unique track/frame and share it across horizons."""
+    if image_times is None:
+        image_times = [item[0] for item in image_index]
+    groups = df.groupby(["track_id", "frame_utc"], sort=False).indices
+    for (_track_key, _frame_key), indices in groups.items():
+        row_indices = [int(index) for index in indices]
+        if allowed_indices is not None:
+            row_indices = [index for index in row_indices if index in allowed_indices]
+            if not row_indices:
+                continue
+        row = df.iloc[row_indices[0]]
+        track_id = canonical_track_id(row["track_id"])
+        timestamp = parse_timestamp(row["frame_utc"])
         if timestamp is None:
             continue
-
-        history = histories.get(
-            track_id
-        )
-
+        history = histories.get(track_id)
         if not history:
             continue
-
-        position = causal_position(
-            history,
-            timestamp,
-        )
-
-        sequence = find_visual_sequence(
-            timestamp,
-            position,
-            image_index,
-        )
-
+        sequence = find_visual_sequence(timestamp, history, image_index, image_times)
         if sequence is None:
             continue
+        frames, mask, elapsed, gaps, _selected = sequence
+        yield row_indices, feature_vector(frames, mask, elapsed, gaps)
 
-        frames, mask, elapsed, gaps = sequence
-
-        features = feature_vector(
-            frames,
-            mask,
-            elapsed,
-            gaps,
-        )
-
-        valid_count += 1
-        yield row_index, features
-
-    return valid_count
-
-
-def make_ensemble():
-
-    return [
-        (
-            "rf",
-            RandomForestClassifier(
-                n_estimators=700,
-                max_depth=14,
-                min_samples_leaf=2,
-                max_features="sqrt",
-                class_weight="balanced_subsample",
-                random_state=RANDOM_STATE,
-                n_jobs=-1,
-            ),
-            0.20,
-        ),
+def make_ensemble(n_estimators=60, include_logistic=True):
+    ensemble = [
         (
             "extra",
             ExtraTreesClassifier(
-                n_estimators=700,
-                max_depth=16,
-                min_samples_leaf=2,
+                n_estimators=n_estimators,
+                max_depth=14,
+                min_samples_leaf=3,
                 max_features="sqrt",
                 class_weight="balanced",
                 random_state=RANDOM_STATE,
                 n_jobs=-1,
             ),
-            0.30,
-        ),
-        (
-            "hist",
-            HistGradientBoostingClassifier(
-                max_iter=350,
-                learning_rate=0.045,
-                max_leaf_nodes=31,
-                min_samples_leaf=12,
-                l2_regularization=1.0,
-                random_state=RANDOM_STATE,
-            ),
-            0.30,
-        ),
-        (
-            "logistic",
-            Pipeline(
-                [
-                    (
-                        "imputer",
-                        SimpleImputer(
-                            strategy="median"
-                        ),
-                    ),
-                    (
-                        "scaler",
-                        StandardScaler(),
-                    ),
-                    (
-                        "model",
-                        LogisticRegression(
-                            max_iter=2000,
-                            C=0.7,
-                            class_weight="balanced",
-                            random_state=RANDOM_STATE,
-                        ),
-                    ),
-                ]
-            ),
-            0.20,
+            1.0 if not include_logistic else 0.70,
         ),
     ]
+    if include_logistic:
+        ensemble.append((
+            "logistic",
+            Pipeline([
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                ("model", LogisticRegression(
+                    max_iter=1500,
+                    C=0.7,
+                    class_weight="balanced",
+                    random_state=RANDOM_STATE,
+                )),
+            ]),
+            0.30,
+        ))
+    return ensemble
 
+def ensemble_probability(trained_models, matrix):
+    weighted = []
+    total_weight = 0.0
+    for name, model, weight in trained_models:
+        classes = list(model.classes_)
+        if 1 in classes:
+            values = model.predict_proba(matrix)[:, classes.index(1)]
+        else:
+            values = np.zeros(len(matrix), dtype=float)
+        weighted.append(values * weight)
+        total_weight += weight
+    return np.sum(weighted, axis=0) / max(total_weight, 1e-9)
+
+
+def sha256_file(path: Path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 def main():
+    print("=== CLIMAAR RMA10 — VISUAL/TEMPORAL CAUSAL 3 ===")
+    if not DATASET.exists() or not RADAR_DIR.exists():
+        raise SystemExit("Falta dataset o histórico de imágenes RMA10")
+    summary_path = ROOT / "data/radar/rma10_dataset_resumen.json"
+    if not summary_path.exists():
+        raise SystemExit("Falta resumen del dataset RMA10")
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    if summary.get("schema_version") != "rma10-causal-v2" or summary.get("migration_version") != "rma10-causal-migration-2":
+        raise SystemExit("Dataset sin migración causal v2; migrar antes de entrenar")
+    if summary.get("features_causales") != list(V1_FEATURES):
+        raise SystemExit("Features causales del dataset no coinciden con el modelo visual")
+    if float(summary.get("radio_operativo_km", 0)) != 240.0:
+        raise SystemExit("El radio operativo RMA10 debe permanecer en 240 km")
 
-    print(
-        "=== CLIMAAR RMA10 — MODELO DEFINITIVO ==="
-    )
-
-    if not DATASET.exists():
-        raise SystemExit(
-            f"No existe dataset: {DATASET}"
-        )
-
-    if not RADAR_DIR.exists():
-        raise SystemExit(
-            f"No existe radar: {RADAR_DIR}"
-        )
-
-    df = pd.read_csv(
-        DATASET
-    )
-
-    required = (
-        set(V1_FEATURES)
-        | set(TARGETS)
-        | {
-            "track_id",
-            "horizonte_min",
-            "frame_utc",
-            "x",
-            "y",
-        }
-    )
-
-    missing = sorted(
-        required - set(df.columns)
-    )
-
+    df = pd.read_csv(DATASET)
+    required = set(V1_FEATURES) | set(TARGETS) | {
+        "track_id", "horizonte_min", "frame_utc", "x", "y", "label_valid"
+    }
+    missing = sorted(required - set(df.columns))
     if missing:
-        raise SystemExit(
-            f"Faltan columnas obligatorias: {missing}"
-        )
+        raise SystemExit(f"Faltan columnas obligatorias: {missing}")
+    df["track_id"] = df["track_id"].map(canonical_track_id)
+    df["horizonte_min"] = pd.to_numeric(df["horizonte_min"], errors="coerce")
+    df = df[df["label_valid"].astype(bool)].copy()
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.dropna(subset=["track_id", "horizonte_min", "frame_utc", *V1_FEATURES, *TARGETS])
+    df = df[df["track_id"] != ""].copy()
+    df = df.sort_values(["frame_utc", "track_id", "horizonte_min"]).reset_index(drop=True)
+    df["horizonte_min"] = df["horizonte_min"].astype(int)
 
-    df = df.replace(
-        [np.inf, -np.inf],
-        np.nan,
-    )
-
-    df["track_id"] = df[
-        "track_id"
-    ].map(
-        canonical_track_id
-    )
-
-    print(
-        f"Dataset: {len(df)} filas"
-        f" | tracks: "
-        f"{df['track_id'].nunique()}"
-    )
+    split = chronological_event_split(df)
+    train_indices = set(np.flatnonzero(split["train_mask"]).tolist())
+    calibration_indices = set(np.flatnonzero(split["calibration_mask"]).tolist())
+    test_indices = set(np.flatnonzero(split["test_mask"]).tolist())
+    split_summary = {
+        key: value for key, value in split.items()
+        if key not in {"train_mask", "calibration_mask", "test_mask", "event_by_track"}
+    }
+    rolling_folds = rolling_origin_event_splits(df, n_last_events=4, min_rows=100)
+    if len(rolling_folds) < 2:
+        raise RuntimeError(f"Se requieren 2 folds rolling-origin; encontrados={len(rolling_folds)}")
+    print(f"Eventos: {split['event_count']} | train={split['train_rows']} | calibration={split['calibration_rows']} | test={split['test_rows']} | rolling={len(rolling_folds)}")
 
     image_index = build_image_index()
+    image_times = [item[0] for item in image_index]
+    histories = build_histories(df)
+    print(f"Historias: {len(histories)} | imágenes válidas: {len(image_index)}")
 
-    histories = build_histories(
-        df
-    )
+    # Una sola extracción por track/frame; las cuatro filas de horizonte
+    # comparten exactamente la misma secuencia visual.
+    visual_groups = []
+    raw_features = []
+    train_group_mask = []
+    for row_indices, features in iter_visual_features(
+        df, histories, image_index, image_times=image_times
+    ):
+        visual_groups.append(row_indices)
+        raw_features.append(features)
+        train_group_mask.append(any(index in train_indices for index in row_indices))
 
-    print(
-        f"Historias construidas: "
-        f"{len(histories)}"
-    )
+    if not raw_features:
+        raise RuntimeError("No se generaron secuencias visuales")
+    raw_matrix = np.asarray(raw_features, dtype=np.float32)
+    train_group_mask = np.asarray(train_group_mask, dtype=bool)
+    train_visual_count = int(train_group_mask.sum())
+    if train_visual_count < MIN_SEQUENCE_LEN * 20:
+        raise RuntimeError(f"Secuencias visuales insuficientes en train: {train_visual_count}")
 
-    # Split temporal por bloques de evento.
-    # Cada track permanece íntegramente en un único bloque.
-    # Los tracks que se solapan temporalmente quedan en el mismo evento.
-    track_events = (
-        df.groupby("track_id")["frame_utc"]
-        .agg(["min", "max"])
-        .copy()
-    )
-
-    track_events["min"] = pd.to_datetime(
-        track_events["min"], utc=True
-    )
-    track_events["max"] = pd.to_datetime(
-        track_events["max"], utc=True
-    )
-
-    event_id = 0
-    current_end = None
-    track_event = {}
-
-    for track_id, row in track_events.sort_values("min").iterrows():
-        start = row["min"]
-        end = row["max"]
-
-        if (
-            current_end is None
-            or start > current_end + pd.Timedelta(minutes=30)
-        ):
-            event_id += 1
-            current_end = end
-        else:
-            current_end = max(current_end, end)
-
-        track_event[track_id] = event_id
-
-    event_groups = df["track_id"].map(track_event)
-
-    splitter = GroupShuffleSplit(
-        n_splits=1,
-        test_size=0.25,
+    visual_dim = int(raw_matrix.shape[1])
+    components = min(PCA_COMPONENTS, train_visual_count, visual_dim)
+    pca = PCA(
+        n_components=components,
+        svd_solver="randomized",
         random_state=RANDOM_STATE,
     )
+    pca.fit(raw_matrix[train_group_mask])
+    visual_pca = pca.transform(raw_matrix).astype(np.float32)
 
-    train_idx, test_idx = next(
-        splitter.split(
-            df,
-            groups=event_groups,
-        )
-    )
+    X = np.zeros((len(df), len(V1_FEATURES) + components + 1), dtype=np.float32)
+    X[:, :len(V1_FEATURES)] = df[list(V1_FEATURES)].astype(float).to_numpy(dtype=np.float32)
+    for group_index, row_indices in enumerate(visual_groups):
+        for row_index in row_indices:
+            X[row_index, len(V1_FEATURES):len(V1_FEATURES) + components] = visual_pca[group_index]
+            X[row_index, -1] = 1.0
 
-    train_indices = set(
-        df.index[train_idx]
-    )
+    visual_valid = X[:, -1] > 0.5
+    models = {}
+    calibrations = {}
+    validation_metrics = {}
+    for horizon in HORIZONS:
+        for target in TARGETS:
+            key = f"{horizon}m_{target}"
+            horizon_mask = (df["horizonte_min"].to_numpy() == horizon) & visual_valid
+            positions = np.flatnonzero(horizon_mask)
+            train_pos = np.asarray([p for p in positions if p in train_indices], dtype=int)
+            calibration_pos = np.asarray([p for p in positions if p in calibration_indices], dtype=int)
+            test_pos = np.asarray([p for p in positions if p in test_indices], dtype=int)
+            if len(train_pos) < 100 or len(calibration_pos) < 100 or len(test_pos) < 100:
+                raise RuntimeError(
+                    f"Secuencias insuficientes {key}: train={len(train_pos)} "
+                    f"cal={len(calibration_pos)} test={len(test_pos)}"
+                )
 
-    test_indices = set(
-        df.index[test_idx]
-    )
+            y_train = df.iloc[train_pos][target].astype(int).to_numpy()
+            y_cal = df.iloc[calibration_pos][target].astype(int).to_numpy()
+            y_test = df.iloc[test_pos][target].astype(int).to_numpy()
+            if len(np.unique(y_train)) < 2:
+                raise RuntimeError(f"Una sola clase en entrenamiento visual: {key}")
 
-    print(
-        f"Tracks train: "
-        f"{df.iloc[train_idx]['track_id'].nunique()}"
-        f" | test: "
-        f"{df.iloc[test_idx]['track_id'].nunique()}"
-    )
-
-    # Primera pasada: PCA incremental.
-    # Las 14.350 features originales se generan y liberan por lote;
-    # nunca se almacenan todas las secuencias visuales en RAM.
-    visual_feature_dim = None
-    train_visual_count = 0
-    pca_batch = []
-    pending_batch = None
-
-    for index, features in iter_visual_features(
-        df,
-        histories,
-        image_index,
-        allowed_indices=train_indices,
-    ):
-        if visual_feature_dim is None:
-            visual_feature_dim = len(features)
-
-        pca_batch.append(features)
-        train_visual_count += 1
-
-        if len(pca_batch) >= PCA_COMPONENTS:
-            batch = np.asarray(
-                pca_batch,
-                dtype=np.float32,
-            )
-            pca_batch.clear()
-
-            # IncrementalPCA exige al menos n_components muestras
-            # por partial_fit. Guardamos un lote completo de 64 y lo
-            # combinamos con el siguiente si hace falta, evitando que
-            # el último lote pequeño rompa el entrenamiento.
-            if pending_batch is None:
-                pending_batch = batch
+            if target == "toward_bahia":
+                # El objetivo direccional no superó persistencia en los folds
+                # independientes; se conserva un prior diagnóstico sin probabilidad publicable.
+                prior = DummyClassifier(strategy="prior")
+                prior.fit(X[train_pos], y_train)
+                models[key] = [("prior_no_aprobado", prior, 1.0)]
+                calibration = {
+                    "enabled": False,
+                    "approved": False,
+                    "method": "DISABLED_BY_ROLLING_ORIGIN_GATE",
+                    "reason": "TOWARD_BAHIA_DID_NOT_BEAT_PERSISTENCE_IN_INDEPENDENT_EVENTS",
+                    "calibration_samples": int(len(calibration_pos)),
+                    "test_samples": int(len(test_pos)),
+                    "rolling_origin_folds": 0,
+                    "rolling_origin_passes": 0,
+                }
+                calibrations[key] = calibration
+                baseline_metrics = classification_metrics(
+                    y_test, persistence_baseline(df.iloc[test_pos], target)
+                )
+                prior_probability = ensemble_probability(models[key], X[test_pos])
+                validation_metrics[key] = {
+                    "train_samples": int(len(train_pos)),
+                    "calibration_samples": int(len(calibration_pos)),
+                    "test_samples": int(len(test_pos)),
+                    "train_positive": int(y_train.sum()),
+                    "calibration_positive": int(y_cal.sum()),
+                    "test_positive": int(y_test.sum()),
+                    "model_raw": classification_metrics(y_test, prior_probability),
+                    "model_calibrated": None,
+                    "persistence_baseline": baseline_metrics,
+                    "beats_persistence": False,
+                    "calibration_enabled": False,
+                    "calibration_reason": calibration["reason"],
+                    "rolling_origin": [],
+                    "rolling_origin_passes": 0,
+                    "rolling_origin_folds": 0,
+                }
+                print(f"{key}: no aprobado; se conserva prior sin probabilidad")
                 continue
 
-            batch = np.vstack((pending_batch, batch))
-            pending_batch = None
-
-            if "pca" not in locals():
-                components = min(
-                    PCA_COMPONENTS,
-                    batch.shape[0],
-                    batch.shape[1],
-                )
-                pca = IncrementalPCA(
-                    n_components=components,
-                    batch_size=PCA_COMPONENTS,
-                )
-
-            pca.partial_fit(batch)
-
-    if pca_batch:
-        tail = np.asarray(
-            pca_batch,
-            dtype=np.float32,
-        )
-        pca_batch.clear()
-
-        if pending_batch is None:
-            pending_batch = tail
-        else:
-            pending_batch = np.vstack((pending_batch, tail))
-
-    if pending_batch is not None:
-        if "pca" not in locals():
-            components = min(
-                PCA_COMPONENTS,
-                pending_batch.shape[0],
-                pending_batch.shape[1],
-            )
-            pca = IncrementalPCA(
-                n_components=components,
-                batch_size=PCA_COMPONENTS,
-            )
-
-        pca.partial_fit(pending_batch)
-        pending_batch = None
-
-    if visual_feature_dim is None or train_visual_count == 0:
-        raise RuntimeError(
-            "No hay secuencias visuales válidas en entrenamiento."
-        )
-
-    components = pca.n_components_
-    visual_dim = visual_feature_dim
-
-    print(
-        f"Secuencias visuales válidas: {train_visual_count}"
-    )
-    print(
-        f"Features visuales: {visual_feature_dim}"
-    )
-    print(
-        f"PCA visual: {components} componentes "
-        f"(IncrementalPCA, batch={PCA_COMPONENTS})"
-    )
-
-    # Liberar únicamente la caché de dBZ antes de la segunda pasada.
-    # No cambia ninguna feature ni el resultado del modelo.
-    load_dbz.cache_clear()
-
-    base_matrix = df[
-        list(V1_FEATURES)
-    ].astype(
-        float
-    ).to_numpy(
-        dtype=np.float32
-    )
-
-    index_positions = {
-        index: position
-        for position, index
-        in enumerate(df.index)
-    }
-
-    X = np.zeros(
-        (len(df), len(V1_FEATURES) + components + 1),
-        dtype=np.float32,
-    )
-
-    X[:, :len(V1_FEATURES)] = base_matrix
-
-    # Segunda pasada: transformar cada feature visual y escribirla
-    # directamente en la matriz final. No se crea visual_map.
-    for index, features in iter_visual_features(
-        df,
-        histories,
-        image_index,
-    ):
-        position = index_positions[index]
-
-        visual = pca.transform(
-            np.asarray(
-                features,
-                dtype=np.float32,
-            ).reshape(1, -1)
-        )[0]
-
-        X[position, len(V1_FEATURES):
-           len(V1_FEATURES) + components] = visual
-        X[position, -1] = 1.0
-
-    print(
-        f"Features finales: {X.shape[1]}"
-    )
-
-    models = {}
-
-    metrics = {
-        "model_version": MODEL_VERSION,
-        "generated_utc": datetime.now(
-            timezone.utc
-        ).isoformat(),
-        "dataset_rows": int(len(df)),
-        "tracks_total": int(
-            df["track_id"].nunique()
-        ),
-        "tracks_train": int(
-            df.iloc[train_idx][
-                "track_id"
-            ].nunique()
-        ),
-        "tracks_test": int(
-            df.iloc[test_idx][
-                "track_id"
-            ].nunique()
-        ),
-        "v1_features": list(
-            V1_FEATURES
-        ),
-        "visual_raw_features": int(
-            visual_dim
-        ),
-        "pca_features": int(
-            components
-        ),
-        "final_features": int(
-            X.shape[1]
-        ),
-        "horizons": list(
-            HORIZONS
-        ),
-        "targets": list(
-            TARGETS
-        ),
-        "models": {},
-    }
-
-    for horizon in HORIZONS:
-
-        for target in TARGETS:
-
-            key = f"{horizon}m_{target}"
-
-            mask = (
-                df["horizonte_min"]
-                == horizon
-            ).to_numpy(copy=True)
-
-            mask &= (
-                df[target]
-                .notna()
-                .to_numpy()
-            )
-
-            mask &= (
-                df["track_id"]
-                != ""
-            ).to_numpy()
-
-            positions = np.flatnonzero(
-                mask
-            )
-
-            train_positions = [
-                pos
-                for pos in positions
-                if df.index[pos]
-                in train_indices
-            ]
-
-            test_positions = [
-                pos
-                for pos in positions
-                if df.index[pos]
-                in test_indices
-            ]
-
-            if (
-                len(train_positions) < 20
-                or len(test_positions) < 10
-            ):
-                raise RuntimeError(
-                    f"Datos insuficientes "
-                    f"{key}: "
-                    f"train={len(train_positions)} "
-                    f"test={len(test_positions)}"
-                )
-
-            X_train = X[
-                train_positions
-            ]
-
-            X_test = X[
-                test_positions
-            ]
-
-            y_train = (
-                df.iloc[
-                    train_positions
-                ][target]
-                .astype(int)
-                .to_numpy()
-            )
-
-            y_test = (
-                df.iloc[
-                    test_positions
-                ][target]
-                .astype(int)
-                .to_numpy()
-            )
-
-            if len(np.unique(y_train)) < 2:
-                raise RuntimeError(
-                    f"Una sola clase en "
-                    f"entrenamiento: {key}"
-                )
-
             trained_models = []
+            for name, model, weight in make_ensemble():
+                model.fit(X[train_pos], y_train)
+                trained_models.append((name, model, weight))
 
-            probabilities = []
-
-            for (
-                name,
-                model,
-                weight,
-            ) in make_ensemble():
-
-                model.fit(
-                    X_train,
-                    y_train,
-                )
-
-                probability = model.predict_proba(
-                    X_test
-                )[:, 1]
-
-                trained_models.append(
-                    (
-                        name,
-                        model,
-                        weight,
-                    )
-                )
-
-                probabilities.append(
-                    probability * weight
-                )
-
-            total_weight = sum(
-                item[2]
-                for item in trained_models
+            raw_cal = ensemble_probability(trained_models, X[calibration_pos])
+            raw_test = ensemble_probability(trained_models, X[test_pos])
+            calibration = fit_platt_calibration(
+                raw_cal, y_cal, raw_test, y_test, min_samples=100
             )
+            raw_metrics = classification_metrics(y_test, raw_test)
+            baseline_probability = persistence_baseline(df.iloc[test_pos], target)
+            baseline_metrics = classification_metrics(y_test, baseline_probability)
+            calibrated_metrics = None
+            if calibration.get("a") is not None and calibration.get("b") is not None:
+                eps = 1e-6
+                clipped = np.clip(raw_test, eps, 1 - eps)
+                logits = np.log(clipped / (1 - clipped))
+                z = np.clip(float(calibration["a"]) * logits + float(calibration["b"]), -60, 60)
+                calibrated_probability = 1.0 / (1.0 + np.exp(-z))
+                calibrated_metrics = classification_metrics(y_test, calibrated_probability)
 
-            probability = (
-                np.sum(
-                    probabilities,
-                    axis=0,
+            beats_baseline = bool(
+                raw_metrics["samples"] >= 100
+                and raw_metrics["roc_auc"] is not None
+                and raw_metrics["roc_auc"] > 0.55
+                and raw_metrics["brier"] < baseline_metrics["brier"]
+                and raw_metrics["balanced_accuracy"] is not None
+                and baseline_metrics["balanced_accuracy"] is not None
+                and raw_metrics["balanced_accuracy"] >= baseline_metrics["balanced_accuracy"]
+            )
+            if not beats_baseline:
+                calibration["enabled"] = False
+                calibration["reason"] = "MODEL_DID_NOT_BEAT_CAUSAL_PERSISTENCE_BASELINE"
+
+            rolling_results = []
+            for fold in rolling_folds:
+                fold_train = np.asarray([p for p in positions if fold["train_mask"][p]], dtype=int)
+                fold_cal = np.asarray([p for p in positions if fold["calibration_mask"][p]], dtype=int)
+                fold_test = np.asarray([p for p in positions if fold["test_mask"][p]], dtype=int)
+                if min(len(fold_train), len(fold_cal), len(fold_test)) < 100:
+                    continue
+                y_fold_train = df.iloc[fold_train][target].astype(int).to_numpy()
+                y_fold_cal = df.iloc[fold_cal][target].astype(int).to_numpy()
+                y_fold_test = df.iloc[fold_test][target].astype(int).to_numpy()
+                if min(len(np.unique(y_fold_train)), len(np.unique(y_fold_cal)), len(np.unique(y_fold_test))) < 2:
+                    continue
+                fold_models = []
+                for name, model, weight in make_ensemble(n_estimators=20, include_logistic=True):
+                    model.fit(X[fold_train], y_fold_train)
+                    fold_models.append((name, model, weight))
+                fold_raw_cal = ensemble_probability(fold_models, X[fold_cal])
+                fold_raw_test = ensemble_probability(fold_models, X[fold_test])
+                fold_calibration = fit_platt_calibration(
+                    fold_raw_cal, y_fold_cal, fold_raw_test, y_fold_test, min_samples=100
                 )
-                / total_weight
-            )
-
-            prediction = (
-                probability >= 0.5
-            ).astype(int)
-
-            auc = safe_auc(
-                y_test,
-                probability,
-            )
-
-            brier = float(
-                brier_score_loss(
-                    y_test,
-                    probability,
+                fold_raw_metrics = classification_metrics(y_fold_test, fold_raw_test)
+                fold_baseline_metrics = classification_metrics(
+                    y_fold_test, persistence_baseline(df.iloc[fold_test], target)
                 )
-            )
-
-            balanced = float(
-                balanced_accuracy_score(
-                    y_test,
-                    prediction,
+                fold_beats = bool(
+                    fold_raw_metrics["roc_auc"] is not None
+                    and fold_raw_metrics["roc_auc"] > 0.55
+                    and fold_raw_metrics["brier"] < fold_baseline_metrics["brier"]
+                    and fold_raw_metrics["balanced_accuracy"] is not None
+                    and fold_baseline_metrics["balanced_accuracy"] is not None
+                    and fold_raw_metrics["balanced_accuracy"] >= fold_baseline_metrics["balanced_accuracy"]
                 )
-            )
+                rolling_results.append({
+                    "test_event": fold["test_event"],
+                    "calibration_event": fold["calibration_event"],
+                    "train_samples": int(len(fold_train)),
+                    "calibration_samples": int(len(fold_cal)),
+                    "test_samples": int(len(fold_test)),
+                    "model_raw": fold_raw_metrics,
+                    "persistence_baseline": fold_baseline_metrics,
+                    "calibration_enabled": bool(fold_calibration.get("enabled")),
+                    "beats_persistence": fold_beats,
+                    "approved": bool(fold_beats and fold_calibration.get("enabled")),
+                    "rolling_model": "EXTRATREES_20_PLUS_LOGISTIC_PROXY",
+                })
+            rolling_passes = sum(bool(item["approved"]) for item in rolling_results)
+            rolling_ok = len(rolling_results) >= 2 and rolling_passes == len(rolling_results)
+            if calibration.get("enabled") and not rolling_ok:
+                calibration["enabled"] = False
+                calibration["reason"] = "ROLLING_ORIGIN_VALIDATION_NOT_PASSED"
+            calibration["rolling_origin_folds"] = len(rolling_results)
+            calibration["rolling_origin_passes"] = rolling_passes
+            calibration["approved"] = bool(beats_baseline and rolling_ok and calibration.get("enabled"))
+            if not calibration.get("enabled"):
+                calibrated_metrics = None
 
             models[key] = trained_models
-
-            metrics["models"][key] = {
-                "samples_train": int(
-                    len(y_train)
-                ),
-                "samples_test": int(
-                    len(y_test)
-                ),
-                "positive_train": int(
-                    y_train.sum()
-                ),
-                "positive_test": int(
-                    y_test.sum()
-                ),
-                "roc_auc": auc,
-                "brier": brier,
-                "balanced_accuracy": balanced,
+            calibrations[key] = calibration
+            validation_metrics[key] = {
+                "train_samples": int(len(train_pos)),
+                "calibration_samples": int(len(calibration_pos)),
+                "test_samples": int(len(test_pos)),
+                "train_positive": int(y_train.sum()),
+                "calibration_positive": int(y_cal.sum()),
+                "test_positive": int(y_test.sum()),
+                "model_raw": raw_metrics,
+                "model_calibrated": calibrated_metrics,
+                "persistence_baseline": baseline_metrics,
+                "beats_persistence": beats_baseline,
+                "calibration_enabled": bool(calibration.get("enabled")),
+                "calibration_reason": calibration.get("reason"),
+                "rolling_origin": rolling_results,
+                "rolling_origin_passes": rolling_passes,
+                "rolling_origin_folds": len(rolling_results),
             }
-
             print(
-                f"{key}: "
-                f"AUC={auc:.4f} "
-                f"bal_acc={balanced:.4f} "
-                f"Brier={brier:.4f}"
+                f"{key}: AUC={raw_metrics['roc_auc']} "
+                f"Brier={raw_metrics['brier']:.4f} "
+                f"persistencia={baseline_metrics['brier']:.4f} "
+                f"calibrado={calibration.get('enabled')}"
             )
 
+    dataset_hash = sha256_file(DATASET)
+    trained_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    approved_models = sum(bool(item.get("approved")) for item in calibrations.values())
     bundle = {
         "model_version": MODEL_VERSION,
         "features_v1": list(V1_FEATURES),
-        "visual_raw_features": int(
-            visual_dim
-        ),
-        "pca_components": int(
-            components
-        ),
+        "features_version": "rma10-causal-features-v2",
+        "visual_raw_features": visual_dim,
+        "pca_components": components,
         "sequence_len": SEQUENCE_LEN,
         "min_sequence_len": MIN_SEQUENCE_LEN,
-        "horizons_min": list(
-            HORIZONS
-        ),
-        "targets": list(
-            TARGETS
-        ),
+        "horizons_min": list(HORIZONS),
+        "targets": list(TARGETS),
         "pca": pca,
         "models": models,
+        "calibration": calibrations,
+        "validation_metrics": validation_metrics,
+        "event_split": split_summary,
+        "dataset_sha256": dataset_hash,
+        "trained_at_utc": trained_at,
+        "approved_models": approved_models,
+        "total_models": len(models),
         "config": {
             "patch_size": PATCH_SIZE,
-            "max_image_gap_min":
-                MAX_IMAGE_GAP_MIN,
-            "max_sequence_window_min":
-                MAX_SEQUENCE_WINDOW_MIN,
+            "max_image_gap_min": MAX_IMAGE_GAP_MIN,
+            "max_sequence_window_min": MAX_SEQUENCE_WINDOW_MIN,
+            "max_current_image_age_min": 15.0,
             "dbz_min": DBZ_MIN,
             "dbz_max": DBZ_MAX,
-            "palette_start":
-                PALETTE_START,
-            "palette_end":
-                PALETTE_END,
+            "palette_start": PALETTE_START,
+            "palette_end": PALETTE_END,
+            "motion_compensated": True,
         },
     }
-
-    MODEL_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    tmp_model = MODEL_PATH.with_suffix(
-        ".tmp.joblib"
-    )
-
-    joblib.dump(
-        bundle,
-        tmp_model,
-        compress=3,
-    )
-
-    tmp_model.replace(
-        MODEL_PATH
-    )
-
+    metrics = {
+        "model_version": MODEL_VERSION,
+        "generated_utc": trained_at,
+        "dataset_rows": int(len(df)),
+        "dataset_sha256": dataset_hash,
+        "tracks_total": int(df["track_id"].nunique()),
+        "images_validas": int(len(image_index)),
+        "secuencias_train": int(train_visual_count),
+        "secuencias_validas_total": int(visual_valid.sum()),
+        "v1_features": list(V1_FEATURES),
+        "visual_raw_features": visual_dim,
+        "pca_features": components,
+        "final_features": int(X.shape[1]),
+        "event_split": split_summary,
+        "approved_models": approved_models,
+        "total_models": len(models),
+        "models": validation_metrics,
+    }
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_model = MODEL_PATH.with_suffix(".tmp.joblib")
+    joblib.dump(bundle, tmp_model, compress=3)
+    tmp_model.replace(MODEL_PATH)
     METRICS_PATH.write_text(
-        json.dumps(
-            metrics,
-            ensure_ascii=False,
-            indent=2,
-        ),
+        json.dumps(metrics, ensure_ascii=False, indent=2, allow_nan=False),
         encoding="utf-8",
     )
-
-    print()
-    print(
-        "=== MODELO DEFINITIVO ENTRENADO ==="
-    )
-    print(
-        f"Modelo: {MODEL_PATH}"
-    )
-    print(
-        f"Métricas: {METRICS_PATH}"
-    )
-    print(
-        "Modelos entrenados: "
-        f"{len(models)}/12"
-    )
+    print(f"Modelo visual causal generado: {MODEL_PATH}")
+    print(f"Modelos aprobados: {approved_models}/{len(models)}")
 
 
 if __name__ == "__main__":
