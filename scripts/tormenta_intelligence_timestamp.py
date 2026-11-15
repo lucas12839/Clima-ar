@@ -103,6 +103,25 @@ def validate_radar_nowcast_ml(radar_timestamp: datetime) -> None:
     ml_data = load_json(ML_FILE)
     if ml_data.get("ok") is not True:
         raise RuntimeError("ERROR: predicción ML no válida.")
+    if ml_data.get("modelo") != "rma10-v1-causal-2":
+        raise RuntimeError("ERROR: versión del modelo V1 incompatible.")
+    for prediction in ml_data.get("predicciones", []):
+        if not isinstance(prediction, dict):
+            raise RuntimeError("ERROR: track ML inválido.")
+        horizons = prediction.get("horizontes", {})
+        flags = prediction.get("calibracion_por_horizonte", {})
+        for horizon in ("5", "10", "20", "30"):
+            values = horizons.get(horizon, {})
+            applied = flags.get(horizon, {})
+            if not isinstance(values, dict) or not isinstance(applied, dict):
+                raise RuntimeError(f"ERROR: ML sin calibración por horizonte {horizon}.")
+            for target in ("strengthened", "weakened", "toward_bahia"):
+                value = values.get(target)
+                calibrated = applied.get(target) is True
+                if calibrated and (not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not 0 <= float(value) <= 100):
+                    raise RuntimeError(f"ERROR: ML {horizon}m/{target} calibración inválida.")
+                if not calibrated and value is not None:
+                    raise RuntimeError(f"ERROR: ML {horizon}m/{target} publicó valor sin calibración.")
 
     ml_value = ml_data.get("frame_radar")
     if not ml_value:
@@ -885,11 +904,11 @@ def main() -> None:
 
     apply_goes_to_intelligence(goes_intelligence, radar_timestamp)
 
-    # RMA10 Visual/Temporal V6: ejecución única por ciclo, después de Intelligence.
+    # RMA10 Visual/Temporal Causal 3: ejecución única por ciclo, después de Intelligence.
     visual_runtime = BASE / "scripts" / "rma10_visual_temporal_runtime.py"
     if not visual_runtime.exists():
         raise RuntimeError(f"No existe runtime visual/temporal: {visual_runtime}")
-    print("RMA10 Visual/Temporal V6 ejecutándose...")
+    print("RMA10 Visual/Temporal Causal 3 ejecutándose...")
     visual_result = subprocess.run(
         [sys.executable, str(visual_runtime)],
         cwd=BASE,
@@ -898,9 +917,9 @@ def main() -> None:
     )
     if visual_result.returncode != 0:
         raise RuntimeError(
-            "RMA10 Visual/Temporal V6 falló; se aborta el ciclo para no publicar un resultado incompleto."
+            "RMA10 Visual/Temporal Causal 3 falló; se aborta el ciclo para no publicar un resultado incompleto."
         )
-    print("RMA10 Visual/Temporal V6 integrado correctamente.")
+    print("RMA10 Visual/Temporal Causal 3 integrado correctamente.")
     try:
         from fusion_multimodal import fuse
 
