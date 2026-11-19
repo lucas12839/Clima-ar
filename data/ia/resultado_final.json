@@ -1,6 +1,6 @@
 {
   "version": "ClimaAR-final-3.0",
-  "actualizado_utc": "2026-11-19T08:52:50.400471+00:00",
+  "actualizado_utc": "2026-11-19T08:55:59.483389+00:00",
   "fuente_radar": "RMA10",
   "motor_decision": {
     "estado": "incipiente",
@@ -64,7 +64,7 @@
     "estaciones": 1,
     "lluvia_1h_mm": 0.0,
     "lluvia_3h_mm": 0.0,
-    "viento_max_kmh": 14.0,
+    "viento_max_kmh": 7.0,
     "rafaga_max_kmh": null,
     "frente_de_rafagas": false,
     "con_frente_de_rafagas": []
@@ -556,23 +556,24 @@
     "clasificacion_historica": null,
     "vigencia_radar": {
       "radar_timestamp": "2026-11-19T08:40:00Z",
-      "radar_age": 12.8,
-      "edad_radar_minutos": 12.8,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 16.0,
+      "edad_radar_minutos": 16.0,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true,
+      "factor_confianza_edad": 0.976
     },
     "radar_timestamp": "2026-11-19T08:40:00Z",
-    "radar_age": 12.8,
+    "radar_age": 16.0,
     "origen_datos": {
       "observacion_radar": {
         "radar_timestamp": "2026-11-19T08:40:00Z",
-        "edad_minutos": 12.8,
-        "es_actual": true,
-        "vigencia": "radar_vigente"
+        "edad_minutos": 16.0,
+        "es_actual": false,
+        "vigencia": "estimado_desde_ultimo_radar_valido"
       },
       "extrapolacion_nowcast": {
-        "aplicada": false,
-        "minutos_extrapolados": 0,
+        "aplicada": true,
+        "minutos_extrapolados": 16.0,
         "limite_minutos": 40.0
       },
       "prediccion_ml": {
@@ -669,7 +670,7 @@
       "movimiento_hacia_centro_dominio": false,
       "eta_minutos": null,
       "eta_minutos_aproximada_centro_dominio": null,
-      "confianza_movimiento": 0,
+      "confianza_movimiento": 0.0,
       "estado": "actividad_detectada",
       "nucleos": [
         {
@@ -935,12 +936,15 @@
           30
         ]
       },
+      "distancia_km_frame": 24.39,
+      "eta_minutos_frame": null,
       "vigencia_radar": {
         "radar_timestamp": "2026-11-19T08:40:00Z",
-        "radar_age": 12.8,
-        "edad_radar_minutos": 12.8,
-        "modo": "radar_vigente",
-        "estimado": false
+        "radar_age": 16.0,
+        "edad_radar_minutos": 16.0,
+        "modo": "estimado_desde_ultimo_radar_valido",
+        "estimado": true,
+        "factor_confianza_edad": 0.976
       }
     },
     "ambiente": {
@@ -976,7 +980,7 @@
       "freezing_level_height": null,
       "lightning_density": null,
       "observacion_sazb_utc": "2026-11-19T08:00:00+00:00",
-      "observacion_sazb_edad_minutos": 52.48898851666667,
+      "observacion_sazb_edad_minutos": 55.74720848333333,
       "observacion_sazb_fresca": false,
       "modelo_ecmwf_viento_10m_kmh": 10.3,
       "modelo_ecmwf_direccion_10m": 205.0,
@@ -1017,7 +1021,7 @@
         "frame_actual_utc": "2026-11-19T08:40:00Z"
       },
       "acquisition": "actualizado",
-      "generated_at_utc": "2026-11-19T08:52:50.254784+00:00",
+      "generated_at_utc": "2026-11-19T08:55:59.359625+00:00",
       "source_state_version": "1.5",
       "source_state_status": "ok",
       "domain": {
@@ -1677,7 +1681,7 @@
       "raw_state": {
         "version": "1.5",
         "satellite": "GOES-19",
-        "generated_at_utc": "2026-11-19T08:52:30.078948+00:00",
+        "generated_at_utc": "2026-11-19T08:55:45.517462+00:00",
         "reference_frame_utc": "2026-11-19T08:40:00+00:00",
         "status": "ok",
         "domain": {
@@ -2295,7 +2299,7 @@
   "meteorologia": {
     "version": "1.1.0",
     "motor": "ClimaAR Intelligence",
-    "actualizado_utc": "2026-11-19T08:52:29.339339+00:00",
+    "actualizado_utc": "2026-11-19T08:55:44.832533+00:00",
     "ubicacion": {
       "ciudad": "Bahia Blanca",
       "latitud": -38.71,
@@ -2308,7 +2312,7 @@
       "sazb_valido": false,
       "sazb_disponible": true,
       "sazb_fresco": false,
-      "sazb_edad_minutos": 52.5,
+      "sazb_edad_minutos": 55.7,
       "puntos_ecmwf_validos": 9
     },
     "radar": {
@@ -2376,7 +2380,7 @@
       "fuente": "Aviation Weather Center",
       "estacion": "SAZB",
       "obsTime_utc": "2026-11-19T08:00:00+00:00",
-      "edad_minutos": 48.5,
+      "edad_minutos": 54.9,
       "temperatura_c": 12,
       "punto_rocio_c": 12,
       "viento_kt": 8,
@@ -2417,7 +2421,7 @@
       "freezing_level_height": null,
       "lightning_density": null,
       "observacion_sazb_utc": "2026-11-19T08:00:00+00:00",
-      "observacion_sazb_edad_minutos": 52.48898851666667,
+      "observacion_sazb_edad_minutos": 55.74720848333333,
       "observacion_sazb_fresca": false,
       "modelo_ecmwf_viento_10m_kmh": 10.3,
       "modelo_ecmwf_direccion_10m": 205.0,
@@ -7240,12 +7244,9 @@
         }
       ]
     },
-    "estado": "operativo_con_ecmwf_anterior",
+    "estado": "operativo",
     "ecmwf_respaldo": {
-      "usado": true,
-      "motivo": "ECMWF no pudo obtener el grupo 1/3: HTTPSConnectionPool(host='api.open-meteo.com', port=443): Read timed out. (read timeout=45)",
-      "edad_minutos": 6.9,
-      "actualizado_utc": "2026-11-19T08:45:36.218268+00:00"
+      "usado": false
     },
     "proxima_etapa": "Motor IA de evolucion, trayectoria, fortalecimiento, debilitamiento, ETA, duracion y peligros."
   },
@@ -7281,10 +7282,11 @@
     },
     "vigencia_radar": {
       "radar_timestamp": "2026-11-19T08:40:00Z",
-      "radar_age": 12.8,
-      "edad_radar_minutos": 12.8,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 16.0,
+      "edad_radar_minutos": 16.0,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true,
+      "factor_confianza_edad": 0.976
     }
   }
 }
