@@ -146,7 +146,19 @@ def process_product(
     path = temp_dir / f"{product}.nc"
     metadata = download_product(product, path, reference_time, hours_back=6)
     result = prepare_goes_domain(path, variable=variable)
+    extra = {}
+    if product == "abi_c13":
+        from .topes_localidad import por_localidad
+
+        try:
+            extra["por_localidad"] = por_localidad(
+                result["data"], result["latitude"], result["longitude"],
+                metadata.get("end_time_utc"), OUTPUT_FILE,
+            )
+        except Exception as exc:
+            extra["por_localidad_error"] = str(exc)
     return {
+        **extra,
         "status": "ok",
         "source": {
             **build_source_metadata(product, metadata),

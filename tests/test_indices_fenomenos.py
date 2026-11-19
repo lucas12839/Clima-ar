@@ -149,3 +149,18 @@ class IntegracionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SateliteTest(unittest.TestCase):
+    def test_topes_muy_frios_suben_granizo(self):
+        r = fen.evaluar(radar=radar(dbz_ciudad=52), satelite={"min_c_15km": -64})
+        self.assertEqual(r["fenomenos"]["granizo"]["categoria"], "probable")
+
+    def test_topes_solos_no_crean_granizo(self):
+        r = fen.evaluar(radar=radar(dbz_ciudad=30), satelite={"min_c_15km": -70})
+        self.assertEqual(r["fenomenos"]["granizo"]["grado"], 0)
+
+    def test_sin_radar_nube_de_tormenta_es_lluvia_probable(self):
+        r = fen.evaluar(radar={"disponible": False}, satelite={"min_c_15km": -55})
+        self.assertEqual(r["fenomenos"]["lluvia"]["grado"], 2)
+        self.assertFalse(r["fenomenos"]["lluvia"]["confirmado"])

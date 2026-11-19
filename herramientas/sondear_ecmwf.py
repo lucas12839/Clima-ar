@@ -13,12 +13,12 @@ VARS = ["wind_speed_850hPa", "wind_direction_850hPa", "wind_speed_500hPa", "wind
         "wind_speed_700hPa", "wind_direction_700hPa", "geopotential_height_500hPa"]
 for url in ("https://api.open-meteo.com/v1/ecmwf", "https://api.open-meteo.com/v1/forecast"):
     for v in VARS:
-        r = requests.get(url, params=dict(BASE, hourly=v), timeout=30)
+        r = requests.get(url, params=dict(BASE, hourly=v), timeout=60)
         try:
             val = r.json().get("hourly", {}).get(v)
         except Exception:
             val = r.text[:80]
         print(url.rsplit("/", 1)[1], v, r.status_code, str(val)[:80])
-    r = requests.get(url, params=dict(BASE, hourly=",".join(VARS)), timeout=30)
+    r = requests.get(url, params=dict(BASE, hourly=",".join(VARS)), timeout=60)
     print(url, "TODAS", r.status_code, r.text[:200])
 sys.exit(0)

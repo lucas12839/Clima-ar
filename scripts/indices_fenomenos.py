@@ -60,6 +60,11 @@ RAYOS_SALTO_MIN = 1.0            # ...con al menos 1 rayo por minuto
 
 LLEGADA_MAX_MIN = 60.0
 
+# GOES-19 canal 13 (topes de nubes).
+TOPE_MUY_FRIO_C = -60.0          # tormenta muy profunda: granizo más probable
+TOPE_TORMENTA_C = -50.0          # nube de tormenta (sin radar: lluvia probable)
+ENFRIAMIENTO_RAPIDO_C = 8.0      # °C cada 10 min: la tormenta crece rápido
+
 NOMBRES = {
     "lluvia": "lluvia",
     "viento": "viento",
@@ -267,6 +272,35 @@ def viento_por_radar(*, velocidad: float | None, coherencia: float | None,
 # --------------------------------------------------------------------------
 # Granizo
 # --------------------------------------------------------------------------
+def ajustar_por_satelite(ev: dict[str, Any], sat: dict[str, Any]) -> dict[str, Any]:
+    """Topes muy fríos o enfriándose rápido sobre una tormenta con núcleo
+    >= 50 dBZ suben un grado el granizo (nunca lo crean solos)."""
+    if not sat or ev["grado"] < 2:
+        return ev
+    tope = numero(sat.get("min_c_15km"))
+    enfr = numero(sat.get("enfriamiento_c_10min"))
+    razones = []
+    if tope is not None and tope <= TOPE_MUY_FRIO_C:
+        razones.append(f"topes de nube muy fríos ({tope:.0f} °C, GOES-19)")
+    if enfr is not None and enfr >= ENFRIAMIENTO_RAPIDO_C:
+        razones.append(f"topes enfriándose {enfr:.0f} °C en 10 min: la tormenta crece rápido")
+    if not razones or ev["grado"] >= 4:
+        return dict(ev, razones=ev["razones"] + razones) if razones else ev
+    nuevo = _evaluacion("granizo", min(4, ev["grado"] + 1), ev["fuente"] + "+goes19",
+                        ev["razones"] + razones, False)
+    return nuevo
+
+
+def lluvia_por_satelite(sat: dict[str, Any]) -> dict[str, Any] | None:
+    """Sin radar: nube de tormenta sobre la zona = lluvia probable (no se mide)."""
+    tope = numero((sat or {}).get("min_c_15km"))
+    if tope is None or tope > TOPE_TORMENTA_C:
+        return None
+    return _evaluacion("lluvia", 2, "goes19", [
+        f"nube de tormenta sobre la zona (topes {tope:.0f} °C): lluvia probable, sin radar para medirla"],
+        False, {"estimada": True})
+
+
 def granizo_por_radar(dbz: float | None, amb: dict[str, Any]) -> dict[str, Any]:
     dbz = numero(dbz) or 0.0
     if dbz >= GRANIZO_SEVERO_DBZ:
@@ -392,6 +426,7 @@ def evaluar(
     superficie: dict[str, Any] | None = None,
     rayos: dict[str, Any] | None = None,
     ambiente: dict[str, Any] | None = None,
+    satelite: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Devuelve {ahora, al_llegar, fenomenos, resumen, calificacion}.
 
@@ -405,7 +440,10 @@ def evaluar(
            tasa_30km_previa_por_min.
     ambiente: ECMWF de la hora (wind_gusts_10m, wind_speed_10m,
               freezing_level_height, ...).
+    satelite: topes GOES-19 de la zona (min_c_15km, p10_c_30km,
+              enfriamiento_c_10min).
     """
+    sat = satelite or {}
     radar = radar or {}
     sup = superficie or {}
     rayos = rayos or {}
@@ -431,12 +469,13 @@ def evaluar(
             l1=radar.get("lluvia_1h_mm"),
         )
         pico = numero(radar.get("dbz_pico"))
-        ahora["granizo"] = granizo_por_radar(pico if pico is not None else dbz_c, amb)
+        ahora["granizo"] = ajustar_por_satelite(
+            granizo_por_radar(pico if pico is not None else dbz_c, amb), sat)
         cercano = max(numero(radar.get("dbz_ciudad")) or 0, numero(radar.get("dbz_30km")) or 0)
         ev_vr = viento_por_radar(velocidad=radar.get("velocidad_kmh"),
                                  coherencia=radar.get("coherencia"), dbz_cercano=cercano)
     else:
-        ahora["lluvia"] = dict(nada["lluvia"])
+        ahora["lluvia"] = lluvia_por_satelite(sat) or dict(nada["lluvia"])
         ahora["granizo"] = dict(nada["granizo"])
         ev_vr = None
     if est_lluvia is not None:
