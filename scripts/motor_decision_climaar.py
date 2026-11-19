@@ -431,6 +431,62 @@ def tendencia(actual, previo):
     return "estables"
 
 
+LIMITES_FUENTES_MIN = {"radar": 30, "satelite": 30, "rayos": 15, "modelo": 90, "estaciones": 30}
+
+
+def _edad_min(texto, ahora):
+    try:
+        t = datetime.fromisoformat(str(texto).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return round((ahora - t).total_seconds() / 60.0, 1)
+
+
+def estado_fuentes(ahora=None):
+    """Qué fuente está al día y cuál no: para no trabajar nunca a ciegas.
+
+    Cada fuente: edad del último dato (min) y si está al día. "a_ciegas" es
+    true solo si no queda ninguna fuente de observación (radar, satélite,
+    rayos ni estaciones) al día."""
+    ahora = ahora or datetime.now(timezone.utc)
+    flujo = load(FLUJO) if FLUJO.exists() else {}
+    goes = load(GOES) if GOES.exists() else {}
+    meteo = load(METEO) if METEO.exists() else {}
+    sup = load(SUPERFICIE) if SUPERFICIE.exists() else {}
+    goes = goes if isinstance(goes, dict) else {}
+    c13 = ((goes.get("productos") or {}).get("abi_c13") or {}).get("source") or {}
+    ventana = ((goes.get("glm") or {}).get("ventana")) or {}
+    edades = {
+        "radar": _edad_min((flujo or {}).get("radar_timestamp") or (flujo or {}).get("frame_actual_utc"), ahora),
+        "satelite": _edad_min(c13.get("end_time_utc"), ahora),
+        "rayos": _edad_min(ventana.get("fin_ventana_utc"), ahora) if ventana.get("disponible") else None,
+        "modelo": _edad_min(((meteo or {}).get("ecmwf_cache") or {}).get("actualizado_utc")
+                            if ((meteo or {}).get("ecmwf_cache") or {}).get("usado")
+                            else (meteo or {}).get("actualizado_utc"), ahora),
+        "estaciones": _edad_min((sup or {}).get("generado_utc"), ahora)
+                      if (sup or {}).get("estaciones_frescas") else None,
+    }
+    fuentes = {}
+    for k, edad in edades.items():
+        fuentes[k] = {"edad_min": edad,
+                      "al_dia": edad is not None and edad <= LIMITES_FUENTES_MIN[k],
+                      "limite_min": LIMITES_FUENTES_MIN[k]}
+    fuentes["estaciones"]["frescas"] = (sup or {}).get("estaciones_frescas")
+    fuentes["estaciones"]["descartadas_por_calidad"] = (sup or {}).get("descartadas_por_calidad") or []
+    observacion = [k for k in ("radar", "satelite", "rayos", "estaciones") if fuentes[k]["al_dia"]]
+    faltan = [k for k, v in fuentes.items() if not v["al_dia"]]
+    return {
+        "fuentes": fuentes,
+        "al_dia": observacion,
+        "atrasadas": faltan,
+        "a_ciegas": not observacion,
+        "resumen": ("Todas las fuentes al día" if not faltan
+                    else "Sin datos al día de: " + ", ".join(faltan)),
+    }
+
+
 def resumen_regional(localidades):
     """Localidades con algún fenómeno, de mayor a menor."""
     filas = [
@@ -745,6 +801,7 @@ def main():
         "clasificacion_meteorologica": weather_class,
         "tipo_tiempo": tipo_tiempo,
         "estaciones_bahia": superficie_bahia(),
+        "estado_fuentes": estado_fuentes(),
         "amenaza_bahia": threat,
         "clasificacion_historica": intel.get("clasificacion_historica"),
         "severidad_meteorologica": {

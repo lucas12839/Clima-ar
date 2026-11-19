@@ -62,3 +62,15 @@ class LocalidadesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EstadoFuentesTest(unittest.TestCase):
+    def test_estado_fuentes_tiene_todas(self):
+        r = motor.estado_fuentes()
+        self.assertEqual(set(r["fuentes"]), {"radar", "satelite", "rayos", "modelo", "estaciones"})
+        self.assertIn("a_ciegas", r)
+
+    def test_edad(self):
+        ahora = datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc)
+        self.assertEqual(motor._edad_min("2026-11-19T11:30:00Z", ahora), 30.0)
+        self.assertIsNone(motor._edad_min(None, ahora))

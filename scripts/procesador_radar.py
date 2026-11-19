@@ -95,7 +95,8 @@ def cargar_dbz_rma10(path):
             if not isinstance(transparencia, int):
                 raise ValueError("No se encontro el indice de transparencia esperado.")
 
-            indices = np.asarray(imagen.getdata(), dtype=np.int16)
+            # Índices de la paleta en orden de filas (igual que getdata, que Pillow quita en 2027).
+            indices = np.asarray(imagen, dtype=np.int16).reshape(-1)
             matriz = np.fromiter(
                 (
                     np.nan
