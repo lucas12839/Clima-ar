@@ -195,7 +195,7 @@ jobs:
           test -s data/radar/radar_nowcast.json
           test -s data/radar/actual.png
 
-          python scripts/scripts/georreferenciar_rma10.py
+          python scripts/georreferenciar_rma10.py
 
           test -s data/radar/radar_nowcast.json
 
@@ -509,9 +509,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -f scripts/prediccion_evolucion.py ]; then
-            python scripts/prediccion_evolucion.py
-          fi
+          python scripts/prediccion_evolucion.py
 
           test -s \
             data/radar/seguimiento/prediccion_evolucion.json
