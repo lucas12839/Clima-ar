@@ -1,37 +1,63 @@
 # ClimaAR
 
-ClimaAR es un prototipo de seguimiento de tormentas para Bahía Blanca basado en el **RMA10 del SMN**, con captura automática y análisis temporal.
+Detector de tormentas en tiempo real para Bahía Blanca, basado en el radar **RMA10 (SINARAME, producto ZH MAX)** y en datos meteorológicos de superficie y modelos.
 
-## Arquitectura actual
+**Funciona con reglas y física, sin modelos entrenados.** No hay entrenamiento, ni revisión manual de celdas, ni redes neuronales (DGMR, MetNet, etc.).
 
-1. **RMA10 oficial:** GitHub Actions captura el producto `ZH_MAX` aproximadamente cada 10 minutos desde la página oficial del SMN.
-2. **Archivo propio:** cada captura se guarda con timestamp en `data/radar/raw/` y se mantiene `data/radar/latest.png`.
-3. **dBZ:** `scripts/procesar_radar.py` decodifica los colores usando la paleta calibrada a partir de la leyenda RMA10 de Bahía Blanca.
-4. **Características:** se calculan reflectividad media/máxima, áreas por umbral y centroides de las zonas convectivas.
-5. **Secuencia temporal:** la API expone los últimos 4 frames para construir entradas `T-30, T-20, T-10, T`.
-6. **Nowcast inicial:** `/nowcast` hace una extrapolación temporal simple de la evolución reciente. Está marcado como `baseline_experimental`; todavía no es el modelo de IA final.
-7. **Primer modelo de nowcasting:** `scripts/entrenar_nowcast.py` aprende a predecir el próximo frame (10 min) a partir de las últimas cuatro observaciones RMA10. El workflow `entrenar-nowcast.yml` se ejecuta cuando ya hay suficientes secuencias.
-8. **Modelo ambiental:** el workflow `procesar-historico.yml` conserva el modelo de temperatura como baseline independiente.
+> ClimaAR no reemplaza la información oficial del SMN ni la evaluación de profesionales.
+
+## Cómo funciona
+
+```
+SINARAME publica un frame (cada ~10 min; a veces con 30 min o más de atraso)
+ └─ detector_sinarame.py (servicio en el VPS, consulta cada 30 s)
+     └─ probar-radar-smn.yml      captura → valida PNG → dBZ → filtrado → seguimiento de celdas
+         └─ climaar-intelligence.yml
+              nowcast → georreferenciación (240 km) → evolución por reglas
+              → trayectoria → fusión meteorológica → Storm Engine → motor de decisión
+              → validación de integridad
+```
+
+Entre frames, la IA sigue corriendo con el último radar válido y marca cuántos minutos tiene.
+
+## Estructura
+
+| Carpeta / archivo | Qué hace |
+|---|---|
+| `scraper/capturar_radar_smn.py` | Descarga y valida el PNG del RMA10 |
+| `scripts/detector_sinarame.py`, `scripts/radar_estado.py` | Reloj del radar: un frame = un procesamiento |
+| `scripts/procesador_radar.py`, `scripts/decodificador_rma10_dbz.py` | Colores → dBZ, máscara de ecos fijos |
+| `seguimiento_temporal.py` | Seguimiento de celdas entre frames |
+| `scripts/adaptar_rma10_intelligence.py`, `scripts/georreferenciar_rma10.py` | Nowcast y georreferenciación |
+| `scripts/prediccion_evolucion.py`, `scripts/conectar_evolucion_trayectoria.py` | Evolución y trayectoria a 5/10/20/30 min |
+| `scripts/prediccion_rma10_ml.py` | Geometría por track (sin modelo; mantiene el contrato del archivo) |
+| `scripts/meteorologia_fusion.py`, `scripts/smn_observaciones.py`, `scripts/estaciones/` | Datos meteorológicos y estaciones |
+| `goes19/` | Datos satelitales GOES-19 |
+| `scripts/tormenta_intelligence*.py`, `scripts/motor_decision_climaar.py` | Storm Engine y decisión final |
+| `scripts/validar_integridad_climaar.py` | Verifica que todo el ciclo esté sincronizado |
+| `app.py` | API (FastAPI) |
+| `frontend/` | Web (Netlify) |
+| `deploy/`, `docs/` | Servicio del detector y documentación |
+
+## Workflows
+
+| Workflow | Disparo |
+|---|---|
+| `climaar-detector-sinarame.yml` | Watchdog cada 10 min: solo actúa si el servicio del VPS no da latido |
+| `probar-radar-smn.yml` | Lo despacha el detector con cada frame nuevo |
+| `climaar-intelligence.yml` | Después de cada frame (o refresco entre frames) |
+| `climaar-calidad.yml` | Al terminar Intelligence |
+| `observaciones-sazb.yml`, `climaar-ciclo-radar.yml`, `climaar-auto-radar.yml`, `climaar-watchdog.yml`, `probar-app.yml` | Manuales / soporte |
 
 ## API
 
-- `/health`
-- `/radar`
-- `/radar/imagen`
-- `/secuencia`
-- `/tormenta`
-- `/nowcast`
-- `/modelo`
-- `/modelo/nowcast`
-- `/prediccion`
-- `/estado`
+`/health`, `/estado`, `/pronostico`, `/radar`, `/radar/imagen`, `/secuencia`, `/nowcast`, `/prediccion`, `/prediccion/en-vivo`, `/tormenta`, `/inteligencia`, `/modelo`, `/modelo/nowcast`.
 
-## Fuente
+## Desarrollo
 
-El radar utilizado es el RMA10 de Bahía Blanca del Servicio Meteorológico Nacional.
+```bash
+pip install -r requirements.txt pytest
+python -m pytest -q
+```
 
-> La interpretación de radar meteorológico requiere conocimiento especializado. ClimaAR no reemplaza la información oficial ni la evaluación de profesionales.
-
-## Siguiente etapa
-
-Con suficientes secuencias RMA10, se entrenará el modelo de nowcasting de ClimaAR usando las secuencias temporales y observaciones/eventos históricos disponibles.
+Reglas del repo: `main` es producción. Todo cambio va por rama y pull request.
