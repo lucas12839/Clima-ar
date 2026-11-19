@@ -713,6 +713,39 @@ function getIntelligenceClassification() {
 }
 
 
+function getTipoTiempo() {
+  const intel = state.intelligence || {};
+  const tipo =
+    intel?.resultado_final?.tipo_tiempo ||
+    intel?.tipo_tiempo ||
+    intel?.resultado_final?.motor_decision?.tipo_tiempo;
+  return tipo && typeof tipo === "object" && tipo.etiqueta ? tipo : null;
+}
+
+function tipoTiempoTexto() {
+  const tipo = getTipoTiempo();
+  if (!tipo) {
+    return classificationText();
+  }
+  const NOMBRES = { granizo: "granizo", viento: "viento", inundacion: "inundación" };
+  const partes = [tipo.etiqueta];
+  if (tipo.alcance === "acercandose" && tipo.minutos_hasta_llegada != null) {
+    partes.push(
+      tipo.minutos_hasta_llegada <= 2
+        ? "llegando ahora"
+        : `llega en ~${Math.round(tipo.minutos_hasta_llegada)} min`
+    );
+  }
+  if (tipo.alcance === "sin_radar") {
+    partes.push("sin radar reciente");
+  }
+  const indicios = Array.isArray(tipo.indicios_en_evaluacion) ? tipo.indicios_en_evaluacion : [];
+  if (indicios.length) {
+    partes.push(`indicios en evaluación: ${indicios.map(k => NOMBRES[k] || k).join(", ")}`);
+  }
+  return partes.join(" · ");
+}
+
 function getIntelligenceSeverity() {
   const intel = state.intelligence || {};
   const final = intel.resultado_final || {};
@@ -855,7 +888,7 @@ function renderAlert() {
       cores === 1
         ? ""
         : "s"
-    } · ${intensityLabel(level)} · ${classificationText()} · ${severityLabel(severity)}.`
+    } · ${intensityLabel(level)} · ${tipoTiempoTexto()}.`
   );
 
   setText(
@@ -888,13 +921,13 @@ function renderStorm() {
 
   setText(
     "#stormRisk",
-    `${classificationText()} · ${severityLabel(severity)}`
+    tipoTiempoTexto()
   );
 
+  // Sin colores de alerta: estilo neutro (ClimaAR no emite alertas oficiales).
   const risk = $("#stormRisk");
   if (risk) {
-    risk.className = "riskBadge";
-    risk.classList.add(severityClass(severity));
+    risk.className = "riskBadge riskNeutral";
   }
 
   setText(
