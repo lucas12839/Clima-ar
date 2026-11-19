@@ -183,6 +183,8 @@ def resumen_estacion(nombre: str, serie: list[dict], ahora: datetime, coords) ->
     return {
         "nombre": nombre,
         "utc": ultima["utc"],
+        "lat": lat,
+        "lon": lon,
         "distancia_bahia_km": round(distancia_km(lat, lon, BAHIA_LAT, BAHIA_LON), 1) if lat is not None else None,
         "temperatura_c": ultima.get("temp"),
         "viento_kmh": ultima.get("viento"),
@@ -215,6 +217,28 @@ def resumir(estaciones: list[dict]) -> dict[str, Any]:
     }
 
 
+RADIO_LOCALIDAD_KM = 15.0
+LOCALIDADES = Path(__file__).resolve().parents[2] / "config" / "localidades.json"
+
+
+def por_localidad(estaciones: list[dict], path: Path = LOCALIDADES) -> dict[str, dict]:
+    """Estaciones a <= 15 km de cada localidad (las demás no la representan)."""
+    try:
+        locs = json.loads(path.read_text(encoding="utf-8")).get("localidades") or []
+    except Exception:
+        return {}
+    salida = {}
+    for loc in locs:
+        cerca = [
+            e for e in estaciones
+            if e.get("lat") is not None
+            and distancia_km(e["lat"], e["lon"], loc["lat"], loc["lon"]) <= RADIO_LOCALIDAD_KM
+        ]
+        if cerca:
+            salida[loc["id"]] = dict(resumir(cerca), nombres=[e["nombre"] for e in cerca])
+    return salida
+
+
 def main(ahora: datetime | None = None) -> int:
     ahora = ahora or datetime.now(timezone.utc)
     coords = coordenadas()
@@ -231,6 +255,7 @@ def main(ahora: datetime | None = None) -> int:
         "estaciones_frescas": len(estaciones),
         "bahia_blanca": resumir(bahia),
         "region": resumir(estaciones),
+        "localidades": por_localidad(estaciones),
         "estaciones": estaciones,
     }
     escribir(SALIDA, salida)

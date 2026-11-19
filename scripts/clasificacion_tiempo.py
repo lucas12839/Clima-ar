@@ -23,6 +23,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import indices_fenomenos as fen
+
 TIPOS = (
     ("sin_precipitacion", "Sin precipitación"),
     ("llovizna", "Llovizna o lluvia muy débil"),
@@ -202,6 +204,7 @@ def clasificar(
             "radar_disponible": False,
             "amenazas": medidas,
             "razones": ["Sin radar reciente: satélite, estaciones y ambiente."] + razones_sup + razones_conv,
+            **fen.evaluar(radar={"disponible": False}, superficie=superficie, rayos=rayos, ambiente=ambiente),
         }
 
     ahora = nivel_por_reflectividad(dbz_ciudad, convectivo)
@@ -312,6 +315,23 @@ def clasificar(
         "amenazas": amenazas,
         "razones": razones + [a["razon"] for a in amenazas.values()] + razones_sup + razones_conv,
     })
+    salida.update(fen.evaluar(
+        radar={
+            "disponible": True,
+            "dbz_ciudad": dbz_ciudad,
+            "dbz_30km": dbz_30km,
+            "dbz_llegada": dbz_llegada,
+            "eta_llegada_min": eta_llegada_min,
+            "velocidad_kmh": velocidad_kmh,
+            "coherencia": coherencia,
+            "minutos_lluvia_intensa": minutos_lluvia_intensa,
+            "lluvia_3h_mm": lluvia_3h_mm,
+            "lluvia_6h_mm": lluvia_6h_mm,
+        },
+        superficie=superficie,
+        rayos=rayos,
+        ambiente=ambiente,
+    ))
     return salida
 
 
@@ -354,4 +374,34 @@ def mantener_amenazas(actual: dict[str, Any], anterior: dict[str, Any] | None,
     resultado["indicios_en_evaluacion"] = sorted(
         k for k, v in amenazas.items() if v.get("en_calibracion")
     )
+    mantener_fenomenos(resultado, anterior, ahora, ahora_utc, anterior_utc, parse)
     return resultado
+
+
+def mantener_fenomenos(resultado, anterior, ahora, ahora_utc, anterior_utc, parse) -> None:
+    """Un fenómeno severo se mantiene 40 min después de la última detección
+    para que la calificación no se prenda y apague entre frames. Lo medido
+    "ahora" no se toca: solo la calificación y el resumen."""
+    fenomenos = resultado.get("fenomenos")
+    if not isinstance(fenomenos, dict):
+        return
+    fenomenos = {k: dict(v) for k, v in fenomenos.items()}
+    for v in fenomenos.values():
+        if v.get("grado", 0) >= 4:
+            v["ultima_deteccion_utc"] = ahora_utc
+    previos = (anterior or {}).get("fenomenos") if isinstance(anterior, dict) else None
+    if ahora is not None and isinstance(previos, dict):
+        for clave, previo in previos.items():
+            if not isinstance(previo, dict) or previo.get("grado", 0) < 4:
+                continue
+            if fenomenos.get(clave, {}).get("grado", 0) >= 4:
+                continue
+            ultima = parse(previo.get("ultima_deteccion_utc") or anterior_utc)
+            if ultima is None:
+                continue
+            minutos = (ahora - ultima).total_seconds() / 60.0
+            if 0 <= minutos <= MANTENER_AMENAZA_MIN:
+                fenomenos[clave] = dict(previo, mantenido=True, minutos_desde_deteccion=round(minutos))
+    resultado["fenomenos"] = fenomenos
+    resultado["resumen"] = fen.resumen(fenomenos)
+    resultado["calificacion"] = fen.calificacion(fenomenos)
