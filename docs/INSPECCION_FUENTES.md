@@ -67,43 +67,72 @@ Descartados:
 | Datos completos del RMA10 (con Doppler) | volumen 3D, velocidad del viento | **no son públicos**: hay que pedirlos a SMN / Subsecretaría de Recursos Hídricos |
 | Blitzortung (rayos de red ciudadana) | rayos en tiempo real | **no da acceso a terceros**; solo a quien instala un receptor |
 
-## 3. Plan ordenado por prioridad
+## 3. Cómo lo resolvieron los sistemas de referencia (y qué tomamos)
 
-Prioridad = cuánto mejora la precisión, por cuánto trabajo, y qué destraba lo siguiente.
+- **NowCastMIX (servicio meteorológico alemán):** cada 5 min junta radar, rayos, estaciones y
+  modelos y calcula, con reglas graduales ("lógica difusa": cada dato suma de a poco, sin cortes de
+  sí/no), el potencial de granizo, ráfagas y lluvia intensa de cada tormenta; después la mueve con
+  su desplazamiento para la próxima hora. **Sin modelos entrenados: es nuestra base.**
+- **RDT (satélites europeos):** describe y sigue cada tormenta solo con satélite (tope, topes
+  sobresalientes, rayos, modelo); se usa donde no hay radar. **Base del modo sin radar.**
+- **ProbSevere (Estados Unidos):** mismos ingredientes por tormenta, pero combinados con modelos
+  entrenados. Solo como guía de qué señales mirar (por ejemplo, el área mínima de los rayos).
 
-1. **Corregir los umbrales de tormentas, con apoyo satelital.** (Ya era el próximo trabajo.)
-   Granizo severo hoy salta con 60 dBZ crudo (el 13/11 en Punta Alta dio "posible severo" con
-   granizo chico). Propuesta: además del radar, exigir confirmación física: tope por encima del
-   nivel de congelamiento (altura de topes 2 km + nivel de congelamiento de ICON/WRF/ECMWF),
-   tope sobresaliente, enfriamiento rápido o salto de rayos. Revisar Tornquist (posible efecto
-   de las sierras). Necesita las respuestas de Lucas sobre granizo de octubre y noviembre.
-2. **Lectura parcial de GOES-19 y datos por tormenta.** Leer solo la zona de 240 km (no el disco
-   completo) y calcular todo por localidad **y por tormenta seguida por el radar**, no por el
-   círculo entero. Es la base técnica de los puntos 3 a 5 sin alargar el ciclo.
-3. **Señales de tormenta severa por satélite:** topes sobresalientes (método de textura del
-   infrarrojo: píxel ≤ −58 °C y ≥ 6,5 °C más frío que el yunque a 8 km), altura de topes 2 km y
-   fase hielo, por tormenta.
-4. **Rayos mejorados:** salto de rayos con el método estándar (aumento de más de 2 desvíos en
-   intervalos de 2 min) por tormenta, y área de los rayos.
-5. **Aviso de tormenta que se forma en el lugar (antes del radar):** reglas físicas de
-   enfriamiento de topes, congelamiento (fase) y diferencias entre canales. Ataca la principal
-   falla medida del pronóstico.
-6. **Pronóstico con pysteps:** movimiento con 3 o más imágenes, varios escenarios →
-   probabilidad real de llegada por localidad (reemplaza "llega / puede llegar" por un
-   porcentaje calculado), crecimiento y debilitamiento, y a 1-3 h mezcla con el WRF del SMN.
-   Se mide contra el pronóstico actual con `validar_nowcast_flujo.py` antes de reemplazarlo.
-7. **Modelos:** sumar el WRF del SMN (lluvia cada 10 min a 4 km por localidad) y varios modelos
-   y ensambles de Open-Meteo: probabilidad de ambiente severo en vez de un solo valor, índice de
-   elevación, inhibición y nivel de congelamiento para granizo.
-8. **Ambiente medido por satélite** (inestabilidad, agua precipitable y perfiles en cielo
-   despejado) para corregir al modelo antes de que se formen las tormentas.
-9. **Calibración continua** (ya planificada): lluvia chaparrón por chaparrón con estaciones,
-   cortes de granizo con casos reales, repetir `calibrar_llegadas.py` cada mes.
-10. **Nunca a ciegas** (ya planificado): probar el modo sin radar con una tormenta real; con los
-    puntos 2 a 5 queda mucho más completo.
+Adaptación: todo se calcula **solo dentro de los 240 km** y **solo sobre las tormentas que ya sigue
+el radar**. Nada se adopta si no se mide antes su costo en el ciclo y su mejora en aciertos.
+
+## 4. Reglas de confiabilidad (valen para todos los puntos)
+
+Objetivo: un sistema confiable que en el futuro pueda dar avisos de tormentas severas.
+
+1. **Sincronización:** cada dato nuevo lleva su hora de captura y solo se usa si corresponde a la
+   imagen de radar del ciclo (satélite hasta ~15 min antes; rayos del mismo intervalo). Nunca se
+   mezclan ciclos.
+2. **Compatibilidad:** a los archivos que leen la API y la pantalla solo se les **agregan** campos;
+   nunca se cambian ni se borran los existentes.
+3. **Integridad:** `validar_integridad_climaar.py` controla cada fuente nueva (hora, atraso,
+   ciclo).
+4. **Falla segura:** si falta una fuente, se dice y baja la confianza. **Nunca** se muestra "sin
+   tormenta" por falta de datos.
+5. **Prueba en paralelo:** cada mejora corre primero "en sombra" (calcula y guarda, pero no se
+   muestra) junto a la versión actual, y la reemplaza solo si acierta más.
+6. **Medición de aciertos:** por fenómeno, porcentaje de tormentas detectadas, falsas alarmas y
+   minutos de anticipación, contra estaciones y rayos de GOES-19. Informe mensual.
+7. **Casos guardados:** cada tormenta real queda como caso de prueba; todo cambio se vuelve a
+   correr sobre esos casos antes de unirse a main.
+8. **Pruebas:** con tormenta y sin actividad, `pytest` y emulación de los procesos reales.
+
+## 5. Orden de trabajo
+
+1. **Base del satélite:** leer solo la zona de 240 km de GOES-19 y calcular por tormenta seguida
+   por el radar.
+2. **Señales de tormenta severa por satélite:** topes sobresalientes (píxel ≤ −58 °C y ≥ 6,5 °C
+   más frío que el yunque a 8 km), altura del tope sobre el nivel de congelamiento (altura 2 km),
+   hielo en el tope.
+3. **Rayos mejorados:** salto de rayos con el método estándar (más de 2 desvíos en intervalos de
+   2 min) y área de los rayos, por tormenta.
+4. **Puntaje de gravedad por tormenta (estilo NowCastMIX):** granizo, ráfagas y lluvia intensa con
+   radar + satélite + rayos + modelo. **Reemplaza la corrección de umbrales** (Punta Alta,
+   Tornquist). Mientras tanto se mantiene "posible severa".
+5. **Aviso de tormenta que se forma en el lugar,** antes del radar (enfriamiento de topes,
+   congelamiento, diferencias entre canales; estilo RDT).
+6. **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
+   imágenes, crecimiento o debilitamiento según el puntaje, varios escenarios y porcentaje de
+   llegada (pysteps sobre nuestra grilla de 512 × 512, solo si su costo en el ciclo lo permite).
+7. **Modelos:** WRF del SMN y escenarios de varios modelos, solo puntos dentro de 240 km.
+8. **Ambiente medido por el satélite** (inestabilidad, agua precipitable, perfiles) antes de que
+   se nuble.
+9. **Calibración y medición continua:** lluvia con estaciones, puntaje con estaciones y rayos,
+   informe mensual de aciertos.
+10. **Nunca a ciegas:** probar el modo sin radar (satélite + rayos + estaciones) con una tormenta
+    real.
 11. **Vigilancia:** VPS que se actualice solo, control de cada fuente.
-12. **Pedidos a instituciones:** datos completos del RMA10 con Doppler (SMN / Recursos
-    Hídricos), estaciones de UNS, CONICET, Municipalidad y red provincial. Opcional: instalar un
-    receptor de Blitzortung para tener acceso a esa red de rayos.
 
 Al final: actualizar Render (datos) y Netlify (pantalla).
+
+Descartado: pedidos a instituciones (casi imposible); se resuelve con lo que tenemos. Los datos
+completos del RMA10 ya fueron pedidos por Lucas: si llegan, se suman.
+
+Uso estimado de lo que GOES-19 ofrece y nos sirve: hoy ~25-30 %; con los puntos 1-3 ~60 %; con el
+5 ~75 %; con el 8 ~85-90 %. El resto no se puede (mesoescala de 1 min casi nunca sobre Argentina;
+lluvia satelital discontinuada; visible 0,5 km solo de día y pesado).

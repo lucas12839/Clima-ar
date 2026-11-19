@@ -103,8 +103,8 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
    lo fuerte? (el radar crudo dio ~190 mm en Punta Alta: parece sobreestimar).
 
 ## Siguiente — orden de trabajo vigente: `docs/INSPECCION_FUENTES.md` (19/11/2026, 17:00)
-Inspección completa de GOES-19, pronóstico y fuentes, con un plan de 12 puntos por prioridad.
-Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan.
+Inspección completa de GOES-19, pronóstico y fuentes, con reglas de confiabilidad y un plan de 11 puntos por prioridad.
+Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. Más estaciones" quedó descartado).
 
 - **A. Nunca a ciegas:** falta probar el modo sin radar con una tormenta real (rayos + topes
   + estaciones); vientos satelitales todavía solo como dato general.
@@ -132,8 +132,8 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan.
   instituciones (UNS, CONICET, Municipalidad, red provincial de 11 estaciones).
 - **Próximo trabajo de Lucas:** corrección de los umbrales de tormentas (granizo severo con
   radar crudo está bajo: el 13/11 en Punta Alta cayó granizo chico y ClimaAR dijo "posible
-  severo"). Es el punto 1 del plan de `docs/INSPECCION_FUENTES.md`, ahora con apoyo satelital
-  (altura de topes sobre el nivel de congelamiento, topes sobresalientes, salto de rayos).
+  severo"). Ahora es el punto 4 de `docs/INSPECCION_FUENTES.md`: un puntaje de gravedad por tormenta
+  (radar + satélite + rayos + modelo), después de los puntos 1 a 3.
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
