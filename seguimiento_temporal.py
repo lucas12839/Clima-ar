@@ -26,6 +26,12 @@ UMBRAL_CAMBIO_RUMBO = 20.0
 
 MAX_DISTANCIA_BASE = 70.0
 MAX_DISTANCIA_SIN_OVERLAP = 85.0
+# Límite físico para asociar celdas SIN superposición entre frames:
+# 120 km/h (2,13 px/min en la grilla de 512 px) más un margen de 12 px por
+# cambio de forma del centroide. Sin esto se unían celdas distintas a
+# 50-80 km y salían velocidades de 150-850 km/h.
+VELOCIDAD_MAX_PX_MIN = 120.0 / 60.0 / (240.0 / 255.5)
+MARGEN_CENTROIDE_PX = 12.0
 MAX_MISSED_FRAMES = 2
 MAX_HISTORIAL = 20
 MAX_REPLAY_FRAMES = 6
@@ -623,6 +629,13 @@ def compatibilidad(
     )
 
     if d > limite:
+        return None
+
+    # Sin superposición, la identidad depende solo de la distancia: tiene
+    # que ser físicamente alcanzable en el intervalo.
+    if overlap < 0.02 and d > (
+        VELOCIDAD_MAX_PX_MIN * max(intervalo, 1.0) + MARGEN_CENTROIDE_PX
+    ):
         return None
 
     d_pred = None

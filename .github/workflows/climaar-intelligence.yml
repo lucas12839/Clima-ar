@@ -180,6 +180,12 @@ jobs:
           python scripts/estaciones/validar_red_observaciones.py
           test -s data/ia/estaciones/red_observaciones_estado.json
 
+      - name: Nowcast por flujo óptico (física; da el movimiento al adaptador)
+        run: |
+          set -euo pipefail
+          python scripts/nowcast_flujo_optico.py
+          test -s data/radar/nowcast_flujo.json
+
       - name: Conectar RMA10 con Storm Engine
         run: |
           set -euo pipefail
@@ -513,12 +519,6 @@ jobs:
 
           test -s \
             data/radar/seguimiento/prediccion_evolucion.json
-
-      - name: Nowcast por flujo óptico (física, nunca corta el ciclo)
-        run: |
-          set -euo pipefail
-          python scripts/nowcast_flujo_optico.py
-          test -s data/radar/nowcast_flujo.json
 
       - name: Conectar evolución con trayectoria
         run: |

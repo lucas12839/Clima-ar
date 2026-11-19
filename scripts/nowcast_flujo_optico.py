@@ -52,6 +52,8 @@ ACTUAL = RADAR_DIR / "actual.png"
 TIMESTAMP_FILE = RADAR_DIR / "radar_timestamp.txt"
 HISTORICO = RADAR_DIR / "historico"
 SALIDA = RADAR_DIR / "nowcast_flujo.json"
+# Campo de movimiento para el resto del ciclo (no se versiona: .gitignore).
+CAMPO = RADAR_DIR / ".flujo_campo.npz"
 MASCARA_CLUTTER = ROOT / "config" / "clutter_rma10.png"
 
 VERSION = "flujo-optico-1.0"
@@ -329,6 +331,31 @@ def impacto_ciudad(actual: np.ndarray, flujo: dict[str, Any], max_min: int = 60)
     }
 
 
+def leer_campo(radar_ts: str | None, path: Path | None = None):
+    """(u, v, coherencia) en px/min si el campo es del mismo frame; si no, None."""
+    path = path or CAMPO
+    if not path.exists() or radar_ts is None:
+        return None
+    try:
+        with np.load(path) as datos:
+            if parse_utc(str(datos["radar_timestamp"])) != parse_utc(radar_ts):
+                return None
+            return datos["u"], datos["v"], float(datos["coherencia"])
+    except Exception:
+        return None
+
+
+def velocidad_en(campo, x: float, y: float, radio_px: int = 6):
+    """Vector medio (px/min) del flujo alrededor de (x, y)."""
+    u, v, _ = campo
+    h, w = u.shape
+    x0, x1 = max(0, int(x) - radio_px), min(w, int(x) + radio_px + 1)
+    y0, y1 = max(0, int(y) - radio_px), min(h, int(y) + radio_px + 1)
+    if x0 >= x1 or y0 >= y1:
+        return None
+    return float(u[y0:y1, x0:x1].mean()), float(v[y0:y1, x0:x1].mean())
+
+
 # ------------------------------------------------------------
 # selección de frames
 # ------------------------------------------------------------
@@ -402,6 +429,17 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
             edad_radar_min=round(edad, 1), frame_previo=iso(previo_dt),
         )
 
+    try:
+        np.savez_compressed(
+            CAMPO,
+            u=flujo["u"].astype(np.float32),
+            v=flujo["v"].astype(np.float32),
+            radar_timestamp=np.array(radar_ts),
+            coherencia=np.array(flujo["coherencia"]),
+        )
+    except Exception as exc:
+        print(f"AVISO: no se pudo guardar el campo de flujo: {exc}")
+
     ciudad = impacto_ciudad(resultado["actual"], flujo)
     f_gap = 1.0 if gap <= 12 else round(max(0.5, 1.0 - (gap - 12) / 36.0), 3)
     f_alc = factor_alcance(ciudad.get("distancia_radar_origen_km"))
@@ -469,8 +507,10 @@ def main(argv=None) -> int:
         print(f"Máscara de clutter: {int(mask.sum())} píxeles -> {MASCARA_CLUTTER}")
         return 0
 
+    # Solo para reproducir frames históricos (herramientas/reproducir_frames.py).
+    ahora = parse_utc(os.environ.get("CLIMAAR_AHORA_UTC", "")) if os.environ.get("CLIMAAR_AHORA_UTC") else None
     try:
-        salida = ejecutar()
+        salida = ejecutar(ahora)
     except Exception as exc:  # el nowcast nunca corta el ciclo
         salida = salida_no_disponible(None, f"ERROR: {str(exc)[:200]}")
     escribir_json_atomico(SALIDA, salida)

@@ -163,3 +163,41 @@ class EscalaEdadRadarTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VelocidadFisicaTest(unittest.TestCase):
+    def test_movimientos_coinciden(self):
+        import adaptar_rma10_intelligence as ad
+        self.assertTrue(ad.movimientos_coinciden(1.0, 90, 1.2, 100))
+        self.assertFalse(ad.movimientos_coinciden(2.0, 90, 0.9, 95))   # >50 %
+        self.assertFalse(ad.movimientos_coinciden(1.0, 0, 1.0, 120))   # >60°
+        self.assertFalse(ad.movimientos_coinciden(0.0, None, 1.0, 90))
+
+    def test_flujo_casi_estacionario_es_valido(self):
+        import adaptar_rma10_intelligence as ad
+        campo = (np.zeros((512, 512), np.float32), np.zeros((512, 512), np.float32), 0.8)
+        anterior = ad.CAMPO_FLUJO
+        try:
+            ad.CAMPO_FLUJO = campo
+            r = ad.movimiento_por_flujo({"x": 200, "y": 200}, (5, 5, 2.0, 45, "seguimiento"))
+        finally:
+            ad.CAMPO_FLUJO = anterior
+        self.assertEqual(r[4], "flujo_optico")
+        self.assertEqual(r[2], 0.0)
+
+    def test_seguimiento_rechaza_salto_sin_superposicion(self):
+        import seguimiento_temporal as st
+        a = {"x": 100.0, "y": 100.0, "pixeles": 200, "ancho": 16, "alto": 16, "bbox": [92, 92, 108, 108]}
+        b = dict(a, x=160.0, y=100.0, bbox=[152, 92, 168, 108])  # 60 px en 10 min ≈ 340 km/h
+        self.assertIsNone(st.compatibilidad(a, b, 10.0))
+
+    def test_evolucion_descarta_saltos(self):
+        import prediccion_evolucion as pe
+        hist = [
+            {"timestamp": "2026-11-12T20:00:00Z", "x": 100, "y": 100},
+            {"timestamp": "2026-11-12T20:10:00Z", "x": 160, "y": 100},
+            {"timestamp": "2026-11-12T20:20:00Z", "x": 168, "y": 100},
+        ]
+        muestras = pe.movement_samples(hist)
+        self.assertEqual(len(muestras), 1)
+        self.assertAlmostEqual(muestras[0]["speed"], 0.8)
