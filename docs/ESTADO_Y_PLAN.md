@@ -1,4 +1,4 @@
-# ClimaAR — estado y plan (traspaso al 19/11/2026)
+# ClimaAR — estado y plan (actualizado 19/11/2026, 09:30 hora de Argentina)
 
 Leer junto con `CLAUDE.md` (reglas fijas del repo).
 
@@ -43,33 +43,51 @@ Herramienta: `herramientas/simular_evento_real.py` (necesita las imágenes del S
 evento: Lucas tiene los zips `Temporal_viento`, `Temporal_granizo`, `Temporal_inundacion`).
 Lucas dijo que por ahora no hacen falta más simulaciones.
 
-## Próximo: punto 1 — índices por fenómeno
-Cada fenómeno con su índice; la calificación general es el índice más alto y dice cuál
-es ("Severa (viento)"). Propuesta (Lucas aprobó la idea, cortes a revisar):
+## Hecho el 19/11/2026 a la mañana (PR #33 y siguiente) — ver `docs/INDICES_Y_LOCALIDADES.md`
+- **Punto 1 terminado: índices por fenómeno.** Lluvia, viento, granizo y tormenta eléctrica
+  por separado, combinación real ("Viento fuerte, sin lluvia"), calificación general = el más
+  alto ("Fuerte (viento)"). Lucas eligió: grado 4 sin estación = **"Posible severa"**.
+- **Localidades por separado** (pedido de Lucas por el 13/11, cuando en Bahía llovió poco y en
+  Punta Alta más de 70 mm): Bahía Blanca, Ingeniero White, General Daniel Cerri, Punta Alta,
+  Tornquist, Médanos, Sierra de la Ventana (Lucas sacó Monte Hermoso, Dorrego y Pehuen-Co).
+- Lluvia por localidad = **promedio del área** (no el píxel más intenso).
+- **Confiabilidad de cada llegada** con 30 días de radar: después de 20 min solo llegó ~1 de
+  cada 3; casi siempre pasó al costado. Se dice "llega" o "puede llegar", y una llegada poco
+  confiable no sube la calificación.
+- Viento severo por radar: velocidad local, ≥ 75 km/h en dos frames seguidos.
+- **GOES-19:** rayos de los últimos 20 min por localidad con salto brusco (antes: un archivo
+  de 20 s); topes de nube (canal 13) por localidad con enfriamiento; topes ≤ −50 °C dan
+  "lluvia probable" cuando no hay radar. Funcionando en producción desde las 08:47.
+- **Modelo europeo en altura** (850/700/500 hPa): cizalladura, gradiente térmico y aire seco
+  → "ambiente favorable a tormentas severas". En producción desde las 09:12.
+- Tendencia de las tormentas a ≤ 20 km de cada localidad (se intensifican / se debilitan).
+- Simulación del viernes 13/11 (119 frames, cadena completa, sin errores): Bahía Blanca nunca
+  severa (3,5 mm en 6 h); Punta Alta "Posible severa (lluvia)" con 117 mm en 6 h.
 
-- **Lluvia** (radar, mm/h por Marshall-Palmer; estaciones confirman): llovizna <1,
-  débil 1–3, moderada 3–12, fuerte 12–50, **severa** >50 mm/h o fuerte sostenida >1 h
-  o 30 mm en 1 h / 50 mm en 3 h.
-- **Viento** (ráfagas de estaciones; radar anticipa): leve <30, moderado 30–50,
-  fuerte 50–90, **severo** ráfaga ≥90 km/h o línea ≥60 km/h en bloque (coherencia ≥0,85,
-  ≥45 dBZ). Con esto el 16/12 habría quedado "Severa (viento)" desde las 15:50.
-- **Granizo** (radar): sin señal <50 dBZ, posible 50–55, probable 55–60, **severo** ≥60.
-- **Tormenta eléctrica** (rayos GOES-19): sin rayos, aislada, frecuente, **severa** con
-  salto brusco de rayos.
+### Revisión de 30 días (solo radar, `herramientas/revisar_30_dias.py`)
+Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
+- Bahía Blanca: granizo 28/10, 4/11, 12/11. Nunca lluvia ni viento severo.
+- Punta Alta: lluvia 12/11 y 13/11; granizo 28/10, 12/11, 13/11.
+- Médanos: lluvia 3/11, 6/11, 12/11; granizo 28/10, 2/11, 12/11; viento 12/11.
+- **Tornquist: granizo en 10 días** (30/10 al 9/11) — sospechoso: tormentas sobre las sierras
+  o efecto del terreno en el radar. A confirmar con Lucas.
 
-Pendiente de respuesta de Lucas: si viento y lluvia severa por radar se muestran como
-"severa" o "posible severa" hasta calibrarlos.
+### Preguntas para Lucas (calibración)
+1. ¿Hubo granizo o tormenta fuerte el 28/10, 4/11, 12/11 o 13/11 en Bahía Blanca? ¿Y en
+   Tornquist entre el 30/10 y el 9/11?
+2. Viernes 13/11: ¿cuánto llovió exactamente en Punta Alta y en Bahía Blanca, y a qué hora fue
+   lo fuerte? (el radar crudo dio ~190 mm en Punta Alta: parece sobreestimar).
 
-## Después
-2. Probar viento severo y lluvia severa contra los últimos 30 días de radar (falsas alarmas).
-- **A. GOES-19 y nunca a ciegas:** rayos de los últimos 5–10 min y saltos de rayos,
-  enfriamiento de topes de nubes, vientos satelitales, modo completo sin radar.
-- **B. Mejor pronóstico:** crecimiento/debilitamiento por celda, horizonte 2–3 h con
-  varios escenarios, potencial de severidad del ambiente, formas (líneas, ecos en arco).
-- **C. Calibración y validación continua** con cada temporal nuevo.
-- **D. Vigilancia:** VPS que se actualice solo, monitoreo de cada fuente (hoy el vigilante
-  de GitHub tarda horas si el VPS se cae), Doppler más adelante.
+## Siguiente
+- **A. Nunca a ciegas:** falta probar el modo sin radar con una tormenta real (rayos + topes
+  + estaciones); vientos satelitales todavía solo como dato general.
+- **B. Mejor pronóstico:** horizonte 2–3 h con varios escenarios, formas (líneas, ecos en
+  arco), crecimiento por celda (hoy: tendencia a ≤ 20 km).
+- **C. Calibración continua:** con las respuestas de arriba, ajustar la fórmula de lluvia del
+  radar crudo y los cortes de granizo; repetir `calibrar_llegadas.py` cada mes.
+- **D. Vigilancia:** VPS que se actualice solo, monitoreo de cada fuente, Doppler más adelante.
 - Menor: reemplazar `getdata` de Pillow (deja de existir en 2027-10).
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
-`prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`.
+`prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
+`indices-fenomenos-localidades` (ya unida).
