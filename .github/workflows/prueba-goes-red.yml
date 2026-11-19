@@ -1,0 +1,18 @@
+name: Prueba GOES red (temporal)
+on:
+  push:
+    branches: [prueba-goes-red]
+jobs:
+  sondear:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          lfs: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q numpy requests xarray netCDF4 scipy
+      - run: python herramientas/sondear_goes.py
