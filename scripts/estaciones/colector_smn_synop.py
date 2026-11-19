@@ -23,6 +23,11 @@ STATIONS = {
     "0-20000-0-87688": "TRES ARROYOS",
 }
 MAX_AGE_MINUTES = 15.0
+
+
+def is_fresh_age(age):
+    """Misma política que colector_bcp: fresca entre 0 y 15 min inclusive."""
+    return age is not None and 0 <= age <= MAX_AGE_MINUTES
 LOOKBACK_MINUTES = 120
 OUTPUT = Path("data/ia/estaciones/observaciones/smn_synop_actual.json")
 TIMEOUT_SECONDS = 20

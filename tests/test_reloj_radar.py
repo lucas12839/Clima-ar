@@ -290,9 +290,11 @@ class EdadRadarEIATest(unittest.TestCase):
             (tmp / "data/radar").mkdir(parents=True)
             shutil.copy(ROOT / "data/radar/radar_nowcast.json", tmp / "data/radar")
             shutil.copy(ROOT / "data/radar/estado_radar.json", tmp / "data/radar")
+            # El collector que publica la IA sale de estado_radar.json, no
+            # de la salida anterior de la IA (que puede ser de otro frame).
             expected_collector_timestamp = json.loads(
-                (ia / "inteligencia_tormenta.json").read_text(encoding="utf-8")
-            )["origen_datos"]["collector"]["last_processed_radar_timestamp"]
+                (tmp / "data/radar/estado_radar.json").read_text(encoding="utf-8")
+            ).get("last_processed_radar_timestamp")
             os.chdir(tmp)
             with mock.patch.multiple(
                 engine,
