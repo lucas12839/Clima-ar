@@ -433,7 +433,7 @@ jobs:
           test -s \
             data/radar/radar_features_rma10.csv
 
-      - name: Predicción ML RMA10
+      - name: Predicción RMA10 por track (reglas, sin ML)
         run: |
           set -euo pipefail
 
@@ -459,7 +459,7 @@ jobs:
 
           if d.get("ok") is not True:
               raise SystemExit(
-                  "ERROR: ML no válido"
+                  "ERROR: predicción RMA10 no válida"
               )
 
           if not isinstance(

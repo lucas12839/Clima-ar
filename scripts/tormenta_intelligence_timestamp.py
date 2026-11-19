@@ -103,8 +103,8 @@ def validate_radar_nowcast_ml(radar_timestamp: datetime) -> None:
     ml_data = load_json(ML_FILE)
     if ml_data.get("ok") is not True:
         raise RuntimeError("ERROR: predicción ML no válida.")
-    if ml_data.get("modelo") != "rma10-v1-causal-3-holdout-isolated":
-        raise RuntimeError("ERROR: versión del modelo V1 incompatible.")
+    if ml_data.get("modelo") != "rma10-reglas-sin-entrenamiento-v1":
+        raise RuntimeError("ERROR: predicción RMA10 incompatible (se esperaba reglas sin entrenamiento).")
     for prediction in ml_data.get("predicciones", []):
         if not isinstance(prediction, dict):
             raise RuntimeError("ERROR: track ML inválido.")
@@ -904,22 +904,16 @@ def main() -> None:
 
     apply_goes_to_intelligence(goes_intelligence, radar_timestamp)
 
-    # RMA10 Visual/Temporal Causal 3: ejecución única por ciclo, después de Intelligence.
-    visual_runtime = BASE / "scripts" / "rma10_visual_temporal_runtime.py"
-    if not visual_runtime.exists():
-        raise RuntimeError(f"No existe runtime visual/temporal: {visual_runtime}")
-    print("RMA10 Visual/Temporal Causal 3 ejecutándose...")
-    visual_result = subprocess.run(
-        [sys.executable, str(visual_runtime)],
-        cwd=BASE,
-        text=True,
-        check=False,
-    )
-    if visual_result.returncode != 0:
-        raise RuntimeError(
-            "RMA10 Visual/Temporal Causal 3 falló; se aborta el ciclo para no publicar un resultado incompleto."
-        )
-    print("RMA10 Visual/Temporal Causal 3 integrado correctamente.")
+    # Sin modelos entrenados: el bloque visual/temporal queda desactivado.
+    # motor_decision_climaar.py ignora ia_visual_temporal si no está disponible.
+    intelligence_visual = load_json(INTELLIGENCE_FILE)
+    intelligence_visual["ia_visual_temporal"] = {
+        "disponible": False,
+        "estado_modelo": "DESACTIVADO_SIN_ENTRENAMIENTO",
+        "radar_timestamp": intelligence_visual.get("radar_timestamp"),
+        "motivo": "ClimaAR no usa modelos entrenados en producción.",
+    }
+    save_json(INTELLIGENCE_FILE, intelligence_visual)
     try:
         from fusion_multimodal import fuse
 
