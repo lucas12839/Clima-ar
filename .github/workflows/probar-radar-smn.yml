@@ -260,6 +260,14 @@ jobs:
       # PROCESAMIENTO RADAR
       # ============================================================
 
+      - name: Procesar frames intermedios recuperados (trayectoria continua)
+        if: steps.reclamar.outputs.procesar == 'true'
+        run: |
+          set -euo pipefail
+          # Nunca corta el ciclo: si falla, se procesa solo el frame nuevo.
+          python scripts/procesar_intermedios.py \
+            || echo "::warning::No se pudieron procesar los frames intermedios."
+
       - name: Procesar radar
         if: steps.reclamar.outputs.procesar == 'true'
         run: |
