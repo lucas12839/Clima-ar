@@ -1,0 +1,17 @@
+name: Prueba estaciones públicas (temporal)
+on:
+  push:
+    branches: [prueba-estaciones]
+jobs:
+  sondear:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q requests
+      - run: python -u herramientas/sondear_estaciones.py
