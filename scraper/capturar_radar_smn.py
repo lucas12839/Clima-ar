@@ -28,6 +28,11 @@ STATE = OUT / "seguimiento" / "estado.json"
 
 MIGRATION_MARKER = OUT / ".timestamp_rma10_utc_v2"
 
+# Frames que SINARAME publicó pero la página no mostró (a veces publica dos
+# a la vez y solo se ve el más nuevo). Los procesa scripts/procesar_intermedios.py.
+PENDIENTES = OUT / "intermedios_pendientes.json"
+MAX_RECUPERAR = 6
+
 MAX_RETRIES = 5
 
 MAX_RADAR_AGE_MINUTES = 45
@@ -626,6 +631,49 @@ def respaldar_frames_intermedios(
             "Frames intermedios respaldados:",
             guardados
         )
+
+
+# ============================================================
+# RECUPERAR FRAMES QUE LA PÁGINA NO MOSTRÓ
+# ============================================================
+
+def url_frame(fecha_utc):
+    """Dirección de un frame RMA10 en el caché de SINARAME (hora local en el nombre)."""
+    nombre = fecha_utc.astimezone(ARGENTINA_TZ).strftime("%Y%m%d%H%M%S")
+    return urljoin(URL, f"cache/RMA10/{nombre}.png")
+
+
+def recuperar_intermedios(page, timestamp_elegido, ultimo=None):
+    """Descarga los frames entre el último aceptado y el elegido (pasos de 10 min).
+
+    SINARAME a veces publica dos frames juntos (uno con 16 min de atraso y el
+    siguiente con 6) y la página solo muestra el más nuevo: sin esto se perdía
+    1 de cada 4 frames. Escribe la lista en intermedios_pendientes.json.
+    """
+    pendientes = []
+    try:
+        elegido = timestamp_source_to_datetime(timestamp_elegido).astimezone(timezone.utc)
+        ultimo = ultimo if ultimo is not None else timestamp_persistido()
+        if ultimo is not None and timedelta(minutes=10) < elegido - ultimo <= timedelta(hours=3):
+            t = ultimo + timedelta(minutes=10)
+            while t < elegido and len(pendientes) < MAX_RECUPERAR:
+                destino = HIST / f"{t.strftime('%Y%m%d%H%M%S')}.png"
+                try:
+                    if not destino.exists():
+                        data, _ = descargar_imagen(page, url_frame(t))
+                        destino.write_bytes(data)
+                    pendientes.append({"utc": t.isoformat(), "archivo": str(destino)})
+                    print("Frame intermedio recuperado:", t.isoformat())
+                except Exception as exc:
+                    print("Frame intermedio no disponible:", t.isoformat(), exc)
+                t += timedelta(minutes=10)
+    except Exception as exc:
+        print("AVISO: no se pudieron revisar frames intermedios:", exc)
+    try:
+        PENDIENTES.write_text(json.dumps(pendientes, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        print("AVISO: no se pudo guardar la lista de intermedios:", exc)
+    return pendientes
 
 
 # ============================================================
@@ -1426,6 +1474,11 @@ def main(
                     respaldar_frames_intermedios(
                         page,
                         candidatos,
+                        timestamp
+                    )
+
+                    recuperar_intermedios(
+                        page,
                         timestamp
                     )
 
