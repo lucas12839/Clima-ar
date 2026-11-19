@@ -87,6 +87,32 @@ jobs:
             python -m playwright install --with-deps chromium
           fi
 
+      - name: PRUEBA - recuperar_intermedios con el código de esta rama (no toca datos)
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin prueba-intermedios2
+          git worktree add /tmp/rama FETCH_HEAD
+          cd /tmp/rama
+          python - <<'PY'
+          from datetime import datetime, timedelta, timezone
+          import sys, json
+          sys.path.insert(0, ".")
+          from scraper import capturar_radar_smn as sc
+          from playwright.sync_api import sync_playwright
+          ahora = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+          elegido = ahora - timedelta(minutes=ahora.minute % 10 + 10)
+          ultimo = elegido - timedelta(minutes=50)
+          ts = elegido.astimezone(sc.ARGENTINA_TZ).strftime("%Y%m%d%H%M%S")
+          with sync_playwright() as p:
+              b = sc.lanzar_navegador(p); pg = b.new_page()
+              pg.goto(sc.URL, wait_until="domcontentloaded", timeout=60000)
+              r = sc.recuperar_intermedios(pg, ts, ultimo=ultimo)
+              b.close()
+          print("RECUPERADOS:", json.dumps(r))
+          PY
+          echo "PRUEBA OK"
+          exit 1
+
       # ============================================================
       # DIRECTORIOS
       # ============================================================
