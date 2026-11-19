@@ -10,6 +10,16 @@ RADAR_LON = -62.1654
 BAHIA_LAT = -38.7196
 BAHIA_LON = -62.2724
 RADAR_RADIUS_KM = 240.0
+
+# Velocidad física máxima de un sistema convectivo en la región. Un
+# desplazamiento mayor entre frames es un salto del centroide (celda que se
+# divide, se une o cambia de forma), no movimiento real.
+VELOCIDAD_MAX_KMH = 120.0
+
+
+def velocidad_max_px_min(width: int = 512) -> float:
+    km_por_px = RADAR_RADIUS_KM / max((width - 1) / 2.0, 1.0)
+    return VELOCIDAD_MAX_KMH / 60.0 / km_por_px
 MIN_MOTION_INTERVAL_MIN = 2.0
 MAX_MOTION_INTERVAL_MIN = 45.0
 

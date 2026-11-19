@@ -72,6 +72,8 @@ MAX_SEGMENT_INTERVAL = 180.0
 # No dejamos que una aceleración estimada cambie demasiado
 # la velocidad durante un único horizonte.
 MAX_SPEED_CHANGE_RATIO = 0.25
+# 120 km/h en la grilla RMA10 de 512 px (240 km de radio).
+VELOCIDAD_MAX_PX_MIN = 120.0 / 60.0 / (240.0 / 255.5)
 
 
 # ============================================================
@@ -308,6 +310,10 @@ def movement_samples(history, max_interval=MAX_SEGMENT_INTERVAL):
         dy = number(b["y"]) - number(a["y"])
 
         speed = math.hypot(dx, dy) / dt
+
+        # Salto de centroide, no movimiento real (> 120 km/h).
+        if speed > VELOCIDAD_MAX_PX_MIN:
+            continue
 
         bearing = None
 

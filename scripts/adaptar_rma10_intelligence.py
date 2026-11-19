@@ -24,6 +24,13 @@ RADAR_RADIUS_KM = 240.0
 RADAR_DIAMETER_KM = 480.0
 MAX_TRACK_MATCH_DISTANCE_PX = 45.0
 MAX_INTERVALO_TRACKING = 45.0
+# 120 km/h en la grilla de 512 px (240 km de radio): más rápido es un salto
+# del centroide (división, unión o cambio de forma), no movimiento real.
+VELOCIDAD_MAX_PX_MIN = 120.0 / 60.0 / (240.0 / 255.5)
+VELOCIDAD_MIN_FLUJO_PX_MIN = 0.05
+
+# Campo de flujo óptico del frame actual (lo carga main si existe).
+CAMPO_FLUJO = None
 
 ESTADOS_EXCLUIDOS = {
     "ECO_ESTATICO",
@@ -453,6 +460,44 @@ def area_trend(track):
     )
 
 
+def movimientos_coinciden(v1, d1, v2, d2):
+    """Velocidades a menos del 50 % y rumbos a menos de 60 grados."""
+    if v1 <= 0 or v2 <= 0 or d1 is None or d2 is None:
+        return False
+    if abs(v1 - v2) / max(v2, 1e-6) > 0.5:
+        return False
+    diferencia = abs((d1 - d2 + 180.0) % 360.0 - 180.0)
+    return diferencia <= 60.0
+
+
+def movimiento_por_flujo(item, actual):
+    """Movimiento del flujo óptico en la posición del núcleo (px/min).
+
+    Se usa cuando el seguimiento no tiene un desplazamiento físico válido.
+    dx/dy se expresan como desplazamiento en 10 min.
+    """
+    try:
+        from nowcast_flujo_optico import velocidad_en
+    except Exception:
+        return actual
+    vel = velocidad_en(
+        CAMPO_FLUJO,
+        number(item.get("x")),
+        number(item.get("y")),
+    )
+    if vel is None:
+        return actual
+    u, v = vel
+    speed = math.hypot(u, v)
+    if speed > VELOCIDAD_MAX_PX_MIN:
+        return actual
+    if speed < VELOCIDAD_MIN_FLUJO_PX_MIN:
+        # Eco casi estacionario: también es una medición válida.
+        return (0.0, 0.0, 0.0, None, "flujo_optico")
+    direction = math.degrees(math.atan2(u, -v)) % 360.0
+    return (u * 10.0, v * 10.0, speed, direction, "flujo_optico")
+
+
 def associate_tracks(
     nucleos,
     tracks
@@ -568,6 +613,24 @@ def associate_tracks(
                 best_track
             )
 
+            fuente_movimiento = "seguimiento"
+            if speed > VELOCIDAD_MAX_PX_MIN:
+                dx, dy, speed, direction = 0.0, 0.0, 0.0, None
+                fuente_movimiento = "descartado_salto_centroide"
+
+            if CAMPO_FLUJO is not None:
+                flujo = movimiento_por_flujo(
+                    item, (dx, dy, speed, direction, fuente_movimiento)
+                )
+                if flujo[4] == "flujo_optico" and (
+                    speed <= 0.0
+                    or flujo[2] <= 0.0
+                    or not movimientos_coinciden(speed, direction, flujo[2], flujo[3])
+                ):
+                    # El centroide salta cuando la celda cambia de forma; el
+                    # flujo óptico mide el movimiento del eco completo.
+                    (dx, dy, speed, direction, fuente_movimiento) = flujo
+
             trend, change = (
                 area_trend(
                     best_track
@@ -623,6 +686,9 @@ def associate_tracks(
 
                 "tendencia":
                     trend,
+
+                "fuente_movimiento":
+                    fuente_movimiento,
 
                 "cambio_area_pct":
                     round(
@@ -753,6 +819,17 @@ def main():
         raise RuntimeError(
             "ERROR: timestamp radar invalido."
         )
+
+    global CAMPO_FLUJO
+    try:
+        from nowcast_flujo_optico import leer_campo
+        CAMPO_FLUJO = leer_campo(radar_ts)
+    except Exception:
+        CAMPO_FLUJO = None
+    print(
+        "Campo de flujo óptico:",
+        "disponible" if CAMPO_FLUJO is not None else "no disponible",
+    )
 
     # La evolución se regenera después de este adaptador: si el archivo
     # persistido es de otro frame, no se publica como si fuera del actual.
