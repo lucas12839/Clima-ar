@@ -87,6 +87,33 @@ jobs:
             python -m playwright install --with-deps chromium
           fi
 
+      - name: PRUEBA - frames intermedios por URL (no toca datos)
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from datetime import datetime, timedelta, timezone
+          from zoneinfo import ZoneInfo
+          from playwright.sync_api import sync_playwright
+          import os
+          ar = ZoneInfo("America/Argentina/Buenos_Aires")
+          ahora = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+          base = ahora - timedelta(minutes=ahora.minute % 10)
+          canal = os.environ.get("CLIMAAR_CHROMIUM_CHANNEL") or None
+          with sync_playwright() as p:
+              b = p.chromium.launch(headless=True, channel=canal)
+              pg = b.new_page()
+              pg.goto("https://radares.hidricosargentina.gob.ar/", wait_until="domcontentloaded", timeout=60000)
+              for k in range(0, 13):
+                  t = base - timedelta(minutes=10 * k)
+                  nombre = t.astimezone(ar).strftime("%Y%m%d%H%M%S")
+                  url = f"https://radares.hidricosargentina.gob.ar/cache/RMA10/{nombre}.png"
+                  r = pg.request.get(url, timeout=30000)
+                  print(t.strftime("%H:%M UTC"), r.status, len(r.body()) if r.ok else 0)
+              b.close()
+          PY
+          echo "PRUEBA OK"
+          exit 1
+
       # ============================================================
       # DIRECTORIOS
       # ============================================================
