@@ -17,6 +17,7 @@ OUT = BASE / "data/ia/resultado_final.json"
 FLUJO = BASE / "data/radar/nowcast_flujo.json"
 FLUJO_DBZ_MIN = 40.0
 GOES = BASE / "data/ia/goes19_intelligence.json"
+SUPERFICIE = BASE / "data/ia/estaciones/senales_superficie.json"
 FLUJO_CONF_MIN = 0.5
 
 VERSION = "ClimaAR-final-3.0"
@@ -282,6 +283,24 @@ def optical_flow_evidence(flujo, nowcast):
     return score, score > 0, resumen
 
 
+def superficie_bahia():
+    """Resumen de estaciones de Bahía Blanca si es reciente (<= 20 min)."""
+    datos = load(SUPERFICIE) if SUPERFICIE.exists() else {}
+    if not isinstance(datos, dict):
+        return {}
+    generado = datos.get("generado_utc")
+    try:
+        edad = (
+            datetime.now(timezone.utc)
+            - datetime.fromisoformat(str(generado).replace("Z", "+00:00"))
+        ).total_seconds() / 60.0
+    except (TypeError, ValueError):
+        return {}
+    if edad > 20:
+        return {}
+    return datos.get("bahia_blanca") or {}
+
+
 def tipo_de_tiempo(flujo, intel, nowcast):
     """Escala descriptiva (llovizna ... tormenta potencialmente severa)."""
     flujo = flujo if isinstance(flujo, dict) else {}
@@ -314,6 +333,7 @@ def tipo_de_tiempo(flujo, intel, nowcast):
         rayos=rayos,
         ambiente=(intel.get("ambiente") or {}) if isinstance(intel, dict) else {},
         radar_disponible=radar_ok and sincronizado,
+        superficie=superficie_bahia(),
     )
 
 
@@ -517,6 +537,7 @@ def main():
         },
         "clasificacion_meteorologica": weather_class,
         "tipo_tiempo": tipo_tiempo,
+        "estaciones_bahia": superficie_bahia(),
         "amenaza_bahia": threat,
         "clasificacion_historica": intel.get("clasificacion_historica"),
         "severidad_meteorologica": {
