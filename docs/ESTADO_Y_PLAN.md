@@ -77,6 +77,8 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
   confiables (ver `docs/INDICES_Y_LOCALIDADES.md`). Factor inicial 0,4 por Punta Alta 13/11
   (72 mm reales, 35 mm entre 14 y 15:30; en Bahía casi no llovió: la tormenta se desvió).
 - Pendiente: Lucas quiere corregir los umbrales de tormentas (próximo paso).
+- `estado_fuentes` en `resultado_final.json`: edad de radar, satélite, rayos, modelo y
+  estaciones, cuáles están al día y si ClimaAR quedó "a ciegas" (ninguna observación al día).
 - Pendiente: enlace de la estación de MeteoPunta en Punta Alta para sumarla como punto de control.
 
 ### Preguntas para Lucas (calibración)
@@ -93,7 +95,7 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
 - **C. Calibración continua:** con las respuestas de arriba, ajustar la fórmula de lluvia del
   radar crudo y los cortes de granizo; repetir `calibrar_llegadas.py` cada mes.
 - **D. Vigilancia:** VPS que se actualice solo, monitoreo de cada fuente, Doppler más adelante.
-- Menor: reemplazar `getdata` de Pillow (deja de existir en 2027-10).
+- Hecho: `getdata` de Pillow reemplazado (mismo resultado comprobado en 40 frames).
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,

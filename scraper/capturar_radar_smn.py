@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
+import numpy as np
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
@@ -77,11 +78,8 @@ def validar_png(data):
                 "imagen completamente transparente"
             )
 
-        visible = sum(
-            1
-            for a in alpha.getdata()
-            if a > 2
-        )
+        # Sin getdata (Pillow lo quita en 2027): conteo con numpy.
+        visible = int((np.asarray(alpha) > 2).sum())
 
         if (
             visible /
