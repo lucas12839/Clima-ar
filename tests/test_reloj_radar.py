@@ -273,8 +273,9 @@ class EdadRadarEIATest(unittest.TestCase):
             p = tmp / "e.json"
             est.reclamar(iso(T0), p, T0)
             est.completar(iso(T0), p, T0)
-            s = est.snapshot(p, T0 + timedelta(minutes=30))
-            self.assertEqual(s["radar_age_minutos"], 30.0)
+            # Escala: hasta 30 min vigente; 30-60 estimado.
+            s = est.snapshot(p, T0 + timedelta(minutes=40))
+            self.assertEqual(s["radar_age_minutos"], 40.0)
             self.assertEqual(s["vigencia_radar"], "estimado_desde_ultimo_radar_valido")
         finally:
             shutil.rmtree(tmp)

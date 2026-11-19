@@ -1,0 +1,486 @@
+#!/usr/bin/env python3
+"""Nowcast por flujo óptico para el RMA10 (sin entrenamiento).
+
+Método (física/extrapolación, mismo principio que pySTEPS):
+1. Decodifica a dBZ el frame actual y uno anterior (5–30 min antes).
+2. Quita ecos fijos (clutter) con una máscara de persistencia histórica.
+3. Estima el campo de movimiento con flujo óptico Farnebäck (OpenCV).
+4. Advecta el campo de reflectividad hacia adelante (semi-lagrangiano)
+   a 10, 20, 30 y 60 min.
+5. Mide qué llega a Bahía Blanca: dBZ máximo en un radio de 10 km y la
+   primera hora en que un eco ≥35 dBZ entra en ese radio.
+
+La confianza baja con el atraso del radar (30–60 min), con un hueco
+largo entre frames, con movimiento desordenado y a más de 150 km del
+radar (el haz pasa alto y subestima la reflectividad).
+
+Uso:
+  python scripts/nowcast_flujo_optico.py                 # ciclo operativo
+  python scripts/nowcast_flujo_optico.py --generar-mascara  # desde el histórico
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import io
+import json
+import math
+import os
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+for _p in (ROOT, ROOT / "scripts"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+from scripts.rma10_features import (  # noqa: E402
+    BAHIA_LAT,
+    BAHIA_LON,
+    RADAR_RADIUS_KM,
+    latlon_to_pixel,
+    parse_utc,
+)
+
+RADAR_DIR = ROOT / "data" / "radar"
+ACTUAL = RADAR_DIR / "actual.png"
+TIMESTAMP_FILE = RADAR_DIR / "radar_timestamp.txt"
+HISTORICO = RADAR_DIR / "historico"
+SALIDA = RADAR_DIR / "nowcast_flujo.json"
+MASCARA_CLUTTER = ROOT / "config" / "clutter_rma10.png"
+
+VERSION = "flujo-optico-1.0"
+LEADS_MIN = (10, 20, 30, 60)
+PASO_ETA_MIN = 5
+UMBRAL_ECO_DBZ = 20.0
+UMBRAL_TORMENTA_DBZ = 35.0
+UMBRAL_FUERTE_DBZ = 45.0
+RADIO_CIUDAD_KM = 10.0
+MIN_PIXELES_CIUDAD = 6  # ~5 km²: evita que un píxel suelto cuente como tormenta
+GAP_MIN_MIN = 5.0
+GAP_MAX_MIN = 30.0
+VELOCIDAD_MAX_KMH = 120.0
+ALCANCE_CONFIABLE_KM = 150.0
+EDAD_NORMAL_MIN = 30.0
+EDAD_MAX_MIN = 60.0
+CLUTTER_FRACCION = 0.3
+
+
+# ------------------------------------------------------------
+# utilidades
+# ------------------------------------------------------------
+
+def iso(dt: datetime | None) -> str | None:
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if dt else None
+
+
+def km_por_pixel(width: int) -> float:
+    return RADAR_RADIUS_KM / max((width - 1) / 2.0, 1.0)
+
+
+def timestamp_de_nombre(path: Path) -> datetime | None:
+    stem = path.stem
+    if len(stem) == 14 and stem.isdigit() and stem.startswith("20"):
+        try:
+            return datetime.strptime(stem, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def cargar_dbz(path: Path) -> np.ndarray | None:
+    import procesador_radar
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        return procesador_radar.cargar_dbz_rma10(path)
+
+
+def escribir_json_atomico(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name, suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2, allow_nan=False)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+# ------------------------------------------------------------
+# máscara de clutter
+# ------------------------------------------------------------
+
+def cargar_mascara_clutter(shape: tuple[int, int]) -> np.ndarray:
+    if not MASCARA_CLUTTER.exists():
+        return np.zeros(shape, dtype=bool)
+    from PIL import Image
+
+    with Image.open(MASCARA_CLUTTER) as img:
+        mask = np.asarray(img.convert("L")) > 127
+    if mask.shape != shape:
+        return np.zeros(shape, dtype=bool)
+    return mask
+
+
+def generar_mascara_clutter(frames: list[Path], fraccion: float = CLUTTER_FRACCION) -> np.ndarray | None:
+    """Píxeles con eco ≥20 dBZ en más de `fraccion` de los frames = clutter."""
+    acumulado = None
+    n = 0
+    for path in frames:
+        dbz = cargar_dbz(path)
+        if dbz is None:
+            continue
+        eco = np.nan_to_num(dbz, nan=-99.0) >= UMBRAL_ECO_DBZ
+        acumulado = eco.astype(np.int32) if acumulado is None else acumulado + eco
+        n += 1
+    if acumulado is None or n < 20:
+        return None
+    return (acumulado / n) > fraccion
+
+
+# ------------------------------------------------------------
+# núcleo físico
+# ------------------------------------------------------------
+
+def campo_limpio(dbz: np.ndarray, clutter: np.ndarray) -> np.ndarray:
+    campo = np.nan_to_num(dbz.astype(np.float32), nan=0.0)
+    campo[campo < UMBRAL_ECO_DBZ - 5.0] = 0.0
+    campo[clutter] = 0.0
+    return campo
+
+
+def a_uint8(campo: np.ndarray) -> np.ndarray:
+    return np.clip(campo / 70.0 * 255.0, 0, 255).astype(np.uint8)
+
+
+def estimar_flujo(previo: np.ndarray, actual: np.ndarray, gap_min: float, km_px: float) -> dict[str, Any]:
+    """Flujo óptico en px/min, suavizado y acotado a una velocidad física."""
+    import cv2
+
+    flow = cv2.calcOpticalFlowFarneback(
+        a_uint8(previo), a_uint8(actual), None,
+        pyr_scale=0.5, levels=4, winsize=31, iterations=5,
+        poly_n=7, poly_sigma=1.5, flags=cv2.OPTFLOW_FARNEBACK_GAUSSIAN,
+    )
+    u = flow[..., 0] / gap_min
+    v = flow[..., 1] / gap_min
+
+    eco = (actual >= UMBRAL_ECO_DBZ) | (previo >= UMBRAL_ECO_DBZ)
+    n_eco = int(eco.sum())
+    if n_eco < 30:
+        return {"valido": False, "motivo": "SIN_ECOS_SUFICIENTES", "pixeles_eco": n_eco}
+
+    u_med = float(np.median(u[eco]))
+    v_med = float(np.median(v[eco]))
+
+    # Fuera de los ecos el flujo no está definido: se usa el vector medio.
+    peso = cv2.GaussianBlur(eco.astype(np.float32), (0, 0), 8)
+    u_s = cv2.GaussianBlur(np.where(eco, u, 0).astype(np.float32), (0, 0), 8)
+    v_s = cv2.GaussianBlur(np.where(eco, v, 0).astype(np.float32), (0, 0), 8)
+    w = np.clip(peso * 3.0, 0.0, 1.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        u_f = np.where(peso > 1e-3, u_s / np.maximum(peso, 1e-3), u_med)
+        v_f = np.where(peso > 1e-3, v_s / np.maximum(peso, 1e-3), v_med)
+    u_f = w * u_f + (1 - w) * u_med
+    v_f = w * v_f + (1 - w) * v_med
+
+    vmax = VELOCIDAD_MAX_KMH / 60.0 / km_px
+    rapidez = np.hypot(u_f, v_f)
+    escala = np.where(rapidez > vmax, vmax / np.maximum(rapidez, 1e-6), 1.0)
+    u_f *= escala
+    v_f *= escala
+
+    # Coherencia: fracción de ecos que se mueven a menos de 45° del medio.
+    rap_eco = np.hypot(u[eco], v[eco])
+    norma = math.hypot(u_med, v_med)
+    if norma > 1e-6:
+        coseno = (u[eco] * u_med + v[eco] * v_med) / np.maximum(rap_eco * norma, 1e-6)
+        coherencia = float(np.mean(coseno > math.cos(math.radians(45))))
+    else:
+        coherencia = 0.0
+
+    velocidad_kmh = norma * km_px * 60.0
+    # dirección HACIA donde va (0 = norte, 90 = este); y crece hacia el sur.
+    direccion = (math.degrees(math.atan2(u_med, -v_med)) + 360.0) % 360.0
+
+    return {
+        "valido": True,
+        "u": u_f.astype(np.float32),
+        "v": v_f.astype(np.float32),
+        "pixeles_eco": n_eco,
+        "velocidad_media_kmh": round(min(velocidad_kmh, VELOCIDAD_MAX_KMH), 1),
+        "direccion_hacia_grados": round(direccion, 1),
+        "coherencia": round(coherencia, 3),
+    }
+
+
+def advectar(campo: np.ndarray, u: np.ndarray, v: np.ndarray, minutos: float, pasos_por_10min: int = 4) -> np.ndarray:
+    """Semi-lagrangiano hacia atrás: F(x, t) = F0(x - V·t), en sub-pasos."""
+    import cv2
+
+    h, w = campo.shape
+    gx, gy = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+    n = max(1, int(math.ceil(minutos / 10.0 * pasos_por_10min)))
+    dt = minutos / n
+    x = gx.copy()
+    y = gy.copy()
+    for _ in range(n):
+        uu = cv2.remap(u, x, y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        vv = cv2.remap(v, x, y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        x = x - uu * dt
+        y = y - vv * dt
+    # Vecino más cercano: conserva los picos de reflectividad (bilineal los lava).
+    return cv2.remap(campo, x, y, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
+
+
+def disco(shape: tuple[int, int], cx: float, cy: float, radio_px: float) -> np.ndarray:
+    h, w = shape
+    gy, gx = np.ogrid[:h, :w]
+    return (gx - cx) ** 2 + (gy - cy) ** 2 <= radio_px ** 2
+
+
+def factor_alcance(distancia_km: float | None) -> float:
+    """1.0 hasta 150 km; baja linealmente a 0.5 en 240 km."""
+    if distancia_km is None or not math.isfinite(distancia_km):
+        return 1.0
+    if distancia_km <= ALCANCE_CONFIABLE_KM:
+        return 1.0
+    frac = (distancia_km - ALCANCE_CONFIABLE_KM) / (RADAR_RADIUS_KM - ALCANCE_CONFIABLE_KM)
+    return round(max(0.5, 1.0 - 0.5 * min(frac, 1.0)), 3)
+
+
+def factor_edad(edad_min: float | None) -> float:
+    """1.0 hasta 30 min; baja a 0.4 en 60 min; 0 después."""
+    if edad_min is None:
+        return 1.0
+    if edad_min <= EDAD_NORMAL_MIN:
+        return 1.0
+    if edad_min > EDAD_MAX_MIN:
+        return 0.0
+    return round(1.0 - 0.6 * (edad_min - EDAD_NORMAL_MIN) / (EDAD_MAX_MIN - EDAD_NORMAL_MIN), 3)
+
+
+def pronosticar(previo_dbz: np.ndarray, actual_dbz: np.ndarray, gap_min: float, clutter: np.ndarray,
+                leads=LEADS_MIN) -> dict[str, Any]:
+    """Núcleo sin E/S: devuelve campos pronosticados y diagnóstico."""
+    h, w = actual_dbz.shape
+    km_px = km_por_pixel(w)
+    previo = campo_limpio(previo_dbz, clutter)
+    actual = campo_limpio(actual_dbz, clutter)
+    flujo = estimar_flujo(previo, actual, gap_min, km_px)
+    if not flujo["valido"]:
+        return {"flujo": flujo, "campos": {}, "actual": actual}
+    campos = {int(t): advectar(actual, flujo["u"], flujo["v"], float(t)) for t in leads}
+    return {"flujo": flujo, "campos": campos, "actual": actual}
+
+
+def impacto_ciudad(actual: np.ndarray, flujo: dict[str, Any], max_min: int = 60) -> dict[str, Any]:
+    h, w = actual.shape
+    km_px = km_por_pixel(w)
+    cx, cy = latlon_to_pixel(BAHIA_LAT, BAHIA_LON, w, h)
+    zona = disco((h, w), cx, cy, RADIO_CIUDAD_KM / km_px)
+
+    def max_en_zona(campo):
+        """dBZ que cubre al menos MIN_PIXELES_CIUDAD píxeles de la zona."""
+        vals = campo[zona]
+        if vals.size < MIN_PIXELES_CIUDAD:
+            return 0.0
+        return float(np.partition(vals, -MIN_PIXELES_CIUDAD)[-MIN_PIXELES_CIUDAD])
+
+    serie = []
+    eta = None
+    eta_fuerte = None
+    dbz_eta = None
+    for t in range(0, max_min + 1, PASO_ETA_MIN):
+        campo = actual if t == 0 else advectar(actual, flujo["u"], flujo["v"], float(t))
+        m = max_en_zona(campo)
+        serie.append({"minutos": t, "dbz_max": round(m, 1)})
+        if eta is None and m >= UMBRAL_TORMENTA_DBZ:
+            eta = t
+            dbz_eta = m
+        if eta_fuerte is None and m >= UMBRAL_FUERTE_DBZ:
+            eta_fuerte = t
+
+    # Distancia al radar del eco que llegaría (punto de origen de la trayectoria).
+    origen_km = None
+    if eta is not None:
+        x, y = cx, cy
+        for _ in range(max(1, eta // 2)):
+            ix = int(np.clip(round(x), 0, w - 1))
+            iy = int(np.clip(round(y), 0, h - 1))
+            x -= float(flujo["u"][iy, ix]) * 2.0
+            y -= float(flujo["v"][iy, ix]) * 2.0
+        origen_km = math.hypot(x - (w - 1) / 2.0, y - (h - 1) / 2.0) * km_px
+
+    return {
+        "radio_km": RADIO_CIUDAD_KM,
+        "dbz_max_ahora": serie[0]["dbz_max"],
+        "serie": serie,
+        "eta_tormenta_min": eta,
+        "dbz_al_llegar": round(dbz_eta, 1) if dbz_eta is not None else None,
+        "eta_tormenta_fuerte_min": eta_fuerte,
+        "distancia_radar_origen_km": round(origen_km, 1) if origen_km is not None else None,
+    }
+
+
+# ------------------------------------------------------------
+# selección de frames
+# ------------------------------------------------------------
+
+def frame_previo(actual_dt: datetime, historico: Path = HISTORICO) -> tuple[Path, datetime] | None:
+    """Frame anterior más cercano a 10 min, dentro de 5–30 min."""
+    mejor = None
+    for path in historico.glob("20*.png"):
+        dt = timestamp_de_nombre(path)
+        if dt is None:
+            continue
+        gap = (actual_dt - dt).total_seconds() / 60.0
+        if GAP_MIN_MIN <= gap <= GAP_MAX_MIN:
+            puntaje = abs(gap - 10.0)
+            if mejor is None or puntaje < mejor[0]:
+                mejor = (puntaje, path, dt)
+    return (mejor[1], mejor[2]) if mejor else None
+
+
+# ------------------------------------------------------------
+# ciclo operativo
+# ------------------------------------------------------------
+
+def salida_no_disponible(radar_ts: str | None, motivo: str, **extra) -> dict[str, Any]:
+    return {
+        "version": VERSION,
+        "disponible": False,
+        "motivo": motivo,
+        "radar_timestamp": radar_ts,
+        "generado_utc": iso(datetime.now(timezone.utc)),
+        **extra,
+    }
+
+
+def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
+    ahora = ahora or datetime.now(timezone.utc)
+    if not TIMESTAMP_FILE.exists() or not ACTUAL.exists():
+        return salida_no_disponible(None, "SIN_RADAR_ACTUAL")
+
+    radar_ts = TIMESTAMP_FILE.read_text(encoding="utf-8").strip()
+    actual_dt = parse_utc(radar_ts)
+    if actual_dt is None:
+        return salida_no_disponible(radar_ts, "TIMESTAMP_INVALIDO")
+
+    edad = max(0.0, (ahora - actual_dt).total_seconds() / 60.0)
+    f_edad = factor_edad(edad)
+    if f_edad <= 0.0:
+        return salida_no_disponible(
+            radar_ts, "RADAR_ATRASADO",
+            edad_radar_min=round(edad, 1),
+            nota="Más de 60 min sin radar: sin proyección de celdas; solo riesgo por ambiente.",
+        )
+
+    previo = frame_previo(actual_dt)
+    if previo is None:
+        return salida_no_disponible(radar_ts, "SIN_FRAME_PREVIO_5_30_MIN", edad_radar_min=round(edad, 1))
+    previo_path, previo_dt = previo
+    gap = (actual_dt - previo_dt).total_seconds() / 60.0
+
+    actual_dbz = cargar_dbz(ACTUAL)
+    previo_dbz = cargar_dbz(previo_path)
+    if actual_dbz is None or previo_dbz is None or actual_dbz.shape != previo_dbz.shape:
+        return salida_no_disponible(radar_ts, "NO_SE_PUDO_DECODIFICAR_DBZ", edad_radar_min=round(edad, 1))
+
+    clutter = cargar_mascara_clutter(actual_dbz.shape)
+    resultado = pronosticar(previo_dbz, actual_dbz, gap, clutter)
+    flujo = resultado["flujo"]
+    if not flujo["valido"]:
+        return salida_no_disponible(
+            radar_ts, flujo.get("motivo", "FLUJO_INVALIDO"),
+            edad_radar_min=round(edad, 1), frame_previo=iso(previo_dt),
+        )
+
+    ciudad = impacto_ciudad(resultado["actual"], flujo)
+    f_gap = 1.0 if gap <= 12 else round(max(0.5, 1.0 - (gap - 12) / 36.0), 3)
+    f_alc = factor_alcance(ciudad.get("distancia_radar_origen_km"))
+    confianza = round(max(0.0, min(1.0, (0.4 + 0.6 * flujo["coherencia"]) * f_edad * f_gap * f_alc)), 3)
+
+    # Los minutos ya transcurridos desde el barrido se descuentan del ETA.
+    eta = ciudad["eta_tormenta_min"]
+    eta_desde_ahora = None if eta is None else round(max(eta - edad, 0.0), 1)
+
+    pron = {}
+    for t, campo in resultado["campos"].items():
+        pron[str(t)] = {
+            "pixeles_ge_35dbz": int((campo >= UMBRAL_TORMENTA_DBZ).sum()),
+            "dbz_max_bahia": next((s["dbz_max"] for s in ciudad["serie"] if s["minutos"] == t), None),
+        }
+
+    return {
+        "version": VERSION,
+        "disponible": True,
+        "metodo": "flujo_optico_farneback_advection_semilagrangiana",
+        "radar_timestamp": radar_ts,
+        "frame_previo": iso(previo_dt),
+        "intervalo_frames_min": round(gap, 1),
+        "edad_radar_min": round(edad, 1),
+        "generado_utc": iso(ahora),
+        "movimiento": {
+            "velocidad_media_kmh": flujo["velocidad_media_kmh"],
+            "direccion_hacia_grados": flujo["direccion_hacia_grados"],
+            "coherencia": flujo["coherencia"],
+            "pixeles_eco": flujo["pixeles_eco"],
+        },
+        "bahia_blanca": {
+            **ciudad,
+            "eta_tormenta_desde_ahora_min": eta_desde_ahora,
+            "tormenta_en_60_min": eta is not None,
+        },
+        "pronostico": pron,
+        "confianza": confianza,
+        "factores_confianza": {
+            "coherencia_movimiento": flujo["coherencia"],
+            "edad_radar": f_edad,
+            "intervalo_frames": f_gap,
+            "alcance_radar": f_alc,
+        },
+        "clutter_enmascarado": bool(clutter.any()),
+    }
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--generar-mascara", action="store_true")
+    parser.add_argument("--frames", type=int, default=400)
+    args = parser.parse_args(argv)
+
+    if args.generar_mascara:
+        frames = sorted(HISTORICO.glob("20*.png"))[-args.frames:]
+        mask = generar_mascara_clutter(frames)
+        if mask is None:
+            print("No hay suficientes frames para generar la máscara.")
+            return 1
+        from PIL import Image
+
+        MASCARA_CLUTTER.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray((mask * 255).astype(np.uint8)).save(MASCARA_CLUTTER)
+        print(f"Máscara de clutter: {int(mask.sum())} píxeles -> {MASCARA_CLUTTER}")
+        return 0
+
+    try:
+        salida = ejecutar()
+    except Exception as exc:  # el nowcast nunca corta el ciclo
+        salida = salida_no_disponible(None, f"ERROR: {str(exc)[:200]}")
+    escribir_json_atomico(SALIDA, salida)
+    resumen = {k: salida.get(k) for k in ("disponible", "motivo", "radar_timestamp", "confianza")}
+    if salida.get("disponible"):
+        resumen["eta_tormenta_min"] = salida["bahia_blanca"]["eta_tormenta_min"]
+        resumen["velocidad_kmh"] = salida["movimiento"]["velocidad_media_kmh"]
+    print(json.dumps(resumen, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

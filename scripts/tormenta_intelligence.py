@@ -1078,8 +1078,10 @@ def ai_prediction(
     return None
 
 
-RADAR_ESTIMACION_MAX_MIN = 180.0
-RADAR_FRESCO_MAX_MIN = 20.0
+# Hasta 30 min: radar vigente. 30-60: se extrapola con confianza
+# decreciente. Más de 60: radar obsoleto, sin proyección de celdas.
+RADAR_ESTIMACION_MAX_MIN = 60.0
+RADAR_FRESCO_MAX_MIN = 30.0
 DISTANCIA_SOBRE_CIUDAD_KM = 30.0
 SEVERIDADES_VALIDAS = ("verde", "amarillo", "naranja", "rojo")
 
@@ -1112,6 +1114,14 @@ def apply_radar_age(nowcast):
     nowcast = dict(nowcast)
     age = radar_age_minutes(nowcast)
 
+    # Lejos del radar (>150 km) el movimiento es menos confiable.
+    alcance = finite(nowcast.get("confianza_alcance"))
+    if alcance is not None and 0.0 < alcance < 1.0:
+        nowcast["confianza_movimiento"] = round(
+            clamp(finite(nowcast.get("confianza_movimiento"), 0.0) * alcance),
+            3,
+        )
+
     vigencia = {
         "radar_timestamp": nowcast.get("frame_actual_utc"),
         "radar_age": (
@@ -1137,8 +1147,10 @@ def apply_radar_age(nowcast):
 
     if age > RADAR_ESTIMACION_MAX_MIN:
         vigencia["modo"] = "radar_obsoleto"
+        vigencia["radar_atrasado"] = True
         vigencia["motivo"] = (
-            "El ultimo radar valido es demasiado antiguo para extrapolar."
+            "Mas de 60 min sin radar: sin proyeccion de celdas; "
+            "el riesgo sale solo del ambiente meteorologico."
         )
         nowcast["vigencia_radar"] = vigencia
         nowcast["actividad"] = False
@@ -1171,13 +1183,19 @@ def apply_radar_age(nowcast):
             2,
         )
 
+    # 1.0 a los 30 min -> 0.4 a los 60 min.
+    factor_edad = max(
+        0.4,
+        1.0
+        - 0.6
+        * (age - RADAR_FRESCO_MAX_MIN)
+        / (RADAR_ESTIMACION_MAX_MIN - RADAR_FRESCO_MAX_MIN),
+    )
+    vigencia["factor_confianza_edad"] = round(factor_edad, 3)
     nowcast["confianza_movimiento"] = round(
         clamp(
             finite(nowcast.get("confianza_movimiento"), 0.0)
-            * max(
-                0.3,
-                1.0 - age / (2 * RADAR_ESTIMACION_MAX_MIN),
-            )
+            * factor_edad
         ),
         3,
     )

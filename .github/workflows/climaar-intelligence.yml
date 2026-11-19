@@ -514,6 +514,12 @@ jobs:
           test -s \
             data/radar/seguimiento/prediccion_evolucion.json
 
+      - name: Nowcast por flujo óptico (física, nunca corta el ciclo)
+        run: |
+          set -euo pipefail
+          python scripts/nowcast_flujo_optico.py
+          test -s data/radar/nowcast_flujo.json
+
       - name: Conectar evolución con trayectoria
         run: |
           set -euo pipefail

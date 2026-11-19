@@ -31,7 +31,8 @@ SINARAME publica frame T
   El refresco de IA exige `radar_timestamp.txt == last_processed_radar_timestamp`.
 - **Entre frames** la IA sigue: el detector pide `climaar-intelligence.yml modo=refresco`
   (sin reprocesar radar) usando el último radar válido; `apply_radar_age` extrapola hasta
-  180 min y luego marca `radar_obsoleto` (límites sin cambios).
+  60 min (confianza 1.0 hasta 30 min, 0.4 a los 60) y luego marca `radar_obsoleto`:
+  sin proyección de celdas, solo riesgo por ambiente.
 - **Salida de IA**: `radar_timestamp`, `radar_age`, `vigencia_radar` y `origen_datos`
   (`observacion_radar` / `extrapolacion_nowcast` / `prediccion_ml`).
 
