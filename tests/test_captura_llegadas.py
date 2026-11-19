@@ -48,6 +48,22 @@ class RegistroLlegadasTest(unittest.TestCase):
             self.assertEqual(len(destino.read_text(encoding="utf-8").splitlines()), 3)
 
 
+class PodaHistoricoTest(unittest.TestCase):
+    def test_borra_solo_frames_viejos_con_nombre_valido(self):
+        ahora = datetime(2026, 11, 19, 5, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            viejo = d / "20261001000000.png"
+            nuevo = d / "20261118000000.png"
+            otro = d / "notas.png"
+            for f in (viejo, nuevo, otro):
+                f.write_bytes(b"x")
+            self.assertEqual(sc.podar_historico(ahora, 30, d), 1)
+            self.assertFalse(viejo.exists())
+            self.assertTrue(nuevo.exists())
+            self.assertTrue(otro.exists())
+
+
 class NavegadorTest(unittest.TestCase):
     def test_usa_canal_configurado(self):
         pw = mock.MagicMock()

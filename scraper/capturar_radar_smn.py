@@ -32,6 +32,10 @@ MAX_RETRIES = 5
 
 MAX_RADAR_AGE_MINUTES = 45
 
+# Retención del histórico de frames (se usa para el frame previo del
+# flujo óptico, la máscara de clutter y la validación retrospectiva).
+RETENCION_HISTORICO_DIAS = 30
+
 MAX_FUTURE_SKEW_MINUTES = 2
 
 ARGENTINA_TZ = ZoneInfo(
@@ -896,6 +900,11 @@ def aceptar_frame(
         ahora
     )
 
+    try:
+        podar_historico(ahora)
+    except Exception as exc:
+        print("AVISO: no se pudo podar el histórico:", exc)
+
     escribir_estado(
         "NUEVO\n"
         f"frame={utc_iso}\n"
@@ -1040,6 +1049,35 @@ def registrar_llegada(fecha_utc, ahora):
         print("AVISO: no se pudo registrar la llegada:", exc)
 
     return registro
+
+
+def podar_historico(ahora, dias=RETENCION_HISTORICO_DIAS, carpeta=None):
+    """Borra frames del histórico más viejos que `dias` (nombre YYYYMMDDhhmmss)."""
+
+    carpeta = carpeta or HIST
+    limite = ahora - timedelta(days=dias)
+    borrados = 0
+
+    for path in carpeta.glob("*.png"):
+
+        stem = path.stem
+
+        if not (len(stem) == 14 and stem.isdigit() and stem.startswith("20")):
+            continue
+
+        try:
+            fecha = datetime.strptime(stem, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+
+        if fecha < limite:
+            path.unlink()
+            borrados += 1
+
+    if borrados:
+        print("Histórico podado:", borrados, "frames de más de", dias, "días")
+
+    return borrados
 
 
 # ============================================================
