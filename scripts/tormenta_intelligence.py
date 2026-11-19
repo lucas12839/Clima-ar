@@ -1078,10 +1078,10 @@ def ai_prediction(
     return None
 
 
-# Hasta 30 min: radar vigente. 30-60: se extrapola con confianza
-# decreciente. Más de 60: radar obsoleto, sin proyección de celdas.
-RADAR_ESTIMACION_MAX_MIN = 60.0
-RADAR_FRESCO_MAX_MIN = 30.0
+# Hasta 15 min: radar vigente. 15-40: se extrapola con confianza
+# decreciente. Más de 40: radar obsoleto, sin proyección de celdas.
+RADAR_ESTIMACION_MAX_MIN = 40.0
+RADAR_FRESCO_MAX_MIN = 15.0
 DISTANCIA_SOBRE_CIUDAD_KM = 30.0
 SEVERIDADES_VALIDAS = ("verde", "amarillo", "naranja", "rojo")
 
@@ -1149,7 +1149,7 @@ def apply_radar_age(nowcast):
         vigencia["modo"] = "radar_obsoleto"
         vigencia["radar_atrasado"] = True
         vigencia["motivo"] = (
-            "Mas de 60 min sin radar: sin proyeccion de celdas; "
+            "Mas de 40 min sin radar: sin proyeccion de celdas; "
             "el riesgo sale solo del ambiente meteorologico."
         )
         nowcast["vigencia_radar"] = vigencia
@@ -1183,7 +1183,7 @@ def apply_radar_age(nowcast):
             2,
         )
 
-    # 1.0 a los 30 min -> 0.4 a los 60 min.
+    # 1.0 a los 15 min -> 0.4 a los 40 min.
     factor_edad = max(
         0.4,
         1.0

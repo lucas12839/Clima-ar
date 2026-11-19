@@ -10,7 +10,7 @@ Método (física/extrapolación, mismo principio que pySTEPS):
 5. Mide qué llega a Bahía Blanca: dBZ máximo en un radio de 10 km y la
    primera hora en que un eco ≥35 dBZ entra en ese radio.
 
-La confianza baja con el atraso del radar (30–60 min), con un hueco
+La confianza baja con el atraso del radar (15–40 min), con un hueco
 largo entre frames, con movimiento desordenado y a más de 150 km del
 radar (el haz pasa alto y subestima la reflectividad).
 
@@ -73,8 +73,8 @@ GAP_MIN_MIN = 5.0
 GAP_MAX_MIN = 30.0
 VELOCIDAD_MAX_KMH = 120.0
 ALCANCE_CONFIABLE_KM = 150.0
-EDAD_NORMAL_MIN = 30.0
-EDAD_MAX_MIN = 60.0
+EDAD_NORMAL_MIN = 15.0
+EDAD_MAX_MIN = 40.0
 CLUTTER_FRACCION = 0.3
 
 
@@ -273,7 +273,7 @@ def factor_alcance(distancia_km: float | None) -> float:
 
 
 def factor_edad(edad_min: float | None) -> float:
-    """1.0 hasta 30 min; baja a 0.4 en 60 min; 0 después."""
+    """1.0 hasta 15 min; baja a 0.4 en 40 min; 0 después."""
     if edad_min is None:
         return 1.0
     if edad_min <= EDAD_NORMAL_MIN:
@@ -538,7 +538,7 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
         return salida_no_disponible(
             radar_ts, "RADAR_ATRASADO",
             edad_radar_min=round(edad, 1),
-            nota="Más de 60 min sin radar: sin proyección de celdas; solo riesgo por ambiente.",
+            nota="Más de 40 min sin radar: sin proyección de celdas; solo satélite y ambiente.",
         )
 
     actual_dbz = cargar_dbz(ACTUAL)
