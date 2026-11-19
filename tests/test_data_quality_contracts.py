@@ -10,7 +10,6 @@ import numpy as np
 import app
 from app import sanitize_ml_probabilities, sanitize_storm_probabilities
 from scripts.motor_decision_climaar import intelligence_score
-from scripts.prediccion_rma10_ml import get_calibrated_probability
 from scripts import procesador_radar
 from scripts import conectar_evolucion_trayectoria as evolution_connector
 from scripts import validar_integridad_climaar as integrity_validator
@@ -401,21 +400,6 @@ class EvolutionConnectorTests(unittest.TestCase):
 
 
 class ProbabilityContractTests(unittest.TestCase):
-    def test_uncalibrated_ml_output_is_not_published_as_probability(self):
-        self.assertIsNone(
-            get_calibrated_probability(
-                0.8,
-                {"enabled": False},
-            )
-        )
-
-    def test_calibrated_ml_output_is_retained(self):
-        value = get_calibrated_probability(
-            0.8,
-            {"enabled": True, "a": 1.0, "b": 0.0},
-        )
-        self.assertAlmostEqual(value, 0.8)
-
     def test_api_hides_only_uncalibrated_horizons(self):
         payload = {
             "calibracion_probabilistica": {

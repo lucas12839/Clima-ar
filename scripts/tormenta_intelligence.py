@@ -5,15 +5,10 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-try:
-    import clasificador_tormenta
-except Exception:
-    clasificador_tormenta = None
-
-try:
-    import joblib
-except Exception:
-    joblib = None
+# Sin modelos entrenados en producción: el clasificador histórico y el
+# predictor de impacto V8 quedan desactivados. Las funciones que los usaban
+# ya tenían fallback por reglas (historical_score y environment_score_value).
+clasificador_tormenta = None
 
 
 VERSION = "4.0.0"
@@ -1078,24 +1073,9 @@ def hazard_signals(
 
 def load_ai_model():
 
-    if joblib is None:
-        return None
+    """Desactivado: ClimaAR no carga modelos entrenados."""
 
-    path = (
-        MODEL_DIR
-        / "climaar_predictor_impacto_v8.joblib"
-    )
-
-    if not path.exists():
-        return None
-
-    try:
-        return joblib.load(
-            path
-        )
-
-    except Exception:
-        return None
+    return None
 
 
 def ai_prediction(
