@@ -982,6 +982,26 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Radar e Intelligence comparten el grupo de concurrencia, que
+          # admite 1 run en curso + 1 pendiente. Si ya hay un frame RMA10
+          # esperando, despachar Intelligence lo reemplazaría y GitHub
+          # cancelaría ese frame. En ese caso no se despacha: el próximo
+          # run de Radar dispara Intelligence con el frame más nuevo.
+          esperando=0
+          for estado in queued pending waiting requested; do
+            # Solo runs de la última hora: GitHub deja runs "fantasma" en
+            # queued que no se pueden cancelar (7/11/2026).
+            n="$(gh api "repos/$GH_REPO/actions/workflows/probar-radar-smn.yml/runs?status=$estado&per_page=30" \
+              --jq '[.workflow_runs[] | select((now - (.created_at | fromdateiso8601)) < 3600)] | length' \
+              2>/dev/null || echo 0)"
+            esperando=$((esperando + n))
+          done
+
+          if [ "$esperando" -gt 0 ]; then
+            echo "::notice::Hay $esperando frame(s) RMA10 esperando: Intelligence la dispara el próximo run de Radar."
+            exit 0
+          fi
+
           gh workflow run climaar-intelligence.yml \
             --repo "$GH_REPO" \
             --ref main \
