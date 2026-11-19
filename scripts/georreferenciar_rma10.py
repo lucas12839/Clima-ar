@@ -648,7 +648,10 @@ def main():
             georeferenced.append(item)
 
     principal_id = nowcast.get("nucleo_principal_id")
-    if principal_id is None:
+    # Sin actividad (cielo despejado o solo clutter) no hay principal: es
+    # válido solo si el nowcast declara actividad=false.
+    sin_actividad = principal_id is None and nowcast.get("actividad") is False
+    if principal_id is None and not sin_actividad:
         raise RuntimeError(
             "ERROR: Nowcast no contiene nucleo_principal_id. "
             "Georreferenciación no puede inventar un principal."
@@ -656,11 +659,11 @@ def main():
 
     principal_item = None
     for item in georeferenced:
-        if str(item.get("track_id")) == str(principal_id):
+        if principal_id is not None and str(item.get("track_id")) == str(principal_id):
             principal_item = item
             break
 
-    if principal_item is None:
+    if principal_item is None and not sin_actividad:
         raise RuntimeError(
             "ERROR: el principal del Nowcast "
             f"({principal_id}) no existe entre los núcleos georreferenciados."
@@ -809,6 +812,21 @@ def main():
                 "track_id",
                 principal_item.get("nucleo_id"),
             ),
+        }
+    elif sin_actividad:
+        nowcast["distancia_km"] = None
+        nowcast["distancia_radar_km"] = None
+        nowcast["confianza_alcance"] = None
+        nowcast["movimiento_hacia_bahia"] = False
+        nowcast["eta_minutos"] = None
+        nowcast["bahia_blanca"] = {
+            "latitud": BAHIA_LAT,
+            "longitud": BAHIA_LON,
+            "distancia_principal_km": None,
+            "rumbo_desde_principal_grados": None,
+            "movimiento_hacia_bahia": False,
+            "eta_minutos": None,
+            "nucleo_principal_id": None,
         }
     else:
         raise RuntimeError(

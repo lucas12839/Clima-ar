@@ -938,7 +938,8 @@ def main():
     principal = radar.get("nucleo_principal_id")
     bahia_principal = radar.get("bahia_blanca", {}).get("nucleo_principal_id")
 
-    if principal is None:
+    # Sin principal solo es válido cuando el radar no tiene actividad.
+    if principal is None and radar.get("actividad") is not False:
         raise RuntimeError(
             "ERROR: meteorología recibió un Nowcast sin principal."
         )

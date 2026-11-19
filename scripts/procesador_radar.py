@@ -17,6 +17,7 @@ BASE = Path("data/radar")
 ACTUAL = BASE / "actual.png"
 MASCARA = BASE / "mascara_ecos_estaticos.png"
 MASCARA_JSON = BASE / "mascara_ecos_estaticos.json"
+MASCARA_CLUTTER = Path(__file__).resolve().parents[1] / "config" / "clutter_rma10.png"
 SALIDA = BASE / "resultado_procesamiento.json"
 
 # ============================================================
@@ -154,16 +155,45 @@ def estadisticas_dbz_region(matriz_dbz, region):
     }
 
 
-def cargar_mascara():
-    if not MASCARA.exists():
-        print("AVISO: no existe la máscara estática.")
+def cargar_mascara_clutter(shape):
+    """Clutter persistente del RMA10 (píxeles con eco en >30 % de los frames).
+
+    Se genera con: python scripts/nowcast_flujo_optico.py --generar-mascara
+    """
+    if not MASCARA_CLUTTER.exists():
         return None
     try:
-        imagen = cargar_imagen(MASCARA)
-        return np.mean(imagen, axis=2) > 100
+        with Image.open(MASCARA_CLUTTER) as img:
+            clutter = np.asarray(img.convert("L")) > 127
+        return clutter if clutter.shape == shape else None
     except Exception as exc:
-        print(f"AVISO: no se pudo cargar información de máscara: {exc}")
+        print(f"AVISO: no se pudo cargar la máscara de clutter: {exc}")
         return None
+
+
+def cargar_mascara():
+    """Máscara estática = ecos fijos conocidos + clutter persistente.
+
+    Los píxeles enmascarados que muestran cambio temporal (una tormenta real
+    pasando sobre las sierras) se rescatan en _mascara_temporal_dinamica.
+    """
+    base = None
+    if MASCARA.exists():
+        try:
+            imagen = cargar_imagen(MASCARA)
+            base = np.mean(imagen, axis=2) > 100
+        except Exception as exc:
+            print(f"AVISO: no se pudo cargar información de máscara: {exc}")
+    else:
+        print("AVISO: no existe la máscara estática.")
+
+    shape = base.shape if base is not None else (512, 512)
+    clutter = cargar_mascara_clutter(shape)
+    if base is None:
+        return clutter
+    if clutter is None:
+        return base
+    return base | clutter
 
 
 def cargar_info_mascara():

@@ -712,6 +712,23 @@ def main() -> None:
                 f"{evolution_dt.isoformat()}"
             )
 
+    # Sin actividad: no hay principal ni trayectoria que proyectar.
+    if (
+        nowcast.get("nucleo_principal_id") is None
+        and nowcast.get("actividad") is False
+    ):
+        nowcast["proyecciones"] = {}
+        nowcast["proyecciones_metadata"] = {
+            "track_id": None,
+            "pronostico_disponible": False,
+            "motivo_no_disponible": "SIN_ACTIVIDAD",
+            "radar_timestamp": radar_timestamp.isoformat(),
+        }
+        radar["nowcast"] = nowcast
+        atomic_write_json(RADAR_FILE, radar)
+        print("OK: sin actividad; no hay trayectoria que proyectar.")
+        return
+
     (
         width,
         height,

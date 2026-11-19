@@ -974,17 +974,24 @@ def main():
     )
 
     if not tracks:
-        raise RuntimeError(
-            "ERROR: Tracking no contiene tracks activos para el frame actual."
+        # Sin ecos operativos (cielo despejado o solo clutter): se publica
+        # un nowcast sin actividad y sin principal; el resto del ciclo lo
+        # acepta solo cuando actividad es false.
+        if seguimiento.get("track_principal_candidato_id") is not None:
+            raise RuntimeError(
+                "ERROR: Tracking declaró un principal pero no tiene tracks activos."
+            )
+        tracking_principal = None
+    else:
+        tracking_principal = require_tracking_principal_track(
+            tracks,
+            seguimiento
         )
 
-    tracking_principal = require_tracking_principal_track(
-        tracks,
-        seguimiento
+    compat_track = tracking_principal or {}
+    principal_source = (
+        "seguimiento_temporal" if tracking_principal else "sin_actividad"
     )
-
-    compat_track = tracking_principal
-    principal_source = "seguimiento_temporal"
 
     if compat_track:
 

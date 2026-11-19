@@ -1951,6 +1951,8 @@ def prediccion_en_vivo() -> (
             **radar_metadata(),
         }
 
+    # prediccion_evolucion.json solo trae radar_timestamp (el frame para el
+    # que se calculó); sin este respaldo el endpoint nunca era válido.
     prediction_ts = (
         prediction.get(
             "frame_prediccion"
@@ -1960,6 +1962,9 @@ def prediccion_en_vivo() -> (
         )
         or prediction.get(
             "actualizado_utc"
+        )
+        or prediction.get(
+            "radar_timestamp"
         )
     )
 
