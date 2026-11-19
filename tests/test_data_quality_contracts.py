@@ -465,6 +465,9 @@ class ProbabilityContractTests(unittest.TestCase):
             payload["calibracion_probabilistica"],
         )
 
+        if not payload.get("predicciones"):
+            self.skipTest("Sin actividad en el radar: no hay predicciones que revisar.")
+
         track = payload["predicciones"][0]
         for target in ("strengthened", "weakened", "toward_bahia"):
             key = f"5m_{target}"

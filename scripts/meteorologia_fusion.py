@@ -42,7 +42,9 @@ HEADERS = {
     "Accept": "application/json",
 }
 
-REQUEST_TIMEOUT = 45
+# Corto a propósito: si Open-Meteo no responde se usa el último pronóstico
+# guardado en vez de alargar el ciclo varios minutos.
+REQUEST_TIMEOUT = 20
 
 
 # ============================================================
@@ -349,41 +351,23 @@ def consultar_ecmwf():
                     f"{exc}"
                 )
 
-    if any(resultado is None for resultado in resultados):
-        for indice, resultado in enumerate(resultados):
-            if resultado is not None:
-                continue
-
-            ultimo_error = None
-
-            for intento in range(1, 3):
+    faltan = [i for i, r in enumerate(resultados) if r is None]
+    if faltan:
+        print(f"ECMWF: un reintento para los grupos {[i + 1 for i in faltan]}")
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futuros = {
+                executor.submit(_consultar_ecmwf_grupo, grupos[i], REQUEST_TIMEOUT): i
+                for i in faltan
+            }
+            for futuro in as_completed(futuros):
+                indice = futuros[futuro]
                 try:
-                    print(
-                        f"ECMWF grupo {indice + 1}/3 "
-                        f"reintento {intento}/2"
-                    )
-
-                    resultados[indice] = _consultar_ecmwf_grupo(
-                        grupos[indice],
-                        REQUEST_TIMEOUT,
-                    )
-
-                    ultimo_error = None
-                    break
-
+                    resultados[indice] = futuro.result()
                 except Exception as exc:
-                    ultimo_error = exc
-
-                    print(
-                        f"AVISO ECMWF grupo {indice + 1}/3 "
-                        f"reintento {intento}: {exc}"
+                    raise RuntimeError(
+                        "ECMWF no pudo obtener el grupo "
+                        f"{indice + 1}/3: {exc}"
                     )
-
-            if ultimo_error is not None:
-                raise RuntimeError(
-                    "ECMWF no pudo obtener el grupo "
-                    f"{indice + 1}/3: {ultimo_error}"
-                )
 
     datos = []
 
@@ -895,6 +879,10 @@ def append_historico(radar, sazb, actual, calidad):
 
 ECMWF_RESPALDO_MAX_MIN = 180.0
 
+# El pronóstico ECMWF es horario: si el guardado tiene menos de esto, se
+# reutiliza sin consultar Open-Meteo (ciclos más rápidos y estables).
+ECMWF_CACHE_MIN = 30.0
+
 
 def cargar_respaldo_ecmwf(motivo):
     """Último ambiente ECMWF guardado, si es reciente. (ambiente, info) o (None, info)."""
@@ -963,29 +951,41 @@ def main():
     print("Consultando ECMWF...")
 
     respaldo_ecmwf = None
+    cache_ecmwf = None
 
-    try:
-        ecmwf_raw = consultar_ecmwf()
+    reciente, info_cache = cargar_respaldo_ecmwf("pronóstico reciente")
+    if reciente is not None and info_cache.get("edad_minutos", 1e9) < ECMWF_CACHE_MIN:
+        ambiente = reciente
+        cache_ecmwf = {
+            "usado": True,
+            "edad_minutos": info_cache["edad_minutos"],
+            "actualizado_utc": info_cache.get("actualizado_utc"),
+        }
+        print(f"ECMWF: se reutiliza el pronóstico guardado ({info_cache['edad_minutos']} min).")
 
-        print(
-            f"ECMWF: {len(ecmwf_raw)} puntos recibidos"
-        )
+    if cache_ecmwf is None:
+        try:
+            ecmwf_raw = consultar_ecmwf()
 
-        ambiente = construir_ambiente(ecmwf_raw)
+            print(
+                f"ECMWF: {len(ecmwf_raw)} puntos recibidos"
+            )
 
-    except Exception as exc:
-        # Open-Meteo a veces no responde (timeouts). Antes eso cortaba todo
-        # el ciclo de Intelligence. Ahora se usa el último pronóstico ECMWF
-        # válido (cubre 12 h) si tiene menos de ECMWF_RESPALDO_MAX_MIN.
-        print(f"ERROR ECMWF: {exc}")
-        ambiente, respaldo_ecmwf = cargar_respaldo_ecmwf(str(exc))
-        if ambiente is None:
-            print("ERROR: sin pronóstico ECMWF de respaldo utilizable.")
-            return 1
-        print(
-            "AVISO: se usa el pronóstico ECMWF anterior "
-            f"({respaldo_ecmwf['edad_minutos']} min)."
-        )
+            ambiente = construir_ambiente(ecmwf_raw)
+
+        except Exception as exc:
+            # Open-Meteo a veces no responde (timeouts). Antes eso cortaba todo
+            # el ciclo de Intelligence. Ahora se usa el último pronóstico ECMWF
+            # válido (cubre 12 h) si tiene menos de ECMWF_RESPALDO_MAX_MIN.
+            print(f"ERROR ECMWF: {exc}")
+            ambiente, respaldo_ecmwf = cargar_respaldo_ecmwf(str(exc))
+            if ambiente is None:
+                print("ERROR: sin pronóstico ECMWF de respaldo utilizable.")
+                return 1
+            print(
+                "AVISO: se usa el pronóstico ECMWF anterior "
+                f"({respaldo_ecmwf['edad_minutos']} min)."
+            )
 
     actual_ecmwf = obtener_actual_centro(ambiente)
 
@@ -1029,6 +1029,7 @@ def main():
         },
         "estado": "operativo" if respaldo_ecmwf is None else "operativo_con_ecmwf_anterior",
         "ecmwf_respaldo": respaldo_ecmwf or {"usado": False},
+        "ecmwf_cache": cache_ecmwf or {"usado": False},
         "proxima_etapa": (
             "Motor IA de evolucion, trayectoria, "
             "fortalecimiento, debilitamiento, ETA, "
@@ -1042,7 +1043,7 @@ def main():
     )
 
     # Con el pronóstico de respaldo no se reescribe: conserva su hora real.
-    if respaldo_ecmwf is None:
+    if respaldo_ecmwf is None and cache_ecmwf is None:
         save_json(
             AMBIENTE_FILE,
             {
