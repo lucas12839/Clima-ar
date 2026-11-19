@@ -16,7 +16,7 @@ import requests
 ESTACIONES = ["LU4DRH-11", "FW6154", "EW9010"]
 UA = {"User-Agent": "ClimaAR/1.0 diagnostico (GitHub lucas12839/clima-ar)"}
 
-for c in ESTACIONES:
+for c in []:
     try:
         t = requests.get(f"http://wx.findu.com/cgi-bin/wxpage.cgi?call={c}&last=48", headers=UA, timeout=30).text
         plano = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t))
@@ -35,7 +35,7 @@ try:
     s = socket.create_connection(("rotate.aprs2.net", 14580), timeout=30)
     s.sendall(("user CLIMAAR pass -1 vers ClimaAR 1.0 filter b/" + "/".join(ESTACIONES) + "\r\n").encode())
     s.settimeout(30)
-    fin = time.time() + 720
+    fin = time.time() + 1080
     buf = b""
     while time.time() < fin:
         try:
@@ -48,7 +48,8 @@ try:
         while b"\n" in buf:
             linea, buf = buf.split(b"\n", 1)
             txt = linea.decode("latin-1").strip()
-            print(datetime.now(timezone.utc).strftime("%H:%M:%S"), txt[:220])
+            if not txt.startswith("#"):
+                print(datetime.now(timezone.utc).strftime("%H:%M:%S"), txt[:220])
     s.close()
 except Exception as exc:
     print("ERROR APRS-IS", exc)
