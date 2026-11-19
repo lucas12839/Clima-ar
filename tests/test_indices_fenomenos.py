@@ -149,3 +149,39 @@ class IntegracionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SateliteTest(unittest.TestCase):
+    def test_topes_muy_frios_suben_granizo(self):
+        r = fen.evaluar(radar=radar(dbz_ciudad=52), satelite={"min_c_15km": -64})
+        self.assertEqual(r["fenomenos"]["granizo"]["categoria"], "probable")
+
+    def test_topes_solos_no_crean_granizo(self):
+        r = fen.evaluar(radar=radar(dbz_ciudad=30), satelite={"min_c_15km": -70})
+        self.assertEqual(r["fenomenos"]["granizo"]["grado"], 0)
+
+    def test_sin_radar_nube_de_tormenta_es_lluvia_probable(self):
+        r = fen.evaluar(radar={"disponible": False}, satelite={"min_c_15km": -55})
+        self.assertEqual(r["fenomenos"]["lluvia"]["grado"], 2)
+        self.assertFalse(r["fenomenos"]["lluvia"]["confirmado"])
+
+
+class AmbienteTest(unittest.TestCase):
+    # 16/12/2023 a las 12 UTC (data/eventos_severos/variables_convectivas_2023-12-16.csv)
+    AMB = {"cape": 1830, "wind_speed_850hPa": 30, "wind_direction_850hPa": 0,
+           "wind_speed_500hPa": 90, "wind_direction_500hPa": 280,
+           "temperature_850hPa": 18.3, "temperature_500hPa": -10.3, "relative_humidity_500hPa": 50}
+
+    def test_ambiente_no_crea_fenomenos(self):
+        r = fen.evaluar(radar=radar(), ambiente=self.AMB)
+        self.assertEqual(r["calificacion"]["grado"], 0)
+        self.assertTrue(r["ambiente"]["favorable_severas"])
+
+    def test_tormenta_en_ambiente_favorable_da_rafagas_posibles(self):
+        r = fen.evaluar(radar=radar(dbz_ciudad=47), ambiente=self.AMB)
+        self.assertEqual(r["fenomenos"]["viento"]["grado"], 3)
+        self.assertFalse(r["fenomenos"]["viento"]["confirmado"])
+
+    def test_granizo_sube_con_ambiente(self):
+        r = fen.evaluar(radar=radar(dbz_ciudad=52), ambiente=self.AMB)
+        self.assertEqual(r["fenomenos"]["granizo"]["categoria"], "probable")

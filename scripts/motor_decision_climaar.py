@@ -318,13 +318,30 @@ def rayos_para(rayos, lat, lon):
     return salida, propio
 
 
+def topes_por_localidad():
+    """Topes GOES-19 (canal 13) por localidad, si la imagen tiene <= 30 min."""
+    goes = load(GOES) if GOES.exists() else {}
+    c13 = ((goes.get("productos") or {}).get("abi_c13") or {}) if isinstance(goes, dict) else {}
+    edad = finite((c13.get("source") or {}).get("age_minutes"))
+    if edad is not None and edad > 30:
+        return {}
+    return c13.get("por_localidad") or {}
+
+
 def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
     """Índices por fenómeno de cada localidad (Bahía Blanca, Punta Alta, ...)."""
+    import localidades_radar
+
     locs = (flujo or {}).get("localidades") or {}
     if not isinstance(locs, dict):
-        return {}
+        locs = {}
+    # Todas las localidades, aunque el radar no haya llegado (satélite y estaciones).
+    for loc in localidades_radar.cargar_localidades():
+        locs.setdefault(loc["id"], {"nombre": loc["nombre"], "lat": loc["lat"], "lon": loc["lon"],
+                                    "sin_radar": True})
     mov = (flujo or {}).get("movimiento") or {}
     sup_locs = (_superficie_fresca().get("localidades") or {})
+    topes = topes_por_localidad()
     salida = {}
     for loc_id, d in locs.items():
         if not isinstance(d, dict):
@@ -335,7 +352,7 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
             r_loc.update(propio[loc_id])
         ev = fen.evaluar(
             radar={
-                "disponible": bool(radar_ok and sincronizado),
+                "disponible": bool(radar_ok and sincronizado and not d.get("sin_radar")),
                 "dbz_ciudad": finite(d.get("dbz_p75")),
                 "dbz_pico": finite(d.get("dbz_pico")),
                 "mm_h_area": finite(d.get("mm_h_medio")),
@@ -353,6 +370,7 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
             superficie=sup_locs.get(loc_id) or {},
             rayos=r_loc,
             ambiente=ambiente,
+            satelite=topes.get(loc_id) or {},
         )
         ev["nombre"] = d.get("nombre", loc_id)
         ev["acumulado_radar_mm"] = {"1h": d.get("lluvia_1h_mm"), "3h": d.get("lluvia_3h_mm"),
