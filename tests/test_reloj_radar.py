@@ -248,7 +248,8 @@ class EdadRadarEIATest(unittest.TestCase):
         self.assertEqual(v["radar_timestamp"] is not None, True)
 
     def test_radar_viejo_no_se_presenta_como_actual(self):
-        nc = engine.apply_radar_age(self.nowcast(45))
+        # 30 min: dentro de la ventana 15-40 (estimado, no actual).
+        nc = engine.apply_radar_age(self.nowcast(30))
         v = nc["vigencia_radar"]
         self.assertEqual(v["modo"], "estimado_desde_ultimo_radar_valido")
         self.assertTrue(v["estimado"])
@@ -257,7 +258,7 @@ class EdadRadarEIATest(unittest.TestCase):
         self.assertFalse(o["observacion_radar"]["es_actual"])
         self.assertTrue(o["extrapolacion_nowcast"]["aplicada"])
         self.assertAlmostEqual(
-            o["extrapolacion_nowcast"]["minutos_extrapolados"], 45, delta=0.5
+            o["extrapolacion_nowcast"]["minutos_extrapolados"], 30, delta=0.5
         )
 
     def test_radar_obsoleto_mantiene_limite(self):
@@ -273,9 +274,9 @@ class EdadRadarEIATest(unittest.TestCase):
             p = tmp / "e.json"
             est.reclamar(iso(T0), p, T0)
             est.completar(iso(T0), p, T0)
-            # Escala: hasta 30 min vigente; 30-60 estimado.
-            s = est.snapshot(p, T0 + timedelta(minutes=40))
-            self.assertEqual(s["radar_age_minutos"], 40.0)
+            # Escala: hasta 15 min vigente; 15-40 estimado.
+            s = est.snapshot(p, T0 + timedelta(minutes=30))
+            self.assertEqual(s["radar_age_minutos"], 30.0)
             self.assertEqual(s["vigencia_radar"], "estimado_desde_ultimo_radar_valido")
         finally:
             shutil.rmtree(tmp)

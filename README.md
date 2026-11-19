@@ -18,7 +18,7 @@ SINARAME publica un frame (cada ~10 min; a veces con 30 min o más de atraso)
               → validación de integridad
 ```
 
-Entre frames, la IA sigue corriendo con el último radar válido y marca cuántos minutos tiene: hasta 30 min es normal, de 30 a 60 min baja la confianza y con más de 60 min no se proyectan celdas (solo riesgo por ambiente). A más de 150 km del radar la confianza también baja.
+Entre frames, la IA sigue corriendo con el último radar válido y marca cuántos minutos tiene: hasta 15 min es normal, de 15 a 40 min baja la confianza y con más de 40 min no se proyectan celdas (solo riesgo por ambiente). A más de 150 km del radar la confianza también baja.
 
 ## Estructura
 

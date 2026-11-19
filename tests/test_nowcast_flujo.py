@@ -68,9 +68,9 @@ class FlujoOpticoTest(unittest.TestCase):
 
     def test_factores_de_confianza(self):
         self.assertEqual(nf.factor_edad(10), 1.0)
-        self.assertEqual(nf.factor_edad(30), 1.0)
-        self.assertAlmostEqual(nf.factor_edad(45), 0.7, places=2)
-        self.assertEqual(nf.factor_edad(61), 0.0)
+        self.assertEqual(nf.factor_edad(15), 1.0)
+        self.assertAlmostEqual(nf.factor_edad(27.5), 0.7, places=2)
+        self.assertEqual(nf.factor_edad(41), 0.0)
         self.assertEqual(nf.factor_alcance(100), 1.0)
         self.assertAlmostEqual(nf.factor_alcance(240), 0.5)
         self.assertEqual(confianza_alcance(150), 1.0)
@@ -141,17 +141,17 @@ class EscalaEdadRadarTest(unittest.TestCase):
             nc["confianza_alcance"] = alcance
         return nc
 
-    def test_hasta_30_min_es_vigente(self):
-        v = engine.apply_radar_age(self.nowcast(25))["vigencia_radar"]
+    def test_hasta_15_min_es_vigente(self):
+        v = engine.apply_radar_age(self.nowcast(12))["vigencia_radar"]
         self.assertEqual(v["modo"], "radar_vigente")
 
-    def test_45_min_baja_la_confianza(self):
-        nc = engine.apply_radar_age(self.nowcast(45))
+    def test_27_min_baja_la_confianza(self):
+        nc = engine.apply_radar_age(self.nowcast(27.5))
         self.assertEqual(nc["vigencia_radar"]["modo"], "estimado_desde_ultimo_radar_valido")
         self.assertAlmostEqual(nc["confianza_movimiento"], 0.7, delta=0.03)
 
-    def test_mas_de_60_min_es_obsoleto_sin_actividad(self):
-        nc = engine.apply_radar_age(self.nowcast(70))
+    def test_mas_de_40_min_es_obsoleto_sin_actividad(self):
+        nc = engine.apply_radar_age(self.nowcast(45))
         self.assertEqual(nc["vigencia_radar"]["modo"], "radar_obsoleto")
         self.assertTrue(nc["vigencia_radar"]["radar_atrasado"])
         self.assertFalse(nc["actividad"])

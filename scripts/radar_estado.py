@@ -44,10 +44,10 @@ SCHEMA = 1
 CLAIM_TTL_MIN = 30.0
 
 # Mismos limites que Intelligence (apply_radar_age).
-# Escala acordada: hasta 30 min normal; 30-60 estimado con menor
-# confianza; más de 60 sin proyección de celdas (solo ambiente).
-RADAR_FRESCO_MAX_MIN = 30.0
-RADAR_ESTIMACION_MAX_MIN = 60.0
+# Escala acordada: hasta 15 min normal; 15-40 estimado con menor
+# confianza; más de 40 sin proyección de celdas (satélite y ambiente).
+RADAR_FRESCO_MAX_MIN = 15.0
+RADAR_ESTIMACION_MAX_MIN = 40.0
 
 
 # ------------------------------------------------------------

@@ -41,5 +41,5 @@ pronóstico ≥35 dBZ se publica como información (`data/radar/nowcast_flujo.js
 - Extrapolación pura: no anticipa formación ni intensificación.
 - Más allá de 150 km el haz pasa alto y subestima la reflectividad (confianza
   reducida hasta 0,5 a 240 km).
-- Con el radar atrasado más de 30 min la confianza baja; con más de 60 min no se
+- Con el radar atrasado más de 15 min la confianza baja; con más de 40 min no se
   proyectan celdas.
