@@ -185,3 +185,49 @@ class AmbienteTest(unittest.TestCase):
     def test_granizo_sube_con_ambiente(self):
         r = fen.evaluar(radar=radar(dbz_ciudad=52), ambiente=self.AMB)
         self.assertEqual(r["fenomenos"]["granizo"]["categoria"], "probable")
+
+
+class VelocidadEstableTest(unittest.TestCase):
+    def test_salto_de_velocidad_no_da_severo(self):
+        # 13/11/2026 05:20 UTC: 35 -> 105 km/h en 10 min (artefacto del flujo óptico).
+        r = fen.evaluar(radar=radar(dbz_ciudad=40, dbz_30km=63, velocidad_kmh=105, coherencia=0.98,
+                                    velocidad_previa_kmh=35))
+        self.assertEqual(r["fenomenos"]["viento"]["grado"], 3)
+
+    def test_velocidad_repetida_da_posible_severo(self):
+        # 16/12/2023: 75 y 84 km/h en dos frames seguidos.
+        r = fen.evaluar(radar=radar(dbz_ciudad=40, dbz_30km=50, velocidad_kmh=84, coherencia=0.96,
+                                    velocidad_previa_kmh=75))
+        self.assertEqual(r["fenomenos"]["viento"]["categoria"], "posible severo")
+
+    def test_primer_frame_sin_previa_queda_en_fuerte(self):
+        r = fen.evaluar(radar=radar(dbz_ciudad=40, dbz_30km=50, velocidad_kmh=84, coherencia=0.96,
+                                    velocidad_previa_kmh=None))
+        self.assertEqual(r["fenomenos"]["viento"]["grado"], 3)
+
+
+class AcumuladoTest(unittest.TestCase):
+    def test_si_ya_paro_no_es_severa(self):
+        r = fen.evaluar(radar=radar(mm_h_area=0.0, lluvia_1h_mm=0.5, lluvia_3h_mm=4, lluvia_6h_mm=60))
+        self.assertEqual(r["fenomenos"]["lluvia"]["grado"], 0)
+        self.assertIn("anegamientos", r["resumen"])
+
+    def test_si_sigue_lloviendo_es_posible_severa(self):
+        r = fen.evaluar(radar=radar(mm_h_area=6.0, lluvia_1h_mm=8, lluvia_3h_mm=40, lluvia_6h_mm=60))
+        self.assertEqual(r["fenomenos"]["lluvia"]["categoria"], "posible severa")
+
+
+class ConfiabilidadTest(unittest.TestCase):
+    def test_llegada_poco_confiable_no_sube_calificacion(self):
+        conf = {"casos": 195, "llego": 63, "se_desvio": 110, "se_deshizo": 22}
+        r = fen.evaluar(radar=radar(dbz_llegada=56, eta_llegada_min=30, confiabilidad_llegada=conf))
+        self.assertEqual(r["llegada"]["verbo"], "puede llegar")
+        self.assertIn("pasaron al costado", r["llegada"]["texto"])
+        self.assertEqual(r["calificacion"]["grado"], 0)
+        self.assertIsNotNone(r["al_llegar"])
+
+    def test_llegada_confiable_si_cuenta(self):
+        conf = {"casos": 31, "llego": 21, "se_desvio": 8, "se_deshizo": 2}
+        r = fen.evaluar(radar=radar(dbz_llegada=56, eta_llegada_min=10, confiabilidad_llegada=conf))
+        self.assertEqual(r["llegada"]["verbo"], "llega")
+        self.assertEqual(r["fenomenos"]["granizo"]["cuando"], "al_llegar")

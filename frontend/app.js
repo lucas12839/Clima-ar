@@ -732,8 +732,18 @@ function tipoTiempoTexto() {
   const partes = tipo.calificacion && tipo.resumen
     ? [tipo.calificacion.etiqueta, tipo.resumen]
     : [tipo.etiqueta];
-  if (tipo.resumen_al_llegar && tipo.minutos_hasta_llegada != null && tipo.alcance === "acercandose") {
-    partes.push(`al llegar: ${tipo.resumen_al_llegar}`);
+  if (tipo.resumen_al_llegar && tipo.minutos_hasta_llegada != null) {
+    const llegada = tipo.llegada || {};
+    const verbo = llegada.verbo || "puede llegar";
+    partes.push(`${verbo} en ~${Math.round(tipo.minutos_hasta_llegada)} min: ${tipo.resumen_al_llegar}`
+      + (llegada.texto ? ` (${llegada.texto})` : ""));
+  }
+  // Localidades cercanas con fenómenos (cada una analizada por separado).
+  const region = Array.isArray(tipo.resumen_regional)
+    ? tipo.resumen_regional.filter(l => l.id !== "bahia_blanca").slice(0, 3)
+    : [];
+  if (region.length) {
+    partes.push(`región: ${region.map(l => `${l.nombre}: ${l.resumen}`).join("; ")}`);
   }
   if (tipo.alcance === "acercandose" && tipo.minutos_hasta_llegada != null) {
     partes.push(

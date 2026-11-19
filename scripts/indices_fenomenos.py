@@ -41,12 +41,14 @@ LLUVIA_SEVERA_3H_MM = 50.0
 LLUVIA_RADAR_3H_MM = 30.0        # el radar subestima: cortes del 7/3/2025
 LLUVIA_RADAR_6H_MM = 50.0
 LLUVIA_FUERTE_SOSTENIDA_MIN = 60.0
+LLUVIA_SIGUE_1H_MM = 5.0         # sigue lloviendo en serio
 
 VIENTO_MODERADO_KMH = 30.0
 VIENTO_FUERTE_KMH = 50.0
 VIENTO_SEVERO_KMH = 90.0
 VIENTO_MEDIO_FUERTE_KMH = 40.0   # viento medio (no ráfaga) que ya es fuerte
-LINEA_RAPIDA_KMH = 60.0
+LINEA_RAPIDA_KMH = 60.0          # línea rápida: ráfagas fuertes posibles
+LINEA_SEVERA_KMH = 75.0          # 16/12/2023 (155 km/h de ráfaga): 75-84 km/h en dos frames
 LINEA_COHERENCIA = 0.85
 LINEA_DBZ = 45.0
 
@@ -162,11 +164,19 @@ def lluvia_por_radar(dbz: float | None, *, minutos_intensa: float | None = None,
     if grado >= 3 and intensa >= LLUVIA_FUERTE_SOSTENIDA_MIN:
         grado = 4
         razones.append(f"lluvia fuerte sostenida {intensa:.0f} min (riesgo de anegamientos)")
-    if l3 >= LLUVIA_RADAR_3H_MM or l6 >= LLUVIA_RADAR_6H_MM:
-        grado = 4
-        razones.append(f"acumulado estimado por radar {l3:.0f} mm en 3 h, {l6:.0f} mm en 6 h "
-                       "(el radar suele subestimarlo; riesgo de anegamientos)")
     extra = {"mm_h": round(mm_h, 1)}
+    if l3 >= LLUVIA_RADAR_3H_MM or l6 >= LLUVIA_RADAR_6H_MM:
+        texto = (f"acumulado estimado por radar {l3:.0f} mm en 3 h, {l6:.0f} mm en 6 h "
+                 "(riesgo de anegamientos)")
+        # Solo es "lluvia severa" mientras sigue lloviendo: si ya paró, se
+        # informa el acumulado aparte (13/11/2026: Punta Alta seguía como
+        # "severa" 3 h después de que dejó de llover).
+        if grado >= 2 or l1 >= LLUVIA_SIGUE_1H_MM:
+            grado = 4
+            razones.append(texto)
+        else:
+            extra["acumulado_alto"] = True
+            extra["acumulado_razon"] = texto
     if mm_h >= LLUVIA_SEVERA_MM_H:
         extra["detalle"] = "torrencial"
     if grado == 1 and mm_h < LLUVIA_LLOVIZNA_MM_H:
@@ -251,16 +261,41 @@ def viento_por_modelo(amb: dict[str, Any]) -> dict[str, Any] | None:
                        {"rafaga_kmh": round(rafaga) if rafaga is not None else None})
 
 
+VELOCIDAD_SALTO_MAX = 0.4       # cambio máximo entre frames para creer la velocidad
+
+
+def velocidad_estable(vel: float, previa: float | None) -> bool:
+    """El flujo óptico a veces da saltos (13/11/2026: 35 -> 105 km/h en 10 min,
+    imposible para una tormenta). Solo se cree una velocidad alta si el frame
+    anterior dio algo parecido."""
+    return previa is not None and abs(vel - previa) <= VELOCIDAD_SALTO_MAX * max(vel, previa)
+
+
 def viento_por_radar(*, velocidad: float | None, coherencia: float | None,
-                     dbz_cercano: float | None) -> dict[str, Any] | None:
+                     dbz_cercano: float | None, velocidad_previa: float | None = None,
+                     exigir_estable: bool = False) -> dict[str, Any] | None:
     """Línea rápida y ordenada con núcleos fuertes cerca: firma de viento
-    destructivo en la tormenta (16/12/2023: 75-84 km/h, coherencia 0,94-0,98)."""
+    destructivo en la tormenta (16/12/2023: 75-84 km/h, coherencia 0,94-0,98,
+    en dos frames seguidos). Con exigir_estable, la velocidad tiene que
+    repetirse en el frame anterior; si no, queda como mucho en "fuerte"."""
     vel = numero(velocidad)
     coh = numero(coherencia)
     dbz = numero(dbz_cercano) or 0.0
     if vel is None or coh is None or dbz < LINEA_DBZ:
         return None
-    if vel >= LINEA_RAPIDA_KMH and coh >= LINEA_COHERENCIA:
+    previa = numero(velocidad_previa)
+    estable = velocidad_estable(vel, previa) if exigir_estable else True
+    sostenida = (not exigir_estable) or (previa is not None and previa >= 0.85 * LINEA_SEVERA_KMH)
+    if vel >= LINEA_SEVERA_KMH and coh >= LINEA_COHERENCIA and not (estable and sostenida):
+        return _evaluacion("viento", 3, "radar", [
+            f"tormenta muy rápida ({vel:.0f} km/h) con núcleos de {dbz:.0f} dBZ; "
+            "falta confirmar la velocidad en el próximo frame"],
+            False, {"velocidad_sistema_kmh": round(vel)})
+    if LINEA_RAPIDA_KMH <= vel < LINEA_SEVERA_KMH and coh >= LINEA_COHERENCIA:
+        return _evaluacion("viento", 3, "radar", [
+            f"línea de tormentas avanzando a {vel:.0f} km/h con núcleos de {dbz:.0f} dBZ: "
+            "ráfagas fuertes posibles"], False, {"velocidad_sistema_kmh": round(vel)})
+    if vel >= LINEA_SEVERA_KMH and coh >= LINEA_COHERENCIA:
         return _evaluacion("viento", 4, "radar", [
             f"línea de tormentas avanzando a {vel:.0f} km/h en bloque (coherencia {coh:.2f}) "
             f"con núcleos de {dbz:.0f} dBZ"], False, {"velocidad_sistema_kmh": round(vel)})
@@ -387,6 +422,27 @@ def electrica(rayos: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 # Evaluación completa
 # --------------------------------------------------------------------------
+LLEGADA_PROBABLE = 0.5
+
+
+def descripcion_llegada(conf: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Texto honesto de la llegada según lo que pasó en casos parecidos."""
+    if not isinstance(conf, dict) or not conf.get("casos"):
+        return None
+    casos, llego = int(conf["casos"]), int(conf.get("llego", 0))
+    fraccion = llego / casos
+    de_cada_10 = round(fraccion * 10)
+    texto = f"en casos parecidos llegó {de_cada_10} de cada 10"
+    no_llego = casos - llego
+    if no_llego and conf.get("se_desvio", 0) >= 0.6 * no_llego:
+        texto += "; las demás pasaron al costado"
+    elif no_llego and conf.get("se_deshizo", 0) >= 0.6 * no_llego:
+        texto += "; las demás se deshicieron antes"
+    return {"probable": fraccion >= LLEGADA_PROBABLE, "de_cada_10": de_cada_10,
+            "casos": casos, "texto": texto,
+            "verbo": "llega" if fraccion >= LLEGADA_PROBABLE else "puede llegar"}
+
+
 def frase_fenomeno(clave: str, ev: dict[str, Any]) -> str:
     if clave == "lluvia":
         if ev.get("detalle") == "llovizna":
@@ -413,6 +469,8 @@ def resumen(fenomenos: dict[str, dict[str, Any]]) -> str:
         key=lambda kv: (-kv[1]["grado"], list(NOMBRES).index(kv[0])),
     )
     if not presentes:
+        if fenomenos["lluvia"].get("acumulado_alto"):
+            return "Sin lluvia ahora; lluvia acumulada alta (posibles anegamientos)"
         return "Sin fenómenos"
     partes = [frase_fenomeno(k, v) for k, v in presentes]
     texto = partes[0][0].upper() + partes[0][1:]
@@ -421,6 +479,8 @@ def resumen(fenomenos: dict[str, dict[str, Any]]) -> str:
     # Lo que NO hay, cuando importa para entender la situación.
     if fenomenos["lluvia"]["grado"] == 0:
         texto += ", sin lluvia"
+    if fenomenos["lluvia"].get("acumulado_alto"):
+        texto += "; lluvia acumulada alta (posibles anegamientos)"
     return texto
 
 
@@ -496,7 +556,9 @@ def evaluar(
             granizo_por_radar(dbz_nucleo, amb), sat), amb_sev, dbz_nucleo)
         cercano = max(numero(radar.get("dbz_ciudad")) or 0, numero(radar.get("dbz_30km")) or 0)
         ev_vr = viento_por_radar(velocidad=radar.get("velocidad_kmh"),
-                                 coherencia=radar.get("coherencia"), dbz_cercano=cercano)
+                                 coherencia=radar.get("coherencia"), dbz_cercano=cercano,
+                                 velocidad_previa=radar.get("velocidad_previa_kmh"),
+                                 exigir_estable="velocidad_previa_kmh" in radar)
     else:
         ahora["lluvia"] = lluvia_por_satelite(sat) or dict(nada["lluvia"])
         ahora["granizo"] = dict(nada["granizo"])
@@ -528,20 +590,26 @@ def evaluar(
             "granizo": ajustar_por_ambiente("granizo", granizo_por_radar(dbz_l, amb), amb_sev, dbz_l),
         }
         ev_vl = viento_por_radar(velocidad=radar.get("velocidad_eco_kmh") or radar.get("velocidad_kmh"),
-                                 coherencia=radar.get("coherencia"), dbz_cercano=dbz_l)
+                                 coherencia=radar.get("coherencia"), dbz_cercano=dbz_l,
+                                 velocidad_previa=radar.get("velocidad_eco_previa_kmh"),
+                                 exigir_estable="velocidad_previa_kmh" in radar)
         opciones = [o for o in (ev_vl, mod_viento) if o is not None]
         al_llegar["viento"] = ajustar_por_ambiente(
             "viento", _mejor(*opciones) if opciones else dict(nada["viento"]), amb_sev, dbz_l)
         al_llegar["electrica"] = ev_rayos
         for ev in al_llegar.values():
             ev["minutos"] = round(eta, 1)
+    llegada = descripcion_llegada(radar.get("confiabilidad_llegada")) if al_llegar else None
+    # Una llegada poco confiable se muestra, pero no sube la calificación:
+    # en 30 días de radar la mayoría pasó al costado (13/11/2026).
+    cuenta_llegada = bool(al_llegar) and (llegada is None or llegada["probable"])
 
     # ---------------- Lo más alto de ahora y lo que llega ----------------
     fenomenos = {}
     for k in NOMBRES:
-        candidatos = [ahora[k]] + ([al_llegar[k]] if al_llegar else [])
+        candidatos = [ahora[k]] + ([al_llegar[k]] if cuenta_llegada else [])
         mejor = _mejor(*candidatos)
-        fenomenos[k] = dict(mejor, cuando="al_llegar" if (al_llegar and mejor is al_llegar[k]
+        fenomenos[k] = dict(mejor, cuando="al_llegar" if (cuenta_llegada and mejor is al_llegar[k]
                                                            and mejor["grado"] > ahora[k]["grado"])
                             else "ahora")
 
@@ -552,6 +620,7 @@ def evaluar(
         "al_llegar": al_llegar,
         "resumen_al_llegar": resumen(al_llegar) if al_llegar else None,
         "minutos_hasta_llegada": round(eta, 1) if al_llegar else None,
+        "llegada": llegada,
         "fenomenos": fenomenos,
         "resumen": resumen(fenomenos),
         "calificacion": calificacion(fenomenos),

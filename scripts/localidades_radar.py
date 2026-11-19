@@ -36,6 +36,7 @@ LLUVIA_INTENSA_DBZ = 40.0
 DBZ_TOPE_LLUVIA = 53.0       # por encima suele ser granizo: no suma lluvia
 ECO_LLEGADA_DBZ = nf.UMBRAL_TORMENTA_DBZ
 ECO_FUERTE_DBZ = nf.UMBRAL_FUERTE_DBZ
+ENTORNO_KM = 20.0
 
 
 def cargar_localidades(path: Path = CONFIG) -> list[dict[str, Any]]:
@@ -112,6 +113,16 @@ def llegadas(actual: np.ndarray, flujo: dict[str, Any], localidades: list[dict],
                 r["dbz_al_llegar"] = round(m, 1)
             if r["eta_fuerte_min"] is None and m >= ECO_FUERTE_DBZ:
                 r["eta_fuerte_min"] = t
+    # Velocidad de los ecos >=35 dBZ a <= 20 km de cada localidad (movimiento
+    # local, no el promedio de todo el radar: una línea rápida lejos no es
+    # viento acá).
+    for loc_id, (zona, cx, cy) in zonas.items():
+        entorno = nf.disco((h, w), cx, cy, ENTORNO_KM / km_px) & (np.nan_to_num(actual) >= ECO_LLEGADA_DBZ)
+        if entorno.sum() >= MIN_PIXELES:
+            u = float(flujo["u"][entorno].mean())
+            v = float(flujo["v"][entorno].mean())
+            res[loc_id]["velocidad_local_kmh"] = round(math.hypot(u, v) * km_px * 60.0, 1)
+            res[loc_id]["dbz_entorno_20km"] = round(_pico(actual[entorno]), 1)
     # Velocidad del eco que llega, medida donde está ahora (aguas arriba).
     for loc_id, (zona, cx, cy) in zonas.items():
         eta = res[loc_id]["eta_min"]
