@@ -81,6 +81,12 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
   estaciones, cuáles están al día y si ClimaAR quedó "a ciegas" (ninguna observación al día).
 - Pendiente: enlace de la estación de MeteoPunta en Punta Alta para sumarla como punto de control.
 
+### Datos reales verificados (`config/eventos_verificados.json`)
+- 13/11: Punta Alta 76,7 mm (80,4 en dos días) con **granizo chico**; Bahía 0 a 0,5 mm;
+  Pehuen-Co y Monte Hermoso > 50 mm; Dorrego > 60 mm (MeteoPunta). Confirma el factor 0,4
+  (191 mm del radar crudo × 0,4 = 76 mm). El granizo "posible severo" de ClimaAR fue
+  exagerado: el corte de 60 dBZ crudo es bajo. A corregir con los umbrales de Lucas.
+
 ### Preguntas para Lucas (calibración)
 1. ¿Hubo granizo o tormenta fuerte el 28/10, 4/11, 12/11 o 13/11 en Bahía Blanca? ¿Y en
    Tornquist entre el 30/10 y el 9/11?
