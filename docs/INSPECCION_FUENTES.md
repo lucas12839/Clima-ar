@@ -105,7 +105,8 @@ Objetivo: un sistema confiable que en el futuro pueda dar avisos de tormentas se
 ## 5. Orden de trabajo
 
 1. **Base del satélite:** leer solo la zona de 240 km de GOES-19 y calcular por tormenta seguida
-   por el radar.
+   por el radar. **Terminado (#42)**: además se corrigió la ubicación de los píxeles (los datos
+   salían del Pacífico), se sincronizó por barrido y hora, y se corrige la perspectiva.
 2. **Señales de tormenta severa por satélite:** topes sobresalientes (píxel ≤ −58 °C y ≥ 6,5 °C
    más frío que el yunque a 8 km), altura del tope sobre el nivel de congelamiento (altura 2 km),
    hielo en el tope.

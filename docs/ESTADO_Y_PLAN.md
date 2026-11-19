@@ -102,6 +102,31 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
 2. Viernes 13/11: ¿cuánto llovió exactamente en Punta Alta y en Bahía Blanca, y a qué hora fue
    lo fuerte? (el radar crudo dio ~190 mm en Punta Alta: parece sobreestimar).
 
+## Punto 1 del plan terminado (19/11/2026, 20:15 hora de Argentina) — esperando a Lucas para el 2
+- **Error grave corregido:** las fórmulas que pasan cada píxel de GOES-19 a latitud/longitud
+  estaban mal (signos y senos/cosenos invertidos). Hasta este cambio, los datos "a 240 km de
+  Bahía" salían del océano Pacífico (~32°S 85°O, a ~2200 km): topes del canal 13 (y por
+  localidad), vapor de agua, altura y presión de topes. Rayos y vientos estaban bien (traen
+  su propia latitud/longitud). Ahora: fórmulas oficiales de NOAA, verificadas con el ejemplo
+  del manual y con PROJ. Los estados anteriores a la versión 1.6 no se comparan.
+- **Lectura parcial:** solo se leen los pedazos del archivo de la zona (idéntico a bajar el
+  archivo entero, comprobado píxel por píxel en GitHub). Si falla, baja el archivo completo.
+  Recorte exacto del círculo (antes la ventana era de ~2000 km).
+- **Sincronización:** todos los productos del mismo barrido que el canal 13; hora en que el
+  satélite pasó por Bahía (no el fin del barrido); nunca datos posteriores a la imagen de radar;
+  hasta 20 min antes, si no, no se usa por tormenta.
+- **Por tormenta** (`por_tormenta` en `data/goes19/goes19_state.json`): por cada núcleo del
+  radar, topes (canal 13), vapor (canal 8), altura y presión de topes, enfriamiento (misma
+  tormenta) y rayos de los 10 min que terminan en la imagen de radar. La tormenta se mueve con
+  su desplazamiento hasta la hora del satélite y se corrige la perspectiva (un tope de 10 km
+  aparece ~11 km al sureste).
+- Control de integridad: datos por tormenta solo de tormentas del radar, sincronizados, nunca
+  del futuro. GOES puede faltar sin cortar el ciclo.
+- Herramienta: `herramientas/verificar_goes19.py` (en GitHub, con internet).
+- Prueba real 22:40 UTC (19:40 hora de Argentina): 4 tormentas fuertes con topes de −45 a
+  −49 °C, 9-10 km y 9 a 46 rayos; dos ecos de 55-56 dBZ con cielo despejado y sin rayos
+  (probables ecos no meteorológicos: útil para el punto 4). Estado GOES en 7,5 s.
+
 ## Siguiente — orden de trabajo vigente: `docs/INSPECCION_FUENTES.md` (19/11/2026, 17:00)
 Inspección completa de GOES-19, pronóstico y fuentes, con reglas de confiabilidad y un plan de 11 puntos por prioridad.
 Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. Más estaciones" quedó descartado).
@@ -121,7 +146,7 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   el PR y lo une a main (permiso dado). Probar siempre con `pytest`, `herramientas/emular_workflow.py`
   (con tormenta y sin actividad) y, si cambia la clasificación, el 13/11 con
   `herramientas/simular_evento_real.py` (frames en `data/radar/historico`).
-- Hechos con Claude y en producción: PR #15 a #38 (ayer: plan 1-7 y puntos 1-5; hoy: índices
+- Hechos con Claude y en producción: PR #15 a #42 (#40-41 plan, #42 punto 1) (ayer: plan 1-7 y puntos 1-5; hoy: índices
   por fenómeno, localidades, GOES-19, ambiente, calidad de estaciones, calibración de lluvia,
   estado de fuentes, estación CWOP).
 - Localidades: Bahía Blanca, Ingeniero White, General Daniel Cerri, Punta Alta, Tornquist,
@@ -133,7 +158,8 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - **Próximo trabajo de Lucas:** corrección de los umbrales de tormentas (granizo severo con
   radar crudo está bajo: el 13/11 en Punta Alta cayó granizo chico y ClimaAR dijo "posible
   severo"). Ahora es el punto 4 de `docs/INSPECCION_FUENTES.md`: un puntaje de gravedad por tormenta
-  (radar + satélite + rayos + modelo), después de los puntos 1 a 3.
+  (radar + satélite + rayos + modelo), después de los puntos 1 a 3. **Punto 1 terminado (#42):
+  no avanzar al punto 2 sin que Lucas lo diga.**
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,

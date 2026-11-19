@@ -89,20 +89,32 @@ def resumir(lat: np.ndarray, lon: np.ndarray, minutos_antes: np.ndarray,
     }
 
 
-def _archivos(ahora: datetime) -> list[dict]:
+def _listar(horas_utc: list[datetime]) -> dict[str, dict]:
     prefijo, _ = PRODUCT_SPECS["glm"]
-    vistos = {}
-    for horas in (0, 1):
-        for obj in _list_candidate_objects(prefijo, ahora - timedelta(hours=horas)):
+    vistos: dict[str, dict] = {}
+    for cuando in horas_utc:
+        for obj in _list_candidate_objects(prefijo, cuando):
             meta = _enrich_object_metadata(obj)
             if meta:
                 vistos[meta["key"]] = meta
+    return vistos
+
+
+def _elegir(vistos: dict[str, dict], desde: datetime, hasta: datetime | None = None) -> list[dict]:
+    elegidos = [
+        m for m in vistos.values()
+        if _parse_utc(m["end_time_utc"]) > desde
+        and (hasta is None or _parse_utc(m["end_time_utc"]) <= hasta)
+    ]
+    return sorted(elegidos, key=lambda m: m["end_time_utc"])
+
+
+def _archivos(ahora: datetime) -> list[dict]:
+    vistos = _listar([ahora, ahora - timedelta(hours=1)])
     fin = max((_parse_utc(m["end_time_utc"]) for m in vistos.values()), default=None)
     if fin is None:
         return []
-    desde = fin - timedelta(minutes=VENTANA_MIN)
-    elegidos = [m for m in vistos.values() if _parse_utc(m["end_time_utc"]) > desde]
-    return sorted(elegidos, key=lambda m: m["end_time_utc"])[-MAX_ARCHIVOS:]
+    return _elegir(vistos, fin - timedelta(minutes=VENTANA_MIN))[-MAX_ARCHIVOS:]
 
 
 def _bajar(meta: dict, carpeta: Path) -> Path:
@@ -135,11 +147,7 @@ def _leer(meta: dict, destino: Path, centro: tuple[float, float], radio_km: floa
     return _parse_utc(meta["end_time_utc"]), lat, lon
 
 
-def ventana(ahora: datetime | None = None, centro=(-38.7342, -62.1654), radio_km: float = 240.0) -> dict[str, Any]:
-    ahora = ahora or datetime.now(timezone.utc)
-    archivos = _archivos(ahora)
-    if not archivos:
-        return {"disponible": False, "motivo": "SIN_ARCHIVOS_GLM"}
+def _bajar_y_leer(archivos: list[dict], centro, radio_km) -> list[tuple]:
     res = []
     with tempfile.TemporaryDirectory(prefix="climaar_glm_") as tmp:
         with ThreadPoolExecutor(max_workers=HILOS) as pool:
@@ -149,12 +157,16 @@ def ventana(ahora: datetime | None = None, centro=(-38.7342, -62.1654), radio_km
                 res.append(_leer(meta, fut.result(), centro, radio_km))
             except Exception:
                 continue
+    return res
+
+
+def _resumen_ventana(res: list[tuple]) -> dict[str, Any]:
     if not res:
         return {"disponible": False, "motivo": "NO_SE_PUDO_LEER_GLM"}
     fin = max(t for t, _, _ in res)
     inicio = min(t for t, _, _ in res) - timedelta(seconds=20)
-    lat = np.concatenate([a for _, a, _ in res]) if res else np.zeros(0)
-    lon = np.concatenate([b for _, _, b in res]) if res else np.zeros(0)
+    lat = np.concatenate([a for _, a, _ in res])
+    lon = np.concatenate([b for _, _, b in res])
     edades = np.concatenate([np.full(a.size, (fin - t).total_seconds() / 60.0) for t, a, _ in res])
     # Cobertura real: si faltan archivos, la tasa se calcula sobre lo leído.
     cobertura = min(VENTANA_MIN, len(res) / 3.0, (fin - inicio).total_seconds() / 60.0)
@@ -162,6 +174,59 @@ def ventana(ahora: datetime | None = None, centro=(-38.7342, -62.1654), radio_km
     salida.update({
         "fin_ventana_utc": fin.isoformat().replace("+00:00", "Z"),
         "archivos_leidos": len(res),
-        "archivos_esperados": len(archivos),
     })
+    return salida
+
+
+def _rayos_radar(res: list[tuple], frame: datetime, minutos: float) -> dict[str, Any]:
+    """Rayos de los `minutos` que terminan en la imagen de radar, con su edad
+    respecto de esa imagen (para atribuirlos a cada tormenta)."""
+    desde = frame - timedelta(minutes=minutos)
+    elegidos = [(t, a, b) for t, a, b in res if desde < t <= frame]
+    if not elegidos:
+        return {"cobertura_min": 0.0, "minutos": np.zeros(0), "latitude": np.zeros(0),
+                "longitude": np.zeros(0), "archivos": 0}
+    return {
+        "cobertura_min": min(minutos, len(elegidos) / 3.0),
+        "minutos": np.concatenate([np.full(a.size, (frame - t).total_seconds() / 60.0) for t, a, _ in elegidos]),
+        "latitude": np.concatenate([a for _, a, _ in elegidos]),
+        "longitude": np.concatenate([b for _, _, b in elegidos]),
+        "archivos": len(elegidos),
+    }
+
+
+def ventana_y_rayos_radar(ahora: datetime | None = None, centro=(-38.7342, -62.1654), radio_km: float = 240.0,
+                          frame_radar: datetime | None = None,
+                          minutos_radar: float = 10.0) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Una sola descarga para dos usos:
+
+    1. ventana: últimos 20 min hasta el archivo más reciente (por localidad,
+       como siempre: con el radar atrasado los rayos siguen siendo de ahora);
+    2. rayos_radar: los 10 min que terminan en la imagen de radar, para
+       atribuir rayos a cada tormenta en el mismo instante que el radar.
+    """
+    ahora = ahora or datetime.now(timezone.utc)
+    horas = [ahora, ahora - timedelta(hours=1)]
+    if frame_radar is not None:
+        horas += [frame_radar, frame_radar - timedelta(hours=1)]
+    vistos = _listar(sorted({h.replace(minute=0, second=0, microsecond=0) for h in horas}, reverse=True))
+    fin = max((_parse_utc(m["end_time_utc"]) for m in vistos.values()), default=None)
+    if fin is None:
+        return {"disponible": False, "motivo": "SIN_ARCHIVOS_GLM"}, None
+    recientes = _elegir(vistos, fin - timedelta(minutes=VENTANA_MIN))[-MAX_ARCHIVOS:]
+    del_radar = []
+    if frame_radar is not None:
+        del_radar = _elegir(vistos, frame_radar - timedelta(minutes=minutos_radar), frame_radar)
+    union = {m["key"]: m for m in recientes + del_radar}
+    res = _bajar_y_leer(sorted(union.values(), key=lambda m: m["end_time_utc"]), centro, radio_km)
+    fines_recientes = {_parse_utc(m["end_time_utc"]) for m in recientes}
+    salida = _resumen_ventana([r for r in res if r[0] in fines_recientes])
+    if "archivos_leidos" in salida:
+        salida["archivos_esperados"] = len(recientes)
+    rayos = _rayos_radar(res, frame_radar, minutos_radar) if frame_radar is not None else None
+    return salida, rayos
+
+
+def ventana(ahora: datetime | None = None, centro=(-38.7342, -62.1654), radio_km: float = 240.0) -> dict[str, Any]:
+    salida, _ = ventana_y_rayos_radar(ahora, centro, radio_km)
     return salida
