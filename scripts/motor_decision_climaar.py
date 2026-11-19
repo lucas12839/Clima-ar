@@ -405,6 +405,9 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
         )
         ev["nombre"] = d.get("nombre", loc_id)
         ev["velocidad_local_kmh"] = finite(lleg.get("velocidad_local_kmh"))
+        ev["dbz_entorno_20km"] = finite(lleg.get("dbz_entorno_20km"))
+        ev["tendencia"] = tendencia(ev["dbz_entorno_20km"],
+                                    finite((previas.get(loc_id) or {}).get("dbz_entorno_20km")))
         ev["velocidad_eco_kmh"] = finite(lleg.get("velocidad_eco_kmh"))
         ev["acumulado_radar_mm"] = {"1h": d.get("lluvia_1h_mm"), "3h": d.get("lluvia_3h_mm"),
                                     "6h": d.get("lluvia_6h_mm")}
@@ -412,6 +415,20 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
             ev["estaciones"] = sup_locs[loc_id].get("nombres")
         salida[loc_id] = ev
     return salida
+
+
+TENDENCIA_DBZ = 5.0
+
+
+def tendencia(actual, previo):
+    """Cómo cambian las tormentas a <= 20 km entre un ciclo y el siguiente."""
+    if actual is None or previo is None:
+        return None
+    if actual - previo >= TENDENCIA_DBZ:
+        return "se intensifican"
+    if previo - actual >= TENDENCIA_DBZ:
+        return "se debilitan"
+    return "estables"
 
 
 def resumen_regional(localidades):
