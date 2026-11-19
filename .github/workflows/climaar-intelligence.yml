@@ -180,6 +180,13 @@ jobs:
           python scripts/estaciones/validar_red_observaciones.py
           test -s data/ia/estaciones/red_observaciones_estado.json
 
+      - name: Señales de superficie de las estaciones (lluvia, ráfagas, frente de ráfagas)
+        run: |
+          set -euo pipefail
+          # Nunca corta el ciclo: si falla, la clasificación sigue sin estaciones.
+          python scripts/estaciones/senales_superficie.py \
+            || echo "::warning::No se pudieron calcular las señales de superficie."
+
       - name: Nowcast por flujo óptico (física; da el movimiento al adaptador)
         run: |
           set -euo pipefail

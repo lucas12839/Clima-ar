@@ -63,6 +63,51 @@ RAYOS_MUCHOS = 10
 RAYO_CERCA_KM = 30.0
 LLEGADA_MAX_MIN = 60.0
 
+# Mediciones de estaciones en Bahía Blanca (no son estimaciones: suben el nivel).
+RAFAGA_FUERTE_KMH = 70.0
+VIENTO_FUERTE_KMH = 50.0
+LLUVIA_MEDIDA_1H_MM = 30.0
+LLUVIA_MEDIDA_3H_MM = 50.0
+
+
+def nivel_por_lluvia_medida(mm_1h: float | None) -> int:
+    """Intensidad de lluvia medida en 1 h (mm/h) -> nivel de la escala."""
+    if mm_1h is None or mm_1h <= 0:
+        return 0
+    if mm_1h < 0.5:
+        return 1
+    if mm_1h < 2.5:
+        return 2
+    if mm_1h < 10:
+        return 3
+    return 4
+
+
+def amenazas_medidas(superficie: dict[str, Any]) -> tuple[dict[str, dict], list[str]]:
+    """Amenazas confirmadas por estaciones de Bahía Blanca."""
+    amenazas, razones = {}, []
+    rafaga = numero(superficie.get("rafaga_max_kmh"))
+    viento = numero(superficie.get("viento_max_kmh"))
+    l1 = numero(superficie.get("lluvia_1h_mm"))
+    l3 = numero(superficie.get("lluvia_3h_mm"))
+    if (rafaga is not None and rafaga >= RAFAGA_FUERTE_KMH) or (viento is not None and viento >= VIENTO_FUERTE_KMH):
+        medido = f"ráfaga {rafaga:.0f} km/h" if rafaga is not None and rafaga >= RAFAGA_FUERTE_KMH else f"viento {viento:.0f} km/h"
+        amenazas["viento"] = {"indicio": True, "razon": f"{medido} medido en Bahía Blanca", "fuente": "estaciones"}
+    if (l1 is not None and l1 >= LLUVIA_MEDIDA_1H_MM) or (l3 is not None and l3 >= LLUVIA_MEDIDA_3H_MM):
+        amenazas["inundacion"] = {
+            "indicio": True,
+            "razon": f"lluvia medida en Bahía Blanca: {l1 or 0:.0f} mm en 1 h, {l3 or 0:.0f} mm en 3 h",
+            "fuente": "estaciones",
+        }
+    if superficie.get("frente_de_rafagas"):
+        razones.append(
+            "frente de ráfagas en " + ", ".join(superficie.get("con_frente_de_rafagas") or [])
+            + " (salto de presión y caída de temperatura)"
+        )
+    if l1:
+        razones.append(f"lluvia medida: {l1:.1f} mm en la última hora")
+    return amenazas, razones
+
 
 def numero(valor: Any, defecto: float | None = None) -> float | None:
     try:
@@ -135,19 +180,28 @@ def clasificar(
     rayos: dict[str, Any] | None = None,
     ambiente: dict[str, Any] | None = None,
     radar_disponible: bool = True,
+    superficie: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     rayos = rayos or {}
     ambiente = ambiente or {}
     convectivo, electrica_alta, razones_conv = señales_convectivas(rayos, ambiente)
 
+    superficie = superficie or {}
+    medidas, razones_sup = amenazas_medidas(superficie)
+
     if not radar_disponible:
-        base = tipo(5 if convectivo else 0)
+        nivel = max(5 if convectivo else 0, nivel_por_lluvia_medida(numero(superficie.get("lluvia_1h_mm"))))
+        if medidas:
+            nivel = 8
+        base = tipo(nivel)
+        for a in medidas.values():
+            a["en_calibracion"] = False
         return {
             **base,
             "alcance": "sin_radar",
             "radar_disponible": False,
-            "amenazas": {},
-            "razones": ["Sin radar reciente: solo satélite y ambiente."] + razones_conv,
+            "amenazas": medidas,
+            "razones": ["Sin radar reciente: satélite, estaciones y ambiente."] + razones_sup + razones_conv,
         }
 
     ahora = nivel_por_reflectividad(dbz_ciudad, convectivo)
@@ -199,6 +253,16 @@ def clasificar(
 
     for clave, amenaza in amenazas.items():
         amenaza["en_calibracion"] = not AMENAZAS_CALIBRADAS.get(clave, False)
+    # Lo medido por estaciones reemplaza al indicio del radar: está confirmado.
+    for clave, amenaza in medidas.items():
+        amenazas[clave] = dict(amenaza, en_calibracion=False)
+    if superficie.get("frente_de_rafagas") and "viento" not in amenazas:
+        amenazas["viento"] = {
+            "indicio": True,
+            "razon": "frente de ráfagas medido (salto de presión y caída de temperatura)",
+            "fuente": "estaciones",
+            "en_calibracion": True,
+        }
     calibradas = {k for k, v in amenazas.items() if not v["en_calibracion"]}
 
     nivel = max(ahora, llega)
@@ -246,7 +310,7 @@ def clasificar(
         ),
         "region": region,
         "amenazas": amenazas,
-        "razones": razones + [r for a in amenazas.values() for r in [a["razon"]]] + razones_conv,
+        "razones": razones + [a["razon"] for a in amenazas.values()] + razones_sup + razones_conv,
     })
     return salida
 
