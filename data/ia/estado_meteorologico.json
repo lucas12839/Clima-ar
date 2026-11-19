@@ -1,7 +1,7 @@
 {
   "version": "1.1.0",
   "motor": "ClimaAR Intelligence",
-  "actualizado_utc": "2026-11-19T08:55:44.832533+00:00",
+  "actualizado_utc": "2026-11-19T09:02:43.283430+00:00",
   "ubicacion": {
     "ciudad": "Bahia Blanca",
     "latitud": -38.71,
@@ -14,75 +14,39 @@
     "sazb_valido": false,
     "sazb_disponible": true,
     "sazb_fresco": false,
-    "sazb_edad_minutos": 55.7,
+    "sazb_edad_minutos": 62.7,
     "puntos_ecmwf_validos": 9
   },
   "radar": {
     "disponible": true,
     "version": "RMA10-operativo-2.1",
     "fuente": "SMN RMA10",
-    "actualizado": "2026-11-19T08:40:00Z",
-    "frame_actual_utc": "2026-11-19T08:40:00Z",
+    "actualizado": "2026-11-19T08:50:00Z",
+    "frame_actual_utc": "2026-11-19T08:50:00Z",
     "frames_analizados": 41,
     "tiles_ok": true,
-    "actividad": true,
-    "area_px": 20.0,
-    "distancia_km": 24.39,
+    "actividad": false,
+    "area_px": 0,
+    "distancia_km": null,
     "fortalecimiento": "estable",
     "cambio_area_pct": 0.0,
-    "velocidad_kmh": 0.0,
+    "velocidad_kmh": null,
     "direccion": null,
     "direccion_grados": null,
     "movimiento_hacia_bahia": false,
     "eta_minutos": null,
     "proyecciones": {},
-    "confianza_movimiento": 0,
-    "nucleos": [
-      {
-        "x": 271.35,
-        "y": 248.0,
-        "pixeles": 20,
-        "ancho": 9,
-        "alto": 9,
-        "intensidad": 5,
-        "intensidad_max": 5,
-        "intensidad_promedio": 3.1,
-        "nivel_intensidad": "FUERTE",
-        "coherencia_espacial": 0.247,
-        "estado": "DINAMICO",
-        "dbz": {
-          "min": -15.0,
-          "max": 51.713,
-          "media": 34.588,
-          "p95": 51.713,
-          "p99": 51.713,
-          "pixeles": 19
-        },
-        "confianza": 0.86,
-        "nucleo_id": 1,
-        "track_id": 2,
-        "track_match_distance_px": 0.0,
-        "movimiento": {
-          "dx_px": 0.0,
-          "dy_px": 0.0,
-          "velocidad_px_min": 0.0,
-          "direccion_grados": null,
-          "tendencia": "estable",
-          "fuente_movimiento": "seguimiento",
-          "cambio_area_pct": 0.0,
-          "confianza_track": 0
-        }
-      }
-    ],
-    "nucleo_principal_id": 2,
-    "estado": "actividad_detectada"
+    "confianza_movimiento": 0.0,
+    "nucleos": [],
+    "nucleo_principal_id": null,
+    "estado": "sin_precipitacion"
   },
   "observacion_sazb": {
     "disponible": true,
     "fuente": "Aviation Weather Center",
     "estacion": "SAZB",
     "obsTime_utc": "2026-11-19T08:00:00+00:00",
-    "edad_minutos": 54.9,
+    "edad_minutos": 58.7,
     "temperatura_c": 12,
     "punto_rocio_c": 12,
     "viento_kt": 8,
@@ -123,7 +87,7 @@
     "freezing_level_height": null,
     "lightning_density": null,
     "observacion_sazb_utc": "2026-11-19T08:00:00+00:00",
-    "observacion_sazb_edad_minutos": 55.74720848333333,
+    "observacion_sazb_edad_minutos": 62.721390033333336,
     "observacion_sazb_fresca": false,
     "modelo_ecmwf_viento_10m_kmh": 10.3,
     "modelo_ecmwf_direccion_10m": 205.0,
@@ -4946,9 +4910,12 @@
       }
     ]
   },
-  "estado": "operativo",
+  "estado": "operativo_con_ecmwf_anterior",
   "ecmwf_respaldo": {
-    "usado": false
+    "usado": true,
+    "motivo": "ECMWF no pudo obtener el grupo 1/3: HTTPSConnectionPool(host='api.open-meteo.com', port=443): Read timed out. (read timeout=45)",
+    "edad_minutos": 7.0,
+    "actualizado_utc": "2026-11-19T08:55:44.832533+00:00"
   },
   "proxima_etapa": "Motor IA de evolucion, trayectoria, fortalecimiento, debilitamiento, ETA, duracion y peligros."
 }
