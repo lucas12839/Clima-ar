@@ -49,6 +49,9 @@ jobs:
       # DEPENDENCIAS
       # ============================================================
 
+      - name: Marcar inicio del run
+        run: echo "CLIMAAR_INICIO_RUN_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
       - name: Instalar dependencias
         run: |
           set -euo pipefail
@@ -61,15 +64,21 @@ jobs:
       # PLAYWRIGHT
       # ============================================================
 
-      - name: Instalar Chromium para Playwright
+      - name: Preparar navegador (Chrome del runner o Chromium)
+        timeout-minutes: 6
         run: |
           set -euo pipefail
 
-          python -m pip show playwright
-          sudo apt-get update
-          python -m playwright install-deps chromium \
-            || sudo "$(command -v python)" -m playwright install-deps chromium
-          python -m playwright install chromium
+          # Chrome viene preinstalado en ubuntu-latest: usarlo evita
+          # instalar Chromium + dependencias en cada frame (a veces 8-9 min).
+          if command -v google-chrome >/dev/null 2>&1; then
+            google-chrome --version
+            echo "CLIMAAR_CHROMIUM_CHANNEL=chrome" >> "$GITHUB_ENV"
+            echo "Usando Chrome del runner."
+          else
+            echo "Chrome no disponible: instalando Chromium de Playwright."
+            python -m playwright install --with-deps chromium
+          fi
 
       # ============================================================
       # DIRECTORIOS
