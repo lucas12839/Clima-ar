@@ -79,3 +79,19 @@ confirmados de ese período y los pluviómetros de las estaciones.
 
 La máscara de clutter suma un segundo criterio (≥45 dBZ en más del 5 % de los frames):
 en frames sin lluvia sobre la ciudad, los ecos ≥45 dBZ a ≤30 km bajaron de 37 a 14.
+
+## Simulación de la cadena completa "como si estuviera pasando" (19/11/2026)
+
+`herramientas/simular_evento_real.py` pasa cada imagen del evento por los
+pasos reales de los workflows (radar e Intelligence, con validaciones), con
+el reloj puesto 7 min después de la hora del radar. Las 173 imágenes de los
+tres temporales pasaron todos los pasos sin errores.
+
+| Temporal | Se acerca | Sobre la ciudad | Amenaza / indicio | Máximo |
+|---|---|---|---|---|
+| Inundación 7/3/2025 | 02:31 UTC | 01:46 UTC | indicio de inundación 09:26 UTC | Tormenta fuerte (06:43) |
+| Viento 16/12/2023 | 18:52 UTC | 19:19 UTC (línea) | indicio de viento 18:43 UTC (36 min antes) | Tormenta fuerte (21:05) |
+| Granizo 2/2/2025 | 17:32 UTC | 17:49 UTC | granizo 17:58 UTC | Potencialmente severa (17:58) |
+
+Limitaciones: sin estaciones ni rayos GOES de esos días; el ambiente ECMWF es
+el del día de la prueba corrido a la fecha del evento.
