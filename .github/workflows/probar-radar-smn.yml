@@ -87,6 +87,17 @@ jobs:
             python -m playwright install --with-deps chromium
           fi
 
+      - name: PRUEBA - captura solo-detectar con el código de esta rama
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin prueba-captura-chrome
+          git worktree add /tmp/rama FETCH_HEAD
+          cd /tmp/rama
+          python scraper/capturar_radar_smn.py --solo-detectar --salida /tmp/candidatos.json
+          python -c "import json;d=json.load(open('/tmp/candidatos.json'));print(json.dumps(d)[:800])"
+          echo "PRUEBA OK: se detiene el workflow antes de tocar datos."
+          exit 1
+
       # ============================================================
       # DIRECTORIOS
       # ============================================================
