@@ -31,6 +31,23 @@ BAHIA_LAT = -38.7196
 BAHIA_LON = -62.2724
 
 RADAR_RANGE_KM = 240.0
+ALCANCE_CONFIABLE_KM = 150.0
+
+
+def confianza_alcance(distancia_radar_km):
+    """1.0 hasta 150 km; baja a 0.5 en 240 km.
+
+    Lejos del radar el haz pasa alto (a 240 km, ~4-5 km sobre el suelo):
+    se ve solo la parte alta de la tormenta y se subestima la intensidad.
+    """
+    try:
+        d = float(distancia_radar_km)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(d) or d <= ALCANCE_CONFIABLE_KM:
+        return 1.0
+    frac = min((d - ALCANCE_CONFIABLE_KM) / (RADAR_RANGE_KM - ALCANCE_CONFIABLE_KM), 1.0)
+    return round(max(0.5, 1.0 - 0.5 * frac), 3)
 EARTH_RADIUS_KM = 6371.0088
 
 TOWARD_BAHIA_MAX_ERROR_DEG = 45.0
@@ -514,6 +531,7 @@ def process_nucleus(nucleo, index, width, height):
         "dentro_alcance_nominal": bool(
             distance_radar_km <= RADAR_RANGE_KM + 0.5
         ),
+        "confianza_alcance": confianza_alcance(distance_radar_km),
         "distancia_bahia_km": round(distance_bahia, 2),
         "rumbo_bahia_grados": round(bearing_bahia, 1),
     }
@@ -754,6 +772,8 @@ def main():
         nowcast["nucleo_principal_fuente"] = "seguimiento_temporal"
 
         nowcast["distancia_km"] = geo["distancia_bahia_km"]
+        nowcast["distancia_radar_km"] = geo["distancia_radar_km"]
+        nowcast["confianza_alcance"] = geo["confianza_alcance"]
         nowcast["distancia_tipo"] = (
             "georreferenciada_por_nucleo_validada"
         )

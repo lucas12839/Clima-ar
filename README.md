@@ -18,7 +18,7 @@ SINARAME publica un frame (cada ~10 min; a veces con 30 min o más de atraso)
               → validación de integridad
 ```
 
-Entre frames, la IA sigue corriendo con el último radar válido y marca cuántos minutos tiene.
+Entre frames, la IA sigue corriendo con el último radar válido y marca cuántos minutos tiene: hasta 30 min es normal, de 30 a 60 min baja la confianza y con más de 60 min no se proyectan celdas (solo riesgo por ambiente). A más de 150 km del radar la confianza también baja.
 
 ## Estructura
 
@@ -30,6 +30,7 @@ Entre frames, la IA sigue corriendo con el último radar válido y marca cuánto
 | `seguimiento_temporal.py` | Seguimiento de celdas entre frames |
 | `scripts/adaptar_rma10_intelligence.py`, `scripts/georreferenciar_rma10.py` | Nowcast y georreferenciación |
 | `scripts/prediccion_evolucion.py`, `scripts/conectar_evolucion_trayectoria.py` | Evolución y trayectoria a 5/10/20/30 min |
+| `scripts/nowcast_flujo_optico.py` | Nowcast por flujo óptico a 10/20/30/60 min y llegada a Bahía Blanca (ver `docs/VALIDACION_NOWCAST.md`) |
 | `scripts/prediccion_rma10_ml.py` | Geometría por track (sin modelo; mantiene el contrato del archivo) |
 | `scripts/meteorologia_fusion.py`, `scripts/smn_observaciones.py`, `scripts/estaciones/` | Datos meteorológicos y estaciones |
 | `goes19/` | Datos satelitales GOES-19 |

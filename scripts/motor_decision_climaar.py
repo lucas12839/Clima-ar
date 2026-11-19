@@ -9,6 +9,9 @@ PRED = BASE / "data/radar/seguimiento/prediccion_evolucion.json"
 INTEL = BASE / "data/ia/inteligencia_tormenta.json"
 METEO = BASE / "data/ia/estado_meteorologico.json"
 OUT = BASE / "data/ia/resultado_final.json"
+FLUJO = BASE / "data/radar/nowcast_flujo.json"
+FLUJO_DBZ_MIN = 40.0
+FLUJO_CONF_MIN = 0.5
 
 VERSION = "ClimaAR-final-3.0"
 VALID_SEVERITIES = {"verde", "amarillo", "naranja", "rojo"}
@@ -230,6 +233,49 @@ def calibrated_visual_evidence(intel):
     return (max(scores) if scores else 0.0), bool(scores)
 
 
+def optical_flow_evidence(flujo, nowcast):
+    """Evidencia del nowcast por flujo óptico (física, sin entrenamiento).
+
+    Solo cuenta si está sincronizado con el radar del nowcast y pronostica
+    un eco >=35 dBZ entrando en un radio de 10 km de Bahía Blanca dentro de
+    60 min. Pesa más cuanto antes llega y si llega con >=45 dBZ.
+    Devuelve (score 0..1, incorporada, resumen).
+    """
+    resumen = {"disponible": False}
+    if not isinstance(flujo, dict) or flujo.get("disponible") is not True:
+        if isinstance(flujo, dict):
+            resumen["motivo"] = flujo.get("motivo")
+        return 0.0, False, resumen
+    frame = nowcast.get("frame_actual_utc") if isinstance(nowcast, dict) else None
+    if timestamp_key(flujo.get("radar_timestamp")) != timestamp_key(frame):
+        resumen["motivo"] = "DESINCRONIZADO"
+        return 0.0, False, resumen
+
+    bahia = flujo.get("bahia_blanca") or {}
+    conf = clamp(flujo.get("confianza", 0.0))
+    eta = finite(bahia.get("eta_tormenta_desde_ahora_min"))
+    dbz = finite(bahia.get("dbz_al_llegar"), 0.0)
+    resumen = {
+        "disponible": True,
+        "confianza": round(conf, 3),
+        "eta_tormenta_min": eta,
+        "dbz_al_llegar": bahia.get("dbz_al_llegar"),
+        "velocidad_kmh": (flujo.get("movimiento") or {}).get("velocidad_media_kmh"),
+        "direccion_hacia_grados": (flujo.get("movimiento") or {}).get("direccion_hacia_grados"),
+    }
+    # Validación retrospectiva (12/10-19/11/2026): las llegadas pronosticadas
+    # de 35-39 dBZ fueron casi todas falsas alarmas (lluvia en el umbral);
+    # las reales llegaron con >=40 dBZ. Solo cuenta como evidencia de
+    # tormenta con >=40 dBZ y confianza >=0.5.
+    resumen["umbral_evidencia_dbz"] = FLUJO_DBZ_MIN
+    if eta is None or eta > 60 or dbz < FLUJO_DBZ_MIN or conf < FLUJO_CONF_MIN:
+        return 0.0, False, resumen
+    cercania = clamp(1.0 - eta / 90.0)
+    fuerza = 1.0 if dbz >= 45 else 0.7
+    score = clamp(conf * cercania * fuerza)
+    return score, score > 0, resumen
+
+
 def main():
     radar = load(RADAR)
     pred = load(PRED)
@@ -247,6 +293,14 @@ def main():
     visual_score, visual_incorporated = calibrated_visual_evidence(intel)
     if visual_incorporated:
         ia_score = clamp(0.75 * ia_score + 0.25 * visual_score)
+
+    # Flujo óptico: solo puede subir la señal (una llegada pronosticada).
+    flujo_score, flujo_incorporado, flujo_resumen = optical_flow_evidence(
+        load(FLUJO) if FLUJO.exists() else {},
+        radar.get("nowcast", {}),
+    )
+    if flujo_incorporado:
+        ia_score = max(ia_score, clamp(0.75 * ia_score + 0.25 * flujo_score), flujo_score * 0.6)
 
     model_conf = clamp(
         intel.get("confianza_modelo", intel.get("confianza", 0.0))
@@ -309,6 +363,16 @@ def main():
     if not isinstance(threat, dict):
         threat = {}
     threatens = threat.get("amenaza") is True
+    # Una llegada pronosticada por flujo óptico en <=30 min con confianza
+    # razonable también es amenaza para la ciudad.
+    eta_flujo = finite(flujo_resumen.get("eta_tormenta_min"))
+    if (
+        flujo_incorporado
+        and eta_flujo is not None
+        and eta_flujo <= 30
+        and flujo_resumen.get("confianza", 0) >= 0.5
+    ):
+        threatens = True
 
     # Un sistema que no amenaza a Bahia Blanca no puede presentarse como
     # estado fuerte/muy fuerte para la ciudad solo por su eco radar.
@@ -385,7 +449,10 @@ def main():
                 "ia_confianza": model_conf,
                 "ia_visual_temporal_incorporada": visual_incorporated,
                 "ia_visual_temporal_score": round(visual_score, 4),
+                "flujo_optico_incorporado": flujo_incorporado,
+                "flujo_optico_score": round(flujo_score, 4),
             },
+            "flujo_optico": flujo_resumen,
             "regla": (
                 "La intensidad RMA10 es una señal; la severidad meteorológica "
                 "proviene de Intelligence/IA/histórico y no del color radar."
