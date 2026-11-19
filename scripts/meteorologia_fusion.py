@@ -893,6 +893,34 @@ def append_historico(radar, sazb, actual, calidad):
 # MAIN
 # ============================================================
 
+ECMWF_RESPALDO_MAX_MIN = 180.0
+
+
+def cargar_respaldo_ecmwf(motivo):
+    """Último ambiente ECMWF guardado, si es reciente. (ambiente, info) o (None, info)."""
+    datos = load_json(AMBIENTE_FILE)
+    puntos = datos.get("puntos") if isinstance(datos, dict) else None
+    texto = str((datos or {}).get("actualizado_utc") or "").strip()
+    info = {"usado": False, "motivo": motivo[:200]}
+    if not puntos or not texto:
+        return None, info
+    if texto.endswith("Z"):
+        texto = texto[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(texto)
+    except ValueError:
+        return None, info
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    edad = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+    info["edad_minutos"] = round(edad, 1)
+    info["actualizado_utc"] = (datos or {}).get("actualizado_utc")
+    if edad < 0 or edad > ECMWF_RESPALDO_MAX_MIN:
+        return None, info
+    info["usado"] = True
+    return puntos, info
+
+
 def main():
     print("============================================")
     print("ClimaAR Intelligence")
@@ -933,18 +961,30 @@ def main():
 
     print("Consultando ECMWF...")
 
+    respaldo_ecmwf = None
+
     try:
         ecmwf_raw = consultar_ecmwf()
 
+        print(
+            f"ECMWF: {len(ecmwf_raw)} puntos recibidos"
+        )
+
+        ambiente = construir_ambiente(ecmwf_raw)
+
     except Exception as exc:
+        # Open-Meteo a veces no responde (timeouts). Antes eso cortaba todo
+        # el ciclo de Intelligence. Ahora se usa el último pronóstico ECMWF
+        # válido (cubre 12 h) si tiene menos de ECMWF_RESPALDO_MAX_MIN.
         print(f"ERROR ECMWF: {exc}")
-        return 1
-
-    print(
-        f"ECMWF: {len(ecmwf_raw)} puntos recibidos"
-    )
-
-    ambiente = construir_ambiente(ecmwf_raw)
+        ambiente, respaldo_ecmwf = cargar_respaldo_ecmwf(str(exc))
+        if ambiente is None:
+            print("ERROR: sin pronóstico ECMWF de respaldo utilizable.")
+            return 1
+        print(
+            "AVISO: se usa el pronóstico ECMWF anterior "
+            f"({respaldo_ecmwf['edad_minutos']} min)."
+        )
 
     actual_ecmwf = obtener_actual_centro(ambiente)
 
@@ -986,7 +1026,8 @@ def main():
             "ventana_horas": 12,
             "puntos": ambiente,
         },
-        "estado": "operativo",
+        "estado": "operativo" if respaldo_ecmwf is None else "operativo_con_ecmwf_anterior",
+        "ecmwf_respaldo": respaldo_ecmwf or {"usado": False},
         "proxima_etapa": (
             "Motor IA de evolucion, trayectoria, "
             "fortalecimiento, debilitamiento, ETA, "
@@ -999,16 +1040,18 @@ def main():
         fusion,
     )
 
-    save_json(
-        AMBIENTE_FILE,
-        {
-            "version": VERSION,
-            "actualizado_utc": timestamp,
-            "modelo": "ECMWF IFS HRES",
-            "ventana_horas": 12,
-            "puntos": ambiente,
-        },
-    )
+    # Con el pronóstico de respaldo no se reescribe: conserva su hora real.
+    if respaldo_ecmwf is None:
+        save_json(
+            AMBIENTE_FILE,
+            {
+                "version": VERSION,
+                "actualizado_utc": timestamp,
+                "modelo": "ECMWF IFS HRES",
+                "ventana_horas": 12,
+                "puntos": ambiente,
+            },
+        )
 
     append_historico(
         radar,
