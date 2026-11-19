@@ -16,7 +16,7 @@ class TopesTest(unittest.TestCase):
         lon = np.array([-62.27, -62.30, -62.27])
         with tempfile.TemporaryDirectory() as tmp:
             previo = Path(tmp) / "s.json"
-            previo.write_text(json.dumps({"products": {"abi_c13": {
+            previo.write_text(json.dumps({"version": "1.6", "products": {"abi_c13": {
                 "source": {"end_time_utc": "2026-11-19T10:00:00Z"},
                 "por_localidad": {"bahia_blanca": {"p10_c_30km": -30.0}}}}}))
             r = tl.por_localidad(np.array([223.15, 233.15, 290.0]), lat, lon,

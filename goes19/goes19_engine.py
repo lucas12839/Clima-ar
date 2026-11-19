@@ -273,3 +273,42 @@ def discover_latest_products(
         now=now,
         hours_back=hours_back,
     )
+
+
+def product_object_for_scan(
+    product: str,
+    start_time_utc: str,
+    now: datetime | None = None,
+    tolerance_seconds: float = 2.0,
+) -> dict[str, Any] | None:
+    """Archivo del producto que corresponde al MISMO barrido del satélite
+    (mismo inicio de escaneo). Sirve para no mezclar imágenes de distintos
+    momentos entre canales y productos."""
+
+    if product not in PRODUCT_SPECS:
+        raise ValueError(f"Producto GOES no soportado: {product}")
+
+    reference_time = _normalise_reference_time(now)
+    target = _parse_utc(start_time_utc)
+    product_prefix, key_contains = PRODUCT_SPECS[product]
+
+    for when in (target, target + timedelta(minutes=10)):
+        for raw_obj in _list_candidate_objects(product_prefix, when):
+            key = raw_obj.get("key", "")
+            if key_contains and key_contains not in key:
+                continue
+            obj = _enrich_object_metadata(raw_obj)
+            if obj is None:
+                continue
+            try:
+                start = _parse_utc(obj["start_time_utc"])
+                end = _parse_utc(obj["end_time_utc"])
+            except (TypeError, ValueError, KeyError):
+                continue
+            if end > reference_time:
+                continue
+            if abs((start - target).total_seconds()) <= tolerance_seconds:
+                obj["product"] = product
+                obj["product_prefix"] = product_prefix
+                return obj
+    return None

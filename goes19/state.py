@@ -9,18 +9,24 @@ import numpy as np
 import requests
 import xarray as xr
 
-from .goes19_engine import latest_product_object
+from . import por_tormenta
+from .goes19_engine import latest_product_object, product_object_for_scan
 from .geospatial import (
     RADAR_LAT,
     RADAR_LON,
     RADAR_RANGE_KM,
-    prepare_goes_domain,
+    prepare_goes_domain_multi,
 )
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_FILE = BASE_DIR / "data" / "goes19" / "goes19_state.json"
 RADAR_TIMESTAMP_FILE = BASE_DIR / "data" / "radar" / "radar_timestamp.txt"
+RADAR_NOWCAST_FILE = BASE_DIR / "data" / "radar" / "radar_nowcast.json"
+
+# Para los datos por tormenta se lee un poco más que 240 km: una tormenta en el
+# borde puede verse corrida hacia afuera por la perspectiva del satélite.
+RADIO_TORMENTAS_KM = RADAR_RANGE_KM + 25.0
 
 PRODUCTS = {
     "abi_c08": "CMI",
@@ -137,22 +143,91 @@ def haversine_distance_km(
     return 2.0 * earth_radius_km * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
 
 
+def leer_dominio(
+    metadata: dict,
+    variables: list[str],
+    temp_dir: Path,
+    nombre: str,
+) -> tuple[dict, dict]:
+    """Lee solo la zona de Bahía Blanca. Primero por internet, pidiendo solo
+    los pedazos del archivo que hacen falta; si falla, baja el archivo entero
+    (como antes). Devuelve (dominio, info_de_lectura)."""
+    inicio = datetime.now(timezone.utc)
+    try:
+        dominio = prepare_goes_domain_multi(metadata["url"], variables, radio_km=RADIO_TORMENTAS_KM)
+        modo, error = "parcial", None
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"[:300]
+        path = temp_dir / f"{nombre}.nc"
+        response = requests.get(metadata["url"], timeout=180)
+        response.raise_for_status()
+        path.write_bytes(response.content)
+        dominio = prepare_goes_domain_multi(path, variables, radio_km=RADIO_TORMENTAS_KM)
+        path.unlink(missing_ok=True)
+        modo = "completo"
+    info = {
+        "modo": modo,
+        "segundos": round((datetime.now(timezone.utc) - inicio).total_seconds(), 2),
+    }
+    if error:
+        info["error_parcial"] = error
+    return dominio, info
+
+
+def _hora_satelite(metadata: dict, dominio: dict) -> datetime | None:
+    return por_tormenta.hora_local_escaneo(
+        por_tormenta.parse_utc(metadata.get("start_time_utc")),
+        por_tormenta.parse_utc(metadata.get("end_time_utc")),
+        dominio.get("fraccion_escaneo_radar"),
+    )
+
+
+def _campo(valores: np.ndarray, dominio: dict, hora: datetime | None) -> dict:
+    return {
+        "valores": valores,
+        "latitude": dominio["latitude"],
+        "longitude": dominio["longitude"],
+        "proyeccion": dominio.get("proyeccion"),
+        "hora_satelite": hora,
+    }
+
+
+def _buscar_objeto(product: str, reference_time: datetime, inicio_escaneo: str | None) -> tuple[dict, bool]:
+    """Archivo del mismo barrido que el canal 13; si no está publicado, el más
+    reciente anterior a la imagen de radar (marcado como otro barrido)."""
+    if inicio_escaneo:
+        obj = product_object_for_scan(product, inicio_escaneo, now=reference_time)
+        if obj is not None:
+            return obj, True
+    obj = latest_product_object(product, now=reference_time, hours_back=6)
+    if obj is None:
+        raise RuntimeError(f"No se encontró producto GOES: {product}")
+    mismo = bool(inicio_escaneo) and obj.get("start_time_utc") == inicio_escaneo
+    return obj, mismo or not inicio_escaneo
+
+
 def process_product(
     product: str,
     variable: str,
     temp_dir: Path,
     reference_time: datetime,
+    inicio_escaneo: str | None = None,
+    campos: dict | None = None,
 ) -> dict:
-    path = temp_dir / f"{product}.nc"
-    metadata = download_product(product, path, reference_time, hours_back=6)
-    result = prepare_goes_domain(path, variable=variable)
+    metadata, mismo_escaneo = _buscar_objeto(product, reference_time, inicio_escaneo)
+    dominio, lectura = leer_dominio(metadata, [variable], temp_dir, product)
+    valores = np.asarray(dominio["datos"][variable], dtype=np.float64)
+    en_240 = dominio["distance_km"] <= RADAR_RANGE_KM
+    hora = _hora_satelite(metadata, dominio)
+    if campos is not None:
+        campos[product] = _campo(valores, dominio, hora)
     extra = {}
     if product == "abi_c13":
         from .topes_localidad import por_localidad
 
         try:
             extra["por_localidad"] = por_localidad(
-                result["data"], result["latitude"], result["longitude"],
+                valores[en_240], dominio["latitude"][en_240], dominio["longitude"][en_240],
                 metadata.get("end_time_utc"), OUTPUT_FILE,
             )
         except Exception as exc:
@@ -168,9 +243,14 @@ def process_product(
             "center_lat": RADAR_LAT,
             "center_lon": RADAR_LON,
             "radius_km": RADAR_RANGE_KM,
-            "points": int(len(result["data"])),
+            "points": int(np.sum(en_240)),
         },
-        "statistics": calculate_statistics(result["data"]),
+        "statistics": calculate_statistics(valores[en_240]),
+        "lectura": lectura,
+        "sincronizacion": {
+            **por_tormenta.sincronizacion(hora, reference_time),
+            "mismo_escaneo_que_c13": mismo_escaneo,
+        },
     }
 
 
@@ -179,19 +259,22 @@ def process_cloudtop(
     variable: str,
     temp_dir: Path,
     reference_time: datetime,
+    inicio_escaneo: str | None = None,
+    campos: dict | None = None,
 ) -> dict:
-    path = temp_dir / f"{product}.nc"
-    metadata = download_product(product, path, reference_time, hours_back=6)
-    values = np.asarray(
-        prepare_goes_domain(path, variable=variable)["data"],
-        dtype=np.float64,
-    )
-    dqf = np.asarray(
-        prepare_goes_domain(path, variable="DQF")["data"],
-        dtype=np.float64,
-    )
+    metadata, mismo_escaneo = _buscar_objeto(product, reference_time, inicio_escaneo)
+    dominio, lectura = leer_dominio(metadata, [variable, "DQF"], temp_dir, product)
+    values_all = np.asarray(dominio["datos"][variable], dtype=np.float64)
+    dqf_all = np.asarray(dominio["datos"]["DQF"], dtype=np.float64)
+    en_240 = dominio["distance_km"] <= RADAR_RANGE_KM
+    hora = _hora_satelite(metadata, dominio)
+    buenos = np.isfinite(values_all) & np.isfinite(dqf_all) & (dqf_all == 0)
+    if campos is not None:
+        campos[product] = _campo(np.where(buenos, values_all, np.nan), dominio, hora)
 
-    valid = np.isfinite(values) & np.isfinite(dqf) & (dqf == 0)
+    values = values_all[en_240]
+    dqf = dqf_all[en_240]
+    valid = buenos[en_240]
     usable = values[valid]
     if usable.size == 0:
         raise RuntimeError(f"{product}: no hay píxeles DQF=0.")
@@ -214,6 +297,11 @@ def process_cloudtop(
             "non_good_quality_qf": int(np.sum(np.isfinite(dqf) & (dqf != 0))),
         },
         "statistics": calculate_statistics(usable),
+        "lectura": lectura,
+        "sincronizacion": {
+            **por_tormenta.sincronizacion(hora, reference_time),
+            "mismo_escaneo_que_c13": mismo_escaneo,
+        },
     }
 
 
@@ -480,12 +568,22 @@ def process_dmw(
     }
 
 
+def _cargar_json(path: Path) -> dict | None:
+    try:
+        valor = json.loads(path.read_text(encoding="utf-8"))
+        return valor if isinstance(valor, dict) else None
+    except Exception:
+        return None
+
+
 def build_state(reference_time: datetime | None = None) -> dict:
     if reference_time is None:
         reference_time = load_radar_reference_time()
 
+    estado_previo = _cargar_json(OUTPUT_FILE)
+
     state = {
-        "version": "1.5",
+        "version": "1.6",
         "satellite": "GOES-19",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "reference_frame_utc": reference_time.isoformat(),
@@ -501,25 +599,37 @@ def build_state(reference_time: datetime | None = None) -> dict:
         "glm": None,
         "dmw": None,
     }
+    campos: dict[str, dict] = {}
+    rayos_radar = None
 
     with tempfile.TemporaryDirectory(prefix="climaar_goes19_") as temp:
         temp_dir = Path(temp)
 
-        for product, variable in PRODUCTS.items():
+        # El canal 13 fija el barrido de referencia: los demás productos se
+        # toman del MISMO barrido para no mezclar momentos distintos.
+        inicio_escaneo = None
+        orden = ["abi_c13"] + [p for p in PRODUCTS if p != "abi_c13"]
+        for product in orden:
             try:
                 state["products"][product] = process_product(
-                    product, variable, temp_dir, reference_time
+                    product, PRODUCTS[product], temp_dir, reference_time,
+                    inicio_escaneo=inicio_escaneo, campos=campos,
                 )
             except Exception as exc:
                 state["products"][product] = {
                     "status": "unavailable",
                     "error": str(exc),
                 }
+            if product == "abi_c13":
+                inicio_escaneo = (state["products"][product].get("source") or {}).get("start_time_utc")
+        # Mismo orden de claves que antes en el archivo.
+        state["products"] = {k: state["products"][k] for k in PRODUCTS}
 
         for product, variable in CLOUDTOP_PRODUCTS.items():
             try:
                 state["cloudtop"][product] = process_cloudtop(
-                    product, variable, temp_dir, reference_time
+                    product, variable, temp_dir, reference_time,
+                    inicio_escaneo=inicio_escaneo, campos=campos,
                 )
             except Exception as exc:
                 state["cloudtop"][product] = {
@@ -531,11 +641,22 @@ def build_state(reference_time: datetime | None = None) -> dict:
             state["glm"] = process_glm(temp_dir, reference_time)
         except Exception as exc:
             state["glm"] = {"status": "unavailable", "error": str(exc)}
-        # Rayos de los últimos 20 min por localidad (un archivo GLM = 20 s).
+        # Rayos: últimos 20 min por localidad (un archivo GLM = 20 s) y, en la
+        # misma descarga, los 10 min que terminan en la imagen de radar.
         try:
-            from .glm_ventana import ventana
+            from .glm_ventana import ventana_y_rayos_radar
 
-            state["glm"]["ventana"] = ventana(centro=(RADAR_LAT, RADAR_LON), radio_km=RADAR_RANGE_KM)
+            state["glm"]["ventana"], rayos_radar = ventana_y_rayos_radar(
+                centro=(RADAR_LAT, RADAR_LON), radio_km=RADIO_TORMENTAS_KM,
+                frame_radar=reference_time,
+            )
+            if rayos_radar is not None:
+                state["glm"]["rayos_frame_radar"] = {
+                    "fin_utc": por_tormenta.iso(reference_time),
+                    "ventana_min": por_tormenta.RAYOS_VENTANA_MIN,
+                    "cobertura_min": round(float(rayos_radar["cobertura_min"]), 1),
+                    "archivos": int(rayos_radar["archivos"]),
+                }
         except Exception as exc:
             state["glm"]["ventana"] = {"disponible": False, "motivo": f"ERROR: {exc}"}
 
@@ -543,6 +664,38 @@ def build_state(reference_time: datetime | None = None) -> dict:
             state["dmw"] = process_dmw(temp_dir, reference_time)
         except Exception as exc:
             state["dmw"] = {"status": "unavailable", "error": str(exc)}
+
+    # Datos por tormenta (estadística pura, sin red).
+    try:
+        state["por_tormenta"] = por_tormenta.calcular(
+            _cargar_json(RADAR_NOWCAST_FILE),
+            reference_time,
+            {
+                "c13": campos.get("abi_c13"),
+                "c08": campos.get("abi_c08"),
+                "altura_topes": campos.get("cloudtop_height"),
+                "presion_topes": campos.get("cloudtop_pressure"),
+            },
+            rayos_radar,
+            estado_previo,
+        )
+    except Exception as exc:
+        state["por_tormenta"] = {
+            "estado": "error",
+            "error": f"{type(exc).__name__}: {exc}"[:300],
+            "frame_radar_utc": por_tormenta.iso(reference_time),
+            "tormentas": [],
+        }
+
+    state["sincronizacion"] = {
+        "frame_radar_utc": por_tormenta.iso(reference_time),
+        "inicio_barrido_referencia_utc": inicio_escaneo,
+        "desfase_max_min": por_tormenta.DESFASE_MAX_MIN,
+        "productos": {
+            nombre: (item or {}).get("sincronizacion")
+            for nombre, item in {**state["products"], **state["cloudtop"]}.items()
+        },
+    }
 
     components = list(state["products"].values()) + list(state["cloudtop"].values())
     components += [state["glm"], state["dmw"]]
@@ -573,6 +726,18 @@ def main() -> None:
 
     for name, value in state["cloudtop"].items():
         print(f"{name}: {value.get('status')}")
+
+    for name, value in {**state["products"], **state["cloudtop"]}.items():
+        lectura = value.get("lectura") or {}
+        sinc = value.get("sincronizacion") or {}
+        if lectura:
+            print(
+                f"  {name}: lectura {lectura.get('modo')} {lectura.get('segundos')} s, "
+                f"{sinc.get('estado')} (desfase {sinc.get('desfase_min')} min, "
+                f"mismo barrido: {sinc.get('mismo_escaneo_que_c13')})"
+            )
+    pt = state.get("por_tormenta") or {}
+    print(f"Por tormenta: {pt.get('estado')} - {len(pt.get('tormentas') or [])} tormentas")
 
     print(f"GLM: {state['glm'].get('status') if state['glm'] else 'unavailable'}")
 

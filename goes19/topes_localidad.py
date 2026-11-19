@@ -39,9 +39,23 @@ def _parse(texto):
         return None
 
 
+# Desde la versión 1.6 los píxeles se ubican con las fórmulas oficiales de
+# NOAA. Los estados anteriores tenían los topes de otra zona: no se comparan.
+VERSION_MINIMA_PREVIA = (1, 6)
+
+
+def _version(texto) -> tuple[int, ...]:
+    try:
+        return tuple(int(p) for p in str(texto).split("."))
+    except ValueError:
+        return (0,)
+
+
 def _anterior(path: Path) -> tuple[dict, datetime | None]:
     try:
         previo = json.loads(path.read_text(encoding="utf-8"))
+        if _version(previo.get("version")) < VERSION_MINIMA_PREVIA:
+            return {}, None
         c13 = (previo.get("products") or {}).get("abi_c13") or {}
         return c13.get("por_localidad") or {}, _parse((c13.get("source") or {}).get("end_time_utc"))
     except Exception:

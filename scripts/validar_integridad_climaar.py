@@ -73,6 +73,49 @@ def find_track(items, track_id, name):
     fail(f"principal track {wanted} no existe en {name}")
 
 
+def validar_goes19(radar_ts: datetime, nc: dict) -> None:
+    """GOES-19 por tormenta: nunca datos de otro frame, del futuro ni de
+    tormentas que el radar no tiene. GOES puede faltar (no corta el ciclo),
+    pero si está, tiene que ser coherente."""
+    path = BASE / "data" / "goes19" / "goes19_state.json"
+    if not path.is_file() or path.stat().st_size == 0:
+        print("GOES-19: sin estado (permitido: el ciclo sigue sin satélite)")
+        return
+    goes = load(path)
+    frame = goes.get("reference_frame_utc")
+    if not frame or parse_utc(frame, "goes19.reference_frame_utc") != radar_ts:
+        print("GOES-19: estado de otro frame (no se integra; permitido)")
+        return
+    sinc = goes.get("sincronizacion")
+    if isinstance(sinc, dict):
+        for nombre, item in (sinc.get("productos") or {}).items():
+            if not isinstance(item, dict) or not item.get("hora_satelite_utc"):
+                continue
+            hora = parse_utc(item["hora_satelite_utc"], f"goes19.{nombre}.hora_satelite_utc")
+            if hora > radar_ts + timedelta(minutes=1):
+                fail(f"GOES-19 {nombre} es posterior a la imagen de radar: {hora.isoformat()}")
+    pt = goes.get("por_tormenta")
+    if pt is None:
+        return
+    if not isinstance(pt, dict) or not isinstance(pt.get("tormentas"), list):
+        fail("goes19.por_tormenta inválido")
+    if pt.get("estado") == "ok":
+        require_same_timestamp(radar_ts, pt.get("frame_radar_utc"), "goes19.por_tormenta.frame_radar_utc")
+        tracks = {sid(n.get("track_id")) for n in (nc.get("nucleos_georreferenciados") or [])}
+        for t in pt["tormentas"]:
+            if sid(t.get("track_id")) not in tracks:
+                fail(f"goes19.por_tormenta tiene una tormenta que el radar no tiene: {t.get('track_id')}")
+            for campo in ("c13", "c08", "altura_topes", "presion_topes"):
+                item = t.get(campo) or {}
+                if item.get("estado") == "ok":
+                    estado = (item.get("sincronizacion") or {}).get("estado")
+                    if estado != "sincronizado":
+                        fail(f"goes19 {campo} de la tormenta {t.get('track_id')} usado sin sincronizar ({estado})")
+    elif pt["tormentas"]:
+        fail(f"goes19.por_tormenta estado={pt.get('estado')} pero trae tormentas")
+    print(f"GOES-19: sincronizado ({pt.get('estado')}, {len(pt['tormentas'])} tormentas)")
+
+
 def validar_sin_actividad(nc, state, ml, radar_intel, final, radar_meteo) -> None:
     """Frame sin ecos operativos: ningún componente puede declarar principal."""
     if nc.get("actividad") is not False:
@@ -154,6 +197,8 @@ def main() -> None:
     if not isinstance(final_nc, dict):
         fail("resultado_final.radar.nowcast inválido")
     require_same_timestamp(radar_ts, final_nc.get("frame_actual_utc"), "resultado_final.radar.nowcast.frame_actual_utc")
+
+    validar_goes19(radar_ts, nc)
 
     candidate = tracking.get("track_principal_candidato_id")
     if candidate is None:

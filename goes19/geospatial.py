@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -19,9 +20,13 @@ RADAR_LON = -62.1654
 # Dominio operacional de ClimaAR
 RADAR_RANGE_KM = 240.0
 
-# Margen angular para seleccionar una ventana preliminar.
-# Después se aplica el radio exacto de 240 km.
-WINDOW_MARGIN = 1.50
+# Margen de la ventana preliminar: el borde del círculo se toma un 3 % más
+# grande y se suman 2 píxeles por lado. Después se aplica el radio exacto.
+WINDOW_MARGIN = 1.03
+WINDOW_EXTRA_PIXELS = 2
+
+# Lectura parcial por internet: tamaño de cada pedido al servidor de NOAA.
+REMOTE_BLOCK_BYTES = 2 ** 18
 
 
 # ============================================================
@@ -78,7 +83,11 @@ def fixed_grid_to_latlon(
     Convierte coordenadas GOES ABI Fixed Grid
     a latitud/longitud.
 
-    x e y están expresados en radianes.
+    Fórmulas oficiales de NOAA (GOES-R Product User Guide, vol. 3, 4.2.8.1).
+    Verificadas con el ejemplo del manual (x = -0.024052, y = 0.095340,
+    lon0 = -75° -> 33.846162°, -84.690932°).
+
+    x e y están expresados en radianes (x crece al este, y al norte).
     h es la distancia desde el centro de la Tierra
     hasta el satélite.
     """
@@ -97,8 +106,8 @@ def fixed_grid_to_latlon(
         sin_x**2
         + cos_x**2
         * (
-            sin_y**2
-            + ratio**2 * cos_y**2
+            cos_y**2
+            + ratio**2 * sin_y**2
         )
     )
 
@@ -116,10 +125,9 @@ def fixed_grid_to_latlon(
         - 4.0 * a * c
     )
 
-    valid = discriminant >= 0.0
-
+    # Fuera del disco terrestre (espacio) no hay latitud/longitud.
     discriminant = np.where(
-        valid,
+        discriminant >= 0.0,
         discriminant,
         np.nan,
     )
@@ -146,20 +154,20 @@ def fixed_grid_to_latlon(
         * sin_y
     )
 
-    longitude = (
-        np.arctan2(
-            sy,
-            h - sx,
-        )
-        + lambda_0
-    )
-
     latitude = np.arctan(
         ratio**2
         * sz
         / np.sqrt(
             (h - sx) ** 2
             + sy**2
+        )
+    )
+
+    longitude = (
+        lambda_0
+        - np.arctan(
+            sy
+            / (h - sx)
         )
     )
 
@@ -177,9 +185,15 @@ def geodetic_to_fixed_grid(
     r_eq: float,
     r_pol: float,
     h: float,
+    altura_m: float = 0.0,
 ) -> tuple[float, float]:
     """
-    Convierte una coordenada lat/lon a GOES ABI Fixed Grid.
+    Convierte una coordenada lat/lon a GOES ABI Fixed Grid (radianes).
+
+    Fórmulas oficiales de NOAA (GOES-R Product User Guide, 4.2.8.2), con el
+    radio de curvatura del elipsoide. altura_m: altura del punto sobre el
+    elipsoide (0 = suelo). Con la altura del tope de una nube se obtiene
+    dónde la "ve" el satélite.
     """
 
     lat = math.radians(latitude)
@@ -196,40 +210,19 @@ def geodetic_to_fixed_grid(
         * math.sin(lat) ** 2
     )
 
-    x_earth = (
-        n
-        * math.cos(lat)
-        * math.cos(
-            lon - lambda_0
-        )
-    )
+    x_earth = (n + altura_m) * math.cos(lat) * math.cos(lon - lambda_0)
+    y_earth = (n + altura_m) * math.cos(lat) * math.sin(lon - lambda_0)
+    z_earth = (n * (1.0 - eccentricity_sq) + altura_m) * math.sin(lat)
 
-    y_earth = (
-        n
-        * math.cos(lat)
-        * math.sin(
-            lon - lambda_0
-        )
-    )
+    s_x = h - x_earth
+    s_y = -y_earth
+    s_z = z_earth
 
-    z_earth = (
-        n
-        * (1.0 - eccentricity_sq)
-        * math.sin(lat)
+    x_scan = math.asin(
+        -s_y
+        / math.sqrt(s_x**2 + s_y**2 + s_z**2)
     )
-
-    x_scan = math.atan2(
-        -y_earth,
-        h - x_earth,
-    )
-
-    y_scan = math.atan2(
-        z_earth,
-        math.sqrt(
-            (h - x_earth) ** 2
-            + y_earth**2
-        ),
-    )
+    y_scan = math.atan(s_z / s_x)
 
     return (
         x_scan,
@@ -348,108 +341,168 @@ def get_radar_fixed_grid_position(
     )
 
 
-def select_spatial_window(
-    ds: xr.Dataset,
-) -> tuple[slice, slice]:
-    """
-    Selecciona una ventana alrededor del radar RMA10.
+def destino_km(
+    lat0: float,
+    lon0: float,
+    rumbo_grados: float,
+    distancia_km: float,
+) -> tuple[float, float]:
+    """Punto a una distancia y rumbo dados (esfera, suficiente para 300 km)."""
 
-    La ventana es deliberadamente algo mayor que 240 km.
-    Después se aplica el círculo exacto de 240 km.
-    """
-
-    x_center, y_center = (
-        get_radar_fixed_grid_position(ds)
-    )
-
-    # Conversión aproximada de 240 km a ángulo terrestre.
     earth_radius_km = 6371.0088
-
-    angular_radius = (
-        RADAR_RANGE_KM
-        / earth_radius_km
+    d = distancia_km / earth_radius_km
+    rumbo = math.radians(rumbo_grados)
+    lat1 = math.radians(lat0)
+    lon1 = math.radians(lon0)
+    lat2 = math.asin(
+        math.sin(lat1) * math.cos(d)
+        + math.cos(lat1) * math.sin(d) * math.cos(rumbo)
     )
+    lon2 = lon1 + math.atan2(
+        math.sin(rumbo) * math.sin(d) * math.cos(lat1),
+        math.cos(d) - math.sin(lat1) * math.sin(lat2),
+    )
+    return math.degrees(lat2), math.degrees(lon2)
 
-    angular_radius *= WINDOW_MARGIN
 
-    x_values = ds["x"].values
-    y_values = ds["y"].values
-
-    x_indices = np.where(
-        np.abs(
-            x_values - x_center
-        )
-        <= angular_radius
-    )[0]
-
-    y_indices = np.where(
-        np.abs(
-            y_values - y_center
-        )
-        <= angular_radius
-    )[0]
-
-    if (
-        len(x_indices) == 0
-        or len(y_indices) == 0
-    ):
+def _indices_en_rango(valores: np.ndarray, minimo: float, maximo: float, extra: int) -> slice:
+    paso = float(np.median(np.abs(np.diff(valores)))) if valores.size > 1 else 0.0
+    margen = extra * paso
+    idx = np.where((valores >= minimo - margen) & (valores <= maximo + margen))[0]
+    if idx.size == 0:
         raise ValueError(
             "No se encontró una ventana GOES "
             "alrededor del radar RMA10."
         )
+    return slice(int(idx[0]), int(idx[-1]) + 1)
+
+
+def select_spatial_window(
+    ds: xr.Dataset,
+    radio_km: float = RADAR_RANGE_KM,
+) -> tuple[slice, slice]:
+    """
+    Selecciona la ventana mínima de la grilla GOES que contiene el círculo
+    de radio_km alrededor del radar RMA10.
+
+    Se proyecta el borde del círculo (cada 5°) a la grilla del satélite y se
+    toman sus extremos, con un margen chico. Así solo se leen los píxeles
+    necesarios (importante para la lectura parcial por internet).
+    """
+
+    (
+        lambda_0,
+        r_eq,
+        r_pol,
+        h,
+    ) = get_projection(ds)
+
+    borde = [
+        geodetic_to_fixed_grid(
+            *destino_km(RADAR_LAT, RADAR_LON, rumbo, radio_km * WINDOW_MARGIN),
+            lambda_0=lambda_0,
+            r_eq=r_eq,
+            r_pol=r_pol,
+            h=h,
+        )
+        for rumbo in range(0, 360, 5)
+    ]
+    xs = [p[0] for p in borde]
+    ys = [p[1] for p in borde]
+
+    x_values = np.asarray(ds["x"].values, dtype=np.float64)
+    y_values = np.asarray(ds["y"].values, dtype=np.float64)
 
     return (
-        slice(
-            int(x_indices[0]),
-            int(x_indices[-1]) + 1,
-        ),
-        slice(
-            int(y_indices[0]),
-            int(y_indices[-1]) + 1,
-        ),
+        _indices_en_rango(x_values, min(xs), max(xs), WINDOW_EXTRA_PIXELS),
+        _indices_en_rango(y_values, min(ys), max(ys), WINDOW_EXTRA_PIXELS),
     )
+
+
+@contextmanager
+def abrir_goes(origen: str | Path):
+    """
+    Abre un NetCDF GOES local o, si origen es una dirección https, lo lee por
+    internet pidiendo solo los pedazos que se usan (lectura parcial).
+    """
+
+    texto = str(origen)
+    if texto.startswith("http://") or texto.startswith("https://"):
+        import fsspec
+
+        fs = fsspec.filesystem("http")
+        archivo = fs.open(
+            texto,
+            "rb",
+            block_size=REMOTE_BLOCK_BYTES,
+            cache_type="blockcache",
+        )
+        try:
+            ds = xr.open_dataset(archivo, engine="h5netcdf")
+            try:
+                yield ds
+            finally:
+                ds.close()
+        finally:
+            archivo.close()
+        return
+
+    path = Path(origen)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"No existe el archivo GOES: {path}"
+        )
+    with xr.open_dataset(path, engine="netcdf4") as ds:
+        yield ds
+
+
+def fraccion_escaneo(ds: xr.Dataset, y_punto: float) -> float | None:
+    """
+    Parte del barrido (0 = inicio, 1 = fin) en la que el satélite pasó por la
+    fila y_punto. El disco completo se barre de norte a sur en 10 min.
+    """
+
+    try:
+        attrs = ds["y_image_bounds"].values if "y_image_bounds" in ds else None
+        if attrs is not None and np.size(attrs) == 2:
+            norte, sur = float(np.max(attrs)), float(np.min(attrs))
+        else:
+            y = np.asarray(ds["y"].values, dtype=np.float64)
+            norte, sur = float(np.nanmax(y)), float(np.nanmin(y))
+    except Exception:
+        return None
+    if norte <= sur:
+        return None
+    return float(np.clip((norte - y_punto) / (norte - sur), 0.0, 1.0))
 
 
 # ============================================================
 # Dominio ClimaAR
 # ============================================================
 
-def prepare_goes_domain(
-    file_path: str | Path,
-    variable: str = "CMI",
-) -> dict[str, np.ndarray]:
+def prepare_goes_domain_multi(
+    origen: str | Path,
+    variables: list[str] | tuple[str, ...],
+    radio_km: float = RADAR_RANGE_KM,
+) -> dict:
     """
-    Procesa un NetCDF GOES y devuelve únicamente
-    el dominio operacional de ClimaAR.
+    Lee una o varias variables de un mismo NetCDF GOES y devuelve solo los
+    píxeles a <= radio_km del radar RMA10.
 
-    Flujo:
+    origen puede ser un archivo local o una dirección https (lectura
+    parcial: solo se bajan los pedazos de la ventana).
 
-        NetCDF completo
-              ↓
-        ventana alrededor RMA10
-              ↓
-        coordenadas lat/lon
-              ↓
-        círculo exacto de 240 km
-              ↓
-        datos finales
+    Devuelve:
+        datos: {variable: valores}, latitude, longitude, distance_km,
+        proyeccion (lambda_0, r_eq, r_pol, h), fraccion_escaneo_radar.
     """
 
-    file_path = Path(file_path)
+    with abrir_goes(origen) as ds:
 
-    if not file_path.exists():
-        raise FileNotFoundError(
-            f"No existe el archivo GOES: {file_path}"
-        )
-
-    with xr.open_dataset(
-        file_path,
-        engine="netcdf4",
-    ) as ds:
-
-        if variable not in ds:
+        faltan = [v for v in variables if v not in ds]
+        if faltan:
             raise ValueError(
-                f"La variable '{variable}' "
+                f"La variable '{faltan[0]}' "
                 "no existe en el NetCDF."
             )
 
@@ -461,55 +514,131 @@ def prepare_goes_domain(
         ) = get_projection(ds)
 
         x_slice, y_slice = (
-            select_spatial_window(ds)
+            select_spatial_window(ds, radio_km=radio_km)
         )
 
-        subset = ds[
-            variable
-        ].isel(
-            y=y_slice,
-            x=x_slice,
-        )
+        x_values = np.asarray(ds["x"].values[x_slice], dtype=np.float64)
+        y_values = np.asarray(ds["y"].values[y_slice], dtype=np.float64)
 
-        data = subset.values
-
-        x_values = subset["x"].values
-        y_values = subset["y"].values
-
-        x_grid, y_grid = np.meshgrid(
-            x_values,
-            y_values,
-        )
-
-        latitude, longitude = (
-            fixed_grid_to_latlon(
-                x_grid,
-                y_grid,
-                lambda_0=lambda_0,
-                r_eq=r_eq,
-                r_pol=r_pol,
-                h=h,
-            )
-        )
-
-        distance_km = haversine_km(
-            latitude,
-            longitude,
+        x_radar, y_radar = geodetic_to_fixed_grid(
             RADAR_LAT,
             RADAR_LON,
+            lambda_0=lambda_0,
+            r_eq=r_eq,
+            r_pol=r_pol,
+            h=h,
         )
+        fraccion = fraccion_escaneo(ds, y_radar)
 
-        mask = (
-            distance_km
-            <= RADAR_RANGE_KM
-        )
-
-        return {
-            "data": data[mask],
-            "latitude": latitude[mask],
-            "longitude": longitude[mask],
-            "distance_km": distance_km[mask],
+        crudos = {
+            variable: ds[variable].isel(y=y_slice, x=x_slice).values
+            for variable in variables
         }
+
+    x_grid, y_grid = np.meshgrid(
+        x_values,
+        y_values,
+    )
+
+    latitude, longitude = (
+        fixed_grid_to_latlon(
+            x_grid,
+            y_grid,
+            lambda_0=lambda_0,
+            r_eq=r_eq,
+            r_pol=r_pol,
+            h=h,
+        )
+    )
+
+    distance_km = haversine_km(
+        latitude,
+        longitude,
+        RADAR_LAT,
+        RADAR_LON,
+    )
+
+    mask = np.isfinite(distance_km) & (
+        distance_km
+        <= radio_km
+    )
+
+    return {
+        "datos": {variable: valores[mask] for variable, valores in crudos.items()},
+        "latitude": latitude[mask],
+        "longitude": longitude[mask],
+        "distance_km": distance_km[mask],
+        "proyeccion": (lambda_0, r_eq, r_pol, h),
+        "fraccion_escaneo_radar": fraccion,
+    }
+
+
+def prepare_goes_domain(
+    file_path: str | Path,
+    variable: str = "CMI",
+    radio_km: float = RADAR_RANGE_KM,
+) -> dict[str, np.ndarray]:
+    """
+    Procesa un NetCDF GOES y devuelve únicamente
+    el dominio operacional de ClimaAR.
+
+    Flujo:
+
+        NetCDF (local o lectura parcial por internet)
+              ↓
+        ventana mínima alrededor RMA10
+              ↓
+        coordenadas lat/lon
+              ↓
+        círculo exacto de 240 km
+              ↓
+        datos finales
+    """
+
+    result = prepare_goes_domain_multi(file_path, [variable], radio_km=radio_km)
+    return {
+        "data": result["datos"][variable],
+        "latitude": result["latitude"],
+        "longitude": result["longitude"],
+        "distance_km": result["distance_km"],
+        "proyeccion": result["proyeccion"],
+        "fraccion_escaneo_radar": result["fraccion_escaneo_radar"],
+    }
+
+
+def posicion_aparente(
+    latitude: float,
+    longitude: float,
+    altura_km: float,
+    proyeccion: tuple[float, float, float, float],
+) -> tuple[float, float]:
+    """
+    Dónde ve el satélite un punto que está a altura_km sobre (latitude,
+    longitude). GOES-19 mira Bahía Blanca de costado: el tope de una tormenta
+    alta aparece corrido hacia el sur y el este (paralaje).
+    """
+
+    lambda_0, r_eq, r_pol, h = proyeccion
+    if altura_km <= 0:
+        return latitude, longitude
+    x, y = geodetic_to_fixed_grid(
+        latitude,
+        longitude,
+        lambda_0=lambda_0,
+        r_eq=r_eq,
+        r_pol=r_pol,
+        h=h,
+        altura_m=altura_km * 1000.0,
+    )
+    lat_ap, lon_ap = fixed_grid_to_latlon(
+        np.array([x]),
+        np.array([y]),
+        lambda_0=lambda_0,
+        r_eq=r_eq,
+        r_pol=r_pol,
+        h=h,
+    )
+    return float(lat_ap[0]), float(lon_ap[0])
 
 
 # ============================================================
