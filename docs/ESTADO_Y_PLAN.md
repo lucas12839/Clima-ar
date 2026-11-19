@@ -112,6 +112,25 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
 - **D. Vigilancia:** VPS que se actualice solo, monitoreo de cada fuente, Doppler más adelante.
 - Hecho: `getdata` de Pillow reemplazado (mismo resultado comprobado en 40 frames).
 
+
+## Contexto rápido para un chat nuevo (19/11/2026, 16:40)
+- Lucas trabaja desde el celular, no sabe validar pull requests: Claude prueba, valida, abre
+  el PR y lo une a main (permiso dado). Probar siempre con `pytest`, `herramientas/emular_workflow.py`
+  (con tormenta y sin actividad) y, si cambia la clasificación, el 13/11 con
+  `herramientas/simular_evento_real.py` (frames en `data/radar/historico`).
+- Hechos con Claude y en producción: PR #15 a #38 (ayer: plan 1-7 y puntos 1-5; hoy: índices
+  por fenómeno, localidades, GOES-19, ambiente, calidad de estaciones, calibración de lluvia,
+  estado de fuentes, estación CWOP).
+- Localidades: Bahía Blanca, Ingeniero White, General Daniel Cerri, Punta Alta, Tornquist,
+  Médanos, Sierra de la Ventana (Lucas sacó Monte Hermoso, Dorrego y Pehuen-Co).
+- Estaciones: solo fuentes con permiso de lectura automática (BCP, SMN, CWOP). No usar el
+  usuario de Lucas ni claves internas de Ecowitt, WeatherLink, Weather Underground o
+  Weathercloud. MeteoPunta descartado (no respondió). Sí se puede pedir acceso a
+  instituciones (UNS, CONICET, Municipalidad, red provincial de 11 estaciones).
+- **Próximo trabajo de Lucas:** corrección de los umbrales de tormentas (granizo severo con
+  radar crudo está bajo: el 13/11 en Punta Alta cayó granizo chico y ClimaAR dijo "posible
+  severo").
+
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
-`indices-fenomenos-localidades` (ya unida).
+`indices-fenomenos-localidades`, `prueba-estaciones` y las ramas ya unidas de cada PR.
