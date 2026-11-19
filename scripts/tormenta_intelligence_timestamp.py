@@ -741,7 +741,11 @@ def apply_goes_to_intelligence(goes: dict[str, Any], radar_timestamp: datetime) 
         indices = {}
         intelligence["indices_heuristicos"] = indices
 
-    signals = goes.get("senales", {})
+    signals = goes.setdefault("senales", {})
+    # Sin GOES-19 (satélite caído) no hay vientos satelitales: se deja vacío
+    # en vez de cortar el ciclo.
+    if not isinstance(signals.get("dmw_viento_guia"), dict):
+        signals["dmw_viento_guia"] = {}
     convective = clamp(signals.get("conveccion_satelital"))
     lightning = clamp(signals.get("glm_rayo", {}).get("signal"))
     steering = clamp(signals.get("dmw_viento_guia", {}).get("steering_quality"))
