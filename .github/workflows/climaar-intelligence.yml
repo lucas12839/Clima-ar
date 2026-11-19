@@ -557,7 +557,7 @@ jobs:
               )
 
           if metadata.get("pronostico_disponible") is False:
-              if metadata.get("motivo_no_disponible") != "SIN_MOVIMIENTO_VALIDO":
+              if metadata.get("motivo_no_disponible") not in ("SIN_MOVIMIENTO_VALIDO", "SIN_ACTIVIDAD"):
                   raise SystemExit(
                       "ERROR: motivo de proyección no disponible no reconocido"
                   )
@@ -567,8 +567,8 @@ jobs:
                       "movimiento válido"
                   )
               print(
-                  "OK: principal preservado; sin proyección por "
-                  "SIN_MOVIMIENTO_VALIDO."
+                  "OK: sin proyección por "
+                  f"{metadata.get('motivo_no_disponible')}."
               )
               raise SystemExit(0)
 
@@ -648,6 +648,13 @@ jobs:
                   "ERROR: ambiente_en_trayectoria no es un objeto"
               )
 
+          if not trajectory and (data.get("vigencia_radar") or {}).get("modo") == "radar_obsoleto":
+              print(
+                  "OK: radar con más de 60 min; sin proyección de celdas "
+                  "(riesgo solo por ambiente)."
+              )
+              raise SystemExit(0)
+
           if not trajectory:
               radar_path = Path("data/radar/radar_nowcast.json")
               radar = json.loads(
@@ -662,11 +669,11 @@ jobs:
               if (
                   projection_meta.get("pronostico_disponible") is False
                   and projection_meta.get("motivo_no_disponible")
-                  == "SIN_MOVIMIENTO_VALIDO"
+                  in ("SIN_MOVIMIENTO_VALIDO", "SIN_ACTIVIDAD")
               ):
                   print(
-                      "OK: sin ambiente en trayectoria porque "
-                      "no existe movimiento válido."
+                      "OK: sin ambiente en trayectoria por "
+                      f"{projection_meta.get('motivo_no_disponible')}."
                   )
                   raise SystemExit(0)
 

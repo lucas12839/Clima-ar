@@ -816,7 +816,8 @@ def main() -> None:
     nowcast = radar_data.get("nowcast", {})
     principal = nowcast.get("nucleo_principal_id")
     bahia = nowcast.get("bahia_blanca", {})
-    if principal is None:
+    sin_actividad = principal is None and nowcast.get("actividad") is False
+    if principal is None and not sin_actividad:
         raise RuntimeError("ERROR: Intelligence recibió un Nowcast sin principal.")
     if isinstance(bahia, dict) and bahia.get("nucleo_principal_id") is not None and str(bahia.get("nucleo_principal_id")) != str(principal):
         raise RuntimeError(
@@ -837,7 +838,7 @@ def main() -> None:
         )
 
     meteo_principal = meteo_radar.get("nucleo_principal_id")
-    if meteo_principal is None:
+    if meteo_principal is None and not sin_actividad:
         raise RuntimeError("ERROR: meteorología no contiene nucleo_principal_id.")
     if str(meteo_principal) != str(principal):
         raise RuntimeError(

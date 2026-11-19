@@ -423,11 +423,13 @@ def main():
     principal_id = first_number(principal_raw)
 
     if principal_id is None:
-        raise RuntimeError(
-            "ERROR: Decision Engine no recibió un principal operativo."
-        )
-
-    principal_id = int(principal_id)
+        # Sin principal solo es válido si el radar no tiene actividad.
+        if radar_activity:
+            raise RuntimeError(
+                "ERROR: Decision Engine no recibió un principal operativo."
+            )
+    else:
+        principal_id = int(principal_id)
 
     result = {
         "version": VERSION,

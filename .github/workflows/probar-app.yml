@@ -93,7 +93,20 @@ jobs:
               "frame_radar"
           )
 
-          if frame_nowcast != radar:
+          from datetime import datetime, timezone
+
+          def utc(valor):
+              texto = str(valor or "").strip().replace("Z", "+00:00")
+              try:
+                  dt = datetime.fromisoformat(texto)
+              except ValueError:
+                  return None
+              return dt.astimezone(timezone.utc) if dt.tzinfo else None
+
+          # Se comparan instantes, no textos ("...Z" == "...+00:00").
+          radar, frame_nowcast, frame_ml = utc(radar), utc(frame_nowcast), utc(frame_ml)
+
+          if radar is None or frame_nowcast != radar:
               raise SystemExit(
                   "ERROR: radar_nowcast desincronizado"
               )

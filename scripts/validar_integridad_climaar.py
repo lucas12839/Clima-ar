@@ -73,6 +73,42 @@ def find_track(items, track_id, name):
     fail(f"principal track {wanted} no existe en {name}")
 
 
+def validar_sin_actividad(nc, state, ml, radar_intel, final, radar_meteo) -> None:
+    """Frame sin ecos operativos: ningún componente puede declarar principal."""
+    if nc.get("actividad") is not False:
+        fail("Tracking no definió principal pero el Nowcast declara actividad")
+    for nombre, valor in (
+        ("nowcast.nucleo_principal_id", nc.get("nucleo_principal_id")),
+        ("nowcast.track_principal_id", nc.get("track_principal_id")),
+        ("nowcast.track_principal_candidato_id", nc.get("track_principal_candidato_id")),
+        ("nowcast.bahia_blanca.nucleo_principal_id", (nc.get("bahia_blanca") or {}).get("nucleo_principal_id")),
+        ("intelligence.radar.nucleo_principal_id", radar_intel.get("nucleo_principal_id")),
+        ("meteorologia.radar.nucleo_principal_id", radar_meteo.get("nucleo_principal_id")),
+        ("resultado_final.principal.track_id", (final.get("principal") or {}).get("track_id")),
+    ):
+        if valor is not None:
+            fail(f"sin actividad pero {nombre}={valor}")
+    activos = [
+        t for t in state.get("tracks", [])
+        if isinstance(t, dict) and t.get("activo") is True and t.get("presente_en_ultimo_frame") is True
+    ]
+    if activos:
+        fail(f"sin principal pero estado.json tiene {len(activos)} tracks activos presentes")
+    if nc.get("nucleos") not in ([], None):
+        fail("sin actividad pero nowcast.nucleos no está vacío")
+    if nc.get("proyecciones"):
+        fail("sin actividad pero hay proyecciones")
+    metadata = nc.get("proyecciones_metadata") or {}
+    if metadata.get("motivo_no_disponible") != "SIN_ACTIVIDAD":
+        fail("sin actividad pero proyecciones_metadata no lo declara")
+    if not isinstance(ml.get("predicciones"), list):
+        fail("ML.predicciones no es lista")
+    if not isinstance(final.get("severidad_meteorologica"), dict):
+        fail("resultado_final.severidad_meteorologica inválido")
+    print("CLIMAAR INTEGRIDAD: OK")
+    print("Frame sin actividad: ningún componente declara principal.")
+
+
 def main() -> None:
     radar_ts = parse_utc(
         (RADAR / "radar_timestamp.txt").read_text(encoding="utf-8").strip(),
@@ -121,7 +157,8 @@ def main() -> None:
 
     candidate = tracking.get("track_principal_candidato_id")
     if candidate is None:
-        fail("Tracking no definió track_principal_candidato_id")
+        validar_sin_actividad(nc, state, ml, radar_intel, final, radar_meteo)
+        return
 
     principal = nc.get("nucleo_principal_id")
     track_principal = nc.get("track_principal_id")

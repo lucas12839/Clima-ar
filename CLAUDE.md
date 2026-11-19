@@ -9,7 +9,9 @@
 ## Reglas de trabajo
 - `main` = producción. Nunca commitear directo a `main`: rama + pull request.
 - Los bots de Actions commitean datos en `data/` constantemente; los PR de código no deben tocar `data/` salvo que sea el objetivo.
-- Antes de abrir un PR: `python -m pytest -q` y correr el ciclo de Intelligence en una copia (ver `climaar-intelligence.yml` para el orden).
+- Antes de abrir un PR: `python -m pytest -q` y correr los workflows reales en una copia del repo con `herramientas/emular_workflow.py` (ejecuta los pasos `run:` y sus validaciones; saltea los que necesitan GitHub o red):
+  `python herramientas/emular_workflow.py <copia> .github/workflows/climaar-intelligence.yml $(which python) --desde "Conectar RMA10" --hasta "Validar integridad"`
+- Probar siempre los dos casos: con tormenta y **sin actividad** (sin núcleos, nowcast `actividad: false`, sin principal).
 - Mantener los contratos de archivos JSON que leen la API, Intelligence y `validar_integridad_climaar.py`.
 
 ## Ciclo
