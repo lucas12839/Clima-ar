@@ -276,6 +276,13 @@ def cargar_puntos_control(path: Path = CATALOGO_ESTACIONES) -> list[dict[str, An
     except Exception:
         return []
     puntos = []
+    try:
+        cwop = json.loads((ROOT / "config" / "estaciones_cwop.json").read_text(encoding="utf-8"))
+        for e in cwop.get("estaciones") or []:
+            cat.setdefault("stations", []).append({"network": "cwop", "name": e["nombre"],
+                                                   "latitude": e["lat"], "longitude": e["lon"]})
+    except Exception:
+        pass
     for s in cat.get("stations") or []:
         lat, lon = s.get("latitude"), s.get("longitude")
         if lat is None or lon is None:

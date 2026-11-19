@@ -81,6 +81,15 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
   estaciones, cuáles están al día y si ClimaAR quedó "a ciegas" (ninguna observación al día).
 - Pendiente: enlace de la estación de MeteoPunta en Punta Alta para sumarla como punto de control.
 
+### Red CWOP (estaciones ciudadanas abiertas)
+- Única red de estaciones caseras que se puede leer de forma automática con permiso (modo solo
+  escucha de APRS-IS). Weather Underground, Weathercloud, Ecowitt y WeatherLink no lo permiten
+  sin la clave de cada dueño.
+- Conectada **LU4DRH-11** (Ecowitt, 6 km al noroeste del centro): transmite cada 10 min; frente
+  a BCP Bahía Centro da +1,5 °C, viento y lluvia parecidos. Workflow `climaar-cwop.yml` cada
+  10 min; entra en señales, puntos de control y control de calidad como cualquier estación.
+- Descartadas por ahora: FW6154 y EW9010 (~70 km NE), sin transmisiones en 30 min.
+
 ### Datos reales verificados (`config/eventos_verificados.json`)
 - 13/11: Punta Alta 76,7 mm (80,4 en dos días) con **granizo chico**; Bahía 0 a 0,5 mm;
   Pehuen-Co y Monte Hermoso > 50 mm; Dorrego > 60 mm (MeteoPunta). Confirma el factor 0,4

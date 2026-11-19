@@ -1,0 +1,87 @@
+name: ClimaAR Estaciones CWOP
+
+# Escucha la red CWOP (estaciones ciudadanas abiertas) en modo solo lectura.
+# La escucha (hasta ~10 min, las estaciones transmiten cada 10 min) va en un
+# trabajo sin grupo de concurrencia para no frenar Radar ni Intelligence; solo
+# la publicación corta usa el grupo de escrituras de producción.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  escuchar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Escuchar estaciones CWOP (solo lectura)
+        run: |
+          set -euo pipefail
+          python scripts/estaciones/colector_cwop.py --max-segundos 630
+          python - <<'PY'
+          import json
+          d = json.load(open("data/ia/estaciones/observaciones/cwop_actual.json"))
+          assert d.get("collector") == "cwop" and isinstance(d.get("stations"), list)
+          print("estaciones válidas:", d.get("stations_validas"))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cwop
+          path: data/ia/estaciones/observaciones/cwop_actual.json
+          retention-days: 1
+
+  publicar:
+    needs: escuchar
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: climaar-production-writes
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: cwop
+          path: data/ia/estaciones/observaciones/
+      - name: Publicar con rebase y retry
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.local"
+          git add data/ia/estaciones/observaciones/cwop_actual.json
+          if git diff --cached --quiet; then
+            echo "No hay cambios para publicar."
+            exit 0
+          fi
+          git commit -m "obs: actualizar estaciones CWOP"
+          for intento in 1 2 3; do
+            git fetch origin main
+            git rebase origin/main || {
+              git rebase --abort || true
+              echo "Rebase falló en intento $intento."
+              if [ "$intento" -eq 3 ]; then exit 1; fi
+              sleep 3
+              continue
+            }
+            if git push origin HEAD:main; then
+              echo "Push exitoso en intento $intento."
+              exit 0
+            fi
+            echo "Push falló en intento $intento."
+            if [ "$intento" -eq 3 ]; then exit 1; fi
+            sleep 3
+          done
