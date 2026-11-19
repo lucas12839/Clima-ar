@@ -102,7 +102,10 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
 2. Viernes 13/11: ¿cuánto llovió exactamente en Punta Alta y en Bahía Blanca, y a qué hora fue
    lo fuerte? (el radar crudo dio ~190 mm en Punta Alta: parece sobreestimar).
 
-## Siguiente
+## Siguiente — orden de trabajo vigente: `docs/INSPECCION_FUENTES.md` (19/11/2026, 17:00)
+Inspección completa de GOES-19, pronóstico y fuentes, con un plan de 12 puntos por prioridad.
+Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan.
+
 - **A. Nunca a ciegas:** falta probar el modo sin radar con una tormenta real (rayos + topes
   + estaciones); vientos satelitales todavía solo como dato general.
 - **B. Mejor pronóstico:** horizonte 2–3 h con varios escenarios, formas (líneas, ecos en
@@ -129,8 +132,9 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
   instituciones (UNS, CONICET, Municipalidad, red provincial de 11 estaciones).
 - **Próximo trabajo de Lucas:** corrección de los umbrales de tormentas (granizo severo con
   radar crudo está bajo: el 13/11 en Punta Alta cayó granizo chico y ClimaAR dijo "posible
-  severo").
+  severo"). Es el punto 1 del plan de `docs/INSPECCION_FUENTES.md`, ahora con apoyo satelital
+  (altura de topes sobre el nivel de congelamiento, topes sobresalientes, salto de rayos).
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
-`indices-fenomenos-localidades`, `prueba-estaciones` y las ramas ya unidas de cada PR.
+`indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-inspeccion` y las ramas ya unidas de cada PR.
