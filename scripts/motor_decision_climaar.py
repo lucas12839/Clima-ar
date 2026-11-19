@@ -3,6 +3,11 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from clasificacion_tiempo import clasificar, mantener_amenazas  # noqa: E402
+
 BASE = Path(__file__).resolve().parents[1]
 RADAR = BASE / "data/radar/radar_nowcast.json"
 PRED = BASE / "data/radar/seguimiento/prediccion_evolucion.json"
@@ -11,6 +16,7 @@ METEO = BASE / "data/ia/estado_meteorologico.json"
 OUT = BASE / "data/ia/resultado_final.json"
 FLUJO = BASE / "data/radar/nowcast_flujo.json"
 FLUJO_DBZ_MIN = 40.0
+GOES = BASE / "data/ia/goes19_intelligence.json"
 FLUJO_CONF_MIN = 0.5
 
 VERSION = "ClimaAR-final-3.0"
@@ -276,6 +282,41 @@ def optical_flow_evidence(flujo, nowcast):
     return score, score > 0, resumen
 
 
+def tipo_de_tiempo(flujo, intel, nowcast):
+    """Escala descriptiva (llovizna ... tormenta potencialmente severa)."""
+    flujo = flujo if isinstance(flujo, dict) else {}
+    obs = flujo.get("observacion") or {}
+    bahia = flujo.get("bahia_blanca") or {}
+    mov = flujo.get("movimiento") or {}
+    goes = load(GOES) if GOES.exists() else {}
+    glm = (goes.get("glm") or {}) if isinstance(goes, dict) else {}
+    rayos = {
+        "flashes": (glm.get("counts") or {}).get("flashes"),
+        "distancia_km": (glm.get("nearest_flash") or {}).get("distance_km"),
+    }
+    vigencia = (intel.get("vigencia_radar") or {}) if isinstance(intel, dict) else {}
+    radar_ok = bool(obs) and vigencia.get("modo") != "radar_obsoleto"
+    sincronizado = timestamp_key(flujo.get("radar_timestamp")) == timestamp_key(
+        (nowcast or {}).get("frame_actual_utc")
+    )
+    return clasificar(
+        dbz_ciudad=finite(obs.get("dbz_ciudad")),
+        dbz_llegada=finite(bahia.get("dbz_al_llegar")),
+        eta_llegada_min=finite(bahia.get("eta_tormenta_desde_ahora_min")),
+        dbz_region=finite(obs.get("dbz_region")),
+        dbz_30km=finite(obs.get("dbz_30km")),
+        lluvia_3h_mm=finite(obs.get("lluvia_radar_3h_mm")),
+        lluvia_6h_mm=finite(obs.get("lluvia_radar_6h_mm")),
+        distancia_region_km=finite(obs.get("distancia_nucleo_region_km")),
+        velocidad_kmh=finite(mov.get("velocidad_media_kmh")),
+        coherencia=finite(mov.get("coherencia")),
+        minutos_lluvia_intensa=finite(obs.get("minutos_lluvia_intensa")),
+        rayos=rayos,
+        ambiente=(intel.get("ambiente") or {}) if isinstance(intel, dict) else {},
+        radar_disponible=radar_ok and sincronizado,
+    )
+
+
 def main():
     radar = load(RADAR)
     pred = load(PRED)
@@ -301,6 +342,19 @@ def main():
     )
     if flujo_incorporado:
         ia_score = max(ia_score, clamp(0.75 * ia_score + 0.25 * flujo_score), flujo_score * 0.6)
+
+    tipo_tiempo = tipo_de_tiempo(
+        load(FLUJO) if FLUJO.exists() else {},
+        intel,
+        radar.get("nowcast", {}),
+    )
+    anterior = load(OUT) if OUT.exists() else {}
+    tipo_tiempo = mantener_amenazas(
+        tipo_tiempo,
+        anterior.get("tipo_tiempo") if isinstance(anterior, dict) else None,
+        str(nowcast.get("frame_actual_utc") or ""),
+        ((anterior.get("radar") or {}).get("timestamp") if isinstance(anterior, dict) else None),
+    )
 
     model_conf = clamp(
         intel.get("confianza_modelo", intel.get("confianza", 0.0))
@@ -455,12 +509,14 @@ def main():
                 "flujo_optico_score": round(flujo_score, 4),
             },
             "flujo_optico": flujo_resumen,
+            "tipo_tiempo": tipo_tiempo,
             "regla": (
                 "La intensidad RMA10 es una señal; la severidad meteorológica "
                 "proviene de Intelligence/IA/histórico y no del color radar."
             ),
         },
         "clasificacion_meteorologica": weather_class,
+        "tipo_tiempo": tipo_tiempo,
         "amenaza_bahia": threat,
         "clasificacion_historica": intel.get("clasificacion_historica"),
         "severidad_meteorologica": {

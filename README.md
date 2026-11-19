@@ -35,6 +35,7 @@ Entre frames, la IA sigue corriendo con el último radar válido y marca cuánto
 | `scripts/meteorologia_fusion.py`, `scripts/smn_observaciones.py`, `scripts/estaciones/` | Datos meteorológicos y estaciones |
 | `goes19/` | Datos satelitales GOES-19 |
 | `scripts/tormenta_intelligence*.py`, `scripts/motor_decision_climaar.py` | Storm Engine y decisión final |
+| `scripts/clasificacion_tiempo.py` | Tipo de tiempo: llovizna → tormenta potencialmente severa, con granizo / viento / inundación (sin colores de alerta) |
 | `scripts/validar_integridad_climaar.py` | Verifica que todo el ciclo esté sincronizado |
 | `app.py` | API (FastAPI) |
 | `frontend/` | Web (Netlify) |

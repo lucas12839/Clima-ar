@@ -54,3 +54,28 @@ pronosticó la llegada con un error de ±20 min.
 - Acumulado de lluvia por duración del eco sobre la ciudad (inundación).
 - Escala completa de tipos de tiempo (llovizna → tormenta potencialmente severa).
 - Conectar las estaciones y los rayos de GOES-19 a la severidad.
+
+## Clasificación del tiempo (punto 2)
+
+`scripts/clasificacion_tiempo.py` reemplaza la severidad por colores con una escala
+descriptiva: sin precipitación, llovizna, lluvia débil / moderada / fuerte, tormenta
+débil / moderada / fuerte y tormenta potencialmente severa, con amenazas separadas
+(granizo, viento, inundación) y sus razones. No emite alertas oficiales.
+
+Resultado con los tres temporales (solo radar; sin satélite ni ambiente de esas fechas):
+
+| Evento | Indicio | Desde | Criterio |
+|---|---|---|---|
+| Inundación 7/3/2025 | inundación | 08:50 UTC (05:50 local) | 33 mm en 3 h estimados por radar |
+| Viento 16/12/2023 | viento | 18:43 UTC, 36 min antes de la llegada | línea a 60–84 km/h, coherencia ≥0,85, núcleos ≥45 dBZ a ≤30 km |
+| Granizo 2/2/2025 | granizo | 17:58 UTC | núcleo ≥55 dBZ sobre la ciudad |
+
+**Calibración pendiente.** Con los PNG crudos de SINARAME (12/10–19/11/2026) los
+indicios de viento e inundación aparecieron en 5 de 14 días: el radar crudo da valores
+más altos que las imágenes del SMN. Hasta calibrarlos se publican como
+`indicios_en_evaluacion` y no suben el nivel. El granizo (≥55 dBZ, criterio estándar)
+sí sube a "potencialmente severa". Para calibrar hacen falta los días con daños
+confirmados de ese período y los pluviómetros de las estaciones.
+
+La máscara de clutter suma un segundo criterio (≥45 dBZ en más del 5 % de los frames):
+en frames sin lluvia sobre la ciudad, los ecos ≥45 dBZ a ≤30 km bajaron de 37 a 14.

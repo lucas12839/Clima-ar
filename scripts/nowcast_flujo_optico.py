@@ -54,6 +54,10 @@ HISTORICO = RADAR_DIR / "historico"
 SALIDA = RADAR_DIR / "nowcast_flujo.json"
 # Campo de movimiento para el resto del ciclo (no se versiona: .gitignore).
 CAMPO = RADAR_DIR / ".flujo_campo.npz"
+HISTORIAL_CIUDAD = RADAR_DIR / "historial_ciudad.json"
+HISTORIAL_HORAS = 8
+LLUVIA_INTENSA_DBZ = 40.0
+LLUVIA_PERSISTENTE_DBZ = 25.0
 MASCARA_CLUTTER = ROOT / "config" / "clutter_rma10.png"
 
 VERSION = "flujo-optico-1.0"
@@ -63,6 +67,7 @@ UMBRAL_ECO_DBZ = 20.0
 UMBRAL_TORMENTA_DBZ = 35.0
 UMBRAL_FUERTE_DBZ = 45.0
 RADIO_CIUDAD_KM = 10.0
+RADIO_CERCANIA_KM = 30.0
 MIN_PIXELES_CIUDAD = 6  # ~5 km²: evita que un píxel suelto cuente como tormenta
 GAP_MIN_MIN = 5.0
 GAP_MAX_MIN = 30.0
@@ -130,20 +135,30 @@ def cargar_mascara_clutter(shape: tuple[int, int]) -> np.ndarray:
     return mask
 
 
+CLUTTER_FUERTE_DBZ = 45.0
+CLUTTER_FUERTE_FRACCION = 0.05
+
+
 def generar_mascara_clutter(frames: list[Path], fraccion: float = CLUTTER_FRACCION) -> np.ndarray | None:
-    """Píxeles con eco ≥20 dBZ en más de `fraccion` de los frames = clutter."""
+    """Clutter = píxeles con eco ≥20 dBZ en más de `fraccion` de los frames, o
+    con ≥45 dBZ en más del 5 % (una tormenta real no repite tanto el mismo
+    píxel; el clutter intermitente de las sierras sí)."""
     acumulado = None
+    fuerte = None
     n = 0
     for path in frames:
         dbz = cargar_dbz(path)
         if dbz is None:
             continue
-        eco = np.nan_to_num(dbz, nan=-99.0) >= UMBRAL_ECO_DBZ
+        valores = np.nan_to_num(dbz, nan=-99.0)
+        eco = valores >= UMBRAL_ECO_DBZ
+        alto = valores >= CLUTTER_FUERTE_DBZ
         acumulado = eco.astype(np.int32) if acumulado is None else acumulado + eco
+        fuerte = alto.astype(np.int32) if fuerte is None else fuerte + alto
         n += 1
     if acumulado is None or n < 20:
         return None
-    return (acumulado / n) > fraccion
+    return ((acumulado / n) > fraccion) | ((fuerte / n) > CLUTTER_FUERTE_FRACCION)
 
 
 # ------------------------------------------------------------
@@ -356,6 +371,123 @@ def velocidad_en(campo, x: float, y: float, radio_px: int = 6):
     return float(u[y0:y1, x0:x1].mean()), float(v[y0:y1, x0:x1].mean())
 
 
+def observar(campo: np.ndarray) -> dict[str, Any]:
+    """Lo que ve el radar ahora: sobre la ciudad y en toda la región.
+
+    Se exige un área mínima (MIN_PIXELES_CIUDAD) para que un píxel suelto no
+    cuente. dBZ en la región = el núcleo más intenso de al menos esa área.
+    """
+    import cv2
+
+    h, w = campo.shape
+    km_px = km_por_pixel(w)
+    cx, cy = latlon_to_pixel(BAHIA_LAT, BAHIA_LON, w, h)
+    zona = disco((h, w), cx, cy, RADIO_CIUDAD_KM / km_px)
+
+    def percentil_area(valores):
+        if valores.size < MIN_PIXELES_CIUDAD:
+            return 0.0
+        return float(np.partition(valores, -MIN_PIXELES_CIUDAD)[-MIN_PIXELES_CIUDAD])
+
+    dbz_ciudad = percentil_area(campo[zona])
+    # Región: máximo que se mantiene en una ventana de 3x3 (descarta píxeles sueltos).
+    erosion = cv2.erode(campo.astype(np.float32), np.ones((3, 3), np.uint8))
+    dbz_region = float(erosion.max()) if erosion.size else 0.0
+    distancia = None
+    if dbz_region > 0:
+        ys, xs = np.where(erosion >= dbz_region - 0.01)
+        d = np.hypot(xs - cx, ys - cy) * km_px
+        distancia = float(d.min())
+    cerca = disco((h, w), cx, cy, RADIO_CERCANIA_KM / km_px)
+    dbz_cerca = percentil_area(campo[cerca])
+    return {
+        "dbz_ciudad": round(dbz_ciudad, 1),
+        "dbz_30km": round(dbz_cerca, 1),
+        "dbz_region": round(dbz_region, 1),
+        "distancia_nucleo_region_km": round(distancia, 1) if distancia is not None else None,
+        "cobertura_eco_pct": round(float((campo >= UMBRAL_ECO_DBZ).mean() * 100.0), 2),
+    }
+
+
+def actualizar_historial_ciudad(dt: datetime, dbz_ciudad: float, path: Path | None = None) -> dict[str, float]:
+    """Guarda dBZ sobre la ciudad por frame y devuelve las rachas actuales de
+    lluvia intensa (>=40 dBZ) y persistente (>=25 dBZ), en minutos."""
+    path = path or HISTORIAL_CIUDAD
+    try:
+        datos = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    except Exception:
+        datos = []
+    registros = {r["utc"]: r["dbz"] for r in datos if isinstance(r, dict) and "utc" in r}
+    registros[iso(dt)] = round(float(dbz_ciudad), 1)
+    limite = dt - timedelta(hours=HISTORIAL_HORAS)
+    ordenados = sorted(
+        (parse_utc(k), v) for k, v in registros.items() if parse_utc(k) is not None
+    )
+    ordenados = [(t, v) for t, v in ordenados if limite <= t <= dt]
+    try:
+        escribir_json_atomico_lista(path, [{"utc": iso(t), "dbz": v} for t, v in ordenados])
+    except Exception as exc:
+        print(f"AVISO: no se pudo guardar el historial de la ciudad: {exc}")
+
+    return {
+        "minutos_lluvia_intensa": racha(ordenados, LLUVIA_INTENSA_DBZ),
+        "minutos_lluvia_persistente": racha(ordenados, LLUVIA_PERSISTENTE_DBZ),
+        "lluvia_radar_3h_mm": acumulado_mm(ordenados, dt, 3),
+        "lluvia_radar_6h_mm": acumulado_mm(ordenados, dt, 6),
+    }
+
+
+def intensidad_mm_h(dbz: float) -> float:
+    """Marshall-Palmer (Z = 200 R^1.6). Subestima la lluvia tropical eficiente."""
+    if dbz < 15.0:
+        return 0.0
+    return (10 ** (dbz / 10.0) / 200.0) ** (1 / 1.6)
+
+
+def acumulado_mm(ordenados, fin: datetime, horas: float) -> float:
+    """Lluvia estimada por radar sobre la ciudad en las últimas `horas`.
+    Cada frame representa hasta 20 min (los huecos más largos no suman)."""
+    total = 0.0
+    anterior = None
+    for t, v in ordenados:
+        if anterior is None:
+            minutos = 10.0
+        else:
+            minutos = min((t - anterior).total_seconds() / 60.0, 20.0)
+        anterior = t
+        if fin - timedelta(hours=horas) < t <= fin:
+            total += intensidad_mm_h(v) * minutos / 60.0
+    return round(total, 1)
+
+
+def racha(ordenados, umbral: float) -> float:
+    """Minutos seguidos hasta el último frame con dBZ >= umbral (huecos <= 40 min, como los atrasos reales)."""
+    minutos = 0.0
+    fin = None
+    previo = None
+    for t, v in reversed(ordenados):
+        if previo is not None and (previo - t).total_seconds() / 60.0 > 40.0:
+            break
+        if v < umbral:
+            break
+        fin = fin or t
+        minutos = (fin - t).total_seconds() / 60.0 + 10.0
+        previo = t
+    return round(minutos, 1)
+
+
+def escribir_json_atomico_lista(path: Path, data: list) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name, suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
 # ------------------------------------------------------------
 # selección de frames
 # ------------------------------------------------------------
@@ -409,24 +541,32 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
             nota="Más de 60 min sin radar: sin proyección de celdas; solo riesgo por ambiente.",
         )
 
+    actual_dbz = cargar_dbz(ACTUAL)
+    if actual_dbz is None:
+        return salida_no_disponible(radar_ts, "NO_SE_PUDO_DECODIFICAR_DBZ", edad_radar_min=round(edad, 1))
+    clutter = cargar_mascara_clutter(actual_dbz.shape)
+
+    # Observación del frame actual: siempre, haya o no movimiento calculable.
+    observacion = observar(campo_limpio(actual_dbz, clutter))
+    observacion.update(actualizar_historial_ciudad(actual_dt, observacion["dbz_ciudad"]))
+    extra = {"edad_radar_min": round(edad, 1), "observacion": observacion}
+
     previo = frame_previo(actual_dt)
     if previo is None:
-        return salida_no_disponible(radar_ts, "SIN_FRAME_PREVIO_5_30_MIN", edad_radar_min=round(edad, 1))
+        return salida_no_disponible(radar_ts, "SIN_FRAME_PREVIO_5_30_MIN", **extra)
     previo_path, previo_dt = previo
     gap = (actual_dt - previo_dt).total_seconds() / 60.0
 
-    actual_dbz = cargar_dbz(ACTUAL)
     previo_dbz = cargar_dbz(previo_path)
-    if actual_dbz is None or previo_dbz is None or actual_dbz.shape != previo_dbz.shape:
-        return salida_no_disponible(radar_ts, "NO_SE_PUDO_DECODIFICAR_DBZ", edad_radar_min=round(edad, 1))
+    if previo_dbz is None or actual_dbz.shape != previo_dbz.shape:
+        return salida_no_disponible(radar_ts, "NO_SE_PUDO_DECODIFICAR_DBZ", **extra)
 
-    clutter = cargar_mascara_clutter(actual_dbz.shape)
     resultado = pronosticar(previo_dbz, actual_dbz, gap, clutter)
     flujo = resultado["flujo"]
     if not flujo["valido"]:
         return salida_no_disponible(
             radar_ts, flujo.get("motivo", "FLUJO_INVALIDO"),
-            edad_radar_min=round(edad, 1), frame_previo=iso(previo_dt),
+            frame_previo=iso(previo_dt), **extra,
         )
 
     try:
@@ -477,6 +617,7 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
             "tormenta_en_60_min": eta is not None,
         },
         "pronostico": pron,
+        "observacion": observacion,
         "confianza": confianza,
         "factores_confianza": {
             "coherencia_movimiento": flujo["coherencia"],
