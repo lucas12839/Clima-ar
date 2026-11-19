@@ -18,23 +18,24 @@
   "clasificacion_historica": null,
   "vigencia_radar": {
     "radar_timestamp": "2026-11-19T14:40:00Z",
-    "radar_age": 9.6,
-    "edad_radar_minutos": 9.6,
-    "modo": "radar_vigente",
-    "estimado": false
+    "radar_age": 15.6,
+    "edad_radar_minutos": 15.6,
+    "modo": "estimado_desde_ultimo_radar_valido",
+    "estimado": true,
+    "factor_confianza_edad": 0.985
   },
   "radar_timestamp": "2026-11-19T14:40:00Z",
-  "radar_age": 9.6,
+  "radar_age": 15.6,
   "origen_datos": {
     "observacion_radar": {
       "radar_timestamp": "2026-11-19T14:40:00Z",
-      "edad_minutos": 9.6,
-      "es_actual": true,
-      "vigencia": "radar_vigente"
+      "edad_minutos": 15.6,
+      "es_actual": false,
+      "vigencia": "estimado_desde_ultimo_radar_valido"
     },
     "extrapolacion_nowcast": {
-      "aplicada": false,
-      "minutos_extrapolados": 0,
+      "aplicada": true,
+      "minutos_extrapolados": 15.6,
       "limite_minutos": 40.0
     },
     "prediccion_ml": {
@@ -232,12 +233,15 @@
       "motivo_no_disponible": "SIN_ACTIVIDAD",
       "radar_timestamp": "2026-11-19T14:40:00+00:00"
     },
+    "distancia_km_frame": null,
+    "eta_minutos_frame": null,
     "vigencia_radar": {
       "radar_timestamp": "2026-11-19T14:40:00Z",
-      "radar_age": 9.6,
-      "edad_radar_minutos": 9.6,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 15.6,
+      "edad_radar_minutos": 15.6,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true,
+      "factor_confianza_edad": 0.985
     }
   },
   "ambiente": {
@@ -284,7 +288,7 @@
     "relative_humidity_700hPa": 43.0,
     "relative_humidity_500hPa": 23.0,
     "observacion_sazb_utc": "2026-11-19T14:00:00+00:00",
-    "observacion_sazb_edad_minutos": 49.34096851666666,
+    "observacion_sazb_edad_minutos": 55.476967599999995,
     "observacion_sazb_fresca": false,
     "modelo_ecmwf_viento_10m_kmh": 8.7,
     "modelo_ecmwf_direccion_10m": 228.0,
@@ -324,7 +328,7 @@
       "frame_actual_utc": "2026-11-19T14:40:00Z"
     },
     "acquisition": "actualizado",
-    "generated_at_utc": "2026-11-19T14:49:38.614011+00:00",
+    "generated_at_utc": "2026-11-19T14:55:37.209747+00:00",
     "source_state_version": "1.5",
     "source_state_status": "ok",
     "domain": {
@@ -372,50 +376,43 @@
             "min_c_15km": 14.2,
             "p10_c_15km": 14.2,
             "min_c_30km": 13.1,
-            "p10_c_30km": 14.0,
-            "enfriamiento_c_10min": 0.0
+            "p10_c_30km": 14.0
           },
           "ingeniero_white": {
             "min_c_15km": 13.7,
             "p10_c_15km": 14.1,
             "min_c_30km": 13.1,
-            "p10_c_30km": 14.0,
-            "enfriamiento_c_10min": 0.0
+            "p10_c_30km": 14.0
           },
           "general_cerri": {
             "min_c_15km": 14.2,
             "p10_c_15km": 14.2,
             "min_c_30km": 13.6,
-            "p10_c_30km": 14.2,
-            "enfriamiento_c_10min": 0.0
+            "p10_c_30km": 14.2
           },
           "punta_alta": {
             "min_c_15km": 13.6,
             "p10_c_15km": 13.9,
             "min_c_30km": 6.5,
-            "p10_c_30km": 13.1,
-            "enfriamiento_c_10min": 0.2
+            "p10_c_30km": 13.1
           },
           "tornquist": {
             "min_c_15km": -19.0,
             "p10_c_15km": -1.0,
             "min_c_30km": -19.5,
-            "p10_c_30km": -8.0,
-            "enfriamiento_c_10min": 3.3
+            "p10_c_30km": -8.0
           },
           "medanos": {
             "min_c_15km": 13.6,
             "p10_c_15km": 14.2,
             "min_c_30km": 5.6,
-            "p10_c_30km": 13.9,
-            "enfriamiento_c_10min": 0.0
+            "p10_c_30km": 13.9
           },
           "sierra_de_la_ventana": {
             "min_c_15km": -21.4,
             "p10_c_15km": -5.8,
             "min_c_30km": -24.3,
-            "p10_c_30km": -8.1,
-            "enfriamiento_c_10min": 3.9
+            "p10_c_30km": -8.1
           }
         },
         "status": "ok",
@@ -616,7 +613,7 @@
             "distancia_km": null
           }
         },
-        "fin_ventana_utc": "2026-11-19T14:49:00Z",
+        "fin_ventana_utc": "2026-11-19T14:55:20Z",
         "archivos_leidos": 60,
         "archivos_esperados": 60
       }
@@ -1097,7 +1094,7 @@
     "raw_state": {
       "version": "1.5",
       "satellite": "GOES-19",
-      "generated_at_utc": "2026-11-19T14:49:21.143931+00:00",
+      "generated_at_utc": "2026-11-19T14:55:29.343637+00:00",
       "reference_frame_utc": "2026-11-19T14:40:00+00:00",
       "status": "ok",
       "domain": {
@@ -1145,50 +1142,43 @@
               "min_c_15km": 14.2,
               "p10_c_15km": 14.2,
               "min_c_30km": 13.1,
-              "p10_c_30km": 14.0,
-              "enfriamiento_c_10min": 0.0
+              "p10_c_30km": 14.0
             },
             "ingeniero_white": {
               "min_c_15km": 13.7,
               "p10_c_15km": 14.1,
               "min_c_30km": 13.1,
-              "p10_c_30km": 14.0,
-              "enfriamiento_c_10min": 0.0
+              "p10_c_30km": 14.0
             },
             "general_cerri": {
               "min_c_15km": 14.2,
               "p10_c_15km": 14.2,
               "min_c_30km": 13.6,
-              "p10_c_30km": 14.2,
-              "enfriamiento_c_10min": 0.0
+              "p10_c_30km": 14.2
             },
             "punta_alta": {
               "min_c_15km": 13.6,
               "p10_c_15km": 13.9,
               "min_c_30km": 6.5,
-              "p10_c_30km": 13.1,
-              "enfriamiento_c_10min": 0.2
+              "p10_c_30km": 13.1
             },
             "tornquist": {
               "min_c_15km": -19.0,
               "p10_c_15km": -1.0,
               "min_c_30km": -19.5,
-              "p10_c_30km": -8.0,
-              "enfriamiento_c_10min": 3.3
+              "p10_c_30km": -8.0
             },
             "medanos": {
               "min_c_15km": 13.6,
               "p10_c_15km": 14.2,
               "min_c_30km": 5.6,
-              "p10_c_30km": 13.9,
-              "enfriamiento_c_10min": 0.0
+              "p10_c_30km": 13.9
             },
             "sierra_de_la_ventana": {
               "min_c_15km": -21.4,
               "p10_c_15km": -5.8,
               "min_c_30km": -24.3,
-              "p10_c_30km": -8.1,
-              "enfriamiento_c_10min": 3.9
+              "p10_c_30km": -8.1
             }
           },
           "status": "ok",
@@ -1389,7 +1379,7 @@
               "distancia_km": null
             }
           },
-          "fin_ventana_utc": "2026-11-19T14:49:00Z",
+          "fin_ventana_utc": "2026-11-19T14:55:20Z",
           "archivos_leidos": 60,
           "archivos_esperados": 60
         }
