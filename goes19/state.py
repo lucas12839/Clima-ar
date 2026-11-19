@@ -23,6 +23,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_FILE = BASE_DIR / "data" / "goes19" / "goes19_state.json"
 RADAR_TIMESTAMP_FILE = BASE_DIR / "data" / "radar" / "radar_timestamp.txt"
 RADAR_NOWCAST_FILE = BASE_DIR / "data" / "radar" / "radar_nowcast.json"
+METEO_FILE = BASE_DIR / "data" / "ia" / "estado_meteorologico.json"
+
+# Punto 2: productos solo para señales por tormenta (no entran en las
+# estadísticas generales). Variable principal, filtro de calidad.
+SENALES_PRODUCTS = {
+    "cloudtop_height_2km": ("HT", "DQF0"),     # altura del tope, 2 km
+    "cloud_phase": ("Phase", "DQF0"),          # fase: agua/sobreenfriada/mixta/hielo
+}
 
 # Para los datos por tormenta se lee un poco más que 240 km: una tormenta en el
 # borde puede verse corrida hacia afuera por la perspectiva del satélite.
@@ -297,6 +305,38 @@ def process_cloudtop(
             "non_good_quality_qf": int(np.sum(np.isfinite(dqf) & (dqf != 0))),
         },
         "statistics": calculate_statistics(usable),
+        "lectura": lectura,
+        "sincronizacion": {
+            **por_tormenta.sincronizacion(hora, reference_time),
+            "mismo_escaneo_que_c13": mismo_escaneo,
+        },
+    }
+
+
+def process_senal(
+    product: str,
+    temp_dir: Path,
+    reference_time: datetime,
+    inicio_escaneo: str | None,
+    campos: dict,
+) -> dict:
+    """Producto para señales por tormenta: solo píxeles de buena calidad."""
+    variable, _ = SENALES_PRODUCTS[product]
+    metadata, mismo_escaneo = _buscar_objeto(product, reference_time, inicio_escaneo)
+    dominio, lectura = leer_dominio(metadata, [variable, "DQF"], temp_dir, product)
+    valores = np.asarray(dominio["datos"][variable], dtype=np.float64)
+    dqf = np.asarray(dominio["datos"]["DQF"], dtype=np.float64)
+    buenos = np.isfinite(valores) & np.isfinite(dqf) & (dqf == 0)
+    hora = _hora_satelite(metadata, dominio)
+    campos[product] = _campo(np.where(buenos, valores, np.nan), dominio, hora)
+    en_240 = dominio["distance_km"] <= RADAR_RANGE_KM
+    return {
+        "status": "ok",
+        "source": {
+            **build_source_metadata(product, metadata),
+            "age_minutes": age_minutes(metadata, reference_time),
+        },
+        "pixeles_buenos_240km": int(np.sum(buenos & en_240)),
         "lectura": lectura,
         "sincronizacion": {
             **por_tormenta.sincronizacion(hora, reference_time),
@@ -583,7 +623,7 @@ def build_state(reference_time: datetime | None = None) -> dict:
     estado_previo = _cargar_json(OUTPUT_FILE)
 
     state = {
-        "version": "1.6",
+        "version": "1.7",
         "satellite": "GOES-19",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "reference_frame_utc": reference_time.isoformat(),
@@ -637,6 +677,14 @@ def build_state(reference_time: datetime | None = None) -> dict:
                     "error": str(exc),
                 }
 
+        senales_productos = {}
+        for product in SENALES_PRODUCTS:
+            try:
+                senales_productos[product] = process_senal(
+                    product, temp_dir, reference_time, inicio_escaneo, campos)
+            except Exception as exc:
+                senales_productos[product] = {"status": "unavailable", "error": str(exc)[:300]}
+
         try:
             state["glm"] = process_glm(temp_dir, reference_time)
         except Exception as exc:
@@ -675,9 +723,12 @@ def build_state(reference_time: datetime | None = None) -> dict:
                 "c08": campos.get("abi_c08"),
                 "altura_topes": campos.get("cloudtop_height"),
                 "presion_topes": campos.get("cloudtop_pressure"),
+                "altura_topes_2km": campos.get("cloudtop_height_2km"),
+                "fase": campos.get("cloud_phase"),
             },
             rayos_radar,
             estado_previo,
+            _cargar_json(METEO_FILE),
         )
     except Exception as exc:
         state["por_tormenta"] = {
@@ -687,13 +738,24 @@ def build_state(reference_time: datetime | None = None) -> dict:
             "tormentas": [],
         }
 
+    state["senales_severas"] = {
+        "productos": senales_productos,
+        "topes_sobresalientes_zona": (state.get("por_tormenta") or {}).get("topes_sobresalientes_zona"),
+        "metodo": {
+            "topes_sobresalientes": "textura del infrarrojo (Bedka 2010): <= -58 °C, mínimo local a 4 km, "
+                                    "yunque frío a 6-10 km, >= 6,5 °C más frío que el yunque",
+            "vapor_menos_infrarrojo": "canal 8 - canal 13, mismo barrido, píxel a píxel",
+            "congelamiento": "altura del tope (p90) menos nivel de 0 °C del modelo (punto y hora más cercanos)",
+        },
+    }
+
     state["sincronizacion"] = {
         "frame_radar_utc": por_tormenta.iso(reference_time),
         "inicio_barrido_referencia_utc": inicio_escaneo,
         "desfase_max_min": por_tormenta.DESFASE_MAX_MIN,
         "productos": {
             nombre: (item or {}).get("sincronizacion")
-            for nombre, item in {**state["products"], **state["cloudtop"]}.items()
+            for nombre, item in {**state["products"], **state["cloudtop"], **senales_productos}.items()
         },
     }
 
@@ -727,7 +789,8 @@ def main() -> None:
     for name, value in state["cloudtop"].items():
         print(f"{name}: {value.get('status')}")
 
-    for name, value in {**state["products"], **state["cloudtop"]}.items():
+    for name, value in {**state["products"], **state["cloudtop"],
+                        **(state.get("senales_severas") or {}).get("productos", {})}.items():
         lectura = value.get("lectura") or {}
         sinc = value.get("sincronizacion") or {}
         if lectura:
@@ -737,7 +800,8 @@ def main() -> None:
                 f"mismo barrido: {sinc.get('mismo_escaneo_que_c13')})"
             )
     pt = state.get("por_tormenta") or {}
-    print(f"Por tormenta: {pt.get('estado')} - {len(pt.get('tormentas') or [])} tormentas")
+    print(f"Por tormenta: {pt.get('estado')} - {len(pt.get('tormentas') or [])} tormentas - "
+          f"topes sobresalientes en la zona: {pt.get('topes_sobresalientes_zona')}")
 
     print(f"GLM: {state['glm'].get('status') if state['glm'] else 'unavailable'}")
 

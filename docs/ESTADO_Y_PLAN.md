@@ -102,7 +102,26 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
 2. Viernes 13/11: ¿cuánto llovió exactamente en Punta Alta y en Bahía Blanca, y a qué hora fue
    lo fuerte? (el radar crudo dio ~190 mm en Punta Alta: parece sobreestimar).
 
-## Punto 1 del plan terminado (19/11/2026, 20:15 hora de Argentina) — esperando a Lucas para el 2
+## Punto 2 del plan terminado (19/11/2026, 20:50 hora de Argentina) — esperando a Lucas para el 3
+- **Señales de tormenta severa por satélite**, por tormenta (`senales_severas` dentro de cada
+  tormenta en `por_tormenta`), con la misma sincronización, movimiento y perspectiva del punto 1:
+  - topes sobresalientes (textura del infrarrojo, Bedka 2010: ≤ −58 °C, mínimo local a 4 km,
+    yunque frío a 6-10 km, ≥ 6,5 °C más frío que el yunque);
+  - vapor de agua menos infrarrojo (canal 8 − canal 13, mismo barrido, píxel a píxel);
+  - altura del tope con detalle de 2 km (`ABI-L2-ACHA2KMF`; NOAA la publica ~10 min más tarde:
+    si no llega sincronizada se usa la de 10 km);
+  - fase del tope (`ABI-L2-ACTPF`: agua, sobreenfriada, mixta, hielo);
+  - tope por encima del nivel de congelamiento.
+- **Nivel de congelamiento arreglado:** Open-Meteo `/v1/ecmwf` no trae `freezing_level_height`
+  (llegaba vacío, así que la regla "isoterma alta: el granizo chico se derrite" de
+  `indices_fenomenos.py` nunca actuaba). Ahora se calcula del perfil ECMWF (superficie y
+  925-500 hPa con su altura real) en `meteorologia_fusion.py`. Desde ahora esa regla funciona
+  (actúa con el 0 °C a ≥ 4500 m, típico de pleno verano).
+- Prueba real 23:10 UTC (20:10 hora de Argentina): 7 tormentas a 160-220 km, topes 100 % hielo, 9-11 km,
+  5,8-7,5 km sobre el 0 °C (2830 m), sin topes sobresalientes (ninguna llegó a −58 °C).
+- Estado GOES versión 1.7.
+
+## Punto 1 del plan terminado (19/11/2026, 20:15 hora de Argentina)
 - **Error grave corregido:** las fórmulas que pasan cada píxel de GOES-19 a latitud/longitud
   estaban mal (signos y senos/cosenos invertidos). Hasta este cambio, los datos "a 240 km de
   Bahía" salían del océano Pacífico (~32°S 85°O, a ~2200 km): topes del canal 13 (y por
@@ -146,7 +165,7 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   el PR y lo une a main (permiso dado). Probar siempre con `pytest`, `herramientas/emular_workflow.py`
   (con tormenta y sin actividad) y, si cambia la clasificación, el 13/11 con
   `herramientas/simular_evento_real.py` (frames en `data/radar/historico`).
-- Hechos con Claude y en producción: PR #15 a #42 (#40-41 plan, #42 punto 1) (ayer: plan 1-7 y puntos 1-5; hoy: índices
+- Hechos con Claude y en producción: PR #15 a #43 (#40-41 plan, #42 punto 1, #43 punto 2) (ayer: plan 1-7 y puntos 1-5; hoy: índices
   por fenómeno, localidades, GOES-19, ambiente, calidad de estaciones, calibración de lluvia,
   estado de fuentes, estación CWOP).
 - Localidades: Bahía Blanca, Ingeniero White, General Daniel Cerri, Punta Alta, Tornquist,
@@ -158,8 +177,8 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - **Próximo trabajo de Lucas:** corrección de los umbrales de tormentas (granizo severo con
   radar crudo está bajo: el 13/11 en Punta Alta cayó granizo chico y ClimaAR dijo "posible
   severo"). Ahora es el punto 4 de `docs/INSPECCION_FUENTES.md`: un puntaje de gravedad por tormenta
-  (radar + satélite + rayos + modelo), después de los puntos 1 a 3. **Punto 1 terminado (#42):
-  no avanzar al punto 2 sin que Lucas lo diga.**
+  (radar + satélite + rayos + modelo), después de los puntos 1 a 3. **Puntos 1 (#42) y 2 (#43)
+  terminados: no avanzar al punto 3 sin que Lucas lo diga.**
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,

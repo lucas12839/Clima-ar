@@ -308,3 +308,84 @@ def test_hora_local_del_barrido():
     fin = ini + timedelta(minutes=9, seconds=40)
     assert pt.hora_local_escaneo(ini, fin, 0.85) == ini + (fin - ini) * 0.85
     assert pt.hora_local_escaneo(ini, fin, None) == fin
+
+
+# ------------------------------------------------------------------
+# Punto 2: señales de tormenta severa
+# ------------------------------------------------------------------
+
+from goes19 import senales_severas as ss  # noqa: E402
+
+
+def _campo_ot(con_ot=True, yunque_k=218.0, tope_k=205.0):
+    """Yunque frío de 25 km con (o sin) un tope sobresaliente en el centro."""
+    lats = np.arange(-39.2, -38.2, 0.018)
+    lons = np.arange(-62.9, -61.6, 0.023)
+    la, lo = np.meshgrid(lats, lons)
+    la, lo = la.ravel(), lo.ravel()
+    d = gs.haversine_km(la, lo, -38.7, -62.25)
+    bt = np.where(d <= 25, yunque_k, 285.0)
+    if con_ot:
+        bt = np.where(d <= 2.0, tope_k, bt)
+    return bt, la, lo
+
+
+def test_detecta_tope_sobresaliente():
+    bt, la, lo = _campo_ot()
+    ots = ss.detectar_topes_sobresalientes(bt, la, lo)
+    assert len(ots) == 1
+    assert ots[0]["bt_c"] == pytest.approx(205.0 - 273.15, abs=0.1)
+    assert ots[0]["diferencia_c"] == pytest.approx(13.0, abs=0.1)
+
+
+def test_no_detecta_sin_tope_o_con_yunque_tibio_o_tope_no_tan_frio():
+    assert ss.detectar_topes_sobresalientes(*_campo_ot(con_ot=False)) == []
+    # Yunque tibio (-30 °C): no hay yunque frío alrededor.
+    assert ss.detectar_topes_sobresalientes(*_campo_ot(yunque_k=243.0, tope_k=212.0)) == []
+    # Tope de -55 °C: no llega a -58 °C.
+    assert ss.detectar_topes_sobresalientes(*_campo_ot(tope_k=218.15, yunque_k=226.0)) == []
+    # Diferencia chica con el yunque (4 °C).
+    assert ss.detectar_topes_sobresalientes(*_campo_ot(tope_k=210.0, yunque_k=214.0)) == []
+
+
+def test_fase_y_congelamiento():
+    r = ss.resumen_fase(np.array([4, 4, 4, 3, 0, np.nan]))
+    assert r["pixeles"] == 5 and r["fraccion_hielo"] == 0.6 and r["fraccion_hielo_en_nubes"] == 0.75
+    amb = {"ambiente_futuro": {"puntos": [
+        {"punto": "lejos", "latitud": -36.0, "longitud": -60.0,
+         "datos": [{"tiempo_utc": "2026-11-19T23:00", "freezing_level_height": 4000.0}]},
+        {"punto": "cerca", "latitud": -38.7, "longitud": -62.3,
+         "datos": [{"tiempo_utc": "2026-11-19T20:00", "freezing_level_height": 3500.0},
+                   {"tiempo_utc": "2026-11-19T23:00", "freezing_level_height": 3100.0}]}]}}
+    n = ss.nivel_congelamiento_para(amb, -38.72, -62.27, FRAME)
+    assert n["estado"] == "ok" and n["metros"] == 3100 and n["punto"] == "cerca"
+    assert ss.nivel_congelamiento_para(None, -38.7, -62.3, FRAME)["estado"] == "no_disponible"
+
+
+def test_senales_por_tormenta_con_tope_sobresaliente_y_vapor():
+    hora = FRAME - timedelta(minutes=3)
+    lat_v, lon_v = gs.posicion_aparente(-38.7, -62.25, 10.0, PROY)
+    bt, la, lo = _campo_ot()
+    # Mover el campo para que el tope quede donde el satélite ve la tormenta.
+    la = la + (lat_v - (-38.7))
+    lo = lo + (lon_v - (-62.25))
+    c13 = {"valores": bt, "latitude": la, "longitude": lo, "proyeccion": PROY, "hora_satelite": hora}
+    c08 = dict(c13, valores=np.where(bt < 210, bt + 3.0, bt - 10.0))
+    r = pt.calcular(_nowcast([_nucleo(2, -38.7, -62.25, pixeles=300)]), FRAME,
+                    {"c13": c13, "c08": c08}, None)
+    sev = r["tormentas"][0]["senales_severas"]
+    assert r["topes_sobresalientes_zona"] == 1
+    assert sev["topes_sobresalientes"]["cantidad"] == 1
+    assert sev["topes_sobresalientes"]["max_diferencia_yunque_c"] == pytest.approx(13.0, abs=0.1)
+    assert sev["vapor_menos_infrarrojo"]["max_c"] == pytest.approx(3.0, abs=0.01)
+    assert sev["vapor_menos_infrarrojo"]["pixeles_positivos"] > 0
+    assert sev["fase"] == {"estado": "no_disponible"}
+    assert sev["congelamiento"]["estado"] == "no_disponible"
+
+
+def test_vapor_infrarrojo_exige_mismo_barrido_y_grilla():
+    hora = FRAME - timedelta(minutes=3)
+    c = {"valores": np.array([1.0]), "latitude": np.array([1.0]), "longitude": np.array([1.0]), "hora_satelite": hora}
+    assert ss.diferencia_vapor_infrarrojo(c, dict(c, hora_satelite=hora - timedelta(minutes=10))) is None
+    assert ss.diferencia_vapor_infrarrojo(c, dict(c, latitude=np.array([2.0]))) is None
+    assert ss.diferencia_vapor_infrarrojo(c, c) is not None
