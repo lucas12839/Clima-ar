@@ -560,22 +560,30 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
             print(f"AVISO: análisis por localidad no disponible: {exc}")
             return {}
 
+    def puntos_control():
+        import localidades_radar
+        try:
+            return localidades_radar.analizar_puntos_control(actual_dt, limpio_actual)
+        except Exception as exc:
+            print(f"AVISO: puntos de control no disponibles: {exc}")
+            return {}
+
     previo = frame_previo(actual_dt)
     if previo is None:
-        return salida_no_disponible(radar_ts, "SIN_FRAME_PREVIO_5_30_MIN", localidades=por_localidad(), **extra)
+        return salida_no_disponible(radar_ts, "SIN_FRAME_PREVIO_5_30_MIN", localidades=por_localidad(), puntos_control=puntos_control(), **extra)
     previo_path, previo_dt = previo
     gap = (actual_dt - previo_dt).total_seconds() / 60.0
 
     previo_dbz = cargar_dbz(previo_path)
     if previo_dbz is None or actual_dbz.shape != previo_dbz.shape:
-        return salida_no_disponible(radar_ts, "NO_SE_PUDO_DECODIFICAR_DBZ", localidades=por_localidad(), **extra)
+        return salida_no_disponible(radar_ts, "NO_SE_PUDO_DECODIFICAR_DBZ", localidades=por_localidad(), puntos_control=puntos_control(), **extra)
 
     resultado = pronosticar(previo_dbz, actual_dbz, gap, clutter)
     flujo = resultado["flujo"]
     if not flujo["valido"]:
         return salida_no_disponible(
             radar_ts, flujo.get("motivo", "FLUJO_INVALIDO"),
-            frame_previo=iso(previo_dt), localidades=por_localidad(), **extra,
+            frame_previo=iso(previo_dt), localidades=por_localidad(), puntos_control=puntos_control(), **extra,
         )
 
     try:
@@ -628,6 +636,7 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
         "pronostico": pron,
         "observacion": observacion,
         "localidades": por_localidad(flujo, dict(resultado["campos"])),
+        "puntos_control": puntos_control(),
         "confianza": confianza,
         "factores_confianza": {
             "coherencia_movimiento": flujo["coherencia"],

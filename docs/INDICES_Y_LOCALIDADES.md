@@ -110,3 +110,29 @@ promedio del radar: las dos cosas eran falsas para la ciudad.
 - Días con granizo o tormenta fuerte entre el 20/10 y el 19/11 (cortes de granizo con
   radar crudo: hubo ≥ 60 dBZ sobre la ciudad el 28/10, 4/11, 12/11 y 13/11).
 - Validar los cortes de rayos con tormentas reales (la ventana de 20 min empezó hoy).
+
+## Calidad de estaciones y calibración automática de la lluvia (19/11/2026, tarde)
+
+Ni el radar ni las estaciones se creen a ciegas (pedido de Lucas: las estaciones de Bahía
+están en el aeropuerto y en Grünbein, lejos del centro, y no sabemos si miden bien).
+
+- **Puntos de control:** cada estación dentro de los 240 km del radar se compara con lo que
+  el radar ve **justo encima de ella** (3 km), no con la ciudad. Así se calibra la fórmula
+  del radar, que después sirve para cualquier localidad.
+- **Control de calidad** (`scripts/estaciones/calidad_y_calibracion.py`, en cada ciclo):
+  dato atrasado, valores imposibles, temperatura trabada 3 h, lluvia del día que baja, y
+  desacuerdos con el radar (el radar ve ≥ 5 mm encima y la estación 0, o la estación ≥ 10 mm
+  sin eco cerca). Con 2 desacuerdos en 14 días la lluvia de esa estación queda "dudosa".
+  Una estación dudosa no entra en los índices ni en la calibración.
+- **Registro de calibración:** una fila por hora y estación confiable a ≤ 100 km
+  (`data/ia/calibracion/registro_lluvia.json`, 120 días).
+- **Factor automático:** lluvia medida / lluvia del radar en las horas con lluvia. Se usa
+  cuando junta ≥ 20 horas de ≥ 3 días distintos (`data/ia/calibracion/factor_lluvia.json`).
+- **Factor inicial 0,4** (`config/calibracion_lluvia.json`): Punta Alta 13/11, 72 mm medidos
+  contra ~190 mm del radar crudo.
+
+Viernes 13/11 con la corrección (119 frames, sin errores): Bahía Blanca máx. 1,4 mm en 6 h;
+Punta Alta "Posible severa (lluvia)" entre las 15:20 y las 16:00 (lo fuerte real fue de 14 a
+15:30, con 35 mm). Con un solo factor el día da bien (~76 mm contra 72), pero el chaparrón
+de la tarde queda corto (19 mm en 3 h contra 35): por eso hace falta la calibración con
+estaciones, chaparrón por chaparrón.

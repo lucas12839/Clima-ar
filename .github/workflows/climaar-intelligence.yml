@@ -193,6 +193,13 @@ jobs:
           python scripts/nowcast_flujo_optico.py
           test -s data/radar/nowcast_flujo.json
 
+      - name: Calidad de estaciones y calibración de la lluvia del radar
+        run: |
+          set -euo pipefail
+          # Nunca corta el ciclo: sin esto se sigue con la calibración anterior.
+          python scripts/estaciones/calidad_y_calibracion.py \
+            || echo "::warning::No se pudo controlar la calidad de las estaciones."
+
       - name: Conectar RMA10 con Storm Engine
         run: |
           set -euo pipefail
