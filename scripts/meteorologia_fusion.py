@@ -96,6 +96,19 @@ HOURLY_VARIABLES = [
     "total_column_integrated_water_vapour",
     "freezing_level_height",
     "lightning_density",
+    # En altura: cizalladura, gradiente térmico y aire seco (ambiente_severo.py).
+    # Verificado en Open-Meteo /v1/ecmwf el 19/11/2026.
+    "wind_speed_850hPa",
+    "wind_direction_850hPa",
+    "wind_speed_700hPa",
+    "wind_direction_700hPa",
+    "wind_speed_500hPa",
+    "wind_direction_500hPa",
+    "temperature_850hPa",
+    "temperature_700hPa",
+    "temperature_500hPa",
+    "relative_humidity_700hPa",
+    "relative_humidity_500hPa",
 ]
 
 

@@ -6,7 +6,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from clasificacion_tiempo import clasificar, mantener_amenazas  # noqa: E402
+from clasificacion_tiempo import clasificar, mantener_amenazas, mantener_fenomenos  # noqa: E402
+import indices_fenomenos as fen  # noqa: E402
 
 BASE = Path(__file__).resolve().parents[1]
 RADAR = BASE / "data/radar/radar_nowcast.json"
@@ -283,6 +284,147 @@ def optical_flow_evidence(flujo, nowcast):
     return score, score > 0, resumen
 
 
+def _superficie_fresca():
+    datos = load(SUPERFICIE) if SUPERFICIE.exists() else {}
+    if not isinstance(datos, dict):
+        return {}
+    try:
+        edad = (
+            datetime.now(timezone.utc)
+            - datetime.fromisoformat(str(datos.get("generado_utc")).replace("Z", "+00:00"))
+        ).total_seconds() / 60.0
+    except (TypeError, ValueError):
+        return {}
+    return datos if edad <= 20 else {}
+
+
+def distancia_km(lat1, lon1, lat2, lon2):
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = (math.sin((p2 - p1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
+    return 2 * r * math.asin(math.sqrt(min(1.0, a)))
+
+
+def rayos_para(rayos, lat, lon):
+    """Rayos vistos desde la localidad: la distancia se mide al rayo más cercano."""
+    salida = {k: v for k, v in (rayos or {}).items() if k not in ("latitud", "longitud", "por_localidad")}
+    flat, flon = finite((rayos or {}).get("latitud")), finite((rayos or {}).get("longitud"))
+    if flat is not None and flon is not None and lat is not None and lon is not None:
+        salida["distancia_km"] = round(distancia_km(lat, lon, flat, flon), 1)
+    else:
+        salida.pop("distancia_km", None)
+    propio = ((rayos or {}).get("por_localidad") or {})
+    return salida, propio
+
+
+def topes_por_localidad():
+    """Topes GOES-19 (canal 13) por localidad, si la imagen tiene <= 30 min."""
+    goes = load(GOES) if GOES.exists() else {}
+    c13 = ((goes.get("productos") or {}).get("abi_c13") or {}) if isinstance(goes, dict) else {}
+    edad = finite((c13.get("source") or {}).get("age_minutes"))
+    if edad is not None and edad > 30:
+        return {}
+    return c13.get("por_localidad") or {}
+
+
+CALIBRACION_LLEGADAS = BASE / "config/calibracion_llegadas.json"
+CASOS_MINIMOS = 20
+
+
+def confiabilidad_llegada(loc_id, eta, dbz, tabla=None):
+    """Cuántas veces llegó de verdad un pronóstico parecido (30 días de radar).
+    Usa la localidad si tiene >= 20 casos; si no, todas juntas."""
+    if eta is None or dbz is None:
+        return None
+    if tabla is None:
+        tabla = load(CALIBRACION_LLEGADAS) if CALIBRACION_LLEGADAS.exists() else {}
+    plazo = "0-20" if eta < 20 else ("20-40" if eta < 40 else "40-60")
+    inten = "35-40" if dbz < 40 else ("40-45" if dbz < 45 else ">=45")
+    for fuente, base in (("localidad", ((tabla.get("por_localidad") or {}).get(loc_id) or {})),
+                         ("region", tabla.get("global") or {})):
+        fila = (base.get(plazo) or {}).get(inten)
+        if isinstance(fila, dict) and fila.get("casos", 0) >= CASOS_MINIMOS:
+            return dict(fila, fraccion=round(fila["llego"] / fila["casos"], 2), base=fuente,
+                        plazo_min=plazo, intensidad_dbz=inten)
+    return None
+
+
+def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
+    """Índices por fenómeno de cada localidad (Bahía Blanca, Punta Alta, ...)."""
+    import localidades_radar
+
+    locs = (flujo or {}).get("localidades") or {}
+    if not isinstance(locs, dict):
+        locs = {}
+    # Todas las localidades, aunque el radar no haya llegado (satélite y estaciones).
+    for loc in localidades_radar.cargar_localidades():
+        locs.setdefault(loc["id"], {"nombre": loc["nombre"], "lat": loc["lat"], "lon": loc["lon"],
+                                    "sin_radar": True})
+    mov = (flujo or {}).get("movimiento") or {}
+    sup_locs = (_superficie_fresca().get("localidades") or {})
+    topes = topes_por_localidad()
+    tabla = load(CALIBRACION_LLEGADAS) if CALIBRACION_LLEGADAS.exists() else {}
+    previo = load(OUT) if OUT.exists() else {}
+    previas = (((previo.get("tipo_tiempo") or {}).get("localidades")) or {}) if isinstance(previo, dict) else {}
+    salida = {}
+    for loc_id, d in locs.items():
+        if not isinstance(d, dict):
+            continue
+        lleg = d.get("llegada") or {}
+        r_loc, propio = rayos_para(rayos, d.get("lat"), d.get("lon"))
+        if loc_id in propio and isinstance(propio[loc_id], dict):
+            r_loc.update(propio[loc_id])
+        ev = fen.evaluar(
+            radar={
+                "disponible": bool(radar_ok and sincronizado and not d.get("sin_radar")),
+                "dbz_ciudad": finite(d.get("dbz_p75")),
+                "dbz_pico": finite(d.get("dbz_pico")),
+                "mm_h_area": finite(d.get("mm_h_medio")),
+                "dbz_30km": finite(lleg.get("dbz_entorno_20km") or d.get("dbz_pico")),
+                "dbz_llegada": finite(lleg.get("dbz_al_llegar")),
+                "eta_llegada_min": finite(lleg.get("eta_desde_ahora_min")),
+                # Movimiento local (ecos a <= 20 km), no el promedio del radar.
+                "velocidad_kmh": finite(lleg.get("velocidad_local_kmh")),
+                # Del ciclo anterior: la velocidad alta tiene que repetirse.
+                "velocidad_previa_kmh": finite((previas.get(loc_id) or {}).get("velocidad_local_kmh")),
+                "velocidad_eco_previa_kmh": finite((previas.get(loc_id) or {}).get("velocidad_eco_kmh")),
+                "velocidad_eco_kmh": finite(lleg.get("velocidad_eco_kmh")),
+                "coherencia": finite(mov.get("coherencia")),
+                "minutos_lluvia_intensa": finite(d.get("minutos_lluvia_intensa")),
+                "lluvia_1h_mm": finite(d.get("lluvia_1h_mm")),
+                "lluvia_3h_mm": finite(d.get("lluvia_3h_mm")),
+                "lluvia_6h_mm": finite(d.get("lluvia_6h_mm")),
+                "confiabilidad_llegada": confiabilidad_llegada(
+                    loc_id, finite(lleg.get("eta_desde_ahora_min")), finite(lleg.get("dbz_al_llegar")), tabla),
+            },
+            superficie=sup_locs.get(loc_id) or {},
+            rayos=r_loc,
+            ambiente=ambiente,
+            satelite=topes.get(loc_id) or {},
+        )
+        ev["nombre"] = d.get("nombre", loc_id)
+        ev["velocidad_local_kmh"] = finite(lleg.get("velocidad_local_kmh"))
+        ev["velocidad_eco_kmh"] = finite(lleg.get("velocidad_eco_kmh"))
+        ev["acumulado_radar_mm"] = {"1h": d.get("lluvia_1h_mm"), "3h": d.get("lluvia_3h_mm"),
+                                    "6h": d.get("lluvia_6h_mm")}
+        if sup_locs.get(loc_id):
+            ev["estaciones"] = sup_locs[loc_id].get("nombres")
+        salida[loc_id] = ev
+    return salida
+
+
+def resumen_regional(localidades):
+    """Localidades con algún fenómeno, de mayor a menor."""
+    filas = [
+        {"id": k, "nombre": v["nombre"], "calificacion": v["calificacion"]["etiqueta"],
+         "grado": v["calificacion"]["grado"], "resumen": v["resumen"],
+         "minutos_hasta_llegada": v.get("minutos_hasta_llegada")}
+        for k, v in localidades.items() if v["calificacion"]["grado"] > 0
+    ]
+    return sorted(filas, key=lambda f: -f["grado"])
+
+
 def superficie_bahia():
     """Resumen de estaciones de Bahía Blanca si es reciente (<= 20 min)."""
     datos = load(SUPERFICIE) if SUPERFICIE.exists() else {}
@@ -312,13 +454,23 @@ def tipo_de_tiempo(flujo, intel, nowcast):
     rayos = {
         "flashes": (glm.get("counts") or {}).get("flashes"),
         "distancia_km": (glm.get("nearest_flash") or {}).get("distance_km"),
+        "latitud": (glm.get("nearest_flash") or {}).get("latitude"),
+        "longitud": (glm.get("nearest_flash") or {}).get("longitude"),
     }
+    ventana = glm.get("ventana") or {}
+    if isinstance(ventana, dict) and ventana.get("disponible"):
+        rayos.update({
+            "tasa_30km_por_min": ventana.get("tasa_30km_por_min"),
+            "tasa_30km_previa_por_min": ventana.get("tasa_30km_previa_por_min"),
+            "por_localidad": ventana.get("por_localidad") or {},
+        })
     vigencia = (intel.get("vigencia_radar") or {}) if isinstance(intel, dict) else {}
     radar_ok = bool(obs) and vigencia.get("modo") != "radar_obsoleto"
     sincronizado = timestamp_key(flujo.get("radar_timestamp")) == timestamp_key(
         (nowcast or {}).get("frame_actual_utc")
     )
-    return clasificar(
+    ambiente = (intel.get("ambiente") or {}) if isinstance(intel, dict) else {}
+    resultado = clasificar(
         dbz_ciudad=finite(obs.get("dbz_ciudad")),
         dbz_llegada=finite(bahia.get("dbz_al_llegar")),
         eta_llegada_min=finite(bahia.get("eta_tormenta_desde_ahora_min")),
@@ -330,11 +482,43 @@ def tipo_de_tiempo(flujo, intel, nowcast):
         velocidad_kmh=finite(mov.get("velocidad_media_kmh")),
         coherencia=finite(mov.get("coherencia")),
         minutos_lluvia_intensa=finite(obs.get("minutos_lluvia_intensa")),
-        rayos=rayos,
-        ambiente=(intel.get("ambiente") or {}) if isinstance(intel, dict) else {},
+        rayos={k: rayos.get(k) for k in ("flashes", "distancia_km", "tasa_30km_por_min",
+                                          "tasa_30km_previa_por_min") if rayos.get(k) is not None},
+        ambiente=ambiente,
         radar_disponible=radar_ok and sincronizado,
         superficie=superficie_bahia(),
     )
+    localidades = tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado)
+    # Bahía Blanca: los índices salen del análisis por localidad (lluvia media
+    # del área, no el píxel más intenso). La escala 0-8 y las amenazas siguen igual.
+    if "bahia_blanca" in localidades:
+        bb = localidades["bahia_blanca"]
+        for clave in ("ahora", "resumen_ahora", "al_llegar", "resumen_al_llegar",
+                      "fenomenos", "resumen", "calificacion", "llegada", "ambiente"):
+            resultado[clave] = bb[clave]
+        if bb.get("minutos_hasta_llegada") is not None:
+            resultado["minutos_hasta_llegada"] = bb["minutos_hasta_llegada"]
+    resultado["localidades"] = localidades
+    resultado["resumen_regional"] = resumen_regional(localidades)
+    return resultado
+
+
+def mantener_localidades(tipo, anterior, ahora_utc, anterior_utc):
+    """Cada localidad mantiene su fenómeno severo 40 min, como Bahía Blanca."""
+    from clasificacion_tiempo import mantener_fenomenos as _mf
+
+    def parse(texto):
+        try:
+            return datetime.fromisoformat(str(texto).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+
+    ahora = parse(ahora_utc)
+    previas = ((anterior or {}).get("localidades") or {}) if isinstance(anterior, dict) else {}
+    for loc_id, loc in (tipo.get("localidades") or {}).items():
+        _mf(loc, previas.get(loc_id) if isinstance(previas, dict) else None, ahora, ahora_utc, anterior_utc, parse)
+    tipo["resumen_regional"] = resumen_regional(tipo.get("localidades") or {})
+    return tipo
 
 
 def main():
@@ -370,6 +554,12 @@ def main():
     )
     anterior = load(OUT) if OUT.exists() else {}
     tipo_tiempo = mantener_amenazas(
+        tipo_tiempo,
+        anterior.get("tipo_tiempo") if isinstance(anterior, dict) else None,
+        str(nowcast.get("frame_actual_utc") or ""),
+        ((anterior.get("radar") or {}).get("timestamp") if isinstance(anterior, dict) else None),
+    )
+    tipo_tiempo = mantener_localidades(
         tipo_tiempo,
         anterior.get("tipo_tiempo") if isinstance(anterior, dict) else None,
         str(nowcast.get("frame_actual_utc") or ""),
