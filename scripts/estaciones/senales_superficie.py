@@ -28,6 +28,8 @@ BASE = Path(__file__).resolve().parents[2]
 EST = BASE / "data/ia/estaciones"
 BCP = EST / "observaciones/bcp_actual.json"
 SMN = EST / "observaciones/smn_synop_actual.json"
+CWOP = EST / "observaciones/cwop_actual.json"
+CWOP_CONFIG = BASE / "config/estaciones_cwop.json"
 CATALOGO = EST / "catalogo_estaciones.json"
 HISTORIAL = EST / "historial_superficie.json"
 SALIDA = EST / "senales_superficie.json"
@@ -94,6 +96,9 @@ def coordenadas() -> dict[str, tuple[float, float]]:
         lon = numero(s.get("lon", s.get("longitude")))
         if s.get("name") and lat is not None and lon is not None:
             salida[s["name"]] = (lat, lon)
+    for e in leer(CWOP_CONFIG).get("estaciones", []):
+        if e.get("nombre") and e.get("lat") is not None:
+            salida[e["nombre"]] = (float(e["lat"]), float(e["lon"]))
     return salida
 
 
@@ -130,6 +135,19 @@ def observaciones_frescas() -> list[dict[str, Any]]:
             "viento": viento * 3.6 if viento is not None else None,
             "rafaga": rafaga * 3.6 if rafaga is not None else None,
             "presion": _smn_valor(v, "non_coordinate_pressure"),
+        })
+    # Red CWOP (estaciones ciudadanas validadas, config/estaciones_cwop.json).
+    for s in leer(CWOP).get("stations", []):
+        if s.get("estado") != "valida":
+            continue
+        v = s.get("variables") or {}
+        obs.append({
+            "nombre": s.get("nombre"), "red": "cwop", "utc": s.get("observation_time"),
+            "temp": numero(v.get("temperatura_c")),
+            "lluvia_dia": numero(v.get("precipitacion_dia_mm")),
+            "viento": numero(v.get("viento_kmh")),
+            "rafaga": numero(v.get("rafaga_15min_kmh")),
+            "presion": numero(v.get("presion_hpa")),
         })
     return [o for o in obs if o["nombre"] and parse_utc(o["utc"])]
 
