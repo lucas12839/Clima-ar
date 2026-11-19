@@ -728,7 +728,13 @@ function tipoTiempoTexto() {
     return classificationText();
   }
   const NOMBRES = { granizo: "granizo", viento: "viento", inundacion: "inundación" };
-  const partes = [tipo.etiqueta];
+  // Índices por fenómeno: calificación general + combinación real.
+  const partes = tipo.calificacion && tipo.resumen
+    ? [tipo.calificacion.etiqueta, tipo.resumen]
+    : [tipo.etiqueta];
+  if (tipo.resumen_al_llegar && tipo.minutos_hasta_llegada != null && tipo.alcance === "acercandose") {
+    partes.push(`al llegar: ${tipo.resumen_al_llegar}`);
+  }
   if (tipo.alcance === "acercandose" && tipo.minutos_hasta_llegada != null) {
     partes.push(
       tipo.minutos_hasta_llegada <= 2
