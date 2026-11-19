@@ -49,6 +49,9 @@ jobs:
       # DEPENDENCIAS
       # ============================================================
 
+      - name: Marcar inicio del run
+        run: echo "CLIMAAR_INICIO_RUN_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
       - name: Instalar dependencias
         run: |
           set -euo pipefail
@@ -61,15 +64,28 @@ jobs:
       # PLAYWRIGHT
       # ============================================================
 
-      - name: Instalar Chromium para Playwright
+      - name: Preparar navegador (Chrome del runner o Chromium)
+        timeout-minutes: 6
         run: |
           set -euo pipefail
 
-          python -m pip show playwright
-          sudo apt-get update
-          python -m playwright install-deps chromium \
-            || sudo "$(command -v python)" -m playwright install-deps chromium
-          python -m playwright install chromium
+          # Chrome viene preinstalado en ubuntu-latest: usarlo evita
+          # instalar Chromium + dependencias en cada frame (a veces 8-9 min).
+          # Se verifica que Playwright realmente lo pueda abrir.
+          if command -v google-chrome >/dev/null 2>&1 && python - <<'PY'
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              b = p.chromium.launch(headless=True, channel="chrome")
+              b.new_page().goto("about:blank")
+              b.close()
+          print("Chrome del runner OK")
+          PY
+          then
+            echo "CLIMAAR_CHROMIUM_CHANNEL=chrome" >> "$GITHUB_ENV"
+          else
+            echo "Chrome no disponible: instalando Chromium de Playwright."
+            python -m playwright install --with-deps chromium
+          fi
 
       # ============================================================
       # DIRECTORIOS
@@ -965,6 +981,26 @@ jobs:
           RADAR_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
+
+          # Radar e Intelligence comparten el grupo de concurrencia, que
+          # admite 1 run en curso + 1 pendiente. Si ya hay un frame RMA10
+          # esperando, despachar Intelligence lo reemplazaría y GitHub
+          # cancelaría ese frame. En ese caso no se despacha: el próximo
+          # run de Radar dispara Intelligence con el frame más nuevo.
+          esperando=0
+          for estado in queued pending waiting requested; do
+            # Solo runs de la última hora: GitHub deja runs "fantasma" en
+            # queued que no se pueden cancelar (7/11/2026).
+            n="$(gh api "repos/$GH_REPO/actions/workflows/probar-radar-smn.yml/runs?status=$estado&per_page=30" \
+              --jq '[.workflow_runs[] | select((now - (.created_at | fromdateiso8601)) < 3600)] | length' \
+              2>/dev/null || echo 0)"
+            esperando=$((esperando + n))
+          done
+
+          if [ "$esperando" -gt 0 ]; then
+            echo "::notice::Hay $esperando frame(s) RMA10 esperando: Intelligence la dispara el próximo run de Radar."
+            exit 0
+          fi
 
           gh workflow run climaar-intelligence.yml \
             --repo "$GH_REPO" \

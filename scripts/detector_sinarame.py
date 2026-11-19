@@ -60,6 +60,7 @@ def _env_float(nombre, defecto):
 INTERVALO_SEG = _env_float("CLIMAAR_DETECTOR_INTERVALO_SEG", 30)
 REFRESCO_MIN = _env_float("CLIMAAR_REFRESCO_MIN", 10)
 REDESPACHO_MIN = _env_float("CLIMAAR_REDESPACHO_MIN", 10)
+ACTIVIDAD_MAX_MIN = _env_float("CLIMAAR_ACTIVIDAD_MAX_MIN", 60)
 
 
 # ------------------------------------------------------------
@@ -91,6 +92,16 @@ def decidir(
             return "en_proceso"
 
     return "despachar"
+
+
+def contar_runs_recientes(runs, ahora, max_min=60):
+    """Cuenta runs creados hace menos de max_min minutos (ignora fantasmas)."""
+    total = 0
+    for run in runs or []:
+        creado = re_.parse_utc((run or {}).get("created_at"))
+        if creado is not None and (ahora - creado) <= timedelta(minutes=max_min):
+            total += 1
+    return total
 
 
 def refresco_debido(ahora, ultimo_refresco_utc, refresco_min=REFRESCO_MIN):
@@ -147,14 +158,24 @@ class GitHub:
             {"ref": self.ref, "inputs": inputs or {}},
         )
 
-    def activos(self, workflow):
+    def activos(self, workflow, ahora=None, max_min=ACTIVIDAD_MAX_MIN):
+        """Runs en cola o en curso creados en los últimos max_min minutos.
+
+        GitHub puede dejar runs "fantasma" en estado queued para siempre
+        (hay 17 de radar del 7/11/2026 que no se pueden cancelar ni borrar).
+        Contarlos hacía creer que siempre había actividad y bloqueaba el
+        refresco de la IA entre frames.
+        """
+        ahora = ahora or re_.ahora_utc()
         total = 0
-        for estado in ("queued", "in_progress"):
+        for estado in ("queued", "pending", "waiting", "in_progress"):
             raw = self._req(
                 "GET",
-                f"actions/workflows/{workflow}/runs?status={estado}&per_page=1",
+                f"actions/workflows/{workflow}/runs?status={estado}&per_page=30",
             )
-            total += int(json.loads(raw).get("total_count", 0))
+            total += contar_runs_recientes(
+                json.loads(raw).get("workflow_runs", []), ahora, max_min
+            )
         return total
 
     def escribir_latido(self, valor, nombre=VARIABLE_LATIDO):

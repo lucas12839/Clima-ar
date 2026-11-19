@@ -891,6 +891,11 @@ def aceptar_frame(
         utc_iso
     )
 
+    registrar_llegada(
+        fecha_utc,
+        ahora
+    )
+
     escribir_estado(
         "NUEVO\n"
         f"frame={utc_iso}\n"
@@ -916,6 +921,125 @@ def aceptar_frame(
         "Archivo:",
         destino
     )
+
+
+# ============================================================
+# NAVEGADOR
+# ============================================================
+
+def lanzar_navegador(playwright):
+    """Usa el Chrome ya instalado si CLIMAAR_CHROMIUM_CHANNEL lo indica.
+
+    En los runners de GitHub Chrome viene preinstalado: así se evita
+    descargar Chromium e instalar dependencias en cada frame (ese paso
+    a veces tardaba 8-9 min y hacía perder el frame siguiente).
+    Si el canal falla, cae al Chromium de Playwright.
+    """
+
+    canal = os.environ.get(
+        "CLIMAAR_CHROMIUM_CHANNEL",
+        ""
+    ).strip()
+
+    if canal:
+
+        try:
+
+            return playwright.chromium.launch(
+                headless=True,
+                channel=canal
+            )
+
+        except Exception as exc:
+
+            print(
+                f"AVISO: no se pudo usar el navegador '{canal}': {exc}. "
+                "Se usa el Chromium de Playwright."
+            )
+
+    return playwright.chromium.launch(
+        headless=True
+    )
+
+
+# ============================================================
+# REGISTRO DE LLEGADAS (atraso de SINARAME)
+# ============================================================
+
+LLEGADAS = OUT / "llegadas_sinarame.jsonl"
+
+MAX_LINEAS_LLEGADAS = 3000
+
+
+def registrar_llegada(fecha_utc, ahora):
+    """Guarda cuándo llegó cada frame y cuánto atraso traía.
+
+    atraso_sinarame_min: inicio del run (≈ detección) - hora del barrido.
+    atraso_pipeline_min: captura - inicio del run.
+    """
+
+    inicio = None
+
+    texto = os.environ.get(
+        "CLIMAAR_INICIO_RUN_UTC",
+        ""
+    ).strip()
+
+    if texto:
+
+        try:
+
+            inicio = datetime.fromisoformat(
+                texto.replace("Z", "+00:00")
+            )
+
+        except ValueError:
+
+            inicio = None
+
+    def minutos(a, b):
+        return round((a - b).total_seconds() / 60.0, 2)
+
+    registro = {
+        "frame_utc": fecha_utc.isoformat(),
+        "capturado_utc": ahora.isoformat(),
+        "edad_al_capturar_min": minutos(ahora, fecha_utc),
+        "inicio_run_utc": inicio.isoformat() if inicio else None,
+        "atraso_sinarame_min": minutos(inicio, fecha_utc) if inicio else None,
+        "atraso_pipeline_min": minutos(ahora, inicio) if inicio else None,
+    }
+
+    try:
+
+        lineas = []
+
+        if LLEGADAS.exists():
+            lineas = LLEGADAS.read_text(
+                encoding="utf-8"
+            ).splitlines()
+
+        lineas.append(
+            json.dumps(registro, ensure_ascii=False)
+        )
+
+        lineas = lineas[-MAX_LINEAS_LLEGADAS:]
+
+        tmp = LLEGADAS.with_name(
+            LLEGADAS.name + ".tmp"
+        )
+
+        tmp.write_text(
+            "\n".join(lineas) + "\n",
+            encoding="utf-8"
+        )
+
+        tmp.replace(LLEGADAS)
+
+    except Exception as exc:
+
+        print("AVISO: no se pudo registrar la llegada:", exc)
+
+    return registro
 
 
 # ============================================================
@@ -1004,8 +1128,8 @@ def main(
 
     with sync_playwright() as playwright:
 
-        browser = playwright.chromium.launch(
-            headless=True
+        browser = lanzar_navegador(
+            playwright
         )
 
         page = browser.new_page(
