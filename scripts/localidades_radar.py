@@ -29,6 +29,13 @@ from scripts.rma10_features import latlon_to_pixel
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "localidades.json"
 HISTORIAL = ROOT / "data" / "radar" / "historial_localidades.json"
+HISTORIAL_PUNTOS = ROOT / "data" / "radar" / "historial_puntos_control.json"
+CATALOGO_ESTACIONES = ROOT / "data" / "ia" / "estaciones" / "catalogo_estaciones.json"
+CALIBRACION_INICIAL = ROOT / "config" / "calibracion_lluvia.json"
+CALIBRACION_AUTO = ROOT / "data" / "ia" / "calibracion" / "factor_lluvia.json"
+RADIO_PUNTO_KM = 3.0
+RADAR_CENTRO = (-38.7342, -62.1654)
+ALCANCE_KM = 240.0
 HISTORIAL_HORAS = 8
 RADIO_MIN_KM = 3.0          # el radar tiene ~0,94 km/píxel: menos no es representativo
 MIN_PIXELES = 3
@@ -57,11 +64,43 @@ def _zonas(shape, localidades):
     return zonas
 
 
-def mm_h(dbz: np.ndarray) -> np.ndarray:
-    """Marshall-Palmer vectorizado con tope de granizo."""
+def factor_lluvia() -> dict[str, Any]:
+    """Corrección del radar crudo (lluvia real = factor x radar).
+
+    Usa la calibración automática con estaciones confiables si existe y es
+    válida; si no, el valor inicial de config/calibracion_lluvia.json."""
+    try:
+        base = json.loads(CALIBRACION_INICIAL.read_text(encoding="utf-8"))
+    except Exception:
+        base = {"factor": 1.0, "minimo": 0.25, "maximo": 2.0}
+    salida = {"factor": float(base.get("factor", 1.0)), "fuente": "inicial"}
+    try:
+        auto = json.loads(CALIBRACION_AUTO.read_text(encoding="utf-8"))
+        if auto.get("valido") and auto.get("factor") is not None:
+            salida = {"factor": float(auto["factor"]), "fuente": "estaciones"}
+    except Exception:
+        pass
+    salida["factor"] = min(max(salida["factor"], float(base.get("minimo", 0.25))), float(base.get("maximo", 2.0)))
+    return salida
+
+
+_FACTOR: dict[str, Any] | None = None
+
+
+def _factor_actual() -> float:
+    global _FACTOR
+    if _FACTOR is None:
+        _FACTOR = factor_lluvia()
+    return _FACTOR["factor"]
+
+
+def mm_h(dbz: np.ndarray, corregir: bool = True) -> np.ndarray:
+    """Marshall-Palmer vectorizado con tope de granizo y corrección del radar crudo."""
     d = np.nan_to_num(np.asarray(dbz, dtype=np.float64), nan=0.0)
     d = np.minimum(d, DBZ_TOPE_LLUVIA)
     r = (10 ** (d / 10.0) / 200.0) ** (1 / 1.6)
+    if corregir:
+        r = r * _factor_actual()
     return np.where(d >= 15.0, r, 0.0)
 
 
@@ -80,6 +119,7 @@ def observar(campo: np.ndarray, localidades: list[dict]) -> dict[str, dict[str, 
             "dbz_pico": round(_pico(vals), 1),
             "dbz_p75": round(float(np.percentile(vals, 75)) if vals.size else 0.0, 1),
             "mm_h_medio": round(float(mm_h(vals).mean()) if vals.size else 0.0, 2),
+            "mm_h_sin_corregir": round(float(mm_h(vals, corregir=False).mean()) if vals.size else 0.0, 2),
             "cobertura_eco_pct": round(float((vals >= nf.UMBRAL_ECO_DBZ).mean() * 100.0) if vals.size else 0.0, 1),
         }
     return salida
@@ -157,7 +197,8 @@ def acumulados(dt: datetime, obs: dict[str, dict], path: Path = HISTORIAL) -> di
     except Exception:
         datos = []
     registros = {r["utc"]: r["loc"] for r in datos if isinstance(r, dict) and "utc" in r and "loc" in r}
-    registros[nf.iso(dt)] = {k: [v["mm_h_medio"], v["dbz_p75"]] for k, v in obs.items()}
+    registros[nf.iso(dt)] = {k: [v["mm_h_medio"], v["dbz_p75"], v.get("mm_h_sin_corregir", v["mm_h_medio"])]
+                             for k, v in obs.items()}
     limite = dt - timedelta(hours=HISTORIAL_HORAS)
     ordenados = sorted((t, v) for t, v in ((_parse(k), v) for k, v in registros.items()) if t is not None)
     ordenados = [(t, v) for t, v in ordenados if limite <= t <= dt]
@@ -170,9 +211,10 @@ def acumulados(dt: datetime, obs: dict[str, dict], path: Path = HISTORIAL) -> di
     for loc_id in obs:
         serie = [(t, v[loc_id]) for t, v in ordenados if loc_id in v]
 
-        def suma(horas):
+        def suma(horas, indice=0):
             total, anterior = 0.0, None
-            for t, (r, _) in serie:
+            for t, valores in serie:
+                r = valores[indice] if len(valores) > indice else valores[0]
                 minutos = 10.0 if anterior is None else min((t - anterior).total_seconds() / 60.0, 20.0)
                 anterior = t
                 if dt - timedelta(hours=horas) < t <= dt:
@@ -180,7 +222,8 @@ def acumulados(dt: datetime, obs: dict[str, dict], path: Path = HISTORIAL) -> di
             return round(total, 1)
 
         racha, fin, previo = 0.0, None, None
-        for t, (_, p75) in reversed(serie):
+        for t, valores in reversed(serie):
+            p75 = valores[1]
             if previo is not None and (previo - t).total_seconds() / 60.0 > 40.0:
                 break
             if p75 < LLUVIA_INTENSA_DBZ:
@@ -189,6 +232,7 @@ def acumulados(dt: datetime, obs: dict[str, dict], path: Path = HISTORIAL) -> di
             racha = (fin - t).total_seconds() / 60.0 + 10.0
             previo = t
         salida[loc_id] = {"lluvia_1h_mm": suma(1), "lluvia_3h_mm": suma(3), "lluvia_6h_mm": suma(6),
+                          "lluvia_1h_sin_corregir_mm": suma(1, 2),
                           "minutos_lluvia_intensa": round(racha, 1)}
     return salida
 
@@ -215,3 +259,43 @@ def analizar(dt: datetime, campo: np.ndarray, flujo: dict[str, Any] | None,
             item["llegada"] = l
         salida[k] = item
     return salida
+
+
+def _dist_km(lat1, lon1, lat2, lon2):
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = (math.sin((p2 - p1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
+    return 2 * 6371.0 * math.asin(math.sqrt(min(1.0, a)))
+
+
+def cargar_puntos_control(path: Path = CATALOGO_ESTACIONES) -> list[dict[str, Any]]:
+    """Cada estación dentro del alcance del radar es un punto de control: se
+    compara lo que el radar ve justo encima con lo que mide la estación."""
+    try:
+        cat = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    puntos = []
+    for s in cat.get("stations") or []:
+        lat, lon = s.get("latitude"), s.get("longitude")
+        if lat is None or lon is None:
+            continue
+        d = _dist_km(RADAR_CENTRO[0], RADAR_CENTRO[1], float(lat), float(lon))
+        if d > ALCANCE_KM:
+            continue
+        puntos.append({"id": f"{s.get('network')}:{s.get('name')}", "nombre": s.get("name"),
+                       "lat": float(lat), "lon": float(lon), "radio_km": RADIO_PUNTO_KM,
+                       "distancia_radar_km": round(d, 1)})
+    return puntos
+
+
+def analizar_puntos_control(dt: datetime, campo: np.ndarray,
+                            historial: Path = HISTORIAL_PUNTOS) -> dict[str, dict[str, Any]]:
+    puntos = cargar_puntos_control()
+    if not puntos:
+        return {}
+    obs = observar(campo, puntos)
+    acum = acumulados(dt, obs, historial)
+    return {p["id"]: {"nombre": p["nombre"], "lat": p["lat"], "lon": p["lon"],
+                      "distancia_radar_km": p["distancia_radar_km"], **obs[p["id"]], **acum[p["id"]]}
+            for p in puntos}

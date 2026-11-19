@@ -217,6 +217,16 @@ def resumir(estaciones: list[dict]) -> dict[str, Any]:
     }
 
 
+CALIDAD = Path(__file__).resolve().parents[2] / "data/ia/calibracion/calidad_estaciones.json"
+
+
+def calidad_estaciones() -> dict:
+    try:
+        return (json.loads(CALIDAD.read_text(encoding="utf-8")).get("estaciones")) or {}
+    except Exception:
+        return {}
+
+
 RADIO_LOCALIDAD_KM = 15.0
 LOCALIDADES = Path(__file__).resolve().parents[2] / "config" / "localidades.json"
 
@@ -248,14 +258,29 @@ def main(ahora: datetime | None = None) -> int:
     estaciones = [
         resumen_estacion(n, s, ahora, coords) for n, s in historial.items() if n in frescas and s
     ]
-    bahia = [e for e in estaciones if (e["distancia_bahia_km"] or 999) <= RADIO_BAHIA_KM]
+    # Control de calidad (calidad_y_calibracion.py, ciclo anterior): una
+    # estación dudosa no entra en los resúmenes; con la lluvia dudosa se
+    # usa todo menos su lluvia. El detalle queda en "estaciones".
+    calidad = calidad_estaciones()
+    aptas = []
+    for e in estaciones:
+        c = calidad.get(e["nombre"]) or {}
+        e["calidad"] = c.get("estado", "sin_control")
+        e["calidad_lluvia"] = c.get("estado_lluvia", "sin_control")
+        if e["calidad"] == "dudosa":
+            continue
+        if e["calidad_lluvia"] == "dudosa":
+            e = dict(e, lluvia_1h_mm=None, lluvia_3h_mm=None)
+        aptas.append(e)
+    bahia = [e for e in aptas if (e["distancia_bahia_km"] or 999) <= RADIO_BAHIA_KM]
     salida = {
         "version": "1.0.0",
         "generado_utc": ahora.isoformat(),
         "estaciones_frescas": len(estaciones),
         "bahia_blanca": resumir(bahia),
-        "region": resumir(estaciones),
-        "localidades": por_localidad(estaciones),
+        "region": resumir(aptas),
+        "localidades": por_localidad(aptas),
+        "descartadas_por_calidad": sorted(e["nombre"] for e in estaciones if e["calidad"] == "dudosa"),
         "estaciones": estaciones,
     }
     escribir(SALIDA, salida)

@@ -72,6 +72,13 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
 - **Tornquist: granizo en 10 días** (30/10 al 9/11) — sospechoso: tormentas sobre las sierras
   o efecto del terreno en el radar. A confirmar con Lucas.
 
+### Hecho a la tarde
+- Control de calidad de estaciones y calibración automática de la lluvia con estaciones
+  confiables (ver `docs/INDICES_Y_LOCALIDADES.md`). Factor inicial 0,4 por Punta Alta 13/11
+  (72 mm reales, 35 mm entre 14 y 15:30; en Bahía casi no llovió: la tormenta se desvió).
+- Pendiente: Lucas quiere corregir los umbrales de tormentas (próximo paso).
+- Pendiente: enlace de la estación de MeteoPunta en Punta Alta para sumarla como punto de control.
+
 ### Preguntas para Lucas (calibración)
 1. ¿Hubo granizo o tormenta fuerte el 28/10, 4/11, 12/11 o 13/11 en Bahía Blanca? ¿Y en
    Tornquist entre el 30/10 y el 9/11?
