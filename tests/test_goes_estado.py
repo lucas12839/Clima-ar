@@ -36,6 +36,8 @@ def _dominio(variables):
             datos[v] = np.where(frio, 12500.0, 2000.0)
         elif v == "PRES":
             datos[v] = np.where(frio, 180.0, 850.0)
+        elif v == "Phase":
+            datos[v] = np.where(frio, 4.0, 0.0)
         elif v == "DQF":
             datos[v] = np.zeros(la.size)
     return {"datos": datos, "latitude": la, "longitude": lo, "distance_km": d,
@@ -70,6 +72,10 @@ def entorno(tmp_path, monkeypatch):
     monkeypatch.setattr(gv, "ventana_y_rayos_radar", ventana)
     monkeypatch.setattr(st, "OUTPUT_FILE", tmp_path / "goes19_state.json")
     monkeypatch.setattr(st, "RADAR_NOWCAST_FILE", tmp_path / "radar_nowcast.json")
+    (tmp_path / "meteo.json").write_text(json.dumps({"ambiente_futuro": {"puntos": [
+        {"punto": "BB_CENTRO", "latitud": -38.72, "longitud": -62.27,
+         "datos": [{"tiempo_utc": "2026-11-19T23:00", "freezing_level_height": 2858.0}]}]}}), encoding="utf-8")
+    monkeypatch.setattr(st, "METEO_FILE", tmp_path / "meteo.json")
     return tmp_path, llamados
 
 
@@ -122,7 +128,16 @@ def test_estado_con_tormenta_mantiene_contrato_y_agrega_por_tormenta(entorno):
     assert sinc["inicio_barrido_referencia_utc"] == INICIO
     assert sinc["productos"]["abi_c13"]["estado"] == "sincronizado"
     assert 0 < sinc["productos"]["abi_c13"]["desfase_min"] < 20
-    assert s["version"] == "1.6"
+    assert s["version"] == "1.7"
+    # Punto 2: señales severas por tormenta.
+    sev = t["senales_severas"]
+    assert sev["fase"]["estado"] == "ok" and sev["fase"]["fraccion_hielo_en_nubes"] == 1.0
+    assert sev["altura_topes_2km"]["max_km"] == 12.5
+    assert sev["congelamiento"]["estado"] == "ok"
+    assert sev["congelamiento"]["tope_sobre_congelamiento_km"] == pytest.approx(12.5 - 2.858, abs=0.01)
+    assert sev["topes_sobresalientes"]["estado"] == "ok"
+    assert set(s["senales_severas"]["productos"]) == {"cloudtop_height_2km", "cloud_phase"}
+    assert s["sincronizacion"]["productos"]["cloud_phase"]["estado"] == "sincronizado"
 
 
 def test_estado_sin_actividad(entorno):
@@ -226,3 +241,9 @@ def test_integridad_permite_goes_de_otro_frame_o_ausente(tmp_path, monkeypatch):
     goes = _goes([{"track_id": 99}])
     goes["reference_frame_utc"] = "2026-11-19T22:30:00+00:00"
     _validar(tmp_path, monkeypatch, goes, [])
+
+
+def test_integridad_rechaza_senal_severa_sin_sincronizar(tmp_path, monkeypatch):
+    t = {"track_id": 4, "senales_severas": {"fase": {"estado": "ok", "sincronizacion": {"estado": "desfase_excesivo"}}}}
+    with pytest.raises(SystemExit, match="senales_severas.fase"):
+        _validar(tmp_path, monkeypatch, _goes([t]), [{"track_id": 4}])

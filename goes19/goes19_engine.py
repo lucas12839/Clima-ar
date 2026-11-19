@@ -15,6 +15,9 @@ PRODUCT_SPECS = {
     "cloudtop_height": ("ABI-L2-ACHAF", None),
     "cloudtop_temperature": ("ABI-L2-ACHTF", None),
     "cloudtop_pressure": ("ABI-L2-CTPF", None),
+    # Punto 2: señales de tormenta severa.
+    "cloudtop_height_2km": ("ABI-L2-ACHA2KMF", None),
+    "cloud_phase": ("ABI-L2-ACTPF", None),
 
     # DMW: ABI bands 2, 7, 8, 9, 10 and 14.
     "dmw_c02": ("ABI-L2-DMWF", "M6C02"),

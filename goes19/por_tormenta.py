@@ -178,27 +178,37 @@ def altura_para_paralaje(campo_altura: dict | None, tormenta: dict, minutos: flo
     return float(np.clip(km, ALTURA_TOPE_MIN_KM, ALTURA_TOPE_MAX_KM)), "medida"
 
 
+def pixeles_de_tormenta(campo: dict, tormenta: dict, frame: datetime,
+                        altura_km: float) -> tuple[dict, np.ndarray | None, dict]:
+    """Píxeles de un campo que corresponden a la tormenta (con hora y
+    perspectiva corregidas). Devuelve (sincronización, valores o None, ubicación)."""
+    sinc = sincronizacion(campo.get("hora_satelite"), frame)
+    if sinc["estado"] != "sincronizado":
+        return sinc, None, {}
+    minutos = -float(sinc["desfase_min"])
+    lat, lon, corrimiento = ubicar_en_satelite(tormenta, minutos, altura_km, campo.get("proyeccion"))
+    m = _dentro(campo, lat, lon, tormenta["radio_km"])
+    v = np.asarray(campo["valores"], dtype=float)[m]
+    ubicacion = {
+        "centro_satelite": {"latitud": round(lat, 4), "longitud": round(lon, 4)},
+        "corrimiento_km": round(corrimiento, 1),
+    }
+    return sinc, v, ubicacion
+
+
 def estadistica_campo(campo: dict, tormenta: dict, frame: datetime, altura_km: float,
                       tipo: str) -> dict:
     """Estadística de un campo del satélite sobre una tormenta.
 
     tipo: "temperatura" (K -> °C), "altura" (m -> km), "presion" (hPa).
     """
-    sinc = sincronizacion(campo.get("hora_satelite"), frame)
+    sinc, v, ubicacion = pixeles_de_tormenta(campo, tormenta, frame, altura_km)
     salida: dict[str, Any] = {"sincronizacion": sinc}
-    if sinc["estado"] != "sincronizado":
+    if v is None:
         salida["estado"] = "no_usado"
         return salida
-    minutos = -float(sinc["desfase_min"])
-    lat, lon, corrimiento = ubicar_en_satelite(tormenta, minutos, altura_km, campo.get("proyeccion"))
-    m = _dentro(campo, lat, lon, tormenta["radio_km"])
-    v = np.asarray(campo["valores"], dtype=float)[m]
     v = v[np.isfinite(v)]
-    salida.update({
-        "centro_satelite": {"latitud": round(lat, 4), "longitud": round(lon, 4)},
-        "corrimiento_km": round(corrimiento, 1),
-        "pixeles": int(v.size),
-    })
+    salida.update({**ubicacion, "pixeles": int(v.size)})
     if v.size == 0:
         salida["estado"] = "sin_pixeles"
         return salida
@@ -286,13 +296,24 @@ def enfriamiento(actual: dict, previo: dict | None) -> float | None:
 
 
 def calcular(radar_nowcast: dict | None, frame: datetime, campos: dict[str, dict | None],
-             rayos: dict | None, estado_previo: dict | None = None) -> dict:
+             rayos: dict | None, estado_previo: dict | None = None,
+             ambiente: dict | None = None) -> dict:
     """Datos de satélite por tormenta.
 
-    campos: {"c13", "c08", "altura_topes", "presion_topes"} -> cada uno
+    campos: {"c13", "c08", "altura_topes", "presion_topes",
+             "altura_topes_2km", "fase"} -> cada uno
         {"valores", "latitude", "longitude", "proyeccion", "hora_satelite"}
         o None si no hay.
+    ambiente: estado_meteorologico.json (nivel de congelamiento del modelo).
     """
+    from . import senales_severas as ss
+
+    c13_campo = campos.get("c13")
+    topes_sobresalientes = []
+    if c13_campo is not None:
+        topes_sobresalientes = ss.detectar_topes_sobresalientes(
+            c13_campo["valores"], c13_campo["latitude"], c13_campo["longitude"])
+    campo_dif = ss.diferencia_vapor_infrarrojo(campos.get("c08"), c13_campo)
     if not isinstance(radar_nowcast, dict):
         return {"estado": "sin_datos_radar", "frame_radar_utc": iso(frame), "tormentas": []}
     frame_nowcast = parse_utc(radar_nowcast.get("actualizado"))
@@ -310,11 +331,14 @@ def calcular(radar_nowcast: dict | None, frame: datetime, campos: dict[str, dict
     previos = _anteriores(estado_previo)
     salida = []
     for t in tormentas:
-        campo_altura = campos.get("altura_topes")
-        if campo_altura is not None:
-            sinc_alt = sincronizacion(campo_altura.get("hora_satelite"), frame)
-            if sinc_alt["estado"] != "sincronizado":
-                campo_altura = None
+        # Para ubicar la tormenta: altura de 2 km si llegó a tiempo, si no 10 km.
+        campo_altura = None
+        for nombre_altura in ("altura_topes_2km", "altura_topes"):
+            candidato = campos.get(nombre_altura)
+            if candidato is not None and sincronizacion(
+                    candidato.get("hora_satelite"), frame)["estado"] == "sincronizado":
+                campo_altura = candidato
+                break
         minutos_ref = 0.0
         c13 = campos.get("c13")
         if c13 is not None and c13.get("hora_satelite") is not None:
@@ -344,11 +368,104 @@ def calcular(radar_nowcast: dict | None, frame: datetime, campos: dict[str, dict
                 item[nombre] = estadistica_campo(campo, t, frame, altura_km, tipo)
         item["c13"]["enfriamiento_c_10min"] = enfriamiento(item, previos.get(str(t["track_id"])))
         item["rayos"] = rayos_por_tormenta(rayos, t, frame)
+        item["senales_severas"] = senales_de_tormenta(
+            t, frame, altura_km, campos, c13_campo, topes_sobresalientes, campo_dif, ambiente)
         salida.append(item)
 
     return {
         "estado": "ok",
         "frame_radar_utc": iso(frame),
         "metodo": "posición corregida por hora del satélite y por perspectiva (paralaje)",
+        "topes_sobresalientes_zona": len(topes_sobresalientes),
         "tormentas": salida,
     }
+
+
+def senales_de_tormenta(t: dict, frame: datetime, altura_km: float, campos: dict,
+                        c13_campo: dict | None, topes_sobresalientes: list[dict],
+                        campo_dif: dict | None, ambiente: dict | None) -> dict:
+    """Punto 2: señales de tormenta severa por satélite para una tormenta."""
+    from . import senales_severas as ss
+
+    salida: dict[str, Any] = {}
+
+    # 1. Topes sobresalientes (en la imagen del canal 13, como la ve el satélite).
+    if c13_campo is None:
+        salida["topes_sobresalientes"] = {"estado": "no_disponible"}
+    else:
+        sinc = sincronizacion(c13_campo.get("hora_satelite"), frame)
+        item: dict[str, Any] = {"sincronizacion": sinc}
+        if sinc["estado"] != "sincronizado":
+            item["estado"] = "no_usado"
+        else:
+            lat, lon, _ = ubicar_en_satelite(t, -float(sinc["desfase_min"]), altura_km,
+                                             c13_campo.get("proyeccion"))
+            propios = [ot for ot in topes_sobresalientes
+                       if haversine_km(np.array([ot["latitud"]]), np.array([ot["longitud"]]), lat, lon)[0]
+                       <= t["radio_km"]]
+            item.update({
+                "estado": "ok",
+                "cantidad": len(propios),
+                "mas_frio_c": min((o["bt_c"] for o in propios), default=None),
+                "max_diferencia_yunque_c": max((o["diferencia_c"] for o in propios), default=None),
+                "lista": propios[:5],
+            })
+        salida["topes_sobresalientes"] = item
+
+    # 2. Vapor de agua menos infrarrojo.
+    if campo_dif is None:
+        salida["vapor_menos_infrarrojo"] = {"estado": "no_disponible"}
+    else:
+        sinc, v, ubic = pixeles_de_tormenta(campo_dif, t, frame, altura_km)
+        item = {"sincronizacion": sinc}
+        if v is None:
+            item["estado"] = "no_usado"
+        else:
+            v = v[np.isfinite(v)]
+            item.update({"estado": "ok" if v.size else "sin_pixeles", "pixeles": int(v.size)})
+            if v.size:
+                item["max_c"] = round(float(v.max()), 1)
+                item["pixeles_positivos"] = int(np.sum(v > 0))
+        salida["vapor_menos_infrarrojo"] = item
+
+    # 3. Altura del tope con detalle de 2 km.
+    campo_2km = campos.get("altura_topes_2km")
+    salida["altura_topes_2km"] = (estadistica_campo(campo_2km, t, frame, altura_km, "altura")
+                                  if campo_2km is not None else {"estado": "no_disponible"})
+
+    # 4. Fase del tope.
+    campo_fase = campos.get("fase")
+    if campo_fase is None:
+        salida["fase"] = {"estado": "no_disponible"}
+    else:
+        sinc, v, ubic = pixeles_de_tormenta(campo_fase, t, frame, altura_km)
+        item = {"sincronizacion": sinc}
+        if v is None:
+            item["estado"] = "no_usado"
+        else:
+            resumen = ss.resumen_fase(v)
+            item.update({"estado": "ok" if resumen["pixeles"] else "sin_pixeles", **resumen})
+        salida["fase"] = item
+
+    # 5. Tope por encima del nivel de congelamiento.
+    nivel = ss.nivel_congelamiento_para(ambiente, t["latitud"], t["longitud"], frame)
+    altura = None
+    origen = None
+    for nombre in ("altura_topes_2km",):
+        a = salida.get(nombre) or {}
+        if a.get("estado") == "ok":
+            altura, origen = a.get("p90_km"), "2km"
+    if altura is None:
+        a = campos.get("altura_topes")
+        if a is not None:
+            est = estadistica_campo(a, t, frame, altura_km, "altura")
+            if est.get("estado") == "ok":
+                altura, origen = est.get("p90_km"), "10km"
+    congel = {"nivel": nivel, "altura_tope_p90_km": altura, "origen_altura": origen}
+    if nivel.get("estado") == "ok" and altura is not None:
+        congel["estado"] = "ok"
+        congel["tope_sobre_congelamiento_km"] = round(altura - nivel["metros"] / 1000.0, 2)
+    else:
+        congel["estado"] = "no_disponible"
+    salida["congelamiento"] = congel
+    return salida

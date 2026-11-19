@@ -28,17 +28,31 @@ pt = s["por_tormenta"]
 print("POR TORMENTA:", pt["estado"], len(pt["tormentas"]))
 for t in pt["tormentas"]:
     print(f"  tormenta {t['track_id']}: radar {t['dbz_max']} r {t['radio_km']} km | C13 {t['c13'].get('estado')} min {t['c13'].get('min_c')} p10 {t['c13'].get('p10_c')} corr {t['c13'].get('corrimiento_km')} px {t['c13'].get('pixeles')} | C08 min {t['c08'].get('min_c')} | altura max {t['altura_topes'].get('max_km')} ({t['altura_paralaje_km']} {t['altura_paralaje_origen']}) | pres min {t['presion_topes'].get('min_hpa')} | rayos {t['rayos'].get('cantidad')}")
+    sev = t.get("senales_severas") or {}
+    ot = sev.get("topes_sobresalientes") or {}
+    vi = sev.get("vapor_menos_infrarrojo") or {}
+    fa = sev.get("fase") or {}
+    a2 = sev.get("altura_topes_2km") or {}
+    co = sev.get("congelamiento") or {}
+    print(f"     señales: topes sobresalientes {ot.get('cantidad')} (dif {ot.get('max_diferencia_yunque_c')}) | "
+          f"vapor-IR max {vi.get('max_c')} | hielo {fa.get('fraccion_hielo_en_nubes')} | "
+          f"altura 2 km {a2.get('estado')} {a2.get('max_km')} | congelamiento {(co.get('nivel') or {}).get('metros')} m, "
+          f"tope sobre 0 °C {co.get('tope_sobre_congelamiento_km')} km")
+for n, v in ((s.get("senales_severas") or {}).get("productos") or {}).items():
+    print(n, v.get("status"), v.get("lectura"), v.get("sincronizacion"), v.get("pixeles_buenos_240km"), v.get("error", ""))
+print("Topes sobresalientes en la zona:", (s.get("senales_severas") or {}).get("topes_sobresalientes_zona"))
 loc = s["products"]["abi_c13"].get("por_localidad", {})
 print("Topes por localidad (muestra):", {k: v for k, v in list(loc.items())[:4]})
 json.dumps(s)
 
 # Comparación exacta parcial vs completa para cada producto.
 print("\nCOMPARACIÓN parcial vs completa")
-for n, v in {**s["products"], **s["cloudtop"]}.items():
+for n, v in {**s["products"], **s["cloudtop"], **(s.get("senales_severas") or {}).get("productos", {})}.items():
     url = (v.get("source") or {}).get("url")
     if not url:
         continue
-    var = {"abi_c08": ["CMI"], "abi_c13": ["CMI"], "cloudtop_height": ["HT", "DQF"], "cloudtop_pressure": ["PRES", "DQF"]}[n]
+    var = {"abi_c08": ["CMI"], "abi_c13": ["CMI"], "cloudtop_height": ["HT", "DQF"], "cloudtop_pressure": ["PRES", "DQF"],
+           "cloudtop_height_2km": ["HT", "DQF"], "cloud_phase": ["Phase", "DQF"]}[n]
     t1 = time.time(); a = prepare_goes_domain_multi(url, var); tp = time.time() - t1
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / "f.nc"; t1 = time.time(); p.write_bytes(requests.get(url, timeout=300).content)

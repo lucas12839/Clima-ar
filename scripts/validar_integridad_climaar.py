@@ -105,8 +105,11 @@ def validar_goes19(radar_ts: datetime, nc: dict) -> None:
         for t in pt["tormentas"]:
             if sid(t.get("track_id")) not in tracks:
                 fail(f"goes19.por_tormenta tiene una tormenta que el radar no tiene: {t.get('track_id')}")
-            for campo in ("c13", "c08", "altura_topes", "presion_topes"):
-                item = t.get(campo) or {}
+            senales = t.get("senales_severas") or {}
+            items = [(c, t.get(c) or {}) for c in ("c13", "c08", "altura_topes", "presion_topes")]
+            items += [(f"senales_severas.{c}", senales.get(c) or {})
+                      for c in ("topes_sobresalientes", "vapor_menos_infrarrojo", "altura_topes_2km", "fase")]
+            for campo, item in items:
                 if item.get("estado") == "ok":
                     estado = (item.get("sincronizacion") or {}).get("estado")
                     if estado != "sincronizado":

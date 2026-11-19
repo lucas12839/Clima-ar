@@ -109,7 +109,8 @@ Objetivo: un sistema confiable que en el futuro pueda dar avisos de tormentas se
    salían del Pacífico), se sincronizó por barrido y hora, y se corrige la perspectiva.
 2. **Señales de tormenta severa por satélite:** topes sobresalientes (píxel ≤ −58 °C y ≥ 6,5 °C
    más frío que el yunque a 8 km), altura del tope sobre el nivel de congelamiento (altura 2 km),
-   hielo en el tope.
+   hielo en el tope. **Terminado (#43)**: además vapor − infrarrojo y el nivel de congelamiento
+   calculado del perfil del modelo (venía vacío).
 3. **Rayos mejorados:** salto de rayos con el método estándar (más de 2 desvíos en intervalos de
    2 min) y área de los rayos, por tormenta.
 4. **Puntaje de gravedad por tormenta (estilo NowCastMIX):** granizo, ráfagas y lluvia intensa con

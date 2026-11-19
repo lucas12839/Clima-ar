@@ -109,7 +109,19 @@ HOURLY_VARIABLES = [
     "temperature_500hPa",
     "relative_humidity_700hPa",
     "relative_humidity_500hPa",
+    # Nivel de congelamiento: /v1/ecmwf no trae freezing_level_height (llega
+    # vacío). Se calcula del perfil de temperatura con la altura real de cada
+    # nivel (verificado en Open-Meteo /v1/ecmwf el 19/11/2026).
+    "temperature_925hPa",
+    "temperature_600hPa",
+    "geopotential_height_925hPa",
+    "geopotential_height_850hPa",
+    "geopotential_height_700hPa",
+    "geopotential_height_600hPa",
+    "geopotential_height_500hPa",
 ]
+
+NIVELES_PERFIL_HPA = (925, 850, 700, 600, 500)
 
 
 # ============================================================
@@ -402,6 +414,38 @@ def consultar_ecmwf():
 
 
 # ============================================================
+# NIVEL DE CONGELAMIENTO (perfil ECMWF)
+# ============================================================
+
+def nivel_congelamiento_m(registro, elevacion_m=None):
+    """Altura sobre el nivel del mar (m) donde la temperatura cruza 0 °C,
+    interpolando entre la superficie y los niveles 925-500 hPa con su altura
+    real. None si no hay datos o si el cruce está por encima de 500 hPa."""
+
+    perfil = []
+    t2 = finite(registro.get("temperature_2m"))
+    if t2 is not None:
+        perfil.append(((finite(elevacion_m) or 0.0) + 2.0, t2))
+    for nivel in NIVELES_PERFIL_HPA:
+        z = finite(registro.get(f"geopotential_height_{nivel}hPa"))
+        t = finite(registro.get(f"temperature_{nivel}hPa"))
+        if z is None or t is None:
+            continue
+        if perfil and z <= perfil[0][0]:
+            continue  # nivel bajo tierra
+        perfil.append((z, t))
+    perfil.sort()
+    if len(perfil) < 2:
+        return None
+    if perfil[0][1] <= 0.0:
+        return round(perfil[0][0])
+    for (z1, t1), (z2, t2_) in zip(perfil, perfil[1:]):
+        if t1 > 0.0 >= t2_:
+            return round(z1 + (z2 - z1) * t1 / (t1 - t2_))
+    return None
+
+
+# ============================================================
 # NORMALIZACION ECMWF
 # ============================================================
 
@@ -430,7 +474,18 @@ def normalizar_punto(point, grid_point):
 
             registro[variable] = finite(value)
 
+        if registro.get("freezing_level_height") is None:
+            registro["freezing_level_height"] = nivel_congelamiento_m(
+                registro, point.get("elevation")
+            )
+
         registros.append(registro)
+
+    hourly_units = dict(hourly_units or {})
+    if not hourly.get("freezing_level_height") or all(
+        v is None for v in hourly.get("freezing_level_height", [])
+    ):
+        hourly_units["freezing_level_height"] = "m (calculado del perfil ECMWF 925-500 hPa)"
 
     return {
         "punto": grid_point["id"],
