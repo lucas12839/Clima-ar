@@ -5,10 +5,6 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-# Sin modelos entrenados en producción: el clasificador histórico y el
-# predictor de impacto V8 quedan desactivados. Las funciones que los usaban
-# ya tenían fallback por reglas (historical_score y environment_score_value).
-clasificador_tormenta = None
 
 
 VERSION = "4.0.0"
@@ -21,7 +17,6 @@ FUSION_FILE = IA_DIR / "estado_meteorologico.json"
 OUTPUT_FILE = IA_DIR / "inteligencia_tormenta.json"
 HISTORY_FILE = IA_DIR / "historial_inteligencia_tormenta.csv"
 
-MODEL_DIR = BASE_DIR / "modelo"
 
 LAT = -38.71
 LON = -62.26
@@ -1071,164 +1066,16 @@ def hazard_signals(
     }
 
 
-def load_ai_model():
-
-    """Desactivado: ClimaAR no carga modelos entrenados."""
-
-    return None
-
-
 def ai_prediction(
     env,
 ):
 
-    bundle = load_ai_model()
+    """Sin modelos entrenados: no hay predicción de impacto por IA.
 
-    if not isinstance(
-        bundle,
-        dict,
-    ):
-        return None
+    Quien llama usa environment_score_value como respaldo por reglas.
+    """
 
-    model = bundle.get(
-        "model"
-    )
-
-    features = bundle.get(
-        "features",
-        [],
-    )
-
-    medians = bundle.get(
-        "medians",
-        {},
-    )
-
-    if model is None:
-        return None
-
-    values = dict(
-        env or {}
-    )
-
-    temperature = finite(
-        values.get(
-            "temperature_2m"
-        )
-    )
-
-    dew = finite(
-        values.get(
-            "dew_point_2m"
-        )
-    )
-
-    wind_speed = finite(
-        values.get(
-            "wind_speed_10m"
-        )
-    )
-
-    wind_direction = finite(
-        values.get(
-            "wind_direction_10m"
-        )
-    )
-
-    if (
-        temperature is not None
-        and dew is not None
-    ):
-        values["dew_spread"] = (
-            temperature - dew
-        )
-
-    if (
-        wind_speed is not None
-        and wind_direction is not None
-    ):
-
-        radians = math.radians(
-            wind_direction
-        )
-
-        values["wind_u"] = (
-            wind_speed
-            * math.sin(radians)
-        )
-
-        values["wind_v"] = (
-            wind_speed
-            * math.cos(radians)
-        )
-
-    now = now_dt()
-
-    values["hour_sin"] = math.sin(
-        2
-        * math.pi
-        * now.hour
-        / 24
-    )
-
-    values["hour_cos"] = math.cos(
-        2
-        * math.pi
-        * now.hour
-        / 24
-    )
-
-    values["month_sin"] = math.sin(
-        2
-        * math.pi
-        * now.month
-        / 12
-    )
-
-    values["month_cos"] = math.cos(
-        2
-        * math.pi
-        * now.month
-        / 12
-    )
-
-    row = []
-
-    for feature in features:
-
-        value = values.get(
-            feature
-        )
-
-        if value is None:
-            value = medians.get(
-                feature,
-                0.0,
-            )
-
-        row.append(
-            finite(
-                value,
-                0.0,
-            )
-        )
-
-    try:
-
-        probability = (
-            model
-            .predict_proba(
-                [row]
-            )[0][1]
-        )
-
-        return clamp(
-            probability
-        )
-
-    except Exception:
-
-        return None
+    return None
 
 
 RADAR_ESTIMACION_MAX_MIN = 180.0
@@ -1456,9 +1303,8 @@ def classify_weather(
     sin_tormenta / tormenta / tormenta_fuerte / tormenta_severa
     para Bahia Blanca.
 
-    Combina (1) si el sistema amenaza realmente a la ciudad, (2) el
-    clasificador entrenado con el historico y los eventos severos
-    documentados y (3) la severidad del Storm Engine. El maximo del eco
+    Combina (1) si el sistema amenaza realmente a la ciudad y (2) la
+    severidad del Storm Engine (reglas, sin modelos entrenados). El maximo del eco
     radar solo puede limitar la clase, nunca elevarla.
     """
 
@@ -1476,22 +1322,7 @@ def classify_weather(
     else:
         rule_idx = 1
 
-    ml_idx = None
-    if historical_ml:
-        try:
-            ml_idx = clasificador_tormenta.CLASSES.index(
-                historical_ml.get("clase")
-            )
-        except (ValueError, AttributeError):
-            ml_idx = None
-
-    if ml_idx is None:
-        idx = rule_idx
-    else:
-        idx = int((ml_idx + rule_idx) / 2.0 + 0.5)
-        # La severa exige que el historico tambien vea un ambiente fuerte.
-        if idx >= 3 and ml_idx < 2 and severity_level != "rojo":
-            idx = 2
+    idx = rule_idx
 
     idx = max(1, min(3, idx))
 
@@ -1922,24 +1753,7 @@ def main():
         )
     )
 
-    historical_ml = (
-        clasificador_tormenta.predict(
-            environment,
-            now_dt(),
-        )
-        if clasificador_tormenta is not None
-        else None
-    )
-
-    if historical_ml:
-        historical = clamp(
-            0.6 * historical_ml["indice_severidad_historica"]
-            + 0.4 * historical
-        )
-        historical_reasons = list(historical_reasons) + [
-            "clasificador historico: "
-            f"{historical_ml['clase']} para el ambiente actual."
-        ]
+    historical_ml = None
 
     impact = impact_signal(
         nowcast
