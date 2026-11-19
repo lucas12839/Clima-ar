@@ -71,10 +71,17 @@ jobs:
 
           # Chrome viene preinstalado en ubuntu-latest: usarlo evita
           # instalar Chromium + dependencias en cada frame (a veces 8-9 min).
-          if command -v google-chrome >/dev/null 2>&1; then
-            google-chrome --version
+          # Se verifica que Playwright realmente lo pueda abrir.
+          if command -v google-chrome >/dev/null 2>&1 && python - <<'PY'
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              b = p.chromium.launch(headless=True, channel="chrome")
+              b.new_page().goto("about:blank")
+              b.close()
+          print("Chrome del runner OK")
+          PY
+          then
             echo "CLIMAAR_CHROMIUM_CHANNEL=chrome" >> "$GITHUB_ENV"
-            echo "Usando Chrome del runner."
           else
             echo "Chrome no disponible: instalando Chromium de Playwright."
             python -m playwright install --with-deps chromium
