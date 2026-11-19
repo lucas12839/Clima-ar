@@ -105,9 +105,9 @@ def _archivos(ahora: datetime) -> list[dict]:
     return sorted(elegidos, key=lambda m: m["end_time_utc"])[-MAX_ARCHIVOS:]
 
 
-def _leer(meta: dict, carpeta: Path, centro: tuple[float, float], radio_km: float):
+def _bajar(meta: dict, carpeta: Path) -> Path:
+    """Descarga (en hilos: solo red, sin NetCDF)."""
     import requests
-    import xarray as xr
 
     from .s3_client import S3_ENDPOINT
 
@@ -116,6 +116,13 @@ def _leer(meta: dict, carpeta: Path, centro: tuple[float, float], radio_km: floa
     resp = requests.get(url, timeout=60)
     resp.raise_for_status()
     destino.write_bytes(resp.content)
+    return destino
+
+
+def _leer(meta: dict, destino: Path, centro: tuple[float, float], radio_km: float):
+    """Lectura NetCDF de a uno: la librería HDF5 no es segura con hilos."""
+    import xarray as xr
+
     with xr.open_dataset(destino, engine="netcdf4", mask_and_scale=True) as ds:
         lat = np.asarray(ds["flash_lat"].values, dtype=float)
         lon = np.asarray(ds["flash_lon"].values, dtype=float)
@@ -133,14 +140,15 @@ def ventana(ahora: datetime | None = None, centro=(-38.7342, -62.1654), radio_km
     archivos = _archivos(ahora)
     if not archivos:
         return {"disponible": False, "motivo": "SIN_ARCHIVOS_GLM"}
+    res = []
     with tempfile.TemporaryDirectory(prefix="climaar_glm_") as tmp:
         with ThreadPoolExecutor(max_workers=HILOS) as pool:
-            res = []
-            for fut in [pool.submit(_leer, m, Path(tmp), centro, radio_km) for m in archivos]:
-                try:
-                    res.append(fut.result())
-                except Exception:
-                    continue
+            futuros = [(m, pool.submit(_bajar, m, Path(tmp))) for m in archivos]
+        for meta, fut in futuros:
+            try:
+                res.append(_leer(meta, fut.result(), centro, radio_km))
+            except Exception:
+                continue
     if not res:
         return {"disponible": False, "motivo": "NO_SE_PUDO_LEER_GLM"}
     fin = max(t for t, _, _ in res)
