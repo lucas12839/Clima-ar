@@ -14,29 +14,30 @@
     "amenaza": true,
     "nivel": "baja",
     "motivo": "trayectoria_hacia_bahia_blanca",
-    "distancia_km": 73.51,
-    "eta_minutos": 261.0
+    "distancia_km": 68.23,
+    "eta_minutos": 244.7
   },
   "clasificacion_historica": null,
   "vigencia_radar": {
     "radar_timestamp": "2026-11-20T01:40:00Z",
-    "radar_age": 10.2,
-    "edad_radar_minutos": 10.2,
-    "modo": "radar_vigente",
-    "estimado": false
+    "radar_age": 16.3,
+    "edad_radar_minutos": 16.3,
+    "modo": "estimado_desde_ultimo_radar_valido",
+    "estimado": true,
+    "factor_confianza_edad": 0.968
   },
   "radar_timestamp": "2026-11-20T01:40:00Z",
-  "radar_age": 10.2,
+  "radar_age": 16.3,
   "origen_datos": {
     "observacion_radar": {
       "radar_timestamp": "2026-11-20T01:40:00Z",
-      "edad_minutos": 10.2,
-      "es_actual": true,
-      "vigencia": "radar_vigente"
+      "edad_minutos": 16.3,
+      "es_actual": false,
+      "vigencia": "estimado_desde_ultimo_radar_valido"
     },
     "extrapolacion_nowcast": {
-      "aplicada": false,
-      "minutos_extrapolados": 0,
+      "aplicada": true,
+      "minutos_extrapolados": 16.3,
       "limite_minutos": 40.0
     },
     "prediccion_ml": {
@@ -63,11 +64,11 @@
     "impacto": null
   },
   "indices_heuristicos": {
-    "tormenta": 0.649,
-    "llegada_bahia": 0.808,
+    "tormenta": 0.653,
+    "llegada_bahia": 0.817,
     "fortalecimiento": 0.342,
     "debilitamiento": 0.735,
-    "impacto": 0.808,
+    "impacto": 0.817,
     "peligros": {
       "lluvia_fuerte": 0.291,
       "viento_fuerte": 0.217,
@@ -108,7 +109,7 @@
     ],
     "score_ambiente_compatible": 0.25
   },
-  "eta_minutos": 261.0,
+  "eta_minutos": 244.7,
   "duracion_estimada_minutos": 180,
   "radar": {
     "actualizado": "2026-11-20T01:40:00Z",
@@ -121,7 +122,7 @@
     "intensidad_escala": "RMA10_0_6",
     "dbz_max": null,
     "dbz_mean": null,
-    "distancia_km": 73.51,
+    "distancia_km": 68.23,
     "distancia_tipo": "georreferenciada_por_nucleo_validada",
     "fortalecimiento": "debilitandose",
     "cambio_area_pct": 30.38,
@@ -131,9 +132,9 @@
     "direccion_grados": 69.89,
     "movimiento_hacia_bahia": true,
     "movimiento_hacia_centro_dominio": false,
-    "eta_minutos": 261.0,
+    "eta_minutos": 244.7,
     "eta_minutos_aproximada_centro_dominio": null,
-    "confianza_movimiento": 0.95,
+    "confianza_movimiento": 0.92,
     "estado": "actividad_detectada",
     "nucleos": [
       {
@@ -2016,12 +2017,15 @@
         30
       ]
     },
+    "distancia_km_frame": 73.51,
+    "eta_minutos_frame": 261.0,
     "vigencia_radar": {
       "radar_timestamp": "2026-11-20T01:40:00Z",
-      "radar_age": 10.2,
-      "edad_radar_minutos": 10.2,
-      "modo": "radar_vigente",
-      "estimado": false
+      "radar_age": 16.3,
+      "edad_radar_minutos": 16.3,
+      "modo": "estimado_desde_ultimo_radar_valido",
+      "estimado": true,
+      "factor_confianza_edad": 0.968
     }
   },
   "ambiente": {
@@ -2075,7 +2079,7 @@
     "geopotential_height_600hPa": 4255.0,
     "geopotential_height_500hPa": 5642.0,
     "observacion_sazb_utc": "2026-11-20T01:00:00+00:00",
-    "observacion_sazb_edad_minutos": 50.091660733333335,
+    "observacion_sazb_edad_minutos": 56.06039715,
     "observacion_sazb_fresca": false,
     "modelo_ecmwf_viento_10m_kmh": 8.0,
     "modelo_ecmwf_direccion_10m": 100.0,
@@ -2378,7 +2382,7 @@
     }
   },
   "calidad_datos": 80.0,
-  "calidad_tracking": 0.978,
+  "calidad_tracking": 0.964,
   "confianza_modelo": 0.74,
   "limitaciones": [
     "El radar actual no aporta dBZ cuantitativo validado en este motor.",
@@ -2395,7 +2399,7 @@
     "CAPE ECMWF: 40 J/kg.",
     "Rafaga prevista ECMWF: 14.0 km/h.",
     "Indice hibrido de severidad: 47%.",
-    "Impacto inmediato estimado por radar: 81%.",
+    "Impacto inmediato estimado por radar: 82%.",
     "Radar, evolucion, meteorologia, IA e historial se combinan en un unico Storm Engine.",
     "La estimacion no reemplaza avisos oficiales y requiere validacion continua."
   ],
@@ -2408,7 +2412,7 @@
       "frame_actual_utc": "2026-11-20T01:40:00Z"
     },
     "acquisition": "actualizado",
-    "generated_at_utc": "2026-11-20T01:50:12.045139+00:00",
+    "generated_at_utc": "2026-11-20T01:56:19.661780+00:00",
     "source_state_version": "1.7",
     "source_state_status": "ok",
     "domain": {
@@ -2451,7 +2455,7 @@
         },
         "lectura": {
           "modo": "parcial",
-          "segundos": 0.22
+          "segundos": 0.39
         },
         "sincronizacion": {
           "estado": "sincronizado",
@@ -2467,50 +2471,43 @@
             "min_c_15km": -35.2,
             "p10_c_15km": -34.1,
             "min_c_30km": -37.5,
-            "p10_c_30km": -34.1,
-            "enfriamiento_c_10min": -1.3
+            "p10_c_30km": -34.1
           },
           "ingeniero_white": {
             "min_c_15km": -35.5,
             "p10_c_15km": -34.3,
             "min_c_30km": -37.6,
-            "p10_c_30km": -34.8,
-            "enfriamiento_c_10min": -1.2
+            "p10_c_30km": -34.8
           },
           "general_cerri": {
             "min_c_15km": -37.5,
             "p10_c_15km": -34.9,
             "min_c_30km": -38.6,
-            "p10_c_30km": -35.5,
-            "enfriamiento_c_10min": -1.3
+            "p10_c_30km": -35.5
           },
           "punta_alta": {
             "min_c_15km": -34.3,
             "p10_c_15km": -27.9,
             "min_c_30km": -37.6,
-            "p10_c_30km": -33.1,
-            "enfriamiento_c_10min": 1.7
+            "p10_c_30km": -33.1
           },
           "tornquist": {
             "min_c_15km": -33.3,
             "p10_c_15km": -32.2,
             "min_c_30km": -36.7,
-            "p10_c_30km": -32.8,
-            "enfriamiento_c_10min": -1.9
+            "p10_c_30km": -32.8
           },
           "medanos": {
             "min_c_15km": -42.3,
             "p10_c_15km": -38.8,
             "min_c_30km": -45.4,
-            "p10_c_30km": -42.9,
-            "enfriamiento_c_10min": 2.4
+            "p10_c_30km": -42.9
           },
           "sierra_de_la_ventana": {
             "min_c_15km": -26.1,
             "p10_c_15km": -20.0,
             "min_c_30km": -32.6,
-            "p10_c_30km": -27.7,
-            "enfriamiento_c_10min": 7.6
+            "p10_c_30km": -27.7
           }
         },
         "status": "ok",
@@ -2545,7 +2542,7 @@
         },
         "lectura": {
           "modo": "parcial",
-          "segundos": 0.46
+          "segundos": 0.71
         },
         "sincronizacion": {
           "estado": "sincronizado",
@@ -2595,7 +2592,7 @@
         },
         "lectura": {
           "modo": "parcial",
-          "segundos": 0.19
+          "segundos": 0.32
         },
         "sincronizacion": {
           "estado": "sincronizado",
@@ -2643,7 +2640,7 @@
         },
         "lectura": {
           "modo": "parcial",
-          "segundos": 0.22
+          "segundos": 0.37
         },
         "sincronizacion": {
           "estado": "sincronizado",
@@ -2711,8 +2708,8 @@
       "ventana": {
         "disponible": true,
         "cobertura_min": 20,
-        "rayos_dominio_10min": 125,
-        "rayos_dominio_previos_10min": 171,
+        "rayos_dominio_10min": 86,
+        "rayos_dominio_previos_10min": 139,
         "tasa_30km_por_min": 0.0,
         "tasa_30km_previa_por_min": 0.0,
         "por_localidad": {
@@ -2721,28 +2718,28 @@
             "tasa_30km_previa_por_min": 0.0,
             "rayos_30km_10min": 0,
             "rayos_15km_10min": 0,
-            "distancia_km": 53.5
+            "distancia_km": 39.9
           },
           "ingeniero_white": {
             "tasa_30km_por_min": 0.0,
             "tasa_30km_previa_por_min": 0.0,
             "rayos_30km_10min": 0,
             "rayos_15km_10min": 0,
-            "distancia_km": 54.7
+            "distancia_km": 44.9
           },
           "general_cerri": {
             "tasa_30km_por_min": 0.0,
             "tasa_30km_previa_por_min": 0.0,
             "rayos_30km_10min": 0,
             "rayos_15km_10min": 0,
-            "distancia_km": 42.8
+            "distancia_km": 31.9
           },
           "punta_alta": {
             "tasa_30km_por_min": 0.0,
             "tasa_30km_previa_por_min": 0.0,
             "rayos_30km_10min": 0,
             "rayos_15km_10min": 0,
-            "distancia_km": 73.4
+            "distancia_km": 64.2
           },
           "tornquist": {
             "tasa_30km_por_min": 0.0,
@@ -2752,21 +2749,21 @@
             "distancia_km": 52.1
           },
           "medanos": {
-            "tasa_30km_por_min": 0.1,
+            "tasa_30km_por_min": 0.4,
             "tasa_30km_previa_por_min": 0.0,
-            "rayos_30km_10min": 1,
+            "rayos_30km_10min": 4,
             "rayos_15km_10min": 0,
-            "distancia_km": 23.1
+            "distancia_km": 22.8
           },
           "sierra_de_la_ventana": {
             "tasa_30km_por_min": 0.0,
             "tasa_30km_previa_por_min": 0.0,
             "rayos_30km_10min": 0,
             "rayos_15km_10min": 0,
-            "distancia_km": 88.4
+            "distancia_km": 82.5
           }
         },
-        "fin_ventana_utc": "2026-11-20T01:49:40Z",
+        "fin_ventana_utc": "2026-11-20T01:56:00Z",
         "archivos_leidos": 60,
         "archivos_esperados": 60
       },
@@ -3254,7 +3251,7 @@
     "raw_state": {
       "version": "1.7",
       "satellite": "GOES-19",
-      "generated_at_utc": "2026-11-20T01:50:06.626589+00:00",
+      "generated_at_utc": "2026-11-20T01:56:04.054947+00:00",
       "reference_frame_utc": "2026-11-20T01:40:00+00:00",
       "status": "ok",
       "domain": {
@@ -3297,7 +3294,7 @@
           },
           "lectura": {
             "modo": "parcial",
-            "segundos": 0.22
+            "segundos": 0.39
           },
           "sincronizacion": {
             "estado": "sincronizado",
@@ -3313,50 +3310,43 @@
               "min_c_15km": -35.2,
               "p10_c_15km": -34.1,
               "min_c_30km": -37.5,
-              "p10_c_30km": -34.1,
-              "enfriamiento_c_10min": -1.3
+              "p10_c_30km": -34.1
             },
             "ingeniero_white": {
               "min_c_15km": -35.5,
               "p10_c_15km": -34.3,
               "min_c_30km": -37.6,
-              "p10_c_30km": -34.8,
-              "enfriamiento_c_10min": -1.2
+              "p10_c_30km": -34.8
             },
             "general_cerri": {
               "min_c_15km": -37.5,
               "p10_c_15km": -34.9,
               "min_c_30km": -38.6,
-              "p10_c_30km": -35.5,
-              "enfriamiento_c_10min": -1.3
+              "p10_c_30km": -35.5
             },
             "punta_alta": {
               "min_c_15km": -34.3,
               "p10_c_15km": -27.9,
               "min_c_30km": -37.6,
-              "p10_c_30km": -33.1,
-              "enfriamiento_c_10min": 1.7
+              "p10_c_30km": -33.1
             },
             "tornquist": {
               "min_c_15km": -33.3,
               "p10_c_15km": -32.2,
               "min_c_30km": -36.7,
-              "p10_c_30km": -32.8,
-              "enfriamiento_c_10min": -1.9
+              "p10_c_30km": -32.8
             },
             "medanos": {
               "min_c_15km": -42.3,
               "p10_c_15km": -38.8,
               "min_c_30km": -45.4,
-              "p10_c_30km": -42.9,
-              "enfriamiento_c_10min": 2.4
+              "p10_c_30km": -42.9
             },
             "sierra_de_la_ventana": {
               "min_c_15km": -26.1,
               "p10_c_15km": -20.0,
               "min_c_30km": -32.6,
-              "p10_c_30km": -27.7,
-              "enfriamiento_c_10min": 7.6
+              "p10_c_30km": -27.7
             }
           },
           "status": "ok",
@@ -3391,7 +3381,7 @@
           },
           "lectura": {
             "modo": "parcial",
-            "segundos": 0.46
+            "segundos": 0.71
           },
           "sincronizacion": {
             "estado": "sincronizado",
@@ -3441,7 +3431,7 @@
           },
           "lectura": {
             "modo": "parcial",
-            "segundos": 0.19
+            "segundos": 0.32
           },
           "sincronizacion": {
             "estado": "sincronizado",
@@ -3489,7 +3479,7 @@
           },
           "lectura": {
             "modo": "parcial",
-            "segundos": 0.22
+            "segundos": 0.37
           },
           "sincronizacion": {
             "estado": "sincronizado",
@@ -3557,8 +3547,8 @@
         "ventana": {
           "disponible": true,
           "cobertura_min": 20,
-          "rayos_dominio_10min": 125,
-          "rayos_dominio_previos_10min": 171,
+          "rayos_dominio_10min": 86,
+          "rayos_dominio_previos_10min": 139,
           "tasa_30km_por_min": 0.0,
           "tasa_30km_previa_por_min": 0.0,
           "por_localidad": {
@@ -3567,28 +3557,28 @@
               "tasa_30km_previa_por_min": 0.0,
               "rayos_30km_10min": 0,
               "rayos_15km_10min": 0,
-              "distancia_km": 53.5
+              "distancia_km": 39.9
             },
             "ingeniero_white": {
               "tasa_30km_por_min": 0.0,
               "tasa_30km_previa_por_min": 0.0,
               "rayos_30km_10min": 0,
               "rayos_15km_10min": 0,
-              "distancia_km": 54.7
+              "distancia_km": 44.9
             },
             "general_cerri": {
               "tasa_30km_por_min": 0.0,
               "tasa_30km_previa_por_min": 0.0,
               "rayos_30km_10min": 0,
               "rayos_15km_10min": 0,
-              "distancia_km": 42.8
+              "distancia_km": 31.9
             },
             "punta_alta": {
               "tasa_30km_por_min": 0.0,
               "tasa_30km_previa_por_min": 0.0,
               "rayos_30km_10min": 0,
               "rayos_15km_10min": 0,
-              "distancia_km": 73.4
+              "distancia_km": 64.2
             },
             "tornquist": {
               "tasa_30km_por_min": 0.0,
@@ -3598,21 +3588,21 @@
               "distancia_km": 52.1
             },
             "medanos": {
-              "tasa_30km_por_min": 0.1,
+              "tasa_30km_por_min": 0.4,
               "tasa_30km_previa_por_min": 0.0,
-              "rayos_30km_10min": 1,
+              "rayos_30km_10min": 4,
               "rayos_15km_10min": 0,
-              "distancia_km": 23.1
+              "distancia_km": 22.8
             },
             "sierra_de_la_ventana": {
               "tasa_30km_por_min": 0.0,
               "tasa_30km_previa_por_min": 0.0,
               "rayos_30km_10min": 0,
               "rayos_15km_10min": 0,
-              "distancia_km": 88.4
+              "distancia_km": 82.5
             }
           },
-          "fin_ventana_utc": "2026-11-20T01:49:40Z",
+          "fin_ventana_utc": "2026-11-20T01:56:00Z",
           "archivos_leidos": 60,
           "archivos_esperados": 60
         },
@@ -4039,7 +4029,7 @@
               "min_c": -50.4,
               "p10_c": -47.2,
               "media_c": -42.7,
-              "enfriamiento_c_10min": 11.2
+              "enfriamiento_c_10min": null
             },
             "c08": {
               "sincronizacion": {
@@ -4246,7 +4236,7 @@
               "min_c": -40.0,
               "p10_c": -37.5,
               "media_c": -33.4,
-              "enfriamiento_c_10min": -0.8
+              "enfriamiento_c_10min": null
             },
             "c08": {
               "sincronizacion": {
@@ -4453,7 +4443,7 @@
               "min_c": -43.7,
               "p10_c": -42.0,
               "media_c": -36.5,
-              "enfriamiento_c_10min": 5.5
+              "enfriamiento_c_10min": null
             },
             "c08": {
               "sincronizacion": {
@@ -4660,7 +4650,7 @@
               "min_c": -39.0,
               "p10_c": -36.6,
               "media_c": -33.9,
-              "enfriamiento_c_10min": -0.5
+              "enfriamiento_c_10min": null
             },
             "c08": {
               "sincronizacion": {
@@ -5068,7 +5058,7 @@
               "min_c": -43.1,
               "p10_c": -42.5,
               "media_c": -41.4,
-              "enfriamiento_c_10min": -3.3
+              "enfriamiento_c_10min": null
             },
             "c08": {
               "sincronizacion": {
@@ -5275,7 +5265,7 @@
               "min_c": -33.2,
               "p10_c": -31.5,
               "media_c": -27.6,
-              "enfriamiento_c_10min": -10.9
+              "enfriamiento_c_10min": null
             },
             "c08": {
               "sincronizacion": {
@@ -5683,7 +5673,7 @@
               "min_c": -41.8,
               "p10_c": -41.3,
               "media_c": -37.0,
-              "enfriamiento_c_10min": 7.4
+              "enfriamiento_c_10min": null
             },
             "c08": {
               "sincronizacion": {
@@ -6483,7 +6473,7 @@
             "pixeles_buenos_240km": 17235,
             "lectura": {
               "modo": "parcial",
-              "segundos": 0.3
+              "segundos": 0.47
             },
             "sincronizacion": {
               "estado": "sincronizado",
@@ -6509,7 +6499,7 @@
             "pixeles_buenos_240km": 26097,
             "lectura": {
               "modo": "parcial",
-              "segundos": 0.18
+              "segundos": 0.34
             },
             "sincronizacion": {
               "estado": "sincronizado",
@@ -6603,19 +6593,19 @@
   },
   "fusion_multimodal": {
     "version": "multimodal-fusion-v1-lab",
-    "evidence_score": 0.6055,
-    "confidence": 0.8217,
+    "evidence_score": 0.6085,
+    "confidence": 0.8213,
     "radar_freshness_weight": 1.0,
     "source_count": 7,
-    "source_disagreement": 0.2442,
+    "source_disagreement": 0.2458,
     "components": {
       "radar_intensity": 0.4765142857142856,
       "radar_strengthening": null,
       "radar_weakening": null,
       "radar_toward_bahia": null,
-      "environment_impact_score": 0.808,
+      "environment_impact_score": 0.817,
       "environment_intensification_score": 0.342,
-      "environment_formation_score": 0.649,
+      "environment_formation_score": 0.653,
       "convective_context": 0.016,
       "goes_convection": 0.65,
       "goes_lightning": 1.0
