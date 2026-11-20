@@ -219,6 +219,31 @@ def validar_nowcast_capas(radar_ts: datetime) -> None:
           f"{len(n.get('localidades') or {})} localidades)")
 
 
+def validar_modelos_region() -> None:
+    """Modelos por localidad (punto 7, en paralelo): nunca del futuro ni de una corrida
+    que todavía no empezó. Puede faltar (red caída)."""
+    path = IA / "modelos_region.json"
+    if not path.is_file() or path.stat().st_size == 0:
+        print("Modelos por localidad: sin archivo (permitido)")
+        return
+    m = load(path)
+    if m.get("en_paralelo") is not True:
+        fail("modelos por localidad: todavía deben correr en paralelo")
+    generado = parse_utc(m.get("generado_utc"), "modelos.generado_utc")
+    w = m.get("wrf_smn") or {}
+    if w.get("estado") == "ok":
+        init = parse_utc(w.get("corrida_utc"), "modelos.wrf.corrida_utc")
+        if init > generado:
+            fail(f"modelos: corrida del WRF del futuro ({w.get('corrida_utc')})")
+    e = m.get("ensambles") or {}
+    if e.get("estado") in ("ok", "viejo"):
+        bajado = parse_utc(e.get("bajado_utc"), "modelos.ensambles.bajado_utc")
+        if bajado > generado + timedelta(minutes=2):
+            fail(f"modelos: ensambles del futuro ({e.get('bajado_utc')})")
+    print(f"Modelos por localidad: WRF {w.get('estado')} (corrida {w.get('corrida_utc')}), "
+          f"ensambles {e.get('estado')}")
+
+
 def validar_sin_actividad(nc, state, ml, radar_intel, final, radar_meteo) -> None:
     """Frame sin ecos operativos: ningún componente puede declarar principal."""
     if nc.get("actividad") is not False:
@@ -305,6 +330,7 @@ def main() -> None:
     validar_puntaje(radar_ts, nc)
     validar_formacion(radar_ts)
     validar_nowcast_capas(radar_ts)
+    validar_modelos_region()
 
     candidate = tracking.get("track_principal_candidato_id")
     if candidate is None:
