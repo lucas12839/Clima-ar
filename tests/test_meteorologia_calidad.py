@@ -26,22 +26,22 @@ class MeteorologiaCalidadTests(unittest.TestCase):
 
     def test_sazb_vieja_no_suma_puntos_por_disponibilidad(self):
         out = fusion.calcular_calidad(
-            self.radar, self.sazb(56), self.ambiente, now=self.now
+            self.radar, self.sazb(96), self.ambiente, now=self.now
         )
         self.assertEqual(out["score"], 80)
         self.assertEqual(out["nivel"], "medio")
         self.assertTrue(out["sazb_disponible"])
         self.assertFalse(out["sazb_valido"])
         self.assertFalse(out["sazb_fresco"])
-        self.assertEqual(out["sazb_edad_minutos"], 56.0)
+        self.assertEqual(out["sazb_edad_minutos"], 96.0)
 
     def test_recalcula_edad_y_no_confia_en_edad_cacheada(self):
-        sazb = self.sazb(56)
+        sazb = self.sazb(96)
         sazb["edad_minutos"] = 1
         out = fusion.calcular_calidad(
             self.radar, sazb, self.ambiente, now=self.now
         )
-        self.assertEqual(out["sazb_edad_minutos"], 56.0)
+        self.assertEqual(out["sazb_edad_minutos"], 96.0)
         self.assertFalse(out["sazb_fresco"])
         self.assertEqual(out["score"], 80)
 
@@ -74,7 +74,7 @@ class MeteorologiaCalidadTests(unittest.TestCase):
 
 
     def test_sazb_vencida_no_reemplaza_superficie_ecmwf(self):
-        sazb = self.sazb(25.6)
+        sazb = self.sazb(85.6)
         sazb.update({
             "temperatura_c": 5,
             "punto_rocio_c": 4,
@@ -96,10 +96,11 @@ class MeteorologiaCalidadTests(unittest.TestCase):
         self.assertEqual(out["temperature_2m"], 18)
         self.assertEqual(out["wind_speed_10m"], 20)
         self.assertFalse(out["observacion_sazb_fresca"])
-        self.assertEqual(out["observacion_sazb_edad_minutos"], 25.6)
+        self.assertEqual(out["observacion_sazb_edad_minutos"], 85.6)
 
-    def test_sazb_exactamente_15_minutos_sigue_vigente(self):
-        sazb = self.sazb(15)
+    def test_sazb_exactamente_75_minutos_sigue_vigente(self):
+        # El informe del aeropuerto es horario: con 15 min solo valía ~10 min por hora.
+        sazb = self.sazb(75)
         out = fusion.calcular_calidad(
             self.radar, sazb, self.ambiente, now=self.now
         )
@@ -116,6 +117,14 @@ class MeteorologiaCalidadTests(unittest.TestCase):
         self.assertEqual(
             out["estado_observacion_actual"], "observacion_sazb_vencida"
         )
+
+    def test_sazb_de_hace_25_minutos_se_usa(self):
+        out = fusion.calcular_calidad(self.radar, self.sazb(25), self.ambiente, now=self.now)
+        self.assertTrue(out["sazb_fresco"])
+
+    def test_sazb_de_76_minutos_ya_no(self):
+        out = fusion.calcular_calidad(self.radar, self.sazb(76), self.ambiente, now=self.now)
+        self.assertFalse(out["sazb_fresco"])
 
 
 if __name__ == "__main__":

@@ -274,6 +274,10 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - **5b CERRADO (20/11, 16:25, Lucas lo deja a criterio de Claude):** cerrado con la envolvente
   (#61). Primer ciclo en vivo OK (19:00 UTC, tormentas con 413 rayos). Se sigue midiendo solo en
   vivo (`verificacion_nowcast.json` → `llegadas_acumulado`); se revisa en las simulaciones finales.
+- **Auditoría de la cadena (20/11, 17:00-19:00, pedido de Lucas antes del 8):** 12 arreglos y
+  control de salud en cada ciclo (`data/ia/salud_cadena.json`). El más importante: el
+  seguimiento se reconstruía desde cero en casi cada imagen (las tormentas cambiaban de número)
+  porque el capturador escribía su estado. Detalle: `docs/AUDITORIA_2026-11-20.md`.
 - **SIGUIENTE (esperar a Lucas):** punto 8 (ambiente medido por el satélite).
 - Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
@@ -314,5 +318,5 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   imposible); los datos completos del RMA10 (Doppler) ya los pidió Lucas: si llegan, se suman.
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
-`prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
+`auditoria-cadena` (después de unir), `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
 `indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-wrf`, `datos-wrf-historial` (historial del WRF, borrar al final), `prueba-inspeccion` (temporal de pruebas reales: borrar al final), `nowcast-sin-radar`, `nowcast-capas`, `punto6-anvil`, `punto7-modelos`, `validacion-sistema` y las ramas ya unidas de cada PR (`goes-zona-tormentas`, `senales-severas`, `casos-guardados`, `rayos-mejorados`, `puntaje-gravedad`, etc.).

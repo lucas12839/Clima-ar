@@ -130,7 +130,7 @@ def save_json(path, data):
         json.dumps(
             data,
             ensure_ascii=False,
-            indent=2,
+            separators=(",", ":"),  # compacto: 1 MB -> ~0,5 MB por ciclo (auditoría 20/11/2026)
             allow_nan=False,
         ),
         encoding="utf-8",

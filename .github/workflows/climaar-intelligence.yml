@@ -89,14 +89,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          lfs: true
+          # Solo el último estado (antes bajaba los ~540 MB de historia: 25-36 s).
+          fetch-depth: 1
           ref: main
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
 
       - name: Preparar directorios
         run: |
@@ -444,15 +446,6 @@ jobs:
           print("Timestamp sincronizado.")
           PY
 
-      - name: Acumular dataset RMA10
-        run: |
-          set -euo pipefail
-
-          python scripts/acumular_features_rma10.py
-
-          test -s \
-            data/radar/radar_features_rma10.csv
-
       - name: Predicción RMA10 por track (reglas, sin ML)
         run: |
           set -euo pipefail
@@ -739,6 +732,16 @@ jobs:
           # Punto 7 del plan. Falla segura: el script nunca corta el ciclo y
           # se corta a los 5 min (una corrida nueva del WRF se baja una sola vez).
           timeout 300 python scripts/modelos_region.py || echo "AVISO: modelos por localidad no disponibles en este ciclo"
+
+      - name: Control de salud de la cadena (en paralelo, no cambia lo que se ve)
+        env:
+          CLIMAAR_DETECTOR_LATIDO: ${{ vars.CLIMAAR_DETECTOR_LATIDO }}
+        run: |
+          set -euo pipefail
+          # Auditoría 20/11/2026: avisa lo que antes se pasaba por alto
+          # (estaciones que no entran, relojes cortados, numeración, tamaños).
+          # Falla segura: nunca corta el ciclo.
+          python scripts/salud_cadena.py
 
       - name: Validar integridad completa de ClimaAR
         run: |

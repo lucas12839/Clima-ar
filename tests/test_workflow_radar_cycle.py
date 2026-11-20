@@ -10,8 +10,6 @@ ROOT = Path(__file__).resolve().parents[1]
 WF = ROOT / ".github" / "workflows"
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import ciclo_radar as cr  # noqa: E402
-
 
 def _wf(nombre):
     texto = (WF / nombre).read_text(encoding="utf-8")
@@ -33,9 +31,6 @@ def test_unico_schedule_de_la_cadena_es_el_watchdog_del_detector():
     for nombre in (
         "probar-radar-smn.yml",
         "climaar-intelligence.yml",
-        "climaar-ciclo-radar.yml",
-        "climaar-watchdog.yml",
-        "climaar-auto-radar.yml",
         "observaciones-sazb.yml",
     ):
         assert nombre not in con_cron, nombre
@@ -111,26 +106,37 @@ def test_ia_sin_cron_propio_y_con_modo_refresco():
     assert data["concurrency"]["group"] == "climaar-production-writes"
 
 
-def test_ciclo_radar_ya_no_lanza_radar_ni_encadena():
-    data, on, texto = _wf("climaar-ciclo-radar.yml")
-    assert list(on) == ["workflow_dispatch"]
-    assert "gh workflow run probar-radar-smn" not in texto
-    assert texto.count("gh workflow run climaar-detector-sinarame.yml") == 1
-    assert "gh workflow run climaar-ciclo-radar" not in texto
+def test_workflows_viejos_borrados():
+    # Auditoría 20/11/2026: eran manuales y no se usaban.
+    for nombre in ("climaar-ciclo-radar.yml", "climaar-watchdog.yml", "climaar-auto-radar.yml"):
+        assert not (WF / nombre).exists(), nombre
 
 
-def test_watchdog_y_auto_radar_no_lanzan_el_radar():
-    for nombre in ("climaar-watchdog.yml", "climaar-auto-radar.yml"):
-        _, _, texto = _wf(nombre)
-        assert not re.search(
-            r"gh workflow run\s+\\?\s*probar-radar-smn", texto
-        )
-        assert "gh workflow run" in texto
-        assert "climaar-ciclo-radar.yml" in texto
+def test_reloj_encadenado_cwop_vigila_al_detector_y_sigue_solo():
+    # GitHub corre los relojes de 10 min solo ~3 veces por día: la cadena se
+    # relanza sola y en cada vuelta pide al vigilante que mire el latido.
+    data, on, texto = _wf("climaar-cwop.yml")
+    assert "workflow_dispatch" in on and _cron(on)
+    assert data["concurrency"]["group"] == "climaar-reloj-cwop"
+    assert data["concurrency"]["cancel-in-progress"] is False
+    jobs = data["jobs"]
+    assert "gh workflow run climaar-detector-sinarame.yml" in str(jobs["vigilar-detector"])
+    sig = jobs["siguiente-vuelta"]
+    assert sig["if"] == "always()"
+    assert set(sig["needs"]) == {"vigilar-detector", "escuchar", "publicar"}
+    assert "gh workflow run climaar-cwop.yml" in str(sig)
+    assert "480" in str(sig)  # vuelta mínima de 8 min
+    assert data["permissions"]["actions"] == "write"
+    assert jobs["publicar"]["concurrency"]["group"] == "climaar-production-writes"
+    # nunca lanza el radar
+    assert not re.search(r"gh workflow run\s+\\?\s*probar-radar-smn", texto)
 
 
-def test_guardas_de_ejecucion_unica():
-    r = lambda i, s: {"databaseId": i, "status": s}  # noqa: E731
-    assert not cr.debe_lanzar_radar([r(1, "queued")])
-    assert not cr.debe_lanzar_radar([r(1, "in_progress")])
-    assert cr.debe_lanzar_radar([r(1, "completed")])
+def test_checkout_corto_y_python_unico():
+    # Auditoría 20/11/2026: bajar la historia completa (~540 MB) costaba 25-36 s.
+    for f in WF.glob("*.yml"):
+        texto = f.read_text(encoding="utf-8")
+        assert "fetch-depth: 0" not in texto, f.name
+        assert "lfs: true" not in texto, f.name
+        for v in re.findall(r'python-version:\s*"([\d.]+)"', texto):
+            assert v == "3.12", f.name

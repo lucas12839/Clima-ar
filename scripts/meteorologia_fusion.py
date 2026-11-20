@@ -171,7 +171,7 @@ def save_json(path, data):
             data,
             f,
             ensure_ascii=False,
-            indent=2,
+            separators=(",", ":"),  # compacto: 1 MB -> ~0,5 MB por ciclo (auditoría 20/11/2026)
             allow_nan=False,
         )
 
@@ -579,7 +579,9 @@ def obtener_actual_centro(ambiente):
 # FUSION SUPERFICIE ACTUAL: SAZB + ECMWF
 # ============================================================
 
-SAZB_FRESH_MAX_MINUTES = 15
+# El informe del aeropuerto (METAR) es horario: con 15 min solo valía ~10 min
+# por hora. Misma regla que scripts/estaciones/frescura.py ("sazb").
+SAZB_FRESH_MAX_MINUTES = 75
 
 
 def _parse_utc_timestamp(value):
@@ -625,7 +627,7 @@ def obtener_edad_sazb_minutos(sazb, now=None):
 
 
 def fusionar_actual_ecmwf_sazb(actual, sazb, now=None):
-    """Prioriza SAZB/AWC solo si la observacion tiene 0-15 min.
+    """Prioriza SAZB/AWC solo si la observacion tiene 0-75 min (informe horario).
 
     Una observacion vieja, futura o sin timestamp nunca reemplaza
     los valores actuales de ECMWF.

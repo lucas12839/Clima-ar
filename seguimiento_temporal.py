@@ -3014,6 +3014,15 @@ def procesar():
 
         estado = estado_nuevo()
 
+        # La numeración de las tormentas NUNCA vuelve a 1 (auditoría
+        # 20/11/2026): al reconstruir (cielo limpio o hueco largo) los
+        # números reiniciaban y una predicción vieja de la "tormenta 5" se
+        # comparaba con otra tormenta distinta que también era la 5.
+        estado["siguiente_track_id"] = max(
+            estado["siguiente_track_id"],
+            entero(estado_previo.get("siguiente_track_id"), 1),
+        )
+
         for frame_dt, frame_path in frames:
 
             frame_ts = iso(

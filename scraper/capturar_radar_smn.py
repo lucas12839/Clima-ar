@@ -768,49 +768,6 @@ def guardar_estado_persistente(
 
 
 # ============================================================
-# GUARDAR ESTADO LOCAL
-# ============================================================
-
-def guardar_estado_local(
-    timestamp_iso
-):
-
-    STATE.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    data = {}
-
-    if STATE.exists():
-
-        try:
-
-            data = json.loads(
-                STATE.read_text(
-                    encoding="utf-8"
-                )
-            )
-
-        except Exception:
-
-            data = {}
-
-    data[
-        "ultimo_radar_timestamp"
-    ] = timestamp_iso
-
-    STATE.write_text(
-        json.dumps(
-            data,
-            ensure_ascii=False,
-            indent=2
-        ),
-        encoding="utf-8"
-    )
-
-
-# ============================================================
 # ACEPTAR FRAME
 # ============================================================
 
@@ -937,9 +894,12 @@ def aceptar_frame(
         utc_iso
     )
 
-    guardar_estado_local(
-        utc_iso
-    )
+    # NO se escribe el estado del seguimiento (data/radar/seguimiento/estado.json)
+    # (auditoría 20/11/2026): al marcar ahí el frame nuevo ANTES de procesarlo,
+    # seguimiento_temporal.py creía que ya estaba procesado y reconstruía todo
+    # desde cero en cada imagen: los números de las tormentas cambiaban en
+    # cada frame y se perdía la historia de cada una. Ese archivo lo escribe
+    # solo el seguimiento; el capturador usa .climaar/estado_rma10.json.
 
     registrar_llegada(
         fecha_utc,
@@ -1506,9 +1466,12 @@ def main(
 
                     try:
 
+                        # Fuera de data/: es solo para revisar el error y no
+                        # debe quedar guardado en main (auditoría 20/11/2026).
+                        Path("logs").mkdir(parents=True, exist_ok=True)
                         page.screenshot(
                             path=(
-                                OUT /
+                                Path("logs") /
                                 f"captura_error_{intento}.png"
                             ),
                             full_page=True

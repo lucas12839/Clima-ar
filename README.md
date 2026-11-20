@@ -45,11 +45,12 @@ Entre frames, la IA sigue corriendo con el último radar válido y marca cuánto
 
 | Workflow | Disparo |
 |---|---|
-| `climaar-detector-sinarame.yml` | Watchdog cada 10 min: solo actúa si el servicio del VPS no da latido |
+| `climaar-detector-sinarame.yml` | Vigilante: lo lanza cada ~10 min el reloj de CWOP; solo actúa si el servicio del VPS no da latido |
+| `climaar-cwop.yml` | Reloj encadenado (se relanza solo): escucha CWOP y lanza al vigilante del detector |
 | `probar-radar-smn.yml` | Lo despacha el detector con cada frame nuevo |
 | `climaar-intelligence.yml` | Después de cada frame (o refresco entre frames) |
 | `climaar-calidad.yml` | Al terminar Intelligence |
-| `observaciones-sazb.yml`, `climaar-ciclo-radar.yml`, `climaar-auto-radar.yml`, `climaar-watchdog.yml`, `probar-app.yml` | Manuales / soporte |
+| `observaciones-sazb.yml`, `probar-app.yml` | Manuales / soporte |
 
 ## API
 

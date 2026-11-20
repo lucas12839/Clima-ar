@@ -25,13 +25,14 @@ jobs:
       - name: Descargar repositorio
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # Solo el último estado (antes bajaba los ~540 MB de historia: 25-36 s).
+          fetch-depth: 1
           ref: main
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Instalar dependencia
         run: python -m pip install requests
