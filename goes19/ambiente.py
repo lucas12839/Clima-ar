@@ -66,6 +66,8 @@ def leer_ventana(origen: str | Path, variables: tuple[str, ...], radio_km: float
             crudos[v] = datos
         dqf = np.asarray(ds["DQF_Overall"].isel(y=ys, x=xs).values, dtype=np.float64)
         presion = np.asarray(ds["pressure"].values, dtype=np.float64) if "pressure" in ds else None
+    if "LVM" in crudos:
+        crudos["LVM"] = humedad_en_porcentaje(crudos["LVM"])
     xg, yg = np.meshgrid(xv, yv)
     lat, lon = geo.fixed_grid_to_latlon(xg, yg, lambda_0=lam, r_eq=req, r_pol=rpol, h=h)
     dist = geo.haversine_km(lat, lon, geo.RADAR_LAT, geo.RADAR_LON)
@@ -78,6 +80,16 @@ def leer_ventana(origen: str | Path, variables: tuple[str, ...], radio_km: float
         "distance_km": dist[mascara],
         "presion_hpa": presion,
     }
+
+
+def humedad_en_porcentaje(valores: np.ndarray) -> np.ndarray:
+    """LVMPF dice "percent" en sus unidades pero trae fracciones (0 a 1):
+    comprobado el 20/11/2026 con datos reales (todo entre 0 y 1). Si el
+    producto algún día pasa a venir en %, no se vuelve a multiplicar."""
+    ok = np.isfinite(valores)
+    if ok.any() and np.nanmax(valores) <= 1.5:
+        return valores * 100.0
+    return valores
 
 
 def buenos(ventana: dict) -> np.ndarray:

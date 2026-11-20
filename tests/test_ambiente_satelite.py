@@ -206,3 +206,9 @@ def test_main_nunca_corta_el_ciclo(tmp_path, monkeypatch):
     assert ams.main() == 0
     d = json.loads((tmp_path / "a.json").read_text())
     assert d["disponible"] is False and d["en_paralelo"] is True
+
+
+def test_humedad_del_perfil_viene_en_fraccion():
+    # Datos reales del 20/11: unidades "percent" pero valores de 0 a 1.
+    assert amb.humedad_en_porcentaje(np.array([0.2, 0.85, np.nan]))[1] == pytest.approx(85.0)
+    assert amb.humedad_en_porcentaje(np.array([20.0, 85.0]))[1] == 85.0

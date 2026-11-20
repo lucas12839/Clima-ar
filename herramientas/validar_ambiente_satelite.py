@@ -234,6 +234,32 @@ def main(argv=None) -> int:
             "mediana_dias_sin_tormenta": _med(sin),
             "mejor_regla_region": mejor_umbral(dias, f, umbrales, mayor, "tormenta_region"),
         }
+    # Combinaciones: el satélite confirma o corrige al modelo.
+    s18 = sat("18", "cape_p90_jkg")
+    s15 = sat("15", "cape_p90_jkg")
+    e15 = mod("ecmwf_ifs025", "15", "cape")
+
+    def combinar(f):
+        return lambda x: (None if f(x) is None else (1.0 if f(x) else 0.0))
+
+    combos = {
+        "ECMWF >= 100 o satélite 18 UTC >= 100": combinar(
+            lambda x: None if e15(x) is None or s18(x) is None else (e15(x) >= 100 or s18(x) >= 100)),
+        "ECMWF >= 100 y satélite (15 o 18 UTC) >= 50": combinar(
+            lambda x: None if e15(x) is None else (e15(x) >= 100 and max(s15(x) or 0, s18(x) or 0) >= 50)),
+        "satélite 15 UTC >= 50 o 18 UTC >= 100": combinar(
+            lambda x: (max(s15(x) or 0, 0) >= 50) or ((s18(x) or 0) >= 100)),
+    }
+    for nombre, f in combos.items():
+        resumen["variables"][nombre] = {"mejor_regla_region": acierto(dias, f, 1.0, True, "tormenta_region"),
+                                        "bahia": acierto(dias, f, 1.0, True, "tormenta_bahia")}
+    print("\n===== DÍAS")
+    for x in dias:
+        print(f"{x['dia']} radar px45={x['radar']['max_pixeles_45dbz']:5d} bahía={x['radar']['max_pixeles_45dbz_bahia']:4d} "
+              f"| sat CAPE p90 15={s15(x)} 18={s18(x)} agua p90 15={sat('15', 'agua_precipitable_p90_mm')(x)} "
+              f"LI p10 15={sat('15', 'indice_elevacion_p10_c')(x)} grad={sat_perfil('15', 'gradiente_700_500_c_km')(x)} "
+              f"0C={((sat_perfil('15', 'nivel_0c')(x)) or {}).get('altura_m')} "
+              f"| ECMWF CAPE 15={e15(x)} agua={mod('ecmwf_ifs025', '15', 'agua')(x)}")
     print("\n===== RESUMEN")
     print(json.dumps(resumen, ensure_ascii=False, indent=1))
     if a.salida:
