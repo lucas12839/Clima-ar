@@ -42,6 +42,7 @@ for _p in (ROOT, ROOT / "scripts"):
         sys.path.insert(0, str(_p))
 
 import localidades_radar as lr  # noqa: E402
+import corrector_tiempo_real as ct  # noqa: E402
 import nowcast_capas_nucleo as nc  # noqa: E402
 import nowcast_flujo_optico as nf  # noqa: E402
 from scripts.rma10_features import parse_utc  # noqa: E402
@@ -68,6 +69,9 @@ CONFIG_DEFECTO = {
     "tendencia_radar": False,
     "escenarios": True,
     "anvil": False,
+    "corrector": False,
+    "control_calidad_satelite": True,
+    "reglas_corrector": {},
     "nota": "Lo deciden las simulaciones de herramientas/simular_huecos.py.",
 }
 
@@ -194,9 +198,14 @@ def estado_ahora(dbz_radar: float | None, edad_radar: float | None, relleno: dic
     est_ok = est and est.get("edad_min") is not None and est["edad_min"] <= EDAD_ESTACIONES_MAX_MIN
 
     medido = None
-    if rayos_ok and (rayos.get("a_15km_10min") or 0) >= 1:
-        medido = "tormenta"
+    # Rayos = tormenta ELÉCTRICA (fenómeno aparte). Solo cuentan como tormenta con lluvia si
+    # además el satélite ve un tope frío encima; si no, puede ser solo eléctrica, sin lluvia.
+    electrica = bool(rayos_ok and (rayos.get("a_15km_10min") or 0) >= 1)
+    tope = sat.get("tope_p10_c_15km") if sat_ok else None
+    if electrica:
         evidencias.append(f"{rayos['a_15km_10min']} rayos a menos de 15 km en 10 min")
+        if isinstance(tope, (int, float)) and tope <= -35.0:
+            medido = "tormenta"
     if est_ok and (est.get("lluvia_1h_mm") or 0) >= 0.4:
         evidencias.append(f"lluvia medida {est['lluvia_1h_mm']} mm en 1 h")
         medido = medido or "lluvia"
@@ -221,8 +230,16 @@ def estado_ahora(dbz_radar: float | None, edad_radar: float | None, relleno: dic
         evidencias.append("radar viejo sin confirmación: sin nube alta ni rayos ahora")
     else:
         final, manda = cat_radar, "radar_movido"
+    rafaga = est.get("rafaga_max_kmh") if est_ok else None
+    fenomenos = {
+        # Cada fenómeno por separado (índice mixto): puede haber rayos sin lluvia ni viento.
+        "precipitacion": final,
+        "tormenta_electrica": electrica,
+        "viento_medido_kmh": rafaga,
+        "lluvia_medida_1h_mm": est.get("lluvia_1h_mm") if est_ok else None,
+    }
     return {"categoria": final, "manda": manda, "categoria_radar_movido": cat_radar,
-            "peso_radar": round(peso_radar, 2), "evidencias": evidencias}
+            "peso_radar": round(peso_radar, 2), "evidencias": evidencias, "fenomenos": fenomenos}
 
 
 # ------------------------------------------------------------
@@ -351,6 +368,103 @@ def resumen_verificacion(verif: dict) -> dict[str, Any]:
 # ciclo
 # ------------------------------------------------------------
 
+C13_AHORA = Path(__import__("tempfile").gettempdir()) / "climaar_c13_ahora.npz"
+C13_RADAR = Path(__import__("tempfile").gettempdir()) / "climaar_c13_radar.npz"
+
+
+def control_calidad(campo: np.ndarray, radar_dt: datetime, salida: dict) -> np.ndarray:
+    """Ecos del radar sin ninguna nube encima (satélite de la misma hora) = ecos falsos."""
+    info: dict[str, Any] = {"usado": False}
+    try:
+        if C13_RADAR.exists():
+            z = np.load(C13_RADAR)
+            hora = parse_utc(str(z["hora"]))
+            dif = None if hora is None else abs((hora - radar_dt).total_seconds()) / 60.0
+            info["diferencia_satelite_radar_min"] = None if dif is None else round(dif, 1)
+            if dif is not None and dif <= 12.0:
+                sat = ct.grilla_satelite(z["lat"], z["lon"], z["temp_c"], campo.shape)
+                limpio = ct.quitar_ecos_sin_nube(campo, sat)
+                eco = int((campo >= UMBRAL_LLUVIA).sum())
+                falsos = int(((campo >= UMBRAL_LLUVIA) & (limpio < UMBRAL_LLUVIA)).sum())
+                info.update({"usado": True, "pixeles_eco": eco, "pixeles_sin_nube": falsos,
+                             "fraccion_sin_nube": round(falsos / eco, 3) if eco else 0.0})
+                salida["control_calidad_satelite"] = info
+                return limpio
+    except Exception as exc:
+        info["motivo"] = f"{type(exc).__name__}: {str(exc)[:100]}"
+    salida["control_calidad_satelite"] = info
+    return campo
+EDAD_RAYOS_MAX_MIN = 10.0
+
+
+def datos_corrector(goes: dict, ahora: datetime, shape) -> dict[str, Any]:
+    """Satélite más reciente (grilla del radar) y posición de los rayos de los últimos 10 min."""
+    datos: dict[str, Any] = {"satelite": None, "rayos_lat": [], "rayos_lon": [], "info": {}}
+    try:
+        if C13_AHORA.exists():
+            z = np.load(C13_AHORA)
+            hora = parse_utc(str(z["hora"]))
+            edad_sat = None if hora is None else (ahora - hora).total_seconds() / 60.0
+            datos["info"]["satelite_edad_min"] = None if edad_sat is None else round(edad_sat, 1)
+            if edad_sat is not None and edad_sat <= EDAD_SATELITE_MAX_MIN + 5:
+                datos["satelite"] = ct.grilla_satelite(z["lat"], z["lon"], z["temp_c"], shape)
+    except Exception as exc:
+        datos["info"]["satelite_error"] = f"{type(exc).__name__}: {str(exc)[:100]}"
+    ventana = ((goes.get("glm") or {}).get("ventana")) or {}
+    e = edad_min(ventana.get("fin_ventana_utc"), ahora)
+    datos["info"]["rayos_edad_min"] = e
+    if ventana.get("disponible") is not False and e is not None and e <= EDAD_RAYOS_MAX_MIN:
+        pos = ventana.get("rayos_10min") or []
+        datos["rayos_lat"] = [p[0] for p in pos]
+        datos["rayos_lon"] = [p[1] for p in pos]
+        datos["info"]["rayos"] = len(pos)
+    return datos
+
+
+def con_corrector(cfg: dict, campos: dict[float, np.ndarray], edad: float, flujo: dict | None,
+                  datos: dict, salida: dict | None) -> dict[float, np.ndarray]:
+    """Corrige con datos medidos de AHORA. Para los plazos futuros, el satélite y los rayos
+    se mueven con la tormenta (mismo movimiento del radar). Falla segura."""
+    if not cfg.get("corrector") or not campos:
+        return campos
+    try:
+        reglas = cfg.get("reglas_corrector") or {}
+        sat, rlat, rlon = datos["satelite"], np.asarray(datos["rayos_lat"]), np.asarray(datos["rayos_lon"])
+        frio = None if sat is None else np.where(np.isfinite(sat), np.maximum(-sat, 0.0), 0.0).astype(np.float32)
+        nuevos, total = {}, {}
+        for t, c in campos.items():
+            p = float(t) - edad
+            sat_t, lat_t, lon_t = sat, rlat, rlon
+            if p > 0.5 and flujo is not None:
+                if frio is not None:
+                    movido = nc.serie(frio, flujo["u"], flujo["v"], [p])[p]
+                    sat_t = np.where(movido > 0, -movido, 5.0).astype(np.float32)
+                if rlat.size:
+                    h, w = c.shape
+                    x, y = ct.a_pixel(rlat, rlon, w, h)
+                    xi = np.clip(np.rint(x).astype(int), 0, w - 1)
+                    yi = np.clip(np.rint(y).astype(int), 0, h - 1)
+                    x2, y2 = x + flujo["u"][yi, xi] * p, y + flujo["v"][yi, xi] * p
+                    lat_t, lon_t = pixel_a_latlon(x2, y2, w, h)
+            nuevos[t], cambios = ct.corregir(c, sat_t, lat_t, lon_t, reglas)
+            for k, v in cambios.items():
+                total[k] = total.get(k, 0) + v
+        if salida is not None:
+            salida["corrector"] = {"usado": True, "pixeles_cambiados": total, **datos["info"]}
+        return nuevos
+    except Exception as exc:
+        if salida is not None:
+            salida["corrector"] = {"usado": False, "motivo": f"{type(exc).__name__}: {str(exc)[:120]}"}
+        return campos
+
+
+def pixel_a_latlon(x, y, w: int, h: int):
+    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+    lon = ct.RADAR_LON + (np.asarray(x) - cx) / cx * ct.RADAR_RADIUS_KM / (111.320 * math.cos(math.radians(ct.RADAR_LAT)))
+    lat = ct.RADAR_LAT - (np.asarray(y) - cy) / cy * ct.RADAR_RADIUS_KM / 110.574
+    return lat, lon
+
+
 def con_anvil(cfg: dict, flujo: dict, campos: dict[float, np.ndarray], salida: dict | None):
     """Punto 6: suma ANVIL (crecimiento y debilitamiento) si está encendido. Falla segura."""
     if not cfg.get("anvil") or not flujo.get("tres"):
@@ -410,6 +524,8 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     if actual_dbz is not None:
         clutter = nc.cargar_clutter_total(actual_dbz.shape)
         campo = nc.campo_limpio(actual_dbz, clutter)
+        if cfg.get("control_calidad_satelite"):
+            campo = control_calidad(campo, radar_dt, salida)
         previo = nf.frame_previo(radar_dt) if int((campo >= nf.UMBRAL_ECO_DBZ).sum()) >= 30 else None
         if previo is not None:
             prev_dbz = nf.cargar_dbz(previo[0])
@@ -450,6 +566,7 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     zr = zonas_region(campo.shape) if campo is not None else {}
     tiempos = [edad + p for p in PLAZOS_DESDE_AHORA] if edad is not None else []
     campos: dict[float, np.ndarray] = {}
+    datos_corr = None
     if campo is not None:
         if flujo is not None and cfg.get("escenarios"):
             campos = nc.campos_escenarios(campo, flujo["u"], flujo["v"], tiempos, flujo["tasa"])
@@ -458,6 +575,9 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
             campos = nc.serie(campo, flujo["u"], flujo["v"], tiempos, flujo["tasa"])
         else:
             campos = {float(t): campo for t in tiempos}  # sin movimiento: persistencia (se dice)
+        # Corrector con rayos y satélite medidos ahora (agrega y quita).
+        datos_corr = datos_corrector(goes, ahora, campo.shape) if cfg.get("corrector") else None
+        campos = con_corrector(cfg, campos, edad, flujo, datos_corr, salida) if datos_corr else campos
     picos_loc = {p: nc.picos_por_zona(campos[float(edad + p)], zl) for p in PLAZOS_DESDE_AHORA} if campos else {}
     llegada = {}
     if flujo is not None:
@@ -520,6 +640,9 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
             elif cfg.get("escenarios"):
                 futuros = con_anvil(cfg, flujo, nc.campos_escenarios(campo, flujo["u"], flujo["v"], t_imgs,
                                                                      flujo["tasa"]), None)
+                if cfg.get("corrector"):
+                    futuros = con_corrector(cfg, futuros, edad, flujo,
+                                            datos_corr or datos_corrector(goes, ahora, campo.shape), None)
             else:
                 futuros = nc.serie(campo, flujo["u"], flujo["v"], t_imgs, flujo["tasa"])
             for obj, plazo, t_img in objetivos:

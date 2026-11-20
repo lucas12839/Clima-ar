@@ -232,6 +232,7 @@ def process_product(
         campos[product] = _campo(valores, dominio, hora)
     extra = {}
     if product == "abi_c13":
+        guardar_c13_ahora(dominio, hora, C13_RADAR)  # el barrido de la hora del radar
         from .topes_localidad import por_localidad
 
         try:
@@ -636,6 +637,22 @@ def leer_c13_previos(temp_dir: Path, reference_time: datetime,
     return campos, info
 
 
+C13_AHORA = Path(tempfile.gettempdir()) / "climaar_c13_ahora.npz"
+C13_RADAR = Path(tempfile.gettempdir()) / "climaar_c13_radar.npz"
+
+
+def guardar_c13_ahora(dominio: dict, hora: datetime | None, destino: Path | None = None) -> None:
+    """Deja la imagen más reciente del canal 13 (solo la zona) para el corrector del
+    nowcast en capas, que corre más tarde en el MISMO ciclo. No se guarda en git."""
+    try:
+        np.savez_compressed(destino or C13_AHORA, lat=np.asarray(dominio["latitude"], np.float32),
+                            lon=np.asarray(dominio["longitude"], np.float32),
+                            temp_c=(np.asarray(dominio["datos"]["CMI"], np.float32) - 273.15),
+                            hora=np.array(por_tormenta.iso(hora) or ""))
+    except Exception:
+        pass
+
+
 def satelite_ahora(temp_dir: Path, ahora: datetime | None = None) -> dict:
     """Punto 5b: la imagen MÁS RECIENTE del canal 13 (no la de la hora del
     radar) y la anterior, por localidad. Con el radar atrasado o faltante, el
@@ -656,6 +673,7 @@ def satelite_ahora(temp_dir: Path, ahora: datetime | None = None) -> dict:
     dominio, lectura = leer_dominio(meta, ["CMI"], temp_dir, "abi_c13_ahora")
     actual = estadisticas(dominio["datos"]["CMI"], dominio["latitude"], dominio["longitude"], locs)
     hora = _hora_satelite(meta, dominio)
+    guardar_c13_ahora(dominio, hora)
     salida = {"estado": "ok", "hora_satelite_utc": por_tormenta.iso(hora),
               "inicio_utc": meta.get("start_time_utc"), "lectura": lectura,
               "edad_min": round((ahora - hora).total_seconds() / 60.0, 1) if hora else None}

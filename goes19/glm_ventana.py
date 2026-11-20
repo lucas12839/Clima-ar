@@ -33,6 +33,7 @@ MITAD_MIN = 10
 CERCA_KM = 30.0
 SOBRE_KM = 15.0
 MAX_ARCHIVOS = 66
+MAX_RAYOS_POSICION = 1500
 HILOS = 8
 
 
@@ -187,6 +188,12 @@ def _resumen_ventana(res: list[dict]) -> dict[str, Any]:
         "fin_ventana_utc": fin.isoformat().replace("+00:00", "Z"),
         "archivos_leidos": len(res),
     })
+    # Posición de los rayos de los últimos 10 min (para el corrector del nowcast en capas).
+    recientes = edades <= 10.0
+    orden = np.argsort(edades[recientes])[:MAX_RAYOS_POSICION]
+    salida["rayos_10min"] = [[round(float(a), 3), round(float(b), 3)] for a, b in
+                             zip(lat[recientes][orden], lon[recientes][orden])]
+    salida["rayos_10min_total"] = int(recientes.sum())
     return salida
 
 

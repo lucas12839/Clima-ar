@@ -58,8 +58,8 @@ def entorno(tmp_path, monkeypatch):
     monkeypatch.setattr(nf, "frame_previo", lambda dt, historico=None: (
         (hist / f"{dt - timedelta(minutes=10):%Y%m%d%H%M%S}.png", dt - timedelta(minutes=10))
         if (hist / f"{dt - timedelta(minutes=10):%Y%m%d%H%M%S}.png").exists() else None))
-    for nombre in ("SALIDA", "VERIFICACION", "GOES", "SENALES", "METEO", "CONFIG"):
-        monkeypatch.setattr(ncap, nombre, tmp_path / f"{nombre.lower()}.json")
+    for nombre in ("SALIDA", "VERIFICACION", "GOES", "SENALES", "METEO", "CONFIG", "C13_AHORA", "C13_RADAR"):
+        monkeypatch.setattr(ncap, nombre, tmp_path / f"{nombre.lower()}.{'npz' if nombre.startswith('C13') else 'json'}")
     return {"tmp": tmp_path, "campos": campos, "poner": poner, "ts": ts, "bx": bx, "by": by}
 
 
@@ -107,7 +107,12 @@ def test_llegada_con_porcentaje_de_escenarios(entorno):
 
 
 def test_lo_medido_manda_sobre_el_radar_viejo():
+    # Rayos solos: tormenta eléctrica, sin inventar lluvia.
     rell = {"rayos": {"a_15km_10min": 6, "a_30km_10min": 9, "edad_min": 2}}
+    e = ncap.estado_ahora(0.0, 50.0, rell)
+    assert e["categoria"] == "sin_eco" and e["fenomenos"]["tormenta_electrica"] is True
+    # Rayos + tope frío encima: tormenta con lluvia.
+    rell["satelite"] = {"tope_p10_c_15km": -52.0, "edad_min": 5}
     e = ncap.estado_ahora(0.0, 50.0, rell)
     assert e["categoria"] == "tormenta" and e["manda"] == "medido"
     rell = {"estaciones": {"lluvia_1h_mm": 3.0, "edad_min": 5}}
@@ -202,3 +207,46 @@ def test_mascara_intermitente_no_borra_una_tormenta_que_pasa(monkeypatch):
     tormenta = np.nan_to_num(celda(101, 101, radio=10))
     limpio = nc.campo_limpio(tormenta, sin_clutter)
     assert np.array_equal(limpio >= 35, tormenta >= 35)
+
+
+def test_corrector_con_rayos_y_satelite_medidos(entorno, monkeypatch):
+    import corrector_tiempo_real as ct
+
+    ncap.CONFIG.write_text(json.dumps({"corrector": True}), encoding="utf-8")
+    ahora = T0 + timedelta(minutes=30)
+    # Satélite de hace 5 min: cielo SIN nube alta en toda la zona -> la tormenta movida no puede estar.
+    lat, lon = np.meshgrid(np.linspace(-41, -36.5, 260), np.linspace(-65.5, -59, 260), indexing="ij")
+    npz = entorno["tmp"] / "c13.npz"
+    np.savez(npz, lat=lat.ravel().astype(np.float32), lon=lon.ravel().astype(np.float32),
+             temp_c=np.full(lat.size, 12.0, np.float32), hora=np.array(nf.iso(ahora - timedelta(minutes=5))))
+    monkeypatch.setattr(ncap, "C13_AHORA", npz)
+    s = ncap.ejecutar(ahora)
+    assert s["corrector"]["usado"] is True
+    assert s["localidades"]["bahia_blanca"]["radar_movido_a_ahora"]["categoria"] == "sin_eco"
+    # Rayos de ahora sobre Punta Alta (sin eco en el radar): aparece la tormenta.
+    loc = next(l for l in lr.cargar_localidades() if l["id"] == "punta_alta")
+    goes = {"glm": {"ventana": {"disponible": True, "fin_ventana_utc": nf.iso(ahora - timedelta(minutes=1)),
+                                "rayos_10min": [[loc["lat"], loc["lon"]]] * 4, "por_localidad": {}}}}
+    ncap.GOES.write_text(json.dumps(goes), encoding="utf-8")
+    np.savez(npz, lat=lat.ravel().astype(np.float32), lon=lon.ravel().astype(np.float32),
+             temp_c=np.full(lat.size, -50.0, np.float32), hora=np.array(nf.iso(ahora - timedelta(minutes=5))))
+    s = ncap.ejecutar(ahora)
+    assert s["localidades"]["punta_alta"]["radar_movido_a_ahora"]["categoria"] == "tormenta"
+    assert s["corrector"]["pixeles_cambiados"].get("agregado_con_rayos", 0) > 0
+
+
+def test_control_de_calidad_borra_ecos_con_cielo_despejado(entorno, monkeypatch):
+    # Caso 8/11: el radar marca tormenta y el satélite de la misma hora no ve ninguna nube.
+    lat, lon = np.meshgrid(np.linspace(-41, -36.5, 260), np.linspace(-65.5, -59, 260), indexing="ij")
+    np.savez(ncap.C13_RADAR, lat=lat.ravel().astype(np.float32), lon=lon.ravel().astype(np.float32),
+             temp_c=np.full(lat.size, 4.0, np.float32), hora=np.array(nf.iso(T0)))
+    s = ncap.ejecutar(T0 + timedelta(minutes=2))
+    cc = s["control_calidad_satelite"]
+    assert cc["usado"] and cc["fraccion_sin_nube"] == 1.0
+    assert s["localidades"]["bahia_blanca"]["radar_movido_a_ahora"]["categoria"] == "sin_eco"
+    assert "tormenta_proxima_hora" not in s["localidades"]["bahia_blanca"]
+    # Con nube de tormenta encima, el eco se respeta.
+    np.savez(ncap.C13_RADAR, lat=lat.ravel().astype(np.float32), lon=lon.ravel().astype(np.float32),
+             temp_c=np.full(lat.size, -55.0, np.float32), hora=np.array(nf.iso(T0)))
+    s = ncap.ejecutar(T0 + timedelta(minutes=2))
+    assert s["control_calidad_satelite"]["pixeles_sin_nube"] == 0
