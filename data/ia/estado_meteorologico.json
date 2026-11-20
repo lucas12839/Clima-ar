@@ -1,7 +1,7 @@
 {
   "version": "1.1.0",
   "motor": "ClimaAR Intelligence",
-  "actualizado_utc": "2026-11-20T07:42:01.889039+00:00",
+  "actualizado_utc": "2026-11-20T07:48:24.638892+00:00",
   "ubicacion": {
     "ciudad": "Bahia Blanca",
     "latitud": -38.71,
@@ -14,7 +14,7 @@
     "sazb_valido": false,
     "sazb_disponible": true,
     "sazb_fresco": false,
-    "sazb_edad_minutos": 42.0,
+    "sazb_edad_minutos": 48.4,
     "puntos_ecmwf_validos": 9
   },
   "radar": {
@@ -77,40 +77,40 @@
       "20": {
         "minutos": 20,
         "timestamp_utc": "2026-11-20T07:40:00Z",
-        "x": 281.54,
+        "x": 281.55,
         "y": 195.72,
-        "latitud": -38.228866,
-        "longitud": -61.885373,
-        "distancia_radar_km": 61.25,
-        "rumbo_radar_grados": 23.54,
+        "latitud": -38.228865,
+        "longitud": -61.885266,
+        "distancia_radar_km": 61.253,
+        "rumbo_radar_grados": 23.55,
         "track_id": "1",
         "incertidumbre_pixeles": 38.74,
         "confianza_prediccion": 39.8,
         "direccion_estimada": "E",
         "velocidad_estimada_pixeles_min": 0.2133,
         "rumbo_estimado_grados": 95.3,
-        "calibracion_muestras": 323,
-        "correccion_bias_x_pixeles": 0.33,
+        "calibracion_muestras": 322,
+        "correccion_bias_x_pixeles": 0.34,
         "correccion_bias_y_pixeles": 0.68
       },
       "30": {
         "minutos": 30,
         "timestamp_utc": "2026-11-20T07:50:00Z",
-        "x": 283.46,
-        "y": 195.13,
-        "latitud": -38.22383,
-        "longitud": -61.864747,
-        "distancia_radar_km": 62.494,
-        "rumbo_radar_grados": 24.85,
+        "x": 283.45,
+        "y": 195.1,
+        "latitud": -38.223577,
+        "longitud": -61.864855,
+        "distancia_radar_km": 62.516,
+        "rumbo_radar_grados": 24.83,
         "track_id": "1",
         "incertidumbre_pixeles": 40.96,
         "confianza_prediccion": 32.2,
         "direccion_estimada": "E",
         "velocidad_estimada_pixeles_min": 0.2133,
         "rumbo_estimado_grados": 95.3,
-        "calibracion_muestras": 489,
-        "correccion_bias_x_pixeles": 0.13,
-        "correccion_bias_y_pixeles": -0.11
+        "calibracion_muestras": 490,
+        "correccion_bias_x_pixeles": 0.12,
+        "correccion_bias_y_pixeles": -0.14
       }
     },
     "confianza_movimiento": 0.95,
@@ -264,7 +264,7 @@
     "fuente": "Aviation Weather Center",
     "estacion": "SAZB",
     "obsTime_utc": "2026-11-20T07:00:00+00:00",
-    "edad_minutos": 40.8,
+    "edad_minutos": 45.9,
     "temperatura_c": 13,
     "punto_rocio_c": 12,
     "viento_kt": 0,
@@ -323,7 +323,7 @@
     "geopotential_height_600hPa": 4234.0,
     "geopotential_height_500hPa": 5618.0,
     "observacion_sazb_utc": "2026-11-20T07:00:00+00:00",
-    "observacion_sazb_edad_minutos": 42.03148361666667,
+    "observacion_sazb_edad_minutos": 48.410647733333334,
     "observacion_sazb_fresca": false,
     "modelo_ecmwf_viento_10m_kmh": 5.4,
     "modelo_ecmwf_direccion_10m": 318.0,
@@ -7738,14 +7738,15 @@
       }
     ]
   },
-  "estado": "operativo",
+  "estado": "operativo_con_ecmwf_anterior",
   "ecmwf_respaldo": {
-    "usado": false
+    "usado": true,
+    "motivo": "ECMWF no pudo obtener el grupo 3/3: HTTPSConnectionPool(host='api.open-meteo.com', port=443): Read timed out. (read timeout=20)",
+    "edad_minutos": 35.2,
+    "actualizado_utc": "2026-11-20T07:13:12.510613+00:00"
   },
   "ecmwf_cache": {
-    "usado": true,
-    "edad_minutos": 28.8,
-    "actualizado_utc": "2026-11-20T07:13:12.510613+00:00"
+    "usado": false
   },
   "proxima_etapa": "Motor IA de evolucion, trayectoria, fortalecimiento, debilitamiento, ETA, duracion y peligros."
 }
