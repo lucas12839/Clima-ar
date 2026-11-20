@@ -802,6 +802,12 @@ jobs:
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # Restos viejos borrados en la auditoría del 20/11/2026: si una corrida
+          # anterior los trae de vuelta desde el artefacto, no se vuelven a guardar.
+          rm -f data/radar/status.json data/radar/latest.png data/radar/radar_features_rma10.csv \
+            data/radar/captura_error_1.png data/radar/captura_error_2.png data/radar/captura_error_3.png \
+            data/radar/continuidad.txt data/radar/ultimo_radar_sha256.txt
+
           # Casos guardados (regla 7): la carpeta aparece con la primera tormenta.
           historial_goes=""
           if [ -d data/goes19/historial ]; then

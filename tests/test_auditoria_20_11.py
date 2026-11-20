@@ -286,3 +286,9 @@ def test_seguimiento_sigue_las_mismas_tormentas_entre_imagenes(tmp_path, monkeyp
     ids_despues = {t["track_id"] for t in despues["tracks"] if t.get("presente_en_ultimo_frame")}
     # La mayoría de las tormentas conserva su número de una imagen a la otra.
     assert len(ids_antes & ids_despues) >= 0.5 * len(ids_antes)
+
+
+def test_restos_no_vuelven_a_guardarse():
+    for wf in ("climaar-intelligence.yml", "probar-radar-smn.yml"):
+        texto = (ROOT / ".github/workflows" / wf).read_text(encoding="utf-8")
+        assert "rm -f data/radar/status.json data/radar/latest.png data/radar/radar_features_rma10.csv" in texto
