@@ -1,4 +1,4 @@
-# ClimaAR — estado y plan (actualizado 19/11/2026, 09:30 hora de Argentina)
+# ClimaAR — estado y plan (actualizado 20/11/2026, 03:15 hora de Argentina)
 
 Leer junto con `CLAUDE.md` (reglas fijas del repo).
 
@@ -245,10 +245,15 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - **Plan único y vigente: `docs/INSPECCION_FUENTES.md`** (objetivo: sistema confiable que en el
   futuro pueda avisar tormentas severas). 8 reglas de confiabilidad + 11 puntos. La corrección
   de umbrales (Punta Alta, Tornquist) quedó dentro del punto 4.
-- Estado: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
+- **Actualización 20/11/2026, ~03:15 hora de Argentina (Lucas durmiendo, trabajo en segundo
+  plano autorizado):** terminados **5b (#53), 6 (#54) y 7 (#55)**, todos EN PARALELO (no
+  cambian lo que se ve) y validados (`docs/VALIDACION_NOWCAST_CAPAS.md`). Archivos nuevos:
+  `data/radar/nowcast_capas.json`, `data/ia/verificacion_nowcast.json` (validación automática en
+  vivo), `data/ia/modelos_region.json`, `data/ia/modelos/`. Sigue el **punto 8** (esperar a Lucas).
+- Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
   #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).
-  **Sigue el punto 5b** (nunca a ciegas con el radar atrasado), después el 6. Después 7 a 11, luego simulaciones con casos reales para medir aciertos (regla 6, decisión de Lucas)
+  Después 5b, 6 y 7 (terminados el 20/11). Después 7 a 11, luego simulaciones con casos reales para medir aciertos (regla 6, decisión de Lucas)
   y recién ahí decidir avisos y mostrar el puntaje. Al final Render y Netlify.
 - Cómo probar: `pytest`; `herramientas/emular_workflow.py` en una copia, con tormenta y sin
   actividad (para "sin actividad": imagen de radar toda de índice 253, guardarla también en
@@ -268,8 +273,8 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   Decisión de Lucas (20/11): NO crear otro nowcast, mejorar al 100 % y validar el que ya existe
   (`nowcast_flujo_optico.py`); 8 tareas y **estructura en 6 capas acordada** en
   `docs/INSPECCION_FUENTES.md`. El nowcast actual NO es IA: mueve la última imagen y supone
-  intensidad constante (por eso no ve crecer ni deshacerse una tormenta). **Esperar a que
-  Lucas diga "arrancá"** antes de empezar el 5b. Noche 19/11: atraso de SINARAME 16-18 min y faltaron
+  intensidad constante (por eso no ve crecer ni deshacerse una tormenta). **Hecho el 20/11
+  (#53, #54): nowcast en capas + ANVIL, en paralelo.** Noche 19/11: atraso de SINARAME 16-18 min y faltaron
   las imágenes de 22:20 y 00:00 justo cuando la tormenta pasaba por Bahía. En la ciudad no
   hubo nada: convección elevada sobre capa estable, nube de arco al norte (caso y foto en
   `docs/casos/2026-11-19_nube_rodillo_bahia.md`, con el análisis de Alex Gonzalez).
@@ -285,4 +290,4 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
-`indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-inspeccion` (temporal de pruebas reales: borrar al final) y las ramas ya unidas de cada PR (`goes-zona-tormentas`, `senales-severas`, `casos-guardados`, `rayos-mejorados`, `puntaje-gravedad`, etc.).
+`indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-inspeccion` (temporal de pruebas reales: borrar al final), `nowcast-sin-radar`, `nowcast-capas`, `punto6-anvil`, `punto7-modelos`, `validacion-sistema` y las ramas ya unidas de cada PR (`goes-zona-tormentas`, `senales-severas`, `casos-guardados`, `rayos-mejorados`, `puntaje-gravedad`, etc.).

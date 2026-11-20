@@ -94,3 +94,14 @@ compara por localidad y en 150 puntos de la región, separado por atraso. Archiv
   efecto se va a medir con la validación automática y con las simulaciones finales (regla 6).
 - Con 90 min de atraso el pronóstico acierta poco (0,23): por eso la confianza baja de a poco y
   cuanto más viejo el radar más pesan rayos, satélite y estaciones (capa 3).
+
+## Validación de todo el sistema (pedido de Lucas), 20/11/2026 ~03:00 hora de Argentina
+
+Revisado en producción después de unir #53, #54 y #55:
+
+| Pregunta | Resultado |
+|---|---|
+| ¿Las herramientas se pisan? | No. Radar e Intelligence escriben en el mismo grupo `climaar-production-writes`: corren de a una. Las herramientas nuevas solo **agregan** archivos (`nowcast_capas.json`, `verificacion_nowcast.json`, `modelos_region.json`, `data/ia/modelos/`) y no cambian ninguno de los que lee la pantalla. |
+| ¿Alguna se bloquea? | No. Ciclo de Intelligence: ~3 min 30 s (antes ~2 min 30 s; tope de 15 min). Nowcast en capas ~9 s, modelos ~1 s (13-25 s cuando sale una corrida nueva del WRF, tope 5 min). Todas con falla segura. pysteps solo en Intelligence: la cadena del radar no se demora. |
+| ¿Se pierden datos? | No. Todo se guarda en git en el paso "Persistir". El archivo de validación automática se achicó de 300 kB a ~70 kB por ciclo (sin sangría y con números enteros en la región). |
+| ¿Están sincronizadas? | Sí. La integridad exige que el nowcast en capas sea de la misma imagen de radar, con la edad del radar bien calculada y ninguna fuente del futuro. Hora de cada fuente en `fuentes` (radar, rayos, satélite, estaciones, ambiente). Ciclos reales con integridad OK. |

@@ -130,7 +130,7 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
    congelamiento, diferencias entre canales; estilo RDT). **Terminado en paralelo (#48)**:
    `goes19/formacion.py` + `scripts/aviso_formacion.py`, no cambia lo que se ve. Simulado con
    3 días reales: grado "probable" o más acierta 58-85 % con ~20 min de ventaja.
-5b. **Nunca a ciegas cuando no hay imagen de radar nueva** (agregado el 20/11 por pedido de
+5b. **Terminado en paralelo (#53, validado: `docs/VALIDACION_NOWCAST_CAPAS.md`)**. **Nunca a ciegas cuando no hay imagen de radar nueva** (agregado el 20/11 por pedido de
    Lucas, va antes del 6). Noche del 19/11: SINARAME publicó con 16-18 min de atraso casi toda
    la noche y faltaron las imágenes de 22:20 y 00:00, justo cuando la tormenta pasaba por Bahía
    (caso: `docs/casos/2026-11-19_nube_rodillo_bahia.md`). **No se crea otro nowcast: se mejora
@@ -181,12 +181,25 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
      todas queden sincronizadas (misma imagen de radar y misma hora en todos los archivos).
    - **Lo viejo de ClimaAR:** se deja funcionando; se hace un inventario de qué mete ruido en
      lo que se ve y se desconecta recién con el nowcast nuevo validado, con datos.
-   - Avance: rama `nowcast-sin-radar` (sin unir) con la imagen más reciente del satélite por
-     localidad (`satelite_ahora` en `goes19_state.json`), pruebas OK.
-6. **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
+   - **Resultado (20/11, madrugada):** `scripts/nowcast_capas.py` + `scripts/nowcast_capas_nucleo.py`,
+     salida `data/radar/nowcast_capas.json` (en paralelo, corre también en cada refresco de 5 min).
+     Simulación de huecos (`herramientas/simular_huecos.py`, 26 días, 655 casos): tormentas en
+     localidades 0,231 → 0,334 con 40 min de atraso y 0,175 → 0,249 con 60 min; mejora en
+     todos los atrasos de 10 a 90 min. Entraron: capa 1, movimiento de 3 imágenes, escenarios
+     (capa 5). La tendencia del radar (parte de la capa 2) **empeoraba y quedó apagada**.
+     Capas 3 y 4 calculadas, sin historia suficiente para simularlas: se miden con la validación
+     automática (`data/ia/verificacion_nowcast.json`). Se agregó la máscara de clutter
+     intermitente (Bahía Blanca daba eco en el 37 % de las imágenes sin lluvia).
+6. **Terminado en paralelo (#54).** Movimiento de 3 imágenes y escenarios (en #53) + ANVIL de
+   pysteps (crecimiento y debilitamiento) combinado desde 30 min: mejora de 30 a 60 min.
+   pysteps solo en Intelligence (`requirements-nowcast.txt`). **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
    imágenes, crecimiento o debilitamiento según el puntaje, varios escenarios y porcentaje de
    llegada (pysteps sobre nuestra grilla de 512 × 512, solo si su costo en el ciclo lo permite).
 7. **Modelos:** WRF del SMN y escenarios de varios modelos, solo puntos dentro de 240 km.
+   **Terminado en paralelo (#55)**: `scripts/modelos_region.py` → `data/ia/modelos_region.json`
+   (WRF 4 km por localidad: lluvia cada 10 min y ambiente horario; ensambles ECMWF+GFS+ICON,
+   122 escenarios: probabilidad de inestabilidad, lluvia y ráfagas en 12 h). **Falta medir** si
+   el WRF acierta la lluvia por localidad (punto 9).
 8. **Ambiente medido por el satélite** (inestabilidad, agua precipitable, perfiles) antes de que
    se nuble.
 9. **Calibración y medición continua:** lluvia con estaciones, puntaje con estaciones y rayos,
