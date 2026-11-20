@@ -867,7 +867,7 @@ def main():
     OUT.parent.mkdir(parents=True, exist_ok=True)
     tmp = OUT.with_suffix(".json.tmp")
     tmp.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False),
+        json.dumps(result, ensure_ascii=False, separators=(",", ":"), allow_nan=False),  # compacto: 1 MB -> ~0,5 MB por ciclo (auditoría 20/11/2026)
         encoding="utf-8",
     )
     tmp.replace(OUT)

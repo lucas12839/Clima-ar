@@ -58,6 +58,10 @@ TOLERANCIA_HUECO_MIN = 12
 
 MAX_PENDIENTES = 500
 MAX_CALIBRATION = 1000
+CALIBRATION_SCHEMA = 2
+# Una predicción sin observación a su hora se descarta pasado este tiempo
+# (antes quedaba pendiente para siempre).
+PENDING_MAX_AGE_MIN = 60
 MAX_HISTORY = 10
 
 MIN_MATCH_PIXELS = 10.0
@@ -1208,6 +1212,12 @@ def load_calibration():
     if not isinstance(data, dict):
         data = {}
 
+    # Versión 1 = registros de antes de la numeración continua de tormentas
+    # (auditoría 20/11/2026): mezclaban tormentas distintas con el mismo
+    # número (errores de ~40 km a 10 min). Se empieza de cero.
+    if int(number(data.get("schema_version"), 1)) < CALIBRATION_SCHEMA:
+        return []
+
     records = data.get("registros", [])
 
     if not isinstance(records, list):
@@ -1401,6 +1411,10 @@ def validate_pending(current_ts, tracks, pending):
     now = parse_ts(current_ts)
 
     observations = build_observation_index(tracks)
+    first_frames = {
+        track_id(track): parse_ts(track.get("primer_frame"))
+        for track in tracks
+    }
 
     remaining = []
     validated = []
@@ -1427,6 +1441,17 @@ def validate_pending(current_ts, tracks, pending):
         actual = observations.get(
             (tid, target)
         )
+
+        # Mismo número pero tormenta nacida después de la predicción: es otra.
+        origin_dt = parse_ts(prediction.get("timestamp_origen"))
+        first_dt = first_frames.get(tid)
+        if (
+            actual is not None
+            and origin_dt is not None
+            and first_dt is not None
+            and first_dt > origin_dt
+        ):
+            actual = None
 
         if actual is not None:
             prediction["validacion"] = validate_point(
@@ -1456,9 +1481,11 @@ def validate_pending(current_ts, tracks, pending):
             validated.append(prediction)
             continue
 
-        # No descartamos silenciosamente una predicción pasada.
-        # Si no hubo observación utilizable, queda pendiente para
-        # evitar false positives en la métrica.
+        # Sin observación utilizable no cuenta en la métrica. Queda pendiente
+        # hasta PENDING_MAX_AGE_MIN después de su hora (puede llegar un frame
+        # atrasado); después se descarta (antes quedaba para siempre).
+        if (now - target_dt).total_seconds() / 60.0 > PENDING_MAX_AGE_MIN:
+            continue
         remaining.append(prediction)
 
     return remaining, validated
@@ -2265,7 +2292,7 @@ def main():
     save_json(
         CALIBRATION,
         {
-            "schema_version": 1,
+            "schema_version": CALIBRATION_SCHEMA,
             "actualizado": radar_ts,
             "registros": calibration_records[-MAX_CALIBRATION:],
             "resumen": calibration_summary(

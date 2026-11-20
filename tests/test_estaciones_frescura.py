@@ -14,13 +14,18 @@ class ObservationFreshnessTests(unittest.TestCase):
         self.assertEqual(OUTPUT, BASE / "data/ia/estaciones/observaciones/bcp_actual.json")
         self.assertNotEqual(str(OUTPUT), "/opt/Clima-ar/data/ia/estaciones/observaciones/bcp_actual.json")
 
-    def test_colectores_comparten_limite_inclusivo_de_15_minutos(self):
-        for checker in (bcp_is_fresh, smn_is_fresh):
+    def test_cada_red_tiene_su_limite_inclusivo(self):
+        # BCP mide cada minuto: 15 min. SMN es horario y llega 20-25 min tarde: 90 min.
+        for checker, limite in ((bcp_is_fresh, 15), (smn_is_fresh, 90)):
             self.assertTrue(checker(0))
-            self.assertTrue(checker(15))
-            self.assertFalse(checker(15.001))
+            self.assertTrue(checker(limite))
+            self.assertFalse(checker(limite + 0.001))
             self.assertFalse(checker(-0.001))
             self.assertFalse(checker(None))
+
+    def test_bahia_aero_con_25_minutos_entra(self):
+        # Antes (15 min para todos) el SMN no entraba nunca.
+        self.assertTrue(smn_is_fresh(25))
 
     def test_catalogo_real_conecta_las_estaciones_con_sus_colectores(self):
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))

@@ -54,7 +54,7 @@ def save_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False),
+        json.dumps(data, ensure_ascii=False, separators=(",", ":"), allow_nan=False),  # compacto: 1 MB -> ~0,5 MB por ciclo (auditoría 20/11/2026)
         encoding="utf-8",
     )
     tmp.replace(path)

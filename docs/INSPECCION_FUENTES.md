@@ -192,7 +192,7 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
      intermitente (Bahía Blanca daba eco en el 37 % de las imágenes sin lluvia).
 6. **Terminado en paralelo (#54).** Movimiento de 3 imágenes y escenarios (en #53) + ANVIL de
    pysteps (crecimiento y debilitamiento) combinado desde 30 min: mejora de 30 a 60 min.
-   pysteps solo en Intelligence (`requirements-nowcast.txt`). **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
+   pysteps en `requirements-nowcast.txt` (no se instala en producción: ANVIL quedó apagado). **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
    imágenes, crecimiento o debilitamiento según el puntaje, varios escenarios y porcentaje de
    llegada (pysteps sobre nuestra grilla de 512 × 512, solo si su costo en el ciclo lo permite).
 7. **Modelos:** WRF del SMN y escenarios de varios modelos, solo puntos dentro de 240 km.

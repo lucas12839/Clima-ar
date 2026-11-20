@@ -1,18 +1,55 @@
 name: ClimaAR Estaciones CWOP
 
-# Escucha la red CWOP (estaciones ciudadanas abiertas) en modo solo lectura.
+# Escucha la red CWOP (estaciones ciudadanas abiertas) en modo solo lectura y,
+# en cada vuelta, pide al vigilante del detector (climaar-detector-sinarame.yml)
+# que compruebe el latido del servicio del VPS.
+#
+# RELOJ ENCADENADO (auditoría del 20/11/2026): GitHub ejecuta los relojes
+# programados "cada 10 min" solo unas 3 veces por día, así que CWOP quedaba
+# con datos de horas y el respaldo del VPS casi nunca corría. Ahora cada
+# vuelta, al terminar, lanza la siguiente (workflow_dispatch). El reloj
+# programado queda solo para volver a arrancar la cadena si se corta.
+# El grupo de concurrencia deja una sola cadena: si se juntan dos, la que
+# queda en espera más vieja se cancela y siguen con una.
+#
 # La escucha (hasta ~10 min, las estaciones transmiten cada 10 min) va en un
-# trabajo sin grupo de concurrencia para no frenar Radar ni Intelligence; solo
-# la publicación corta usa el grupo de escrituras de producción.
+# trabajo sin el grupo de escrituras para no frenar Radar ni Intelligence;
+# solo la publicación corta usa el grupo de escrituras de producción.
 on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
 
+concurrency:
+  group: climaar-reloj-cwop
+  cancel-in-progress: false
+
 jobs:
+  vigilar-detector:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Pedir al vigilante que compruebe el latido del detector
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Si ya hay un vigilante corriendo o en espera, no se suma otro.
+          activos="$(gh run list --workflow climaar-detector-sinarame.yml \
+            --json status --jq '[.[] | select(.status=="in_progress" or .status=="queued" or .status=="pending" or .status=="waiting")] | length' \
+            --limit 20 || echo 0)"
+          if [ "${activos:-0}" -gt 0 ]; then
+            echo "Vigilante del detector ya activo ($activos)."
+            exit 0
+          fi
+          gh workflow run climaar-detector-sinarame.yml --ref main \
+            || echo "::warning::No se pudo lanzar el vigilante del detector."
+
   escuchar:
     runs-on: ubuntu-latest
     timeout-minutes: 14
@@ -23,7 +60,7 @@ jobs:
           ref: main
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Escuchar estaciones CWOP (solo lectura)
         run: |
           set -euo pipefail
@@ -50,7 +87,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: main
       - uses: actions/download-artifact@v4
         with:
@@ -69,7 +106,7 @@ jobs:
           fi
           git commit -m "obs: actualizar estaciones CWOP"
           for intento in 1 2 3; do
-            git fetch origin main
+            git fetch --depth=20 origin main
             git rebase origin/main || {
               git rebase --abort || true
               echo "Rebase falló en intento $intento."
@@ -85,3 +122,29 @@ jobs:
             if [ "$intento" -eq 3 ]; then exit 1; fi
             sleep 3
           done
+
+  siguiente-vuelta:
+    # Siempre (aunque la escucha o la publicación fallen): la cadena no se corta.
+    needs: [vigilar-detector, escuchar, publicar]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Lanzar la siguiente vuelta del reloj
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Una vuelta dura al menos 8 min: si la escucha termina enseguida
+          # (red APRS caída), no se dispara una vuelta tras otra.
+          inicio="$(gh api "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID" --jq '.run_started_at' || true)"
+          if [ -n "$inicio" ]; then
+            pasados=$(( $(date -u +%s) - $(date -u -d "$inicio" +%s) ))
+            if [ "$pasados" -lt 480 ]; then
+              echo "Vuelta corta (${pasados} s): espera $(( 480 - pasados )) s."
+              sleep $(( 480 - pasados ))
+            fi
+          fi
+          gh workflow run climaar-cwop.yml --ref main
+          echo "Siguiente vuelta pedida."

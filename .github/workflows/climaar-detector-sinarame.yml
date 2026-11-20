@@ -6,7 +6,9 @@ name: ClimaAR Detector SINARAME (watchdog)
 # (systemd en una VM/Raspberry Pi, ver docs/DESPLIEGUE_DETECTOR.md), que
 # publica un latido en la variable de repositorio CLIMAAR_DETECTOR_LATIDO.
 #
-# Este WATCHDOG/RECOVERY corre por schedule y solo actua si el latido
+# Este WATCHDOG/RECOVERY lo lanza cada ~10 min el reloj encadenado de
+# climaar-cwop.yml (GitHub corre los relojes programados de 10 min solo unas
+# 3 veces por dia; el schedule de abajo queda como respaldo) y solo actua si el latido
 # esta apagado (servicio caido): entonces ejecuta el mismo detector durante
 # unos minutos para no perder frames hasta que el servicio vuelva. Con el
 # servicio sano termina en segundos sin consultar SINARAME.

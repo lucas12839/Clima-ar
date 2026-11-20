@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Colector SMN SYNOP con diagnóstico de consulta y frescura estricta.
 
-Mantiene la política ClimaAR: una observación solo es fresca entre 0 y 15 min.
+Política ClimaAR (scripts/estaciones/frescura.py): el SMN mide una vez por hora
+y el dato llega 20-25 min tarde, así que una observación es fresca entre 0 y
+90 min (con 15 min no entraba nunca, ni Bahía Blanca Aero).
 No convierte ausencia de datos en una observación válida.
 """
 import json
@@ -22,11 +24,18 @@ STATIONS = {
     "0-20000-0-87736": "RIO COLORADO",
     "0-20000-0-87688": "TRES ARROYOS",
 }
-MAX_AGE_MINUTES = 15.0
+try:
+    from . import frescura
+except ImportError:  # ejecutado como script
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import frescura
+
+MAX_AGE_MINUTES = frescura.limite_min("smn")
 
 
 def is_fresh_age(age):
-    """Misma política que colector_bcp: fresca entre 0 y 15 min inclusive."""
+    """Fresca entre 0 y MAX_AGE_MINUTES (90 min) inclusive."""
     return age is not None and 0 <= age <= MAX_AGE_MINUTES
 LOOKBACK_MINUTES = 120
 OUTPUT = Path("data/ia/estaciones/observaciones/smn_synop_actual.json")

@@ -2,7 +2,8 @@
 """Valida y resume las 14 estaciones operativas de ClimaAR.
 
 No importa PyTorch ni utiliza el encoder neuronal experimental sin entrenar.
-La frescura se calcula exclusivamente desde observation_time (0..15 min).
+La frescura se calcula exclusivamente desde observation_time, con la edad
+máxima de cada red (scripts/estaciones/frescura.py: BCP 15 min, SMN 90 min).
 """
 import json
 from datetime import datetime, timezone
@@ -13,7 +14,14 @@ CATALOG = BASE / "data/ia/estaciones/catalogo_estaciones.json"
 BCP = BASE / "data/ia/estaciones/observaciones/bcp_actual.json"
 SMN = BASE / "data/ia/estaciones/observaciones/smn_synop_actual.json"
 OUTPUT = BASE / "data/ia/estaciones/red_observaciones_estado.json"
-MAX_AGE = 15.0
+try:
+    from . import frescura
+except ImportError:  # ejecutado como script
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import frescura
+
+MAX_AGE = frescura.limite_min("bcp")  # se mantiene por compatibilidad del informe
 
 
 def parse_time(value):
@@ -56,11 +64,12 @@ def main():
 
         observed = parse_time(record.get("observation_time")) if record else None
         age = (now - observed).total_seconds() / 60 if observed else None
+        limite = frescura.limite_min(network)
         valid = bool(
             station.get("active") is True
             and record
             and age is not None
-            and 0 <= age <= MAX_AGE
+            and 0 <= age <= limite
         )
         if not station.get("active"):
             state = "inactiva"
@@ -70,7 +79,7 @@ def main():
             state = "timestamp_invalido_o_ausente"
         elif age < 0:
             state = "timestamp_futuro"
-        elif age > MAX_AGE:
+        elif age > limite:
             state = "vencida"
         else:
             state = "valida"
@@ -82,6 +91,8 @@ def main():
             "state": state,
             "age_minutes": round(age, 2) if age is not None else None,
             "observation_time": observed.isoformat() if observed else None,
+            "max_age_minutes": limite,
+            "sin_datos_mas_de_24h": frescura.sin_datos_hace_un_dia(age),
         })
 
     expected = int(catalog.get("station_count", len(results)))
@@ -98,7 +109,9 @@ def main():
         "version": "1.0.0",
         "generated_utc": now.isoformat(),
         "max_age_minutes": MAX_AGE,
-        "policy": "La edad se recalcula desde observation_time; futuro, ausente o >15 min se descarta.",
+        "policy": "La edad se recalcula desde observation_time; futuro, ausente o más vieja que el límite de su red se descarta.",
+        "max_age_minutes_por_red": {red: frescura.limite_min(red) for red in ("bcp", "smn")},
+        "estaciones_sin_datos_24h": [x["name"] for x in results if x["sin_datos_mas_de_24h"]],
         "station_count": len(results),
         "valid_count": total_valid,
         "bcp": {"total": sum(x["network"] == "bcp" for x in results), "valid": valid_bcp},
@@ -113,6 +126,8 @@ def main():
 
     print(f"Red de estaciones: {total_valid}/{expected} válidas")
     print(f"BCP: {valid_bcp}/{report['bcp']['total']} | SMN: {valid_smn}/{report['smn']['total']}")
+    if report["estaciones_sin_datos_24h"]:
+        print("::warning::Estaciones sin datos hace más de un día: " + ", ".join(report["estaciones_sin_datos_24h"]))
     for item in results:
         age = f"{item['age_minutes']} min" if item["age_minutes"] is not None else "sin hora"
         print(f"{item['name']}: {item['state']} ({age})")

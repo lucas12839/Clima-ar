@@ -24,6 +24,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from . import frescura
+except ImportError:  # ejecutado como script
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import frescura
+
 BASE = Path(__file__).resolve().parents[2]
 EST = BASE / "data/ia/estaciones"
 BCP = EST / "observaciones/bcp_actual.json"
@@ -107,8 +113,13 @@ def _smn_valor(variables: dict, nombre: str) -> float | None:
     return numero(lista[0].get("value")) if lista and isinstance(lista[0], dict) else None
 
 
-def observaciones_frescas() -> list[dict[str, Any]]:
-    """Normaliza BCP y SMN a {nombre, red, utc, temp, lluvia_dia, viento, rafaga, presion}."""
+def observaciones_frescas(ahora: datetime | None = None) -> list[dict[str, Any]]:
+    """Normaliza BCP, SMN y CWOP a {nombre, red, utc, temp, lluvia_dia, viento, rafaga, presion}.
+
+    La edad se calcula AHORA con la hora de la medición y el límite de su red
+    (frescura.py): la marca "valida" del colector puede ser de horas atrás
+    (la escucha CWOP no corre en cada ciclo)."""
+    ahora = ahora or datetime.now(timezone.utc)
     obs = []
     for s in leer(BCP).get("stations", []):
         if s.get("estado") != "valida":
@@ -149,7 +160,8 @@ def observaciones_frescas() -> list[dict[str, Any]]:
             "rafaga": numero(v.get("rafaga_15min_kmh")),
             "presion": numero(v.get("presion_hpa")),
         })
-    return [o for o in obs if o["nombre"] and parse_utc(o["utc"])]
+    return [o for o in obs if o["nombre"] and parse_utc(o["utc"])
+            and frescura.es_fresca(o["utc"], o["red"], ahora)]
 
 
 def actualizar_historial(obs: list[dict], ahora: datetime, path: Path = HISTORIAL) -> dict[str, list[dict]]:
@@ -270,7 +282,7 @@ def por_localidad(estaciones: list[dict], path: Path = LOCALIDADES) -> dict[str,
 def main(ahora: datetime | None = None) -> int:
     ahora = ahora or datetime.now(timezone.utc)
     coords = coordenadas()
-    obs = observaciones_frescas()
+    obs = observaciones_frescas(ahora)
     historial = actualizar_historial(obs, ahora)
     frescas = {o["nombre"] for o in obs}
     estaciones = [
