@@ -375,6 +375,34 @@ def granizo_por_radar(dbz: float | None, amb: dict[str, Any]) -> dict[str, Any]:
     return _evaluacion("granizo", grado, "radar", razones, False)
 
 
+def confirmar_granizo(ev: dict[str, Any], sat: dict[str, Any], ev_rayos: dict[str, Any],
+                      amb_sev: dict[str, Any]) -> dict[str, Any]:
+    """Granizo "probable" o más solo con el radar necesita otra señal.
+
+    Si el satélite y el ambiente están disponibles y ninguna fuente lo
+    confirma (topes muy fríos o enfriándose rápido, rayos frecuentes o salto,
+    ambiente con energía para tormentas), se baja un grado. Nunca se saca el
+    aviso, y si falta un dato no se baja (falla segura). Caso 19/11 23:20:
+    56 dBZ con CAPE 0, tope -37 °C y casi sin rayos mostró "granizo probable"."""
+    if ev["grado"] < 3 or ev["fuente"] != "radar":
+        return ev   # ya lo confirmó el satélite o el ambiente
+    tope = numero((sat or {}).get("min_c_15km"))
+    if tope is None:
+        tope = numero((sat or {}).get("p10_c_30km"))
+    enfr = numero((sat or {}).get("enfriamiento_c_10min"))
+    nivel = (amb_sev or {}).get("nivel")
+    if tope is None or nivel in (None, "sin_datos"):
+        return ev
+    confirma = (tope <= TOPE_TORMENTA_C or (enfr is not None and enfr >= ENFRIAMIENTO_RAPIDO_C)
+                or (ev_rayos or {}).get("grado", 0) >= 3
+                or nivel in ("favorable_tormentas", "favorable_severas"))
+    if confirma:
+        return ev
+    return _evaluacion("granizo", ev["grado"] - 1, "radar", ev["razones"] + [
+        f"solo lo indica el radar: topes de {tope:.0f} °C, pocos rayos y {amb_sev.get('etiqueta', 'ambiente').lower()}"],
+        False)
+
+
 # --------------------------------------------------------------------------
 # Tormenta eléctrica
 # --------------------------------------------------------------------------
@@ -552,8 +580,8 @@ def evaluar(
         )
         pico = numero(radar.get("dbz_pico"))
         dbz_nucleo = pico if pico is not None else dbz_c
-        ahora["granizo"] = ajustar_por_ambiente("granizo", ajustar_por_satelite(
-            granizo_por_radar(dbz_nucleo, amb), sat), amb_sev, dbz_nucleo)
+        ahora["granizo"] = confirmar_granizo(ajustar_por_ambiente("granizo", ajustar_por_satelite(
+            granizo_por_radar(dbz_nucleo, amb), sat), amb_sev, dbz_nucleo), sat, ev_rayos, amb_sev)
         cercano = max(numero(radar.get("dbz_ciudad")) or 0, numero(radar.get("dbz_30km")) or 0)
         ev_vr = viento_por_radar(velocidad=radar.get("velocidad_kmh"),
                                  coherencia=radar.get("coherencia"), dbz_cercano=cercano,
@@ -587,7 +615,8 @@ def evaluar(
     if hay_radar and eta is not None and eta <= LLEGADA_MAX_MIN and dbz_l is not None and dbz_l >= LLUVIA_ECO_DBZ:
         al_llegar = {
             "lluvia": lluvia_por_radar(dbz_l),
-            "granizo": ajustar_por_ambiente("granizo", granizo_por_radar(dbz_l, amb), amb_sev, dbz_l),
+            "granizo": confirmar_granizo(ajustar_por_ambiente("granizo", granizo_por_radar(dbz_l, amb),
+                                                              amb_sev, dbz_l), sat, ev_rayos, amb_sev),
         }
         ev_vl = viento_por_radar(velocidad=radar.get("velocidad_eco_kmh") or radar.get("velocidad_kmh"),
                                  coherencia=radar.get("coherencia"), dbz_cercano=dbz_l,

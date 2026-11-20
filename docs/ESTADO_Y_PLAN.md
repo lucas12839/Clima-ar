@@ -132,9 +132,11 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
   par de imágenes da una velocidad muy distinta de los dos pares anteriores, se usa la mediana
   (19/11 23:10: un par dio 58 km/h y los vecinos 22-25; ClimaAR mostró "viento fuerte" por
   eso). Prueba `explicit_no_motion_state` ya no depende de los datos en vivo.
-- **Para decidir al final (regla 6):** el granizo que se muestra sigue saliendo solo de dBZ
-  (19/11 23:20 mostró "granizo probable" con 56 dBZ, CAPE 0, tope −37 °C, sin rayos; el
-  puntaje del punto 4 dio 0). Se cambia cuando Lucas decida, con las simulaciones.
+- **Granizo que se muestra (decidido con Lucas el 20/11, #49):** "probable" o más que sale
+  solo del radar baja un grado si el satélite y el ambiente están disponibles y nada lo
+  confirma (topes ≤ −50 °C o enfriándose ≥ 8 °C/10 min, rayos frecuentes o salto, ambiente
+  favorable). Nunca saca el aviso; sin datos no baja. Caso 19/11 23:20: 56 dBZ, CAPE 0, tope
+  −37 °C, casi sin rayos → "posible". El reemplazo por el puntaje sigue para el final.
 
 ## Punto 4 del plan terminado EN PARALELO (19/11/2026, 22:30 hora de Argentina) — esperando a Lucas para el 5
 - `scripts/puntaje_gravedad.py` (paso nuevo de Intelligence, antes de la integridad): por
@@ -246,7 +248,7 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - Estado: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
   #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).
-  **Sigue el punto 6** (mejorar nuestro pronóstico). Después 7 a 11, luego simulaciones con casos reales para medir aciertos (regla 6, decisión de Lucas)
+  **Sigue el punto 5b** (nunca a ciegas con el radar atrasado), después el 6. Después 7 a 11, luego simulaciones con casos reales para medir aciertos (regla 6, decisión de Lucas)
   y recién ahí decidir avisos y mostrar el puntaje. Al final Render y Netlify.
 - Cómo probar: `pytest`; `herramientas/emular_workflow.py` en una copia, con tormenta y sin
   actividad (para "sin actividad": imagen de radar toda de índice 253, guardarla también en
@@ -262,7 +264,9 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - Simulaciones: `herramientas/simular_formacion.py` (punto 5) vuelve a correr días pasados con
   el radar guardado y el satélite de NOAA; en GitHub con la rama `prueba-inspeccion` (matriz de
   días en paralelo). Días con tormentas en el radar guardado: 27/10-6/11, 12/11, 13/11.
-- Pendiente para el final (regla 6): el granizo que se muestra sale solo de dBZ (ver punto 5).
+- **Punto 5b nuevo (va antes del 6): nunca a ciegas cuando el radar se atrasa o falta**
+  (ver `docs/INSPECCION_FUENTES.md`). Noche 19/11: atraso de SINARAME 16-18 min y faltaron
+  las imágenes de 22:20 y 00:00 justo cuando la tormenta pasaba por Bahía.
 - Datos por tormenta: `data/goes19/goes19_state.json` (`por_tormenta` y `formacion_satelite`,
   versión 1.8), `data/ia/puntaje_tormentas.json`, `data/ia/formacion_tormentas.json`; casos guardados en `data/goes19/historial/`, `data/ia/formacion/` y
   `data/ia/puntaje/`.

@@ -231,3 +231,30 @@ class ConfiabilidadTest(unittest.TestCase):
         r = fen.evaluar(radar=radar(dbz_llegada=56, eta_llegada_min=10, confiabilidad_llegada=conf))
         self.assertEqual(r["llegada"]["verbo"], "llega")
         self.assertEqual(r["fenomenos"]["granizo"]["cuando"], "al_llegar")
+
+
+class GranizoConfirmacionTests(unittest.TestCase):
+    """19/11 23:20: 56 dBZ, CAPE 0, tope -37 °C y casi sin rayos -> no "probable"."""
+
+    RADAR = {"dbz_ciudad": 10.0, "dbz_llegada": 56.0, "eta_llegada_min": 8.4, "velocidad_kmh": 20.0,
+             "coherencia": 0.9}
+
+    def test_solo_radar_baja_un_grado(self):
+        r = fen.evaluar(radar=self.RADAR, rayos={"tasa_30km_por_min": 0.1, "tasa_30km_previa_por_min": 0.1,
+                                                 "distancia_km": 26.0},
+                        ambiente={"cape": 0.0}, satelite={"min_c_15km": -37.0})
+        g = r["al_llegar"]["granizo"]
+        self.assertEqual(g["grado"], 2)
+        self.assertTrue(any("solo lo indica el radar" in x for x in g["razones"]))
+
+    def test_con_confirmacion_se_mantiene(self):
+        for kwargs in ({"rayos": {"tasa_30km_por_min": 4.0, "tasa_30km_previa_por_min": 3.5, "distancia_km": 10.0},
+                        "ambiente": {"cape": 0.0}, "satelite": {"min_c_15km": -37.0}},
+                       {"ambiente": {"cape": 1200.0}, "satelite": {"min_c_15km": -37.0}},
+                       {"ambiente": {"cape": 0.0}, "satelite": {"min_c_15km": -55.0}}):
+            r = fen.evaluar(radar=self.RADAR, **kwargs)
+            self.assertEqual(r["al_llegar"]["granizo"]["grado"], 3, kwargs)
+
+    def test_sin_datos_no_se_baja(self):
+        r = fen.evaluar(radar=self.RADAR)
+        self.assertEqual(r["al_llegar"]["granizo"]["grado"], 3)

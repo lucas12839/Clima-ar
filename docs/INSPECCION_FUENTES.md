@@ -130,6 +130,16 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
    congelamiento, diferencias entre canales; estilo RDT). **Terminado en paralelo (#48)**:
    `goes19/formacion.py` + `scripts/aviso_formacion.py`, no cambia lo que se ve. Simulado con
    3 días reales: grado "probable" o más acierta 58-85 % con ~20 min de ventaja.
+5b. **Nunca a ciegas cuando el radar se atrasa o falta** (agregado el 20/11 por pedido de Lucas,
+   va antes del 6). Noche del 19/11: SINARAME publicó con 16-18 min de atraso casi toda la
+   noche y faltaron las imágenes de 22:20 y 00:00 (hora de Argentina), justo cuando la
+   tormenta pasaba por Bahía Blanca (llegó débil, se intensificó y se deshizo entre dos
+   imágenes). Qué hacer: (1) medir y mostrar la edad del radar en cada dato; (2) mover las
+   tormentas a la hora actual con su velocidad (radar adelantado); (3) cubrir el hueco con lo
+   que llega casi en tiempo real: rayos GLM (cada 20 s), satélite (cada 10 min, tendencia del
+   tope por localidad) y estaciones (cada ~5 min: lluvia, ráfaga, salto de presión, caída de
+   temperatura = frente de ráfagas); (4) buscar otra fuente de radar que llegue antes
+   (otros productos de SINARAME, mosaico del SMN) y recuperar imágenes que faltan.
 6. **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
    imágenes, crecimiento o debilitamiento según el puntaje, varios escenarios y porcentaje de
    llegada (pysteps sobre nuestra grilla de 512 × 512, solo si su costo en el ciclo lo permite).
