@@ -76,7 +76,7 @@ def main(argv=None) -> int:
             return None
         if dt not in cache:
             d = nf.cargar_dbz(frames[dt])
-            cache[dt] = None if d is None else nf.campo_limpio(d, clutter)
+            cache[dt] = None if d is None else nc.campo_limpio(d, clutter)
             if len(cache) > 30:
                 cache.pop(next(iter(cache)))
         return cache[dt]

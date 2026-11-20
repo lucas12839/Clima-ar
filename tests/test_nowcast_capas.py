@@ -54,6 +54,7 @@ def entorno(tmp_path, monkeypatch):
     monkeypatch.setattr(nf, "TIMESTAMP_FILE", ts)
     monkeypatch.setattr(nf, "cargar_dbz", lambda p: campos.get(p.name))
     monkeypatch.setattr(nc, "cargar_clutter_total", lambda shape: np.zeros(shape, dtype=bool))
+    monkeypatch.setattr(nc, "cargar_intermitente", lambda shape: None)
     monkeypatch.setattr(nf, "frame_previo", lambda dt, historico=None: (
         (hist / f"{dt - timedelta(minutes=10):%Y%m%d%H%M%S}.png", dt - timedelta(minutes=10))
         if (hist / f"{dt - timedelta(minutes=10):%Y%m%d%H%M%S}.png").exists() else None))
@@ -186,3 +187,18 @@ def test_combinar_anvil_solo_desde_30_min():
     b = {20.0: np.full(SHAPE, 40.0, np.float32), 30.0: np.full(SHAPE, 40.0, np.float32)}
     c = nc.combinar_anvil(a, b)
     assert c[20.0].max() == 0.0 and c[30.0].min() == 40.0
+
+
+def test_mascara_intermitente_no_borra_una_tormenta_que_pasa(monkeypatch):
+    inter = np.zeros(SHAPE, dtype=bool)
+    inter[100:103, 100:103] = True            # puntos de eco del terreno
+    monkeypatch.setattr(nc, "cargar_intermitente", lambda shape: inter)
+    sin_clutter = np.zeros(SHAPE, dtype=bool)
+    # 1) Eco suelto justo sobre el clutter (terreno): se borra.
+    suelto = np.zeros(SHAPE, np.float32)
+    suelto[100:103, 100:103] = 55.0
+    assert nc.campo_limpio(suelto, sin_clutter)[100:103, 100:103].max() == 0.0
+    # 2) Tormenta que pasa por encima del clutter: queda entera, sin perder superficie.
+    tormenta = np.nan_to_num(celda(101, 101, radio=10))
+    limpio = nc.campo_limpio(tormenta, sin_clutter)
+    assert np.array_equal(limpio >= 35, tormenta >= 35)
