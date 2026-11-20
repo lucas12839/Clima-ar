@@ -47,7 +47,7 @@ import nowcast_capas_nucleo as nc  # noqa: E402
 import nowcast_flujo_optico as nf  # noqa: E402
 from scripts.rma10_features import parse_utc  # noqa: E402
 
-VERSION = "nowcast-capas-1.0"
+VERSION = "nowcast-capas-1.1"
 SALIDA = ROOT / "data" / "radar" / "nowcast_capas.json"
 VERIFICACION = ROOT / "data" / "ia" / "verificacion_nowcast.json"
 CONFIG = ROOT / "config" / "nowcast_capas.json"
@@ -72,6 +72,7 @@ CONFIG_DEFECTO = {
     "corrector": False,
     "control_calidad_satelite": True,
     "reglas_corrector": {},
+    "llegada_envolvente": {"activa": False, "k_probable": 2, "k_posible": 1},
     "nota": "Lo deciden las simulaciones de herramientas/simular_huecos.py.",
 }
 
@@ -105,8 +106,17 @@ def categoria(dbz: float) -> str:
 # zonas
 # ------------------------------------------------------------
 
-def zonas_localidades(shape, localidades) -> dict[str, np.ndarray]:
-    return {k: z for k, (z, _, _) in lr._zonas(shape, localidades).items()}
+def zonas_localidades(shape, localidades, margen_km: float = 0.0) -> dict[str, np.ndarray]:
+    """Círculo de cada localidad; con `margen_km`, el círculo agrandado (zona "hasta 10 km")."""
+    if not margen_km:
+        return {k: z for k, (z, _, _) in lr._zonas(shape, localidades).items()}
+    km_px = nf.km_por_pixel(shape[1])
+    salida = {}
+    for loc in localidades:
+        cx, cy = lr.latlon_to_pixel(loc["lat"], loc["lon"], shape[1], shape[0])
+        radio = max(float(loc.get("radio_km", 5.0)), lr.RADIO_MIN_KM) + float(margen_km)
+        salida[loc["id"]] = nf.disco(shape, cx, cy, radio / km_px)
+    return salida
 
 
 def zonas_region(shape) -> dict[str, np.ndarray]:
@@ -297,6 +307,79 @@ def firmas_localidades(senales: dict) -> dict[str, list[dict[str, Any]]]:
             if f:
                 lista.append({"estacion": nombre, "firma": f, "utc": e.get("utc")})
         salida[loc_id] = lista
+    return salida
+
+
+# ------------------------------------------------------------
+# "¿llega a mi localidad en la próxima hora?" (punto 5b)
+# ------------------------------------------------------------
+
+PLAZOS_LLEGADA = (0, 10, 20, 30, 40, 50, 60)
+MARGEN_LLEGADA_KM = 10.0
+LLEGADAS_PENDIENTES_MAX = 40
+
+
+def primera_llegada(picos: dict[int, dict[str, float]], loc: str, umbral: float) -> int | None:
+    for p in PLAZOS_LLEGADA:
+        if p in picos and picos[p].get(loc, 0.0) >= umbral:
+            return p
+    return None
+
+
+def llegadas(campos_por_grado: dict[str, dict[int, np.ndarray]], zonas: dict[str, dict[str, np.ndarray]]
+             ) -> dict[str, dict[str, Any]]:
+    """Primera llegada (minutos desde ahora, None = no llega en la hora) por localidad,
+    fenómeno, grado y zona."""
+    picos = {g: {z: {p: nc.picos_por_zona(c, zz) for p, c in campos.items()} for z, zz in zonas.items()}
+             for g, campos in campos_por_grado.items()}
+    salida: dict[str, dict[str, Any]] = {}
+    locs = next(iter(zonas.values())).keys()
+    for loc in locs:
+        item = {}
+        for fen, umbral in (("lluvia", UMBRAL_LLUVIA), ("tormenta", UMBRAL_TORMENTA)):
+            item[fen] = {g: {z: primera_llegada(picos[g][z], loc, umbral) for z in zonas} for g in picos}
+        salida[loc] = item
+    return salida
+
+
+def verificar_llegadas(verif: dict, radar_dt: datetime, obs: dict[str, dict[str, float]]) -> None:
+    """Cada pronóstico de llegada guardado mira las imágenes reales de su próxima hora; al
+    cerrarse la hora se cuenta si llegó y si se avisó (por fenómeno, grado y zona)."""
+    tot = verif.setdefault("llegadas_acumulado", {})
+    quedan = []
+    for p in verif.get("llegadas_pendientes") or []:
+        desde, hasta = parse_utc(p.get("desde_utc")), parse_utc(p.get("hasta_utc"))
+        if desde is None or hasta is None:
+            continue
+        if desde - timedelta(minutes=TOLERANCIA_VERIF_MIN) <= radar_dt <= hasta + timedelta(minutes=TOLERANCIA_VERIF_MIN):
+            vistos = p.setdefault("visto", {})
+            for z, por_loc in obs.items():
+                for loc, dbz in por_loc.items():
+                    clave = f"{z}|{loc}"
+                    vistos[clave] = max(vistos.get(clave, 0.0), round(float(dbz), 1))
+            p["imagenes"] = p.get("imagenes", 0) + 1
+        if radar_dt > hasta + timedelta(minutes=TOLERANCIA_VERIF_MIN):
+            if p.get("imagenes", 0) >= 5:   # al menos 5 de las 7 imágenes de la hora
+                for loc, fens in (p.get("pronostico") or {}).items():
+                    for fen, grados in fens.items():
+                        umbral = UMBRAL_LLUVIA if fen == "lluvia" else UMBRAL_TORMENTA
+                        for g, zonas in grados.items():
+                            for z, minutos in zonas.items():
+                                llego = p["visto"].get(f"{z}|{loc}", 0.0) >= umbral
+                                aviso = minutos is not None
+                                acc = tot.setdefault(f"{fen}|{g}|{z}", [0, 0, 0, 0])
+                                acc[0 if aviso and llego else 1 if aviso else 2 if llego else 3] += 1
+            continue
+        quedan.append(p)
+    verif["llegadas_pendientes"] = quedan[-LLEGADAS_PENDIENTES_MAX:]
+
+
+def resumen_llegadas(verif: dict) -> dict[str, Any]:
+    salida = {}
+    for clave, (a, b, c, d) in sorted((verif.get("llegadas_acumulado") or {}).items()):
+        salida[clave] = {"deteccion_pct": round(100 * a / (a + c), 1) if a + c else None,
+                         "falsas_alarmas_pct": round(100 * b / (a + b), 1) if a + b else None,
+                         "llegadas": a + c, "avisos": a + b}
     return salida
 
 
@@ -579,6 +662,55 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
         datos_corr = datos_corrector(goes, ahora, campo.shape) if cfg.get("corrector") else None
         campos = con_corrector(cfg, campos, edad, flujo, datos_corr, salida) if datos_corr else campos
     picos_loc = {p: nc.picos_por_zona(campos[float(edad + p)], zl) for p in PLAZOS_DESDE_AHORA} if campos else {}
+    # ¿Llega a mi localidad en la próxima hora? "probable" = campo de hoy; "posible" = envolvente.
+    llegada_loc: dict[str, dict[str, Any]] = {}
+    env_cfg = cfg.get("llegada_envolvente") or {}
+    if campo is not None and edad is not None:
+        try:
+            t_lleg = [float(edad + p) for p in PLAZOS_LLEGADA]
+            if flujo is not None and cfg.get("escenarios"):
+                prob = nc.campos_escenarios(campo, flujo["u"], flujo["v"], t_lleg, flujo["tasa"])
+            elif flujo is not None:
+                prob = nc.serie(campo, flujo["u"], flujo["v"], t_lleg, flujo["tasa"])
+            else:
+                prob = {t: campo for t in t_lleg}
+            grados = {"probable": prob}
+            if env_cfg.get("activa") and flujo is not None:
+                # Validado (herramientas/simular_envolvente.py, 684 casos): con 25 caminos,
+                # "probable" = 2 de 25 y "posible" = 1 de 25 (algún camino la trae).
+                kp, kq = int(env_cfg.get("k_probable", 2)), int(env_cfg.get("k_posible", 1))
+                pilas = nc.campos_envolvente(campo, flujo["u"], flujo["v"], t_lleg, (kp, kq), flujo["tasa"])
+                env = {"probable": pilas[kp], "posible": pilas[kq]}
+                grados = {"probable": {t: np.maximum(env["probable"][t], prob[t]) for t in t_lleg}}
+                # "posible" nunca dice menos que "probable".
+                grados["posible"] = {t: np.maximum(env["posible"][t], grados["probable"][t]) for t in t_lleg}
+            if datos_corr:
+                grados = {g: con_corrector(cfg, c, edad, flujo, datos_corr, None) for g, c in grados.items()}
+            grados = {g: {p: c[float(edad + p)] for p in PLAZOS_LLEGADA} for g, c in grados.items()}
+            zl10 = zonas_localidades(campo.shape, localidades, MARGEN_LLEGADA_KM)
+            llegada_loc = llegadas(grados, {"localidad": zl, "hasta_10km": zl10})
+            salida["llegada_proxima_hora"] = {
+                "usado": True, "grados": sorted(grados),
+                "caminos": len(nc.ESCENARIOS_AMPLIOS) if "posible" in grados else len(nc.ESCENARIOS),
+                "k_probable": int(env_cfg.get("k_probable", 2)) if "posible" in grados else None,
+                "k_posible": int(env_cfg.get("k_posible", 1)) if "posible" in grados else None,
+                # Simulado con el radar atrasado 10 a 90 min; más viejo que eso no está probado.
+                "fuera_de_lo_validado": bool(edad > 90.0),
+                "nota": "Minutos desde ahora hasta la primera llegada (null = no llega en la próxima hora). "
+                        "'probable' = 2 de 25 caminos posibles la traen (menos falsas alarmas); 'posible' = "
+                        "algún camino la trae (detecta más, con más falsas alarmas). Validado con el radar "
+                        "atrasado 10 a 90 min (docs/VALIDACION_NOWCAST_CAPAS.md).",
+            }
+        except Exception as exc:
+            salida["llegada_proxima_hora"] = {"usado": False, "motivo": f"{type(exc).__name__}: {str(exc)[:120]}"}
+    rayos_zona = None
+    if datos_corr and datos_corr.get("rayos_lat") and campo is not None:
+        try:
+            ze = ct.zona_electrica(datos_corr["rayos_lat"], datos_corr["rayos_lon"], campo.shape)
+            rayos_zona = {k: bool(ze[z].any()) for k, z in zl.items()}
+        except Exception:
+            rayos_zona = None
+
     llegada = {}
     if flujo is not None:
         llegada = nc.escenarios_llegada(campo, flujo["u"], flujo["v"], zl, edad, edad + 60.0,
@@ -607,6 +739,11 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
                 "minutos_desde_ahora": None if l["minutos_desde_imagen"] is None else round(l["minutos_desde_imagen"] - edad, 1),
                 "rango_min": None if l["primera_min"] is None else [round(l["primera_min"] - edad, 1), round(l["ultima_min"] - edad, 1)],
             }
+        if k in llegada_loc:
+            item["llegada_proxima_hora"] = llegada_loc[k]
+        if rayos_zona is not None:
+            # Rayos solos = tormenta eléctrica (no dice nada de lluvia ni viento).
+            item["tormenta_electrica_ahora"] = rayos_zona.get(k, False)
         item["suelo"] = {"firmas_estaciones": firmas.get(k, []),
                          "conveccion_elevada": estable["conveccion_elevada"]}
         item["confianza"] = round(nc.confianza_por_edad(edad) * (0.4 + 0.6 * flujo["coherencia"]), 3) \
@@ -621,7 +758,18 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
         obs_reg = nc.picos_por_zona(campo, zr)
         if verif.get("ultima_imagen_verificada") != radar_ts:
             verificar(verif, radar_dt, obs_loc, obs_reg)
+            zl10_obs = zonas_localidades(campo.shape, localidades, MARGEN_LLEGADA_KM)
+            verificar_llegadas(verif, radar_dt, {"localidad": obs_loc,
+                                                 "hasta_10km": nc.picos_por_zona(campo, zl10_obs)})
             verif["ultima_imagen_verificada"] = radar_ts
+        # Guardar el pronóstico de llegada (uno por imagen de radar: el primero que se emite).
+        if llegada_loc and edad is not None:
+            emitidos = {p.get("radar_utc") for p in verif.get("llegadas_pendientes") or []}
+            if radar_ts not in emitidos:
+                verif.setdefault("llegadas_pendientes", []).append({
+                    "emitido_utc": iso(ahora), "radar_utc": radar_ts, "edad_radar_min": edad,
+                    "desde_utc": iso(ahora), "hasta_utc": iso(ahora + timedelta(minutes=60)),
+                    "pronostico": llegada_loc})
         # Guardar los pronósticos para las próximas horas de imagen (cada 10 min).
         if campos:
             base = radar_dt
@@ -660,8 +808,10 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
                                if (parse_utc(p["objetivo_utc"]) - ahora).total_seconds() / 60.0 > -PENDIENTES_MAX_MIN][-60:]
     verif["actualizado_utc"] = iso(ahora)
     verif["resumen"] = resumen_verificacion(verif)
+    verif["resumen_llegadas"] = resumen_llegadas(verif)
     salida["validacion_automatica"] = {
         "resumen": verif["resumen"],
+        "llegadas_proxima_hora": verif["resumen_llegadas"],
         "nota": "'hoy' = imagen vieja tal como llegó; 'capas' = nowcast en capas. CSI más alto = mejor.",
     }
     salida["_verificacion"] = verif

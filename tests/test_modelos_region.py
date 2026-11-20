@@ -19,9 +19,11 @@ def grilla():
 
 def nc_10m(path, h):
     lat, lon = grilla()
-    tiempos = [np.datetime64((INIT + timedelta(hours=h, minutes=10 * i)).replace(tzinfo=None)) for i in range(6)]
-    # 1 mm cada 10 min en toda la grilla (acumulado desde el inicio).
-    pp = np.stack([np.full(lat.shape, (h * 6 + i) * 1.0, dtype=np.float32) for i in range(6)])
+    # Como en los archivos reales: alguna hora viene con 59 s (14:09:59).
+    tiempos = [np.datetime64((INIT + timedelta(hours=h, minutes=10 * i, seconds=-1 if i % 2 else 0)).replace(tzinfo=None))
+               for i in range(6)]
+    # 1 mm en cada intervalo de 10 min (PP de los archivos 10M = lluvia de esos 10 min).
+    pp = np.stack([np.full(lat.shape, 1.0, dtype=np.float32) for i in range(6)])
     xr.Dataset({"PP": (("time", "y", "x"), pp)}, coords={"time": tiempos, "lat": (("y", "x"), lat),
                                                          "lon": (("y", "x"), lon)}).to_netcdf(path)
 
@@ -86,6 +88,9 @@ def test_wrf_por_localidad_y_cache(entorno):
     assert bb["lluvia_10min_max_mm"] == pytest.approx(1.0)
     assert bb["lluvia_3h_media_mm"] == pytest.approx(18.0, abs=1.0)
     assert bb["proxima_hora"]["viento_kmh"] == pytest.approx(36.0)
+    serie = json.loads(mr.CACHE_WRF.read_text())["localidades"]["bahia_blanca"]["lluvia_10min"]
+    assert all(r["utc"][14:19] in ("00:00", "10:00", "20:00", "30:00", "40:00", "50:00") for r in serie)
+    assert all(r["mm_10min_max"] == pytest.approx(1.0) for r in serie)
     n = len(entorno["bajadas"])
     assert n > 0
     # Segundo ciclo: no vuelve a bajar la corrida (usa lo guardado).

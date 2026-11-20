@@ -34,7 +34,7 @@ for _p in (ROOT, ROOT / "scripts"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-VERSION = "modelos-region-1.0"
+VERSION = "modelos-region-1.1"
 LOCALIDADES = ROOT / "config" / "localidades.json"
 SALIDA = ROOT / "data" / "ia" / "modelos_region.json"
 CACHE_WRF = ROOT / "data" / "ia" / "modelos" / "wrf_localidades.json"
@@ -127,6 +127,12 @@ def indices_localidades(lat: np.ndarray, lon: np.ndarray, locs: list[dict]) -> d
     return salida
 
 
+def redondear_10min(t: datetime) -> datetime:
+    """El WRF del SMN guarda algunas horas como 14:09:59: se llevan a la marca de 10 min."""
+    t = t + timedelta(seconds=30)
+    return t.replace(second=0, microsecond=0, minute=(t.minute // 10) * 10)
+
+
 def bajar(url: str, destino: Path) -> Path:
     import requests
 
@@ -151,7 +157,7 @@ def procesar_corrida(init: datetime, claves: list[str], locs: list[dict], ahora:
     # Desde la hora actual (menos 1 h) hasta HORAS_WRF horas de pronóstico.
     h0 = max(0, int((ahora - init).total_seconds() // 3600) - 1)
     horas = [h for h in range(h0, h0 + 9)]
-    salida = {"init_utc": iso(init), "localidades": {l["id"]: {"lluvia_10min": [], "horario": []} for l in locs},
+    salida = {"version": VERSION, "init_utc": iso(init), "localidades": {l["id"]: {"lluvia_10min": [], "horario": []} for l in locs},
               "horas_leidas": [], "completa": True}
     idx = None
     with tempfile.TemporaryDirectory() as tmp:
@@ -172,11 +178,14 @@ def procesar_corrida(init: datetime, claves: list[str], locs: list[dict], ahora:
                     for k, sl in idx.items():
                         loc = salida["localidades"][k]
                         if tipo == "10M":
-                            pp = np.asarray(ds["PP"])  # acumulado desde el inicio de la corrida
+                            # PP de los archivos 10M = lluvia de esos 10 min (documentación del SMN,
+                            # "10-min accumulated precipitation"), NO el acumulado de la corrida.
+                            pp = np.asarray(ds["PP"])
                             for i, t in enumerate(tiempos):
                                 mx, md = resumir_campo(pp[i], sl)
-                                loc["lluvia_10min"].append({"utc": iso(t), "acum_max_mm": redondear(mx, 2),
-                                                            "acum_media_mm": redondear(md, 2)})
+                                loc["lluvia_10min"].append({"utc": iso(redondear_10min(t)),
+                                                            "mm_10min_max": redondear(max(mx, 0.0), 2),
+                                                            "mm_10min_media": redondear(max(md, 0.0), 2)})
                         else:
                             fila = {"utc": iso(tiempos[0])}
                             for var, nombre, fac in (("T2", "temperatura_c", 1.0), ("HR2", "humedad_pct", 1.0),
@@ -187,16 +196,9 @@ def procesar_corrida(init: datetime, claves: list[str], locs: list[dict], ahora:
                                     fila[nombre] = redondear(md * fac, 1)
                             loc["horario"].append(fila)
             salida["horas_leidas"].append(h)
-    # Lluvia cada 10 min = diferencia del acumulado.
     for loc in salida["localidades"].values():
-        serie = sorted({r["utc"]: r for r in loc["lluvia_10min"]}.values(), key=lambda r: r["utc"])
-        prev = None
-        for r in serie:
-            if prev is not None and r["acum_max_mm"] is not None and prev["acum_max_mm"] is not None:
-                r["mm_10min_max"] = round(max(r["acum_max_mm"] - prev["acum_max_mm"], 0.0), 2)
-                r["mm_10min_media"] = round(max(r["acum_media_mm"] - prev["acum_media_mm"], 0.0), 2)
-            prev = r
-        loc["lluvia_10min"] = serie
+        loc["lluvia_10min"] = sorted({r["utc"]: r for r in loc["lluvia_10min"]
+                                      if r["mm_10min_max"] is not None}.values(), key=lambda r: r["utc"])
     salida["segundos"] = round(time.time() - inicio, 1)
     return salida
 
@@ -213,7 +215,8 @@ def wrf(ahora: datetime, locs: list[dict]) -> dict[str, Any]:
         h_actual = int((ahora - init).total_seconds() // 3600)
         leidas = cache.get("horas_leidas") or []
         # Corrida nueva, o la guardada ya no cubre las próximas horas.
-        if cache.get("init_utc") != iso(init) or not cache.get("completa", False) or \
+        # Corrida guardada con otra versión (ej.: la lluvia mal leída antes de la 1.1): se rehace.
+        if cache.get("version") != VERSION or cache.get("init_utc") != iso(init) or not cache.get("completa", False) or \
                 not leidas or max(leidas) < h_actual + 5:
             try:
                 cache = procesar_corrida(init, claves, locs, ahora)
