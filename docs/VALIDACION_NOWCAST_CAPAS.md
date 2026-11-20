@@ -156,3 +156,70 @@ limpia de ecos falsos. Nowcast en capas con corrector (lo que corre hoy en paral
 menos falsas alarmas), pero la detección de tormentas en la próxima hora está en ~50 % (localidad)
 y ~63 % (con 10 km de margen). Lo que falta son, sobre todo, tormentas que **nacen o crecen durante
 la hora** (el radar viejo no las tiene).
+
+## Por qué se escapaban las tormentas y cómo se arregló (20/11/2026, tarde)
+
+**Análisis de las omisiones** (`herramientas/analizar_omisiones.py`, 26 días, 684 imágenes de
+partida, 9.597 casos localidad × atraso). De las tormentas que llegaron a menos de 10 km y no
+se avisaron:
+
+| Qué había en el radar viejo | Omisiones | Aciertos |
+|---|---|---|
+| Tormenta (≥ 35 dBZ) a menos de 15 km | 20 % | 75 % |
+| Tormenta a 15-30 km | 44 % | 17 % |
+| Tormenta a 30-50 km | 22 % | 7 % |
+| Solo lluvia cerca (creció durante la hora) | 10 % | 1 % |
+| Nada a 30 km (nació o vino de muy lejos) | 5 % | 0 % |
+
+**Lo contrario de lo que se pensaba:** 2 de cada 3 tormentas que se escapaban **ya estaban en el
+radar a menos de 30 km**, casi siempre del lado de donde venía el movimiento (529 de 617). El
+pronóstico las tenía, pero en el campo "3 de 9 escenarios" no llegaban: se desviaron,
+aceleraron o se estiraron. Las que nacen o crecen durante la hora son 1 de cada 7.
+
+**Rayos y aviso de formación (probados con las mismas filas):** hay rayos a menos de 30 km solo en
+el 5 % de los casos; sumarlos casi no cambia nada (+0,2 puntos de detección). La señal de
+formación por satélite (tope que se enfría de verdad, bajo −10 °C, con eco débil) agrega
+detecciones pero con **dos falsas alarmas por cada acierto** (detección 69 % con 25 % de falsas
+alarmas): rinde igual que agrandar la zona y no se conecta. Quedan como están (formación en
+paralelo; rayos = tormenta eléctrica).
+
+**Arreglo: envolvente de caminos** (`nc.campos_envolvente`). 25 caminos posibles (velocidad
+0,6-1,4 × dirección ±40°) desde la imagen limpia, con el mismo corrector de satélite y rayos.
+"Llega" si lo dan k de los 25. `herramientas/simular_envolvente.py`, los mismos 684 casos, radar
+atrasado 10-30 min:
+
+| Tormenta en la próxima hora, hasta 10 km | Detecta | Falsas alarmas | CSI | Hora ±15 min |
+|---|---|---|---|---|
+| Hoy (3 de 9) | 63,5 % | 16,2 % | 56,6 | 79 % |
+| 3 de 25 | 67,3 % | 18,6 % | 58,3 | 83 % |
+| **2 de 25 = "probable"** | **73,9 %** | **23,7 %** | **60,1** (el mejor) | 81 % |
+| **1 de 25 = "posible"** | **80,8 %** | **33,8 %** | 57,2 | 79 % |
+
+| Lluvia en la próxima hora, hasta 10 km | Detecta | Falsas alarmas | CSI |
+|---|---|---|---|
+| Hoy | 71,5 % | 5,9 % | 68,4 |
+| **"probable" (2 de 25)** | **82,0 %** | **10,0 %** | 75,2 |
+| **"posible" (1 de 25)** | **87,1 %** | **14,4 %** | 76,0 |
+
+En la localidad misma (sin margen) la tormenta queda en 70 % / 43 % ("probable") y 77 % / 55 %
+("posible"): acertar el círculo exacto de una localidad con una hora de anticipación es mucho
+más difícil que acertar a 10 km.
+
+**Límite (dicho sin rodeos):** con estas fuentes, detectar más tormentas cuesta más falsas
+alarmas; el CSI (que junta las dos cosas) no pasa de ~60 en ninguna variante probada
+(satélite, rayos, radar más lejos, más caminos). Para pasar de 80 % sin subir las falsas
+alarmas haría falta otro tipo de dato (Doppler del RMA10, más estaciones).
+
+**Cómo queda** (en paralelo, no cambia lo que se ve): `nowcast_capas.json` →
+`localidades.<id>.llegada_proxima_hora.{lluvia,tormenta}.{probable,posible}.{localidad,hasta_10km}`
+= minutos desde ahora hasta la primera llegada (`null` = no llega en la hora), y
+`tormenta_electrica_ahora` (rayos a ≤ 10 km en los últimos 10 min). La validación automática en
+vivo guarda cada pronóstico de llegada y lo cierra con las imágenes reales de su hora
+(`verificacion_nowcast.json` → `llegadas_acumulado`; resumen en
+`validacion_automatica.llegadas_proxima_hora`).
+
+**Con el radar muy atrasado (45, 60 y 90 min, mismos 684 casos):** la envolvente sigue
+mejorando. Tormenta hasta 10 km: hoy 50 % detectada / 29 % falsas alarmas (CSI 41,9);
+"probable" 62 % / 35 % (CSI 46,7); "posible" 73 % / 45 % (CSI 46,1). Lluvia hasta 10 km: hoy
+65 % / 9 %; "probable" 77 % / 13 %; "posible" 85 % / 17 %. Con más de 90 min de atraso no está
+probado y el archivo lo marca (`llegada_proxima_hora.fuera_de_lo_validado`).

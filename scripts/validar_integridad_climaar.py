@@ -215,6 +215,18 @@ def validar_nowcast_capas(radar_ts: datetime) -> None:
         c = item.get("confianza")
         if not isinstance(c, (int, float)) or not 0.0 <= c <= 1.0:
             fail(f"nowcast en capas: confianza inválida en {loc_id}: {c!r}")
+        lleg = item.get("llegada_proxima_hora")
+        if lleg is not None:
+            for fen, grados in lleg.items():
+                for grado, zonas in grados.items():
+                    for zona, minutos in zonas.items():
+                        if minutos is not None and not (isinstance(minutos, (int, float)) and 0 <= minutos <= 60):
+                            fail(f"nowcast en capas: llegada inválida en {loc_id} {fen}/{grado}/{zona}: {minutos!r}")
+            pr, po = lleg.get("tormenta", {}).get("probable", {}), lleg.get("tormenta", {}).get("posible")
+            if po is not None:
+                for zona, m in pr.items():
+                    if m is not None and po.get(zona) is None:
+                        fail(f"nowcast en capas: en {loc_id} la tormenta es 'probable' pero no 'posible' ({zona})")
     print(f"Nowcast en capas: sincronizado (radar de hace {n['edad_radar_min']} min, "
           f"{len(n.get('localidades') or {})} localidades)")
 

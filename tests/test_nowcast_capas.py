@@ -250,3 +250,60 @@ def test_control_de_calidad_borra_ecos_con_cielo_despejado(entorno, monkeypatch)
              temp_c=np.full(lat.size, -55.0, np.float32), hora=np.array(nf.iso(T0)))
     s = ncap.ejecutar(T0 + timedelta(minutes=2))
     assert s["control_calidad_satelite"]["pixeles_sin_nube"] == 0
+
+
+def test_llegada_probable_y_posible_por_localidad(entorno):
+    """5b: '¿llega a mi localidad en la próxima hora?'. La celda viene derecho a Bahía:
+    probable y posible la dan; la envolvente nunca dice menos que lo probable."""
+    ncap.CONFIG.write_text(json.dumps({"llegada_envolvente": {"activa": True, "k_probable": 2, "k_posible": 1}}), encoding="utf-8")
+    s = ncap.ejecutar(T0 + timedelta(minutes=5))
+    assert s["llegada_proxima_hora"]["usado"] is True
+    assert s["llegada_proxima_hora"]["grados"] == ["posible", "probable"]
+    bb = s["localidades"]["bahia_blanca"]["llegada_proxima_hora"]
+    for fen in ("lluvia", "tormenta"):
+        for z in ("localidad", "hasta_10km"):
+            p, q = bb[fen]["probable"][z], bb[fen]["posible"][z]
+            assert p is not None and q is not None and q <= p
+    assert 10 <= bb["tormenta"]["probable"]["localidad"] <= 40
+    # Una localidad lejos de la celda no recibe nada en la hora.
+    st = s["localidades"]["sierra_de_la_ventana"]["llegada_proxima_hora"]
+    assert st["tormenta"]["probable"]["localidad"] is None
+
+
+def test_envolvente_trae_la_tormenta_que_se_desvia():
+    """Una celda al costado de la trayectoria: el escenario central no la trae; algún camino
+    con ±40° sí (eso es lo que se escapaba en los 26 días)."""
+    act = np.nan_to_num(celda(200, 270, radio=6))
+    u = np.full(SHAPE, 1.0, dtype=np.float32)
+    v = np.zeros(SHAPE, dtype=np.float32)
+    zona = {"x": nf.disco(SHAPE, 240, 250, 6)}
+    central = nc.campos_escenarios(act, u, v, [40.0])[40.0]
+    amplio = nc.campos_envolvente(act, u, v, [40.0], k=1)[40.0]
+    assert nc.picos_por_zona(central, zona)["x"] < 35
+    assert nc.picos_por_zona(amplio, zona)["x"] >= 35
+    # k = 25: solo donde todos los caminos coinciden (más chico que con k = 1).
+    todos = nc.campos_envolvente(act, u, v, [40.0], k=25)[40.0]
+    assert (todos >= 35).sum() <= (amplio >= 35).sum()
+
+
+def test_verificacion_en_vivo_de_llegadas(entorno):
+    """Cada pronóstico de llegada se cierra con las imágenes reales de su hora."""
+    verif = {"llegadas_pendientes": [{
+        "radar_utc": nf.iso(T0), "desde_utc": nf.iso(T0), "hasta_utc": nf.iso(T0 + timedelta(minutes=60)),
+        "pronostico": {"bahia_blanca": {"tormenta": {"probable": {"localidad": 20}, "posible": {"localidad": 10}},
+                                        "lluvia": {"probable": {"localidad": None}, "posible": {"localidad": 10}}},
+                       "punta_alta": {"tormenta": {"probable": {"localidad": None}, "posible": {"localidad": 30}},
+                                      "lluvia": {"probable": {"localidad": None}, "posible": {"localidad": None}}}}}]}
+    for n in range(0, 70, 10):
+        dbz = 45.0 if n == 30 else 0.0
+        ncap.verificar_llegadas(verif, T0 + timedelta(minutes=n),
+                                {"localidad": {"bahia_blanca": dbz, "punta_alta": 0.0}})
+    assert verif["llegadas_pendientes"]          # todavía abierta (la hora termina a los 60)
+    ncap.verificar_llegadas(verif, T0 + timedelta(minutes=70), {"localidad": {"bahia_blanca": 0.0, "punta_alta": 0.0}})
+    assert verif["llegadas_pendientes"] == []
+    acc = verif["llegadas_acumulado"]
+    assert acc["tormenta|probable|localidad"] == [1, 0, 0, 1]   # Bahía: avisó y llegó; Punta Alta: nada
+    assert acc["tormenta|posible|localidad"] == [1, 1, 0, 0]    # Punta Alta: falsa alarma
+    assert acc["lluvia|probable|localidad"] == [0, 0, 1, 1]     # Bahía: llegó sin aviso
+    r = ncap.resumen_llegadas(verif)
+    assert r["tormenta|posible|localidad"]["falsas_alarmas_pct"] == 50.0

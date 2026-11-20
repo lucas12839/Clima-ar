@@ -1,4 +1,4 @@
-# ClimaAR — estado y plan (actualizado 20/11/2026, 03:15 hora de Argentina)
+# ClimaAR — estado y plan (actualizado 20/11/2026, tarde, hora de Argentina)
 
 Leer junto con `CLAUDE.md` (reglas fijas del repo).
 
@@ -257,14 +257,21 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   `herramientas/simular_llegadas.py`). **El 5b NO queda cerrado**: tormenta en la próxima hora,
   detección ~50 % en la localidad y ~63 % hasta 10 km (falsas alarmas 16-35 %); lluvia hasta
   10 km: detección ~70 %, falsas alarmas 5-7 %. Objetivo de Lucas: 80-100 %.
-- **SIGUIENTE (chat nuevo, esperar "arrancá"):** subir la detección de tormentas que nacen o
-  crecen durante la hora. Pasos: (1) analizar las omisiones (¿nacieron cerca o venían de lejos?)
-  con `simular_llegadas.py`; (2) conectar al pronóstico el aviso de formación por satélite
-  (punto 5, hoy en paralelo) y el salto de rayos (punto 3); (3) volver a simular y comparar.
-  Historial real de GOES-19 de los 26 días: rama `datos-goes-historial` (clonarla y pasar
-  `--goes <carpeta>`). Reglas: los rayos solos = tormenta eléctrica (no lluvia ni viento);
-  ANVIL quedó apagado (Lucas no quiere prolongar tendencias sin datos reales); lo que se ve en
-  la app todavía NO tiene el control de calidad con satélite (ecos falsos de noche).
+- **20/11 tarde (Lucas: "reparar y validar 5b, después el 7"):**
+  - **5b:** las omisiones NO eran tormentas que nacían: 2 de cada 3 ya estaban en el radar a
+    menos de 30 km y no llegaban en el escenario central (`herramientas/analizar_omisiones.py`).
+    Rayos y aviso de formación casi no aportan para esto (probado). Arreglo: **envolvente de 25
+    caminos** (`nc.campos_envolvente`) con dos grados por localidad, `probable` (2 de 25) y
+    `posible` (1 de 25), en `nowcast_capas.json` → `llegada_proxima_hora` (en paralelo) +
+    validación en vivo de las llegadas. Tormenta hasta 10 km: 63,5 % → **74 % "probable"**
+    (24 % falsas alarmas) y **81 % "posible"** (34 %); lluvia hasta 10 km: **82 % / 87 %**
+    (10 % / 14 %). Detalle: `docs/VALIDACION_NOWCAST_CAPAS.md`. Límite: más detección cuesta
+    más falsas alarmas (CSI tope ~60 con estas fuentes).
+  - **7:** error corregido en `modelos_region.py` (la lluvia de 10 min del WRF se leía como
+    acumulado); medido con 26 días: el WRF no acierta cuándo ni dónde llueve por localidad
+    (~1 de cada 3 horas con lluvia), sirve como ambiente. `docs/VALIDACION_MODELOS.md`.
+    Historial en la rama `datos-wrf-historial`.
+- **SIGUIENTE (esperar a Lucas):** punto 8 (ambiente medido por el satélite).
 - Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
   #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).
@@ -305,4 +312,4 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
-`indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-inspeccion` (temporal de pruebas reales: borrar al final), `nowcast-sin-radar`, `nowcast-capas`, `punto6-anvil`, `punto7-modelos`, `validacion-sistema` y las ramas ya unidas de cada PR (`goes-zona-tormentas`, `senales-severas`, `casos-guardados`, `rayos-mejorados`, `puntaje-gravedad`, etc.).
+`indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-wrf`, `datos-wrf-historial` (historial del WRF, borrar al final), `prueba-inspeccion` (temporal de pruebas reales: borrar al final), `nowcast-sin-radar`, `nowcast-capas`, `punto6-anvil`, `punto7-modelos`, `validacion-sistema` y las ramas ya unidas de cada PR (`goes-zona-tormentas`, `senales-severas`, `casos-guardados`, `rayos-mejorados`, `puntaje-gravedad`, etc.).

@@ -217,6 +217,28 @@ def campos_escenarios(actual: np.ndarray, u: np.ndarray, v: np.ndarray, tiempos,
     return {float(t): campo_escenarios(np.stack([s[float(t)] for s in series]), float(t)) for t in tiempos}
 
 
+# Punto 5b, "¿llega a mi localidad en la próxima hora?": ENVOLVENTE de caminos posibles.
+# herramientas/analizar_omisiones.py (26 días, 9.597 casos): 2 de cada 3 tormentas que se
+# escapaban ya estaban en el radar a menos de 30 km, del lado de donde venía el movimiento;
+# no llegaban en el campo "3 de 9" porque se desviaron, aceleraron o se estiraron. Con 25
+# caminos (velocidad 0,6-1,4 y dirección ±40°) y "llega si lo dan k de 25" se decide el
+# grado "posible"; el grado "probable" sigue siendo el campo de hoy. Validado con
+# herramientas/simular_envolvente.py (k en config/nowcast_capas.json).
+ESCENARIOS_AMPLIOS = [(f, g) for f in (0.6, 0.8, 1.0, 1.2, 1.4) for g in (-40.0, -20.0, 0.0, 20.0, 40.0)]
+
+
+def campos_envolvente(actual: np.ndarray, u: np.ndarray, v: np.ndarray, tiempos, k,
+                      tasa: np.ndarray | None = None, escenarios=ESCENARIOS_AMPLIOS):
+    """En cada píxel, el valor que dan al menos `k` de los caminos (k=1: el máximo).
+    Con `k` lista/tupla devuelve {k: campos} calculando los caminos una sola vez."""
+    tiempos = [float(t) for t in tiempos]
+    series = [serie(actual, *rotar(u, v, g, f), tiempos, tasa) for f, g in escenarios]
+    pilas = {t: np.sort(np.stack([s[t] for s in series]), axis=0) for t in tiempos}
+    ks = list(k) if isinstance(k, (list, tuple)) else [k]
+    salida = {kk: {t: pilas[t][-max(1, min(int(kk), len(series)))] for t in tiempos} for kk in ks}
+    return salida if isinstance(k, (list, tuple)) else salida[ks[0]]
+
+
 # Punto 6: crecimiento y debilitamiento con ANVIL (pysteps; física y estadística,
 # sin entrenamiento). Validado con herramientas/comparar_pysteps.py (2 muestras de
 # ~270 casos): combinado con los escenarios ("hay eco si lo dan los escenarios o
