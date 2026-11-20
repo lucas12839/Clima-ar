@@ -223,3 +223,36 @@ mejorando. Tormenta hasta 10 km: hoy 50 % detectada / 29 % falsas alarmas (CSI 4
 "probable" 62 % / 35 % (CSI 46,7); "posible" 73 % / 45 % (CSI 46,1). Lluvia hasta 10 km: hoy
 65 % / 9 %; "probable" 77 % / 13 %; "posible" 85 % / 17 %. Con más de 90 min de atraso no está
 probado y el archivo lo marca (`llegada_proxima_hora.fuera_de_lo_validado`).
+
+
+## El 5b pasa a lo que se ve (20/11/2026, noche)
+
+Decisión de Lucas: primero el 5b para la zona de cada localidad; la llegada de tormenta
+"justo sobre la localidad" no se muestra (en vivo falló casi siempre) hasta tener el
+seguimiento de cada celda con sus rayos (paso 2).
+
+- **Llegadas que se ven** (`motor_decision_climaar.py` → `llegadas_5b`): primera llegada de
+  tormenta (>= 35 dBZ) a la zona de la localidad con 10 km de margen, grado "probable";
+  el dBZ al llegar es el máximo que el 5b pronostica sobre la localidad desde esa hora. Lo
+  del flujo óptico queda guardado en `*_flujo_optico` y es el respaldo si el 5b falta o es
+  de otra imagen (`tipo_tiempo.fuente_llegadas`). La confiabilidad mostrada es la del 5b
+  ("llegó 8 de cada 10", simulación de 26 días).
+- **Trayectorias** (`scripts/trayectorias_capas.py` → `data/radar/trayectorias_capas.json`):
+  cada tormenta sigue el campo de movimiento del 5b en su propio lugar. Las proyecciones
+  5/10/20/30 de la tormenta principal salen de acá (`proyecciones_metadata.fuente =
+  nowcast_capas`); el predictor viejo queda solo de respaldo.
+- Orden en Intelligence: el 5b corre ahora antes de la decisión.
+
+### Trayectorias: 5b contra el predictor viejo (`herramientas/comparar_trayectorias.py`)
+
+8 días con tormentas (27 y 28/10, 1, 3, 5, 12, 13 y 20/11), 12 h por día, imagen por imagen
+como en producción. Se compara dónde dijo cada método que iba a estar una tormenta con
+dónde estuvo de verdad esa misma tormenta (mismo número del seguimiento).
+
+| Plazo | Casos | Error típico viejo | Error típico 5b | A menos de 10 km: viejo / 5b |
+|---|---|---|---|---|
+| 10 min | 3641 | 6,0 km | **4,5 km** | 70 % / **75 %** |
+| 20 min | 3141 | 11,9 km | **9,5 km** | 43 % / **52 %** |
+| 30 min | 2776 | 17,7 km | **14,8 km** | 29 % / **34 %** |
+
+El 5b se equivoca entre 16 y 25 % menos en todos los plazos.

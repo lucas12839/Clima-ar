@@ -26,6 +26,55 @@ EVOLUTION_FILE = (
     / "prediccion_evolucion.json"
 )
 
+# Trayectorias del nowcast en capas (5b): desde el 20/11/2026 son las que se
+# usan (herramientas/comparar_trayectorias.py: aciertan más que el predictor
+# viejo a 10, 20 y 30 min). El predictor viejo queda de respaldo.
+TRAYECTORIAS_FILE = (
+    BASE
+    / "data"
+    / "radar"
+    / "trayectorias_capas.json"
+)
+
+SECTORES = ("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+            "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO")
+
+
+def trayectoria_capas(track_id: Any, radar_timestamp: datetime) -> dict[str, Any] | None:
+    """Trayectoria 5b de la tormenta para esta misma imagen de radar, o None."""
+    if not TRAYECTORIAS_FILE.exists():
+        return None
+    try:
+        data = json.loads(TRAYECTORIAS_FILE.read_text(encoding="utf-8"))
+        if data.get("disponible") is not True:
+            return None
+        if abs((parse_datetime(data.get("radar_timestamp")) - radar_timestamp).total_seconds()) > 1:
+            return None
+    except Exception:
+        return None
+    tray = (data.get("tracks") or {}).get(str(track_id))
+    if not isinstance(tray, dict):
+        return None
+    rumbo = tray.get("rumbo_hacia_grados")
+    direccion = SECTORES[int(((float(rumbo) % 360) + 11.25) // 22.5) % 16] if rumbo is not None else None
+    horizontes = []
+    for h in tray.get("horizontes") or []:
+        horizontes.append({
+            "horizonte_minutos": h.get("minutos"),
+            "x_estimado": h.get("x"),
+            "y_estimado": h.get("y"),
+            "incertidumbre_pixeles": h.get("incertidumbre_pixeles"),
+            "velocidad_estimada_pixeles_min": tray.get("velocidad_pixeles_min"),
+            "rumbo_estimado_grados": rumbo,
+            "direccion_estimada": direccion,
+            "confianza_prediccion": None,
+            "calibracion_muestras": None,
+            "correccion_bias_x_pixeles": None,
+            "correccion_bias_y_pixeles": None,
+        })
+    return {"track_id": tray.get("track_id"), "pronostico_disponible": True, "horizontes": horizontes}
+
+
 RADAR_LAT = -38.7342
 RADAR_LON = -62.1654
 RADAR_RANGE_KM = 240.0
@@ -752,6 +801,15 @@ def main() -> None:
 
     projections: dict[str, Any] = {}
 
+    fuente = "prediccion_evolucion"
+    capas = trayectoria_capas(track_id, radar_timestamp)
+    if capas is not None and all(
+        get_horizon_prediction(capas, h) is not None for h in HORIZONS
+    ):
+        track = {**track, "pronostico_disponible": True, "motivo": None,
+                 "horizontes": capas["horizontes"]}
+        fuente = "nowcast_capas"
+
     forecast_available = (
         track.get("pronostico_disponible") is True
     )
@@ -801,9 +859,8 @@ def main() -> None:
     nowcast[
         "proyecciones_metadata"
     ] = {
-        "fuente": (
-            "prediccion_evolucion"
-        ),
+        "fuente": fuente,
+        "fuente_respaldo": "prediccion_evolucion",
         "objetivo": (
             "bahia_blanca"
         ),

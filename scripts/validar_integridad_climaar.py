@@ -194,8 +194,8 @@ def validar_nowcast_capas(radar_ts: datetime) -> None:
     if not n.get("disponible"):
         print(f"Nowcast en capas: no disponible ({n.get('motivo')}) (permitido)")
         return
-    if n.get("en_paralelo") is not True:
-        fail("nowcast en capas: todavía debe correr en paralelo")
+    if n.get("en_paralelo") is not True and not n.get("en_uso"):
+        fail("nowcast en capas: si no corre en paralelo tiene que decir para qué se usa (en_uso)")
     if n.get("radar_timestamp") is None or parse_utc(n["radar_timestamp"], "capas.radar_timestamp") != radar_ts:
         fail(f"nowcast en capas desincronizado: {n.get('radar_timestamp')!r}")
     generado = parse_utc(n.get("generado_utc"), "capas.generado_utc")
@@ -254,6 +254,25 @@ def validar_modelos_region() -> None:
             fail(f"modelos: ensambles del futuro ({e.get('bajado_utc')})")
     print(f"Modelos por localidad: WRF {w.get('estado')} (corrida {w.get('corrida_utc')}), "
           f"ensambles {e.get('estado')}")
+
+
+def validar_trayectorias_capas(radar_ts: datetime) -> None:
+    """Trayectorias del 5b (se ven desde el 20/11/2026): de esta imagen de radar,
+    y si las proyecciones dicen venir del 5b, el archivo tiene que estar al día
+    y traer la tormenta principal."""
+    path = RADAR / "trayectorias_capas.json"
+    meta = ((load(RADAR / "radar_nowcast.json").get("nowcast") or {}).get("proyecciones_metadata") or {})
+    t = load(path) if path.is_file() and path.stat().st_size else {}
+    if t.get("disponible"):
+        if parse_utc(t.get("radar_timestamp"), "trayectorias.radar_timestamp") != radar_ts:
+            fail(f"trayectorias del 5b desincronizadas: {t.get('radar_timestamp')!r}")
+    if meta.get("fuente") == "nowcast_capas":
+        if not t.get("disponible"):
+            fail("las proyecciones dicen venir del 5b pero las trayectorias no están disponibles")
+        if str(meta.get("track_id")) not in (t.get("tracks") or {}):
+            fail(f"la tormenta principal {meta.get('track_id')} no está en las trayectorias del 5b")
+    print(f"Trayectorias: proyecciones desde {meta.get('fuente')} "
+          f"(5b disponible={bool(t.get('disponible'))}, {len(t.get('tracks') or {})} tormentas)")
 
 
 def validar_ambiente_satelite(radar_ts: datetime) -> None:
@@ -379,6 +398,7 @@ def main() -> None:
     validar_nowcast_capas(radar_ts)
     validar_modelos_region()
     validar_ambiente_satelite(radar_ts)
+    validar_trayectorias_capas(radar_ts)
 
     candidate = tracking.get("track_principal_candidato_id")
     if candidate is None:

@@ -16,6 +16,7 @@ INTEL = BASE / "data/ia/inteligencia_tormenta.json"
 METEO = BASE / "data/ia/estado_meteorologico.json"
 OUT = BASE / "data/ia/resultado_final.json"
 FLUJO = BASE / "data/radar/nowcast_flujo.json"
+CAPAS = BASE / "data/radar/nowcast_capas.json"
 FLUJO_DBZ_MIN = 40.0
 GOES = BASE / "data/ia/goes19_intelligence.json"
 SUPERFICIE = BASE / "data/ia/estaciones/senales_superficie.json"
@@ -284,6 +285,65 @@ def optical_flow_evidence(flujo, nowcast):
     return score, score > 0, resumen
 
 
+# Con qué frecuencia llega de verdad una llegada "probable" del 5b a la zona de
+# la localidad (tormenta a <= 10 km): simulación de 26 días con el radar
+# atrasado 10-30 min, 24 % de falsas alarmas -> llegó 76 de cada 100
+# (herramientas/simular_envolvente.py, docs/VALIDACION_NOWCAST_CAPAS.md).
+CONFIABILIDAD_5B = {"casos": 100, "llego": 76, "se_desvio": 0, "se_deshizo": 0,
+                    "fuente": "nowcast_capas, simulación de 26 días"}
+
+
+def llegadas_5b(flujo, capas=None):
+    """Llegadas que se ven: desde el 20/11/2026 salen del nowcast en capas (5b).
+
+    Para cada localidad, la primera llegada de tormenta (>= 35 dBZ) a su zona
+    con 10 km de margen, grado "probable" (2 de 25 caminos): es lo validado en
+    vivo y en simulación. La llegada "justo sobre la localidad" de tormenta NO
+    se usa (todavía falla demasiado). El dBZ al llegar es el máximo que el 5b
+    pronostica sobre la localidad desde esa hora. Si el 5b no está o no es de
+    la misma imagen de radar, queda lo del flujo óptico (como antes).
+    Solo agrega campos: lo del flujo queda en *_flujo_optico."""
+    import copy
+
+    flujo = flujo if isinstance(flujo, dict) else {}
+    if capas is None:
+        capas = load(CAPAS) if CAPAS.exists() else {}
+    capas = capas if isinstance(capas, dict) else {}
+    lleg_cfg = capas.get("llegada_proxima_hora") or {}
+    if (capas.get("disponible") is not True or lleg_cfg.get("usado") is not True
+            or timestamp_key(capas.get("radar_timestamp")) != timestamp_key(flujo.get("radar_timestamp"))):
+        out = dict(flujo)
+        out["fuente_llegadas"] = "flujo_optico"
+        return out
+    out = copy.deepcopy(flujo)
+    out["fuente_llegadas"] = "nowcast_capas"
+    locs = out.setdefault("localidades", {})
+    for loc_id, c in (capas.get("localidades") or {}).items():
+        l5 = (((c.get("llegada_proxima_hora") or {}).get("tormenta") or {}).get("probable") or {})
+        eta = finite(l5.get("hasta_10km"))
+        pron = c.get("pronostico_desde_ahora") or {}
+        dbz = None
+        if eta is not None:
+            vals = [finite((pron.get(f"{p}min") or {}).get("dbz")) for p in (10, 20, 30, 60) if p >= eta]
+            vals = [v for v in vals if v is not None]
+            dbz = round(max(vals), 1) if vals else None
+        d = locs.setdefault(loc_id, {"nombre": c.get("nombre")})
+        ll = d.setdefault("llegada", {})
+        ll["eta_desde_ahora_min_flujo_optico"] = ll.get("eta_desde_ahora_min")
+        ll["dbz_al_llegar_flujo_optico"] = ll.get("dbz_al_llegar")
+        ll["eta_desde_ahora_min"] = eta
+        ll["dbz_al_llegar"] = dbz
+        ll["fuente"] = "nowcast_capas: tormenta a <= 10 km de la localidad, grado probable"
+        if loc_id == "bahia_blanca":
+            b = out.setdefault("bahia_blanca", {})
+            b["eta_tormenta_desde_ahora_min_flujo_optico"] = b.get("eta_tormenta_desde_ahora_min")
+            b["dbz_al_llegar_flujo_optico"] = b.get("dbz_al_llegar")
+            b["eta_tormenta_desde_ahora_min"] = eta
+            b["dbz_al_llegar"] = dbz
+            b["fuente_llegada"] = ll["fuente"]
+    return out
+
+
 def _superficie_fresca():
     datos = load(SUPERFICIE) if SUPERFICIE.exists() else {}
     if not isinstance(datos, dict):
@@ -395,8 +455,10 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
                 "lluvia_1h_mm": finite(d.get("lluvia_1h_mm")),
                 "lluvia_3h_mm": finite(d.get("lluvia_3h_mm")),
                 "lluvia_6h_mm": finite(d.get("lluvia_6h_mm")),
-                "confiabilidad_llegada": confiabilidad_llegada(
-                    loc_id, finite(lleg.get("eta_desde_ahora_min")), finite(lleg.get("dbz_al_llegar")), tabla),
+                "confiabilidad_llegada": (
+                    CONFIABILIDAD_5B if (flujo or {}).get("fuente_llegadas") == "nowcast_capas"
+                    else confiabilidad_llegada(
+                        loc_id, finite(lleg.get("eta_desde_ahora_min")), finite(lleg.get("dbz_al_llegar")), tabla)),
             },
             superficie=sup_locs.get(loc_id) or {},
             rayos=r_loc,
@@ -613,18 +675,21 @@ def main():
         ia_score = clamp(0.75 * ia_score + 0.25 * visual_score)
 
     # Flujo óptico: solo puede subir la señal (una llegada pronosticada).
+    flujo_visible = llegadas_5b(load(FLUJO) if FLUJO.exists() else {})
     flujo_score, flujo_incorporado, flujo_resumen = optical_flow_evidence(
-        load(FLUJO) if FLUJO.exists() else {},
+        flujo_visible,
         radar.get("nowcast", {}),
     )
+    flujo_resumen["fuente_llegadas"] = flujo_visible.get("fuente_llegadas")
     if flujo_incorporado:
         ia_score = max(ia_score, clamp(0.75 * ia_score + 0.25 * flujo_score), flujo_score * 0.6)
 
     tipo_tiempo = tipo_de_tiempo(
-        load(FLUJO) if FLUJO.exists() else {},
+        flujo_visible,
         intel,
         radar.get("nowcast", {}),
     )
+    tipo_tiempo["fuente_llegadas"] = flujo_visible.get("fuente_llegadas")
     anterior = load(OUT) if OUT.exists() else {}
     tipo_tiempo = mantener_amenazas(
         tipo_tiempo,
