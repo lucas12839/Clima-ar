@@ -266,7 +266,9 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   días en paralelo). Días con tormentas en el radar guardado: 27/10-6/11, 12/11, 13/11.
 - **Punto 5b nuevo (va antes del 6): nunca a ciegas cuando el radar se atrasa o falta**
   (ver `docs/INSPECCION_FUENTES.md`). Noche 19/11: atraso de SINARAME 16-18 min y faltaron
-  las imágenes de 22:20 y 00:00 justo cuando la tormenta pasaba por Bahía.
+  las imágenes de 22:20 y 00:00 justo cuando la tormenta pasaba por Bahía. En la ciudad no
+  hubo nada: convección elevada sobre capa estable, nube de arco al norte (caso y foto en
+  `docs/casos/2026-11-19_nube_rodillo_bahia.md`, con el análisis de Alex Gonzalez).
 - Datos por tormenta: `data/goes19/goes19_state.json` (`por_tormenta` y `formacion_satelite`,
   versión 1.8), `data/ia/puntaje_tormentas.json`, `data/ia/formacion_tormentas.json`; casos guardados en `data/goes19/historial/`, `data/ia/formacion/` y
   `data/ia/puntaje/`.

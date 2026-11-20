@@ -139,7 +139,13 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
    que llega casi en tiempo real: rayos GLM (cada 20 s), satélite (cada 10 min, tendencia del
    tope por localidad) y estaciones (cada ~5 min: lluvia, ráfaga, salto de presión, caída de
    temperatura = frente de ráfagas); (4) buscar otra fuente de radar que llegue antes
-   (otros productos de SINARAME, mosaico del SMN) y recuperar imágenes que faltan.
+   (otros productos de SINARAME, mosaico del SMN) y recuperar imágenes que faltan;
+   (5) detectar **convección elevada sobre capa estable** (inversión cerca del suelo:
+   temperatura a 925 hPa mayor que la de 2 m, inhibición alta, capa límite baja, de noche) y
+   bajar el viento y el granizo esperados en superficie; (6) leer la **firma de las
+   estaciones** (temperatura que sube + humedad que baja + presión que sube de a poco = frente
+   de ráfagas débil; bajón fuerte de temperatura + salto de presión + ráfaga fuerte =
+   reventón). Caso guardado: `docs/casos/2026-11-19_nube_rodillo_bahia.md`.
 6. **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
    imágenes, crecimiento o debilitamiento según el puntaje, varios escenarios y porcentaje de
    llegada (pysteps sobre nuestra grilla de 512 × 512, solo si su costo en el ciclo lo permite).
