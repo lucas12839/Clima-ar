@@ -717,6 +717,13 @@ jobs:
           # Punto 4 del plan. Falla segura: el script nunca corta el ciclo.
           python scripts/puntaje_gravedad.py
 
+      - name: Tormentas en formación antes del radar (en paralelo, no cambia lo que se ve)
+        run: |
+          set -euo pipefail
+
+          # Punto 5 del plan. Falla segura: el script nunca corta el ciclo.
+          python scripts/aviso_formacion.py
+
       - name: Validar integridad completa de ClimaAR
         run: |
           set -euo pipefail

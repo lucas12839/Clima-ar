@@ -72,6 +72,8 @@ MIN_PIXELES_CIUDAD = 6  # ~5 km²: evita que un píxel suelto cuente como tormen
 GAP_MIN_MIN = 5.0
 GAP_MAX_MIN = 30.0
 VELOCIDAD_MAX_KMH = 120.0
+VELOCIDAD_SALTO_KMH = 15.0        # diferencia que dispara el control con varias imágenes
+VELOCIDAD_SALTO_FRACCION = 0.5
 ALCANCE_CONFIABLE_KM = 150.0
 EDAD_NORMAL_MIN = 15.0
 EDAD_MAX_MIN = 40.0
@@ -283,8 +285,57 @@ def factor_edad(edad_min: float | None) -> float:
     return round(1.0 - 0.6 * (edad_min - EDAD_NORMAL_MIN) / (EDAD_MAX_MIN - EDAD_NORMAL_MIN), 3)
 
 
+def controlar_velocidad(flujo: dict[str, Any], previas: list[float] | None) -> dict[str, Any]:
+    """Control con varias imágenes: si la velocidad de este par de imágenes se
+    aparta mucho de la de los pares anteriores, se usa la mediana (misma
+    dirección). Una sola imagen con la hora corrida (SINARAME atrasado) no
+    puede triplicar la velocidad de todas las tormentas (caso 19/11 23:10:
+    58 km/h en un par, 21-24 km/h en los vecinos)."""
+    previas = [v for v in (previas or []) if v is not None and v > 0]
+    actual = flujo["velocidad_media_kmh"]
+    control = {"velocidades_pares_previos_kmh": [round(v, 1) for v in previas], "corregida": False}
+    if len(previas) >= 2 and actual > 0:
+        robusta = float(np.median(previas + [actual]))
+        if abs(actual - robusta) > max(VELOCIDAD_SALTO_KMH, VELOCIDAD_SALTO_FRACCION * robusta):
+            factor = robusta / actual
+            flujo["u"] = (flujo["u"] * factor).astype(np.float32)
+            flujo["v"] = (flujo["v"] * factor).astype(np.float32)
+            control.update({"corregida": True, "velocidad_de_este_par_kmh": actual,
+                            "velocidad_usada_kmh": round(robusta, 1)})
+            flujo["velocidad_media_kmh"] = round(robusta, 1)
+    flujo["control_velocidad"] = control
+    return flujo
+
+
+def velocidad_par(previo_dbz: np.ndarray, actual_dbz: np.ndarray, gap_min: float,
+                  clutter: np.ndarray) -> float | None:
+    km_px = km_por_pixel(actual_dbz.shape[1])
+    f = estimar_flujo(campo_limpio(previo_dbz, clutter), campo_limpio(actual_dbz, clutter), gap_min, km_px)
+    return f["velocidad_media_kmh"] if f["valido"] else None
+
+
+def velocidades_previas(desde_dt: datetime, desde_dbz: np.ndarray, clutter: np.ndarray,
+                        pares: int = 2) -> list[float]:
+    """Velocidad media de los pares de imágenes anteriores (para el control)."""
+    salida = []
+    actual_dt, actual_dbz = desde_dt, desde_dbz
+    for _ in range(pares):
+        previo = frame_previo(actual_dt)
+        if previo is None:
+            break
+        dbz = cargar_dbz(previo[0])
+        if dbz is None or dbz.shape != actual_dbz.shape:
+            break
+        gap = (actual_dt - previo[1]).total_seconds() / 60.0
+        v = velocidad_par(dbz, actual_dbz, gap, clutter)
+        if v is not None:
+            salida.append(v)
+        actual_dt, actual_dbz = previo[1], dbz
+    return salida
+
+
 def pronosticar(previo_dbz: np.ndarray, actual_dbz: np.ndarray, gap_min: float, clutter: np.ndarray,
-                leads=LEADS_MIN) -> dict[str, Any]:
+                leads=LEADS_MIN, velocidades_previas_kmh: list[float] | None = None) -> dict[str, Any]:
     """Núcleo sin E/S: devuelve campos pronosticados y diagnóstico."""
     h, w = actual_dbz.shape
     km_px = km_por_pixel(w)
@@ -293,6 +344,7 @@ def pronosticar(previo_dbz: np.ndarray, actual_dbz: np.ndarray, gap_min: float, 
     flujo = estimar_flujo(previo, actual, gap_min, km_px)
     if not flujo["valido"]:
         return {"flujo": flujo, "campos": {}, "actual": actual}
+    flujo = controlar_velocidad(flujo, velocidades_previas_kmh)
     campos = {int(t): advectar(actual, flujo["u"], flujo["v"], float(t)) for t in leads}
     return {"flujo": flujo, "campos": campos, "actual": actual}
 
@@ -578,7 +630,12 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     if previo_dbz is None or actual_dbz.shape != previo_dbz.shape:
         return salida_no_disponible(radar_ts, "NO_SE_PUDO_DECODIFICAR_DBZ", localidades=por_localidad(), puntos_control=puntos_control(), **extra)
 
-    resultado = pronosticar(previo_dbz, actual_dbz, gap, clutter)
+    try:
+        previas = velocidades_previas(previo_dt, previo_dbz, clutter)
+    except Exception as exc:  # el control nunca corta el ciclo
+        print(f"AVISO: control de velocidad con varias imágenes no disponible: {exc}")
+        previas = []
+    resultado = pronosticar(previo_dbz, actual_dbz, gap, clutter, velocidades_previas_kmh=previas)
     flujo = resultado["flujo"]
     if not flujo["valido"]:
         return salida_no_disponible(
@@ -627,6 +684,7 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
             "direccion_hacia_grados": flujo["direccion_hacia_grados"],
             "coherencia": flujo["coherencia"],
             "pixeles_eco": flujo["pixeles_eco"],
+            "control_varias_imagenes": flujo.get("control_velocidad"),
         },
         "bahia_blanca": {
             **ciudad,

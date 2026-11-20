@@ -1,4 +1,5 @@
 import unittest
+import pytest
 
 import numpy as np
 
@@ -201,3 +202,18 @@ class VelocidadFisicaTest(unittest.TestCase):
         muestras = pe.movement_samples(hist)
         self.assertEqual(len(muestras), 1)
         self.assertAlmostEqual(muestras[0]["speed"], 0.8)
+
+
+def test_control_de_velocidad_con_varias_imagenes():
+    """Caso 19/11 23:10: un solo par de imágenes dio 58 km/h y los vecinos 22-25."""
+    import numpy as np
+
+    flujo = {"velocidad_media_kmh": 58.3, "u": np.full((4, 4), 1.0, np.float32),
+             "v": np.zeros((4, 4), np.float32)}
+    f = nf.controlar_velocidad(dict(flujo), [22.8, 25.0])
+    assert f["control_velocidad"]["corregida"] is True
+    assert f["velocidad_media_kmh"] == 25.0
+    assert float(f["u"][0, 0]) == pytest.approx(25.0 / 58.3, rel=1e-3)
+    # Un cambio chico o sin pares previos no se toca.
+    assert nf.controlar_velocidad(dict(flujo, velocidad_media_kmh=30.0), [22.8, 25.0])["control_velocidad"]["corregida"] is False
+    assert nf.controlar_velocidad(dict(flujo), [])["velocidad_media_kmh"] == 58.3

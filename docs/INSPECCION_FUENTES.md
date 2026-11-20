@@ -127,7 +127,9 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
    Tornquist). Mientras tanto se mantiene "posible severa". **Terminado en paralelo (#46)**:
    `scripts/puntaje_gravedad.py`, no cambia lo que se ve hasta las simulaciones.
 5. **Aviso de tormenta que se forma en el lugar,** antes del radar (enfriamiento de topes,
-   congelamiento, diferencias entre canales; estilo RDT).
+   congelamiento, diferencias entre canales; estilo RDT). **Terminado en paralelo (#48)**:
+   `goes19/formacion.py` + `scripts/aviso_formacion.py`, no cambia lo que se ve. Simulado con
+   3 días reales: grado "probable" o más acierta 58-85 % con ~20 min de ventaja.
 6. **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
    imágenes, crecimiento o debilitamiento según el puntaje, varios escenarios y porcentaje de
    llegada (pysteps sobre nuestra grilla de 512 × 512, solo si su costo en el ciclo lo permite).

@@ -56,7 +56,14 @@ def entorno(tmp_path, monkeypatch):
     def leer(metadata, variables, temp_dir, nombre):
         return _dominio(variables), {"modo": "parcial", "segundos": 0.5}
 
+    def previo(product, start, now=None, tolerance_seconds=2.0):
+        llamados.append((product + "_previo", start))
+        fin = (datetime.fromisoformat(start.replace("Z", "+00:00")) + timedelta(seconds=571))
+        return {"key": f"{product}_{start}.nc", "url": f"https://x/{start}.nc", "start_time_utc": start,
+                "end_time_utc": fin.isoformat().replace("+00:00", "Z"), "size": 1}
+
     monkeypatch.setattr(st, "_buscar_objeto", buscar)
+    monkeypatch.setattr(st, "product_object_for_scan", previo)
     monkeypatch.setattr(st, "leer_dominio", leer)
     monkeypatch.setattr(st, "process_glm", lambda temp_dir, ref: {"status": "sin_actividad"})
     monkeypatch.setattr(st, "process_dmw", lambda temp_dir, ref: {"status": "unavailable"})
@@ -113,7 +120,15 @@ def test_estado_con_tormenta_mantiene_contrato_y_agrega_por_tormenta(entorno):
     assert n240 < len(_dominio(["CMI"])["datos"]["CMI"])
     # Mismo barrido: el canal 13 primero, los demás con su inicio.
     assert llamados[0] == ("abi_c13", None)
-    assert all(inicio == INICIO for _, inicio in llamados[1:])
+    assert all(inicio == INICIO for p, inicio in llamados[1:] if not p.endswith("_previo"))
+    # Punto 5: canal 13 de 10 y 20 min antes del mismo barrido de referencia.
+    previos = [inicio for p, inicio in llamados if p.endswith("_previo")]
+    assert previos == ["2026-11-19T22:20:20Z", "2026-11-19T22:10:20Z"]
+    fs = s["formacion_satelite"]
+    assert fs["frame_radar_utc"] == "2026-11-19T22:40:00Z"
+    assert fs["lectura_previas"]["10"]["estado"] == "ok"
+    # La tormenta fija no se enfría (misma imagen antes y ahora): no es formación.
+    assert fs["estado"] == "sin_crecimiento" and fs["objetos"] == []
     # Datos por tormenta.
     pt = s["por_tormenta"]
     assert pt["estado"] == "ok"
@@ -128,7 +143,7 @@ def test_estado_con_tormenta_mantiene_contrato_y_agrega_por_tormenta(entorno):
     assert sinc["inicio_barrido_referencia_utc"] == INICIO
     assert sinc["productos"]["abi_c13"]["estado"] == "sincronizado"
     assert 0 < sinc["productos"]["abi_c13"]["desfase_min"] < 20
-    assert s["version"] == "1.7"
+    assert s["version"] == "1.8"
     # Punto 2: señales severas por tormenta.
     sev = t["senales_severas"]
     assert sev["fase"]["estado"] == "ok" and sev["fase"]["fraccion_hielo_en_nubes"] == 1.0

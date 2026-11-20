@@ -147,6 +147,38 @@ def validar_puntaje(radar_ts: datetime, nc: dict) -> None:
     print(f"Puntaje de gravedad: sincronizado ({p.get('estado')}, {len(p.get('tormentas') or [])} tormentas)")
 
 
+def validar_formacion(radar_ts: datetime) -> None:
+    """Tormentas en formación (punto 5, en paralelo): de esta imagen, con el
+    satélite de antes del radar y nunca mostradas al público todavía. Puede faltar."""
+    path = IA / "formacion_tormentas.json"
+    if not path.is_file() or path.stat().st_size == 0:
+        print("Tormentas en formación: sin archivo (permitido)")
+        return
+    f = load(path)
+    if f.get("frame_radar_utc") is None or parse_utc(f["frame_radar_utc"], "formacion.frame_radar_utc") != radar_ts:
+        print("Tormentas en formación: de otra imagen (permitido)")
+        return
+    if f.get("modo") != "en_paralelo_no_se_muestra":
+        fail(f"tormentas en formación en modo {f.get('modo')!r}: todavía debe correr en paralelo")
+    if f.get("objetos"):
+        hora = parse_utc(f.get("hora_satelite_utc"), "formacion.hora_satelite_utc")
+        minutos = (radar_ts - hora).total_seconds() / 60.0
+        if not 0.0 <= minutos <= 20.0:
+            fail(f"tormentas en formación con satélite fuera de sincronía ({minutos:.1f} min)")
+    for o in f.get("objetos") or []:
+        g = (o.get("calificacion") or {}).get("grado")
+        if g not in (0, 1, 2, 3):
+            fail(f"tormenta en formación con grado inválido: {g}")
+        if o.get("tipo") == "tormenta_existente_que_crece" and g != 0:
+            fail("una tormenta que el radar ya ve no puede tener aviso de formación")
+    for e in f.get("eventos") or []:
+        v = e.get("ventaja_min")
+        if v is not None and v < 0:
+            fail(f"ventaja negativa en {e.get('id')}: {v}")
+    print(f"Tormentas en formación: sincronizado ({f.get('estado')}, {len(f.get('objetos') or [])} nubes, "
+          f"{len(f.get('seguimiento') or [])} seguimientos)")
+
+
 def validar_sin_actividad(nc, state, ml, radar_intel, final, radar_meteo) -> None:
     """Frame sin ecos operativos: ningún componente puede declarar principal."""
     if nc.get("actividad") is not False:
@@ -231,6 +263,7 @@ def main() -> None:
 
     validar_goes19(radar_ts, nc)
     validar_puntaje(radar_ts, nc)
+    validar_formacion(radar_ts)
 
     candidate = tracking.get("track_principal_candidato_id")
     if candidate is None:

@@ -4,6 +4,7 @@ import json
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import requests
@@ -608,6 +609,33 @@ def process_dmw(
     }
 
 
+def leer_c13_previos(temp_dir: Path, reference_time: datetime,
+                     inicio_escaneo: str | None) -> tuple[dict[int, dict], dict]:
+    """Canal 13 de los barridos de 10 y 20 min antes del de referencia (punto 5)."""
+    from datetime import timedelta
+
+    campos: dict[int, dict] = {}
+    info: dict[str, Any] = {}
+    inicio = por_tormenta.parse_utc(inicio_escaneo)
+    if inicio is None:
+        return campos, {"estado": "sin_barrido_de_referencia"}
+    for minutos in (10, 20):
+        objetivo = por_tormenta.iso(inicio - timedelta(minutes=minutos))
+        try:
+            metadata = product_object_for_scan("abi_c13", objetivo, now=reference_time,
+                                               tolerance_seconds=60.0)
+            if metadata is None:
+                info[str(minutos)] = {"estado": "no_publicado"}
+                continue
+            dominio, lectura = leer_dominio(metadata, ["CMI"], temp_dir, f"abi_c13_{minutos}")
+            campos[minutos] = _campo(np.asarray(dominio["datos"]["CMI"], dtype=np.float64), dominio,
+                                     _hora_satelite(metadata, dominio))
+            info[str(minutos)] = {"estado": "ok", "inicio_utc": metadata.get("start_time_utc"), **lectura}
+        except Exception as exc:
+            info[str(minutos)] = {"estado": "error", "error": f"{type(exc).__name__}: {exc}"[:200]}
+    return campos, info
+
+
 def _cargar_json(path: Path) -> dict | None:
     try:
         valor = json.loads(path.read_text(encoding="utf-8"))
@@ -623,7 +651,7 @@ def build_state(reference_time: datetime | None = None) -> dict:
     estado_previo = _cargar_json(OUTPUT_FILE)
 
     state = {
-        "version": "1.7",
+        "version": "1.8",
         "satellite": "GOES-19",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "reference_frame_utc": reference_time.isoformat(),
@@ -712,6 +740,31 @@ def build_state(reference_time: datetime | None = None) -> dict:
             state["dmw"] = process_dmw(temp_dir, reference_time)
         except Exception as exc:
             state["dmw"] = {"status": "unavailable", "error": str(exc)}
+
+        # Punto 5: canal 13 de 10 y 20 min antes (mismo recorte), para ver
+        # nubes que se están convirtiendo en tormenta.
+        previos_c13, lectura_previos = leer_c13_previos(temp_dir, reference_time, inicio_escaneo)
+
+    # Nubes en formación (estadística pura, sin red).
+    try:
+        from . import formacion
+
+        state["formacion_satelite"] = formacion.detectar(
+            campos.get("abi_c13"), previos_c13.get(10), previos_c13.get(20),
+            {
+                "fase": campos.get("cloud_phase"),
+                "altura_topes_2km": campos.get("cloudtop_height_2km"),
+                "altura_topes": campos.get("cloudtop_height"),
+                "c08": campos.get("abi_c08"),
+            },
+            rayos_radar,
+            reference_time,
+        )
+    except Exception as exc:
+        state["formacion_satelite"] = {"estado": "error", "error": f"{type(exc).__name__}: {exc}"[:300],
+                                       "objetos": []}
+    state["formacion_satelite"]["lectura_previas"] = lectura_previos
+    state["formacion_satelite"]["frame_radar_utc"] = por_tormenta.iso(reference_time)
 
     # Datos por tormenta (estadística pura, sin red).
     try:
@@ -807,6 +860,10 @@ def main() -> None:
     pt = state.get("por_tormenta") or {}
     print(f"Por tormenta: {pt.get('estado')} - {len(pt.get('tormentas') or [])} tormentas - "
           f"topes sobresalientes en la zona: {pt.get('topes_sobresalientes_zona')}")
+
+    fs = state.get("formacion_satelite") or {}
+    print(f"Nubes en formación (punto 5): {fs.get('estado')} - {len(fs.get('objetos') or [])} objetos - "
+          f"imágenes previas: {fs.get('lectura_previas')}")
 
     print(f"GLM: {state['glm'].get('status') if state['glm'] else 'unavailable'}")
 
