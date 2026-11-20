@@ -1,0 +1,44 @@
+name: Historial WRF (temporal, punto 7)
+on:
+  push:
+    branches: [prueba-wrf]
+permissions:
+  contents: write
+jobs:
+  dia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 13
+      matrix:
+        dia: [20261024,20261026,20261027,20261028,20261029,20261030,20261031,20261101,20261102,20261103,20261104,20261105,20261106,20261107,20261108,20261109,20261110,20261111,20261112,20261113,20261114,20261116,20261117,20261118,20261119,20261120]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q requests numpy xarray netCDF4 h5netcdf
+      - run: python herramientas/historial_wrf.py ${{ matrix.dia }} /tmp/wrf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wrf-${{ matrix.dia }}
+          path: /tmp/wrf/
+  juntar:
+    needs: dia
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/todo
+          merge-multiple: true
+      - name: Guardar en la rama datos-wrf-historial
+        run: |
+          ls -la /tmp/todo
+          git init -q h && cd h
+          git config user.name "climaar-bot" && git config user.email "climaar-bot@users.noreply.github.com"
+          git checkout -q -b datos-wrf-historial
+          cp /tmp/todo/*.json .
+          git add . && git commit -q -m "Historial WRF por localidad (punto 7)"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" datos-wrf-historial
