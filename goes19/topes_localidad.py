@@ -91,3 +91,35 @@ def por_localidad(bt_k, lat, lon, fin_utc: str | None, estado_previo: Path,
             item["enfriamiento_c_10min"] = round((prev["p10_c_30km"] - item["p10_c_30km"]) * 10.0 / minutos, 1)
         salida[loc["id"]] = item
     return salida
+
+
+def estadisticas(bt_k, lat, lon, localidades: list[dict]) -> dict[str, dict[str, float]]:
+    """Mínimo y percentil 10 del tope a <= 15 y <= 30 km de cada localidad."""
+    bt = np.asarray(bt_k, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+    lon = np.asarray(lon, dtype=float)
+    ok = np.isfinite(bt) & np.isfinite(lat) & np.isfinite(lon)
+    bt, lat, lon = bt[ok], lat[ok], lon[ok]
+    salida = {}
+    for loc in localidades:
+        d = _dist(loc["lat"], loc["lon"], lat, lon)
+        item = {}
+        for nombre, radio in (("15km", SOBRE_KM), ("30km", CERCA_KM)):
+            v = bt[d <= radio]
+            if v.size:
+                item[f"min_c_{nombre}"] = round(float(v.min()) - K, 1)
+                item[f"p10_c_{nombre}"] = round(float(np.percentile(v, 10)) - K, 1)
+        salida[loc["id"]] = item
+    return salida
+
+
+def con_enfriamiento(actual: dict, previo: dict, minutos: float | None) -> dict[str, dict[str, float]]:
+    """Agrega el enfriamiento (°C cada 10 min, p10 a 30 km) entre dos imágenes."""
+    salida = {}
+    for loc_id, item in actual.items():
+        item = dict(item)
+        prev = previo.get(loc_id) or {}
+        if minutos and 5 <= minutos <= 30 and "p10_c_30km" in item and "p10_c_30km" in prev:
+            item["enfriamiento_c_10min"] = round((prev["p10_c_30km"] - item["p10_c_30km"]) * 10.0 / minutos, 1)
+        salida[loc_id] = item
+    return salida
