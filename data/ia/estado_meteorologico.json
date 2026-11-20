@@ -1,7 +1,7 @@
 {
   "version": "1.1.0",
   "motor": "ClimaAR Intelligence",
-  "actualizado_utc": "2026-11-20T19:49:33.021753+00:00",
+  "actualizado_utc": "2026-11-20T19:54:42.982504+00:00",
   "ubicacion": {
     "ciudad": "Bahia Blanca",
     "latitud": -38.71,
@@ -14,7 +14,7 @@
     "sazb_valido": true,
     "sazb_disponible": true,
     "sazb_fresco": true,
-    "sazb_edad_minutos": 7.6,
+    "sazb_edad_minutos": 12.7,
     "puntos_ecmwf_validos": 9
   },
   "radar": {
@@ -1069,7 +1069,7 @@
     "fuente": "Aviation Weather Center",
     "estacion": "SAZB",
     "obsTime_utc": "2026-11-20T19:42:00+00:00",
-    "edad_minutos": 6.5,
+    "edad_minutos": 11.9,
     "temperatura_c": 19,
     "punto_rocio_c": 13,
     "viento_kt": 4,
@@ -1128,7 +1128,7 @@
     "geopotential_height_600hPa": 4219.0,
     "geopotential_height_500hPa": 5595.0,
     "observacion_sazb_utc": "2026-11-20T19:42:00+00:00",
-    "observacion_sazb_edad_minutos": 7.550362083333334,
+    "observacion_sazb_edad_minutos": 12.716374683333333,
     "observacion_sazb_fresca": true,
     "modelo_ecmwf_viento_10m_kmh": 17.7,
     "modelo_ecmwf_direccion_10m": 219.0,
@@ -8543,14 +8543,15 @@
       }
     ]
   },
-  "estado": "operativo",
+  "estado": "operativo_con_ecmwf_anterior",
   "ecmwf_respaldo": {
-    "usado": false
+    "usado": true,
+    "motivo": "ECMWF no pudo obtener el grupo 3/3: 429 Client Error: Too Many Requests for url: https://api.open-meteo.com/v1/ecmwf?latitude=-38.96%2C-38.71%2C-38.46&longitude=-62.51%2C-62.51%2C-62.51&hourly=tempera",
+    "edad_minutos": 30.2,
+    "actualizado_utc": "2026-11-20T19:24:32.237507+00:00"
   },
   "ecmwf_cache": {
-    "usado": true,
-    "edad_minutos": 25.0,
-    "actualizado_utc": "2026-11-20T19:24:32.237507+00:00"
+    "usado": false
   },
   "proxima_etapa": "Motor IA de evolucion, trayectoria, fortalecimiento, debilitamiento, ETA, duracion y peligros."
 }
