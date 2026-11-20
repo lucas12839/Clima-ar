@@ -1,17 +1,27 @@
 {
   "version": "1.0.0",
-  "generated_utc": "2026-11-20T19:54:40.138757+00:00",
+  "generated_utc": "2026-11-20T19:59:13.962113+00:00",
   "max_age_minutes": 15.0,
-  "policy": "La edad se recalcula desde observation_time; futuro, ausente o >15 min se descarta.",
+  "policy": "La edad se recalcula desde observation_time; futuro, ausente o más vieja que el límite de su red se descarta.",
+  "max_age_minutes_por_red": {
+    "bcp": 15.0,
+    "smn": 90.0
+  },
+  "estaciones_sin_datos_24h": [
+    "PASMAN",
+    "PIGUE AERO",
+    "RIO COLORADO",
+    "TRES ARROYOS"
+  ],
   "station_count": 14,
   "valid_count": 7,
   "bcp": {
     "total": 9,
-    "valid": 7
+    "valid": 6
   },
   "smn": {
     "total": 5,
-    "valid": 0
+    "valid": 1
   },
   "status": "parcial",
   "stations": [
@@ -20,112 +30,140 @@
       "network": "bcp",
       "valid": true,
       "state": "valida",
-      "age_minutes": 6.67,
-      "observation_time": "2026-11-20T19:48:00+00:00"
+      "age_minutes": 7.23,
+      "observation_time": "2026-11-20T19:52:00+00:00",
+      "max_age_minutes": 15.0,
+      "sin_datos_mas_de_24h": false
     },
     {
       "name": "CABILDO",
       "network": "bcp",
-      "valid": true,
-      "state": "valida",
-      "age_minutes": 13.67,
-      "observation_time": "2026-11-20T19:41:00+00:00"
+      "valid": false,
+      "state": "vencida",
+      "age_minutes": 18.23,
+      "observation_time": "2026-11-20T19:41:00+00:00",
+      "max_age_minutes": 15.0,
+      "sin_datos_mas_de_24h": false
     },
     {
       "name": "PUAN",
       "network": "bcp",
       "valid": true,
       "state": "valida",
-      "age_minutes": 6.67,
-      "observation_time": "2026-11-20T19:48:00+00:00"
+      "age_minutes": 5.23,
+      "observation_time": "2026-11-20T19:54:00+00:00",
+      "max_age_minutes": 15.0,
+      "sin_datos_mas_de_24h": false
     },
     {
       "name": "PIGUE",
       "network": "bcp",
       "valid": true,
       "state": "valida",
-      "age_minutes": 7.67,
-      "observation_time": "2026-11-20T19:47:00+00:00"
+      "age_minutes": 6.23,
+      "observation_time": "2026-11-20T19:53:00+00:00",
+      "max_age_minutes": 15.0,
+      "sin_datos_mas_de_24h": false
     },
     {
       "name": "CURA MALAL",
       "network": "bcp",
       "valid": true,
       "state": "valida",
-      "age_minutes": 7.67,
-      "observation_time": "2026-11-20T19:47:00+00:00"
+      "age_minutes": 6.23,
+      "observation_time": "2026-11-20T19:53:00+00:00",
+      "max_age_minutes": 15.0,
+      "sin_datos_mas_de_24h": false
     },
     {
       "name": "SAN ELOY",
       "network": "bcp",
       "valid": false,
       "state": "vencida",
-      "age_minutes": 394.67,
-      "observation_time": "2026-11-20T13:20:00+00:00"
+      "age_minutes": 399.23,
+      "observation_time": "2026-11-20T13:20:00+00:00",
+      "max_age_minutes": 15.0,
+      "sin_datos_mas_de_24h": false
     },
     {
       "name": "ARROYO PANTANOSO",
       "network": "bcp",
       "valid": true,
       "state": "valida",
-      "age_minutes": 7.67,
-      "observation_time": "2026-11-20T19:47:00+00:00"
+      "age_minutes": 6.23,
+      "observation_time": "2026-11-20T19:53:00+00:00",
+      "max_age_minutes": 15.0,
+      "sin_datos_mas_de_24h": false
     },
     {
       "name": "PASMAN",
       "network": "bcp",
       "valid": false,
       "state": "vencida",
-      "age_minutes": 29987.67,
-      "observation_time": "2026-10-31T00:07:00+00:00"
+      "age_minutes": 29992.23,
+      "observation_time": "2026-10-31T00:07:00+00:00",
+      "max_age_minutes": 15.0,
+      "sin_datos_mas_de_24h": true
     },
     {
       "name": "BAHIA BLANCA CENTRO",
       "network": "bcp",
       "valid": true,
       "state": "valida",
-      "age_minutes": 7.67,
-      "observation_time": "2026-11-20T19:47:00+00:00"
+      "age_minutes": 6.23,
+      "observation_time": "2026-11-20T19:53:00+00:00",
+      "max_age_minutes": 15.0,
+      "sin_datos_mas_de_24h": false
     },
     {
       "name": "BAHIA BLANCA AERO",
       "network": "smn",
-      "valid": false,
-      "state": "vencida",
-      "age_minutes": 54.67,
-      "observation_time": "2026-11-20T19:00:00+00:00"
+      "valid": true,
+      "state": "valida",
+      "age_minutes": 59.23,
+      "observation_time": "2026-11-20T19:00:00+00:00",
+      "max_age_minutes": 90.0,
+      "sin_datos_mas_de_24h": false
     },
     {
       "name": "PIGUE AERO",
       "network": "smn",
       "valid": false,
       "state": "vencida",
-      "age_minutes": 1554.67,
-      "observation_time": "2026-11-19T18:00:00+00:00"
+      "age_minutes": 1559.23,
+      "observation_time": "2026-11-19T18:00:00+00:00",
+      "max_age_minutes": 90.0,
+      "sin_datos_mas_de_24h": true
     },
     {
       "name": "CORONEL SUAREZ AERO",
       "network": "smn",
       "valid": false,
       "state": "vencida",
-      "age_minutes": 114.67,
-      "observation_time": "2026-11-20T18:00:00+00:00"
+      "age_minutes": 119.23,
+      "observation_time": "2026-11-20T18:00:00+00:00",
+      "max_age_minutes": 90.0,
+      "sin_datos_mas_de_24h": false
     },
     {
       "name": "RIO COLORADO",
       "network": "smn",
       "valid": false,
       "state": "vencida",
-      "age_minutes": 9834.67,
-      "observation_time": "2026-11-14T00:00:00+00:00"
+      "age_minutes": 9839.23,
+      "observation_time": "2026-11-14T00:00:00+00:00",
+      "max_age_minutes": 90.0,
+      "sin_datos_mas_de_24h": true
     },
     {
       "name": "TRES ARROYOS",
       "network": "smn",
       "valid": false,
       "state": "vencida",
-      "age_minutes": 4794.67,
-      "observation_time": "2026-11-17T12:00:00+00:00"
+      "age_minutes": 4799.23,
+      "observation_time": "2026-11-17T12:00:00+00:00",
+      "max_age_minutes": 90.0,
+      "sin_datos_mas_de_24h": true
     }
   ]
 }
