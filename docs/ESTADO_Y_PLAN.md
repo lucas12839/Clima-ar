@@ -238,7 +238,7 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - Hecho: `getdata` de Pillow reemplazado (mismo resultado comprobado en 40 frames).
 
 
-## Contexto rápido para un chat nuevo (20/11/2026, 00:30 hora de Argentina)
+## Contexto rápido para un chat nuevo (20/11/2026, 00:45 hora de Argentina)
 - Lucas trabaja desde el celular, no sabe inglés ni validar pull requests: Claude prueba,
   valida, abre el PR y lo une a main (permiso dado). Todo en español, horarios en hora de
   Argentina. Avisar al terminar cada punto y **no avanzar al siguiente sin que Lucas lo diga**.
@@ -266,7 +266,10 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   días en paralelo). Días con tormentas en el radar guardado: 27/10-6/11, 12/11, 13/11.
 - **Punto 5b nuevo (va antes del 6): nunca a ciegas cuando no hay imagen de radar nueva.**
   Decisión de Lucas (20/11): NO crear otro nowcast, mejorar al 100 % y validar el que ya existe
-  (`nowcast_flujo_optico.py`); 8 tareas en `docs/INSPECCION_FUENTES.md`. Noche 19/11: atraso de SINARAME 16-18 min y faltaron
+  (`nowcast_flujo_optico.py`); 8 tareas y **estructura en 6 capas acordada** en
+  `docs/INSPECCION_FUENTES.md`. El nowcast actual NO es IA: mueve la última imagen y supone
+  intensidad constante (por eso no ve crecer ni deshacerse una tormenta). **Esperar a que
+  Lucas diga "arrancá"** antes de empezar el 5b. Noche 19/11: atraso de SINARAME 16-18 min y faltaron
   las imágenes de 22:20 y 00:00 justo cuando la tormenta pasaba por Bahía. En la ciudad no
   hubo nada: convección elevada sobre capa estable, nube de arco al norte (caso y foto en
   `docs/casos/2026-11-19_nube_rodillo_bahia.md`, con el análisis de Alex Gonzalez).

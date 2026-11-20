@@ -158,6 +158,31 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
       real que llegó después, por localidad. Se mide el acierto con y sin las mejoras; se une
       solo si mejora y se repite con los casos guardados (19/11, 13/11, 3/11 y otros días con
       tormentas).
+   **Estructura acordada con Lucas (20/11, 00:45): un solo nowcast combinado en capas**, cada
+   una corrige a la anterior y si falta una fuente siguen las demás. Se junta con la parte del
+   punto 6 de crecimiento y escenarios (misma herramienta):
+   - **Capa 1, movimiento:** la última imagen movida a la hora actual; velocidad controlada con
+     varias imágenes (#48) y por tormenta.
+   - **Capa 2, crecimiento y debilitamiento:** tendencia de cada tormenta con satélite (tope
+     que se enfría o se calienta), rayos (salto o caída), radar (tamaño e intensidad en las
+     últimas imágenes) y ambiente.
+   - **Capa 3, relleno en tiempo real:** cuanto más viejo el radar, más pesan rayos, la imagen
+     más reciente del satélite y las estaciones; lo medido manda sobre el radar viejo.
+   - **Capa 4, qué llega al suelo:** capa fría y estable (convección elevada) y firma de las
+     estaciones (frente de ráfagas débil o reventón).
+   - **Capa 5, incertidumbre:** varios escenarios y porcentaje de llegada; edad y fuente de
+     cada dato.
+   - **Capa 6, validación:** automática (cada imagen nueva verifica lo pronosticado para esa
+     hora) y simulada (huecos de 10-60 min en todos los días con tormentas). Se une solo si
+     mejora, capa por capa.
+   - **Orden:** capas 1 y 6, después 3, después 2 y 4, al final 5.
+   - **Validación de todo el sistema al terminar (pedido de Lucas):** que las herramientas no
+     se pisen entre sí, que ninguna se bloquee, que no se pierdan datos fundamentales y que
+     todas queden sincronizadas (misma imagen de radar y misma hora en todos los archivos).
+   - **Lo viejo de ClimaAR:** se deja funcionando; se hace un inventario de qué mete ruido en
+     lo que se ve y se desconecta recién con el nowcast nuevo validado, con datos.
+   - Avance: rama `nowcast-sin-radar` (sin unir) con la imagen más reciente del satélite por
+     localidad (`satelite_ahora` en `goes19_state.json`), pruebas OK.
 6. **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
    imágenes, crecimiento o debilitamiento según el puntaje, varios escenarios y porcentaje de
    llegada (pysteps sobre nuestra grilla de 512 × 512, solo si su costo en el ciclo lo permite).
