@@ -409,13 +409,13 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     campo = None
     if actual_dbz is not None:
         clutter = nc.cargar_clutter_total(actual_dbz.shape)
-        campo = nf.campo_limpio(actual_dbz, clutter)
+        campo = nc.campo_limpio(actual_dbz, clutter)
         previo = nf.frame_previo(radar_dt) if int((campo >= nf.UMBRAL_ECO_DBZ).sum()) >= 30 else None
         if previo is not None:
             prev_dbz = nf.cargar_dbz(previo[0])
             if prev_dbz is not None and prev_dbz.shape == actual_dbz.shape:
                 gap = (radar_dt - previo[1]).total_seconds() / 60.0
-                prev = nf.campo_limpio(prev_dbz, clutter)
+                prev = nc.campo_limpio(prev_dbz, clutter)
                 km_px = nf.km_por_pixel(actual_dbz.shape[1])
                 f1 = nf.estimar_flujo(prev, campo, gap, km_px)
                 if f1["valido"]:
@@ -431,7 +431,7 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
                         if pp is not None:
                             ppd = nf.cargar_dbz(pp[0])
                             if ppd is not None and ppd.shape == actual_dbz.shape:
-                                prev2 = nf.campo_limpio(ppd, clutter)
+                                prev2 = nc.campo_limpio(ppd, clutter)
                                 f2 = nf.estimar_flujo(prev2, prev,
                                                       (previo[1] - pp[1]).total_seconds() / 60.0, km_px)
                                 if f2["valido"] and cfg.get("movimiento_3_imagenes"):

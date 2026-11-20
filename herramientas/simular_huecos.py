@@ -119,15 +119,16 @@ def main(argv=None) -> int:
             return None
         if dt not in cache:
             d = nf.cargar_dbz(frames[dt])
-            cache[dt] = None if d is None else nf.campo_limpio(d, clutter)
+            cache[dt] = None if d is None else nc.campo_limpio(d, clutter)
             if len(cache) > 30:
                 cache.pop(next(iter(cache)))
         return cache[dt]
 
     primero = nf.cargar_dbz(next(iter(frames.values())))
     shape = primero.shape
-    clutter = (nf.cargar_mascara_clutter(shape) if args.sin_clutter_intermitente
-               else nc.cargar_clutter_total(shape))
+    clutter = nc.cargar_clutter_total(shape)
+    if args.sin_clutter_intermitente:
+        nc._INTERMITENTE[shape] = None
     km_px = nf.km_por_pixel(shape[1])
     zl, zr = zonas_localidades(shape), zonas_region(shape)
     tab_loc, tab_reg = nueva_tabla(), nueva_tabla()

@@ -59,17 +59,59 @@ def mascara_clutter_tranquilo(campos_limpios) -> np.ndarray | None:
 CLUTTER_INTERMITENTE = nf.ROOT / "config" / "clutter_intermitente_rma10.png"
 
 
-def cargar_clutter_total(shape: tuple[int, int]) -> np.ndarray:
-    """Clutter fijo (config/clutter_rma10.png) + intermitente (si existe)."""
-    mask = nf.cargar_mascara_clutter(shape)
-    if CLUTTER_INTERMITENTE.exists():
-        from PIL import Image
+MANCHA_FUERA_MIN_PX = 8         # una mancha real tiene al menos 8 píxeles (~7 km²) fuera del clutter
+MANCHA_FUERA_FRACCION = 0.5     # y la mitad o más de su superficie fuera del clutter
+_INTERMITENTE: dict = {}
 
-        with Image.open(CLUTTER_INTERMITENTE) as img:
-            extra = np.asarray(img.convert("L")) > 127
-        if extra.shape == shape:
-            mask = mask | extra
-    return mask
+
+def cargar_clutter_total(shape: tuple[int, int]) -> np.ndarray:
+    """Clutter FIJO (config/clutter_rma10.png). El intermitente se aplica aparte y con
+    cuidado en `campo_limpio` (solo saca ecos sueltos, nunca una tormenta que pasa)."""
+    return nf.cargar_mascara_clutter(shape)
+
+
+def cargar_intermitente(shape: tuple[int, int]) -> np.ndarray | None:
+    if shape not in _INTERMITENTE:
+        extra = None
+        if CLUTTER_INTERMITENTE.exists():
+            from PIL import Image
+
+            with Image.open(CLUTTER_INTERMITENTE) as img:
+                extra = np.asarray(img.convert("L")) > 127
+            if extra.shape != shape:
+                extra = None
+        _INTERMITENTE[shape] = extra
+    return _INTERMITENTE[shape]
+
+
+def campo_limpio(dbz: np.ndarray, clutter: np.ndarray) -> np.ndarray:
+    """Como nf.campo_limpio, más los ecos fijos intermitentes, pero solo si están SUELTOS.
+
+    Un punto del clutter intermitente se borra solo si su mancha de eco está casi toda
+    sobre puntos de clutter (eco del terreno). Si una lluvia o una tormenta pasa por
+    encima, la mancha sigue fuera del clutter y se deja entera: no pierde superficie."""
+    import cv2
+
+    campo = nf.campo_limpio(dbz, clutter)
+    inter = cargar_intermitente(campo.shape)
+    if inter is None or not inter.any():
+        return campo
+    # Cada mancha de eco (conectada) que toca el clutter intermitente: si la mayor parte
+    # está FUERA de los puntos de clutter, es lluvia o tormenta real y se deja entera.
+    eco = (campo >= nf.UMBRAL_ECO_DBZ).astype(np.uint8)
+    toca = inter & (eco > 0)
+    if not toca.any():
+        return campo
+    dil = cv2.dilate(eco, np.ones((3, 3), np.uint8))  # une ecos separados por 1 píxel
+    n, etiquetas = cv2.connectedComponents(dil, connectivity=8)
+    total = np.bincount(etiquetas[eco > 0], minlength=n)
+    en_clutter = np.bincount(etiquetas[toca], minlength=n)
+    fuera = total - en_clutter
+    real = (fuera >= MANCHA_FUERA_MIN_PX) & (fuera >= MANCHA_FUERA_FRACCION * total)
+    real[0] = False
+    borrar = toca & ~real[etiquetas]
+    campo[borrar] = 0.0
+    return campo
 
 
 def confianza_por_edad(edad_min: float | None) -> float:
