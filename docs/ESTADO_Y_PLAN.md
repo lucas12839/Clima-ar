@@ -280,9 +280,12 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   porque el capturador escribía su estado. Detalle: `docs/AUDITORIA_2026-11-20.md`.
 - **Punto 8 TERMINADO en paralelo (20/11, ~18:15):** ambiente medido por GOES-19
   (`data/ia/ambiente_satelite.json`), validado con 25 días (`docs/VALIDACION_AMBIENTE_SATELITE.md`).
-- **SIGUIENTE (esperar a Lucas):** decidir si el 5b pasa a ser el que se ve (con lo medido en vivo
-  de "¿llega a mi localidad?", `verificacion_nowcast.json` → `llegadas_acumulado`), y después
-  el punto 9.
+- **Paso 1 HECHO (20/11, noche, decisión de Lucas):** el 5b pasa a lo que se ve: llegadas a la zona
+  de cada localidad (tormenta a <= 10 km, probable) y trayectorias por tormenta (16-25 % menos error
+  que el predictor viejo). "Justo sobre la localidad" no se muestra. `docs/VALIDACION_NOWCAST_CAPAS.md`.
+- **SIGUIENTE (esperar a Lucas):** paso 2 = seguir cada celda con sus rayos minuto a minuto para la
+  localidad exacta (porcentaje, solo próximos ~30 min; objetivo 70-80 % detectado con < 40 % de
+  falsas alarmas), en paralelo y validado con 26 días. Después el punto 9.
 - Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
   #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).

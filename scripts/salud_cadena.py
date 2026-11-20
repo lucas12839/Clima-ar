@@ -144,6 +144,17 @@ def revisar(ahora: datetime | None = None, latido: str | None = None,
             alertas.append(f"La predicción por tormenta erra {mediana_km:.0f} km a 10 min "
                            "(¿se comparan tormentas distintas?).")
 
+    # Lo que se ve sale del 5b (desde el 20/11/2026) ------------------------------
+    final = leer(DATA / "ia/resultado_final.json") or {}
+    fuente_lleg = ((final.get("tipo_tiempo") or {}).get("fuente_llegadas")) if isinstance(final, dict) else None
+    meta = (((leer(DATA / "radar/radar_nowcast.json") or {}).get("nowcast") or {}).get("proyecciones_metadata") or {})
+    datos["fuente_llegadas"] = fuente_lleg
+    datos["fuente_trayectorias"] = meta.get("fuente")
+    if fuente_lleg == "flujo_optico":
+        alertas.append("Las llegadas que se ven salieron del flujo óptico (respaldo): el 5b no estuvo disponible.")
+    if meta.get("pronostico_disponible") and meta.get("fuente") == "prediccion_evolucion":
+        alertas.append("Las trayectorias salieron del predictor viejo (respaldo): el 5b no estuvo disponible.")
+
     # Ambiente medido por el satélite (punto 8) --------------------------------
     amb = leer(DATA / "ia/ambiente_satelite.json")
     if isinstance(amb, dict):

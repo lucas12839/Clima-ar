@@ -36,9 +36,10 @@ SALIDA = ROOT / "data" / "radar" / "trayectorias_capas.json"
 ESTADO = ROOT / "data" / "radar" / "seguimiento" / "estado.json"
 HORIZONTES_MIN = (5, 10, 20, 30, 60)
 PASO_MIN = 2.5
-# Incertidumbre del lugar (km) según el plazo, medida con
-# herramientas/comparar_trayectorias.py (mediana del error, 20/11/2026).
-INCERTIDUMBRE_KM = {5: 4.0, 10: 6.0, 20: 9.0, 30: 12.0, 60: 22.0}
+# Incertidumbre del lugar (km) según el plazo: mediana del error medida con
+# herramientas/comparar_trayectorias.py (8 días de tormentas, ~3000 casos por
+# plazo, 20/11/2026). 5 y 60 min no se midieron: se estiman de los demás.
+INCERTIDUMBRE_KM = {5: 2.5, 10: 4.5, 20: 9.5, 30: 14.8, 60: 30.0}
 
 
 def parse_utc(texto: Any) -> datetime | None:
