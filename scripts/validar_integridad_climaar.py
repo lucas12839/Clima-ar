@@ -105,6 +105,10 @@ def validar_goes19(radar_ts: datetime, nc: dict) -> None:
         for t in pt["tormentas"]:
             if sid(t.get("track_id")) not in tracks:
                 fail(f"goes19.por_tormenta tiene una tormenta que el radar no tiene: {t.get('track_id')}")
+            rayos = t.get("rayos") or {}
+            if rayos.get("estado") == "ok":
+                require_same_timestamp(radar_ts, rayos.get("fin_utc"),
+                                       f"goes19 rayos de la tormenta {t.get('track_id')}")
             senales = t.get("senales_severas") or {}
             items = [(c, t.get(c) or {}) for c in ("c13", "c08", "altura_topes", "presion_topes")]
             items += [(f"senales_severas.{c}", senales.get(c) or {})

@@ -102,6 +102,23 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
 2. Viernes 13/11: ¿cuánto llovió exactamente en Punta Alta y en Bahía Blanca, y a qué hora fue
    lo fuerte? (el radar crudo dio ~190 mm en Punta Alta: parece sobreestimar).
 
+## Punto 3 del plan terminado (19/11/2026, 22:00 hora de Argentina) — esperando a Lucas para el 4
+- `goes19/rayos_tormenta.py`, dentro de `rayos` de cada tormenta en `por_tormenta`:
+  - **asignación exclusiva:** cada rayo cuenta para una sola tormenta (la más cercana en el
+    minuto del rayo, con su movimiento); nunca rayos posteriores a la imagen de radar;
+  - **salto de rayos 2σ** (Schultz 2009, 2011): 14 min hasta la imagen de radar en tramos de
+    2 min; salto si el último cambio supera 2 desvíos de los 5 anteriores con ≥ 10 rayos/min.
+    Se informa `nivel_sigma` para calibrar el umbral de 10 (puede ser alto para GLM);
+  - **tamaño de rayos:** área mínima, mediana y fracción de rayos chicos (< 300 km², guía GLM de
+    NOAA), energía total.
+- GLM: la ventana de la imagen de radar pasó de 10 a 14 min (una sola descarga con la de
+  localidades); se lee área y energía de cada rayo. El conteo de 10 min se mantiene igual.
+- Casos guardados: tasas de 2 min, salto, nivel, área mínima y fracción de chicos.
+- Integridad: los rayos de cada tormenta terminan en la imagen de radar.
+- Prueba real 00:20 UTC (21:20 hora de Argentina): 14 min completos (42 archivos), áreas 70-900 km²,
+  sin saltos (una tormenta subió 2,5 desvíos con 3 rayos/min). Dos ecos fuertes cerca del radar
+  (54 y 62 dBZ) con 0 rayos y topes de −16 °C: probables ecos no meteorológicos (punto 4).
+
 ## Regla 7 (casos guardados) hecha (19/11/2026, 21:40 hora de Argentina) — sigue el punto 3
 - `goes19/historial.py`: en cada ciclo con tormentas, una línea por imagen de radar en
   `data/goes19/historial/AAAA-MM-DD.jsonl` (día UTC) con satélite, rayos y señales de cada
@@ -172,7 +189,7 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   el PR y lo une a main (permiso dado). Probar siempre con `pytest`, `herramientas/emular_workflow.py`
   (con tormenta y sin actividad) y, si cambia la clasificación, el 13/11 con
   `herramientas/simular_evento_real.py` (frames en `data/radar/historico`).
-- Hechos con Claude y en producción: PR #15 a #44 (#40-41 plan, #42 punto 1, #43 punto 2, #44 casos guardados) (ayer: plan 1-7 y puntos 1-5; hoy: índices
+- Hechos con Claude y en producción: PR #15 a #45 (#40-41 plan, #42 punto 1, #43 punto 2, #44 casos guardados, #45 punto 3) (ayer: plan 1-7 y puntos 1-5; hoy: índices
   por fenómeno, localidades, GOES-19, ambiente, calidad de estaciones, calibración de lluvia,
   estado de fuentes, estación CWOP).
 - Localidades: Bahía Blanca, Ingeniero White, General Daniel Cerri, Punta Alta, Tornquist,
@@ -184,8 +201,8 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - **Próximo trabajo de Lucas:** corrección de los umbrales de tormentas (granizo severo con
   radar crudo está bajo: el 13/11 en Punta Alta cayó granizo chico y ClimaAR dijo "posible
   severo"). Ahora es el punto 4 de `docs/INSPECCION_FUENTES.md`: un puntaje de gravedad por tormenta
-  (radar + satélite + rayos + modelo), después de los puntos 1 a 3. **Puntos 1 (#42) y 2 (#43)
-  terminados: no avanzar al punto 3 sin que Lucas lo diga.**
+  (radar + satélite + rayos + modelo), después de los puntos 1 a 3. **Puntos 1 (#42), 2 (#43) y 3
+  (#45) terminados: no avanzar al punto 4 sin que Lucas lo diga.**
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,

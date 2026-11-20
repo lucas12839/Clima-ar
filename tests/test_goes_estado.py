@@ -247,3 +247,9 @@ def test_integridad_rechaza_senal_severa_sin_sincronizar(tmp_path, monkeypatch):
     t = {"track_id": 4, "senales_severas": {"fase": {"estado": "ok", "sincronizacion": {"estado": "desfase_excesivo"}}}}
     with pytest.raises(SystemExit, match="senales_severas.fase"):
         _validar(tmp_path, monkeypatch, _goes([t]), [{"track_id": 4}])
+
+
+def test_integridad_rechaza_rayos_de_otra_ventana(tmp_path, monkeypatch):
+    t = {"track_id": 4, "rayos": {"estado": "ok", "fin_utc": "2026-11-19T22:30:00Z"}}
+    with pytest.raises(SystemExit):
+        _validar(tmp_path, monkeypatch, _goes([t]), [{"track_id": 4}])

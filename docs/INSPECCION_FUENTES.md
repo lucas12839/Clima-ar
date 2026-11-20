@@ -120,7 +120,8 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
    hielo en el tope. **Terminado (#43)**: además vapor − infrarrojo y el nivel de congelamiento
    calculado del perfil del modelo (venía vacío).
 3. **Rayos mejorados:** salto de rayos con el método estándar (más de 2 desvíos en intervalos de
-   2 min) y área de los rayos, por tormenta.
+   2 min) y área de los rayos, por tormenta. **Terminado (#45)**: además cada rayo cuenta para
+   una sola tormenta.
 4. **Puntaje de gravedad por tormenta (estilo NowCastMIX):** granizo, ráfagas y lluvia intensa con
    radar + satélite + rayos + modelo. **Reemplaza la corrección de umbrales** (Punta Alta,
    Tornquist). Mientras tanto se mantiene "posible severa".

@@ -131,20 +131,32 @@ def _bajar(meta: dict, carpeta: Path) -> Path:
     return destino
 
 
-def _leer(meta: dict, destino: Path, centro: tuple[float, float], radio_km: float):
-    """Lectura NetCDF de a uno: la librería HDF5 no es segura con hilos."""
+def _leer(meta: dict, destino: Path, centro: tuple[float, float], radio_km: float) -> dict:
+    """Lectura NetCDF de a uno: la librería HDF5 no es segura con hilos.
+    Devuelve los rayos del archivo dentro del radio, con su área (km²) y
+    energía (fJ): rayos chicos y muchos = corriente ascendente fuerte."""
     import xarray as xr
 
     with xr.open_dataset(destino, engine="netcdf4", mask_and_scale=True) as ds:
         lat = np.asarray(ds["flash_lat"].values, dtype=float)
         lon = np.asarray(ds["flash_lon"].values, dtype=float)
+        area = (np.asarray(ds["flash_area"].values, dtype=float)
+                if "flash_area" in ds else np.full(lat.shape, np.nan))
+        energia = (np.asarray(ds["flash_energy"].values, dtype=float)
+                   if "flash_energy" in ds else np.full(lat.shape, np.nan))
     destino.unlink(missing_ok=True)
     ok = np.isfinite(lat) & np.isfinite(lon)
-    lat, lon = lat[ok], lon[ok]
+    lat, lon, area, energia = lat[ok], lon[ok], area[ok], energia[ok]
     if lat.size:
         dentro = distancia_km(centro[0], centro[1], lat, lon) <= radio_km
-        lat, lon = lat[dentro], lon[dentro]
-    return _parse_utc(meta["end_time_utc"]), lat, lon
+        lat, lon, area, energia = lat[dentro], lon[dentro], area[dentro], energia[dentro]
+    return {
+        "fin": _parse_utc(meta["end_time_utc"]),
+        "lat": lat,
+        "lon": lon,
+        "area_km2": area / 1e6,       # GLM da m²
+        "energia_fj": energia * 1e15,  # GLM da J
+    }
 
 
 def _bajar_y_leer(archivos: list[dict], centro, radio_km) -> list[tuple]:
@@ -160,14 +172,14 @@ def _bajar_y_leer(archivos: list[dict], centro, radio_km) -> list[tuple]:
     return res
 
 
-def _resumen_ventana(res: list[tuple]) -> dict[str, Any]:
+def _resumen_ventana(res: list[dict]) -> dict[str, Any]:
     if not res:
         return {"disponible": False, "motivo": "NO_SE_PUDO_LEER_GLM"}
-    fin = max(t for t, _, _ in res)
-    inicio = min(t for t, _, _ in res) - timedelta(seconds=20)
-    lat = np.concatenate([a for _, a, _ in res])
-    lon = np.concatenate([b for _, _, b in res])
-    edades = np.concatenate([np.full(a.size, (fin - t).total_seconds() / 60.0) for t, a, _ in res])
+    fin = max(r["fin"] for r in res)
+    inicio = min(r["fin"] for r in res) - timedelta(seconds=20)
+    lat = np.concatenate([r["lat"] for r in res])
+    lon = np.concatenate([r["lon"] for r in res])
+    edades = np.concatenate([np.full(r["lat"].size, (fin - r["fin"]).total_seconds() / 60.0) for r in res])
     # Cobertura real: si faltan archivos, la tasa se calcula sobre lo leído.
     cobertura = min(VENTANA_MIN, len(res) / 3.0, (fin - inicio).total_seconds() / 60.0)
     salida = resumir(lat, lon, edades, cargar_localidades(), cobertura)
@@ -178,32 +190,38 @@ def _resumen_ventana(res: list[tuple]) -> dict[str, Any]:
     return salida
 
 
-def _rayos_radar(res: list[tuple], frame: datetime, minutos: float) -> dict[str, Any]:
+def _rayos_radar(res: list[dict], frame: datetime, minutos: float) -> dict[str, Any]:
     """Rayos de los `minutos` que terminan en la imagen de radar, con su edad
     respecto de esa imagen (para atribuirlos a cada tormenta)."""
     desde = frame - timedelta(minutes=minutos)
-    elegidos = [(t, a, b) for t, a, b in res if desde < t <= frame]
+    elegidos = [r for r in res if desde < r["fin"] <= frame]
+    vacio = np.zeros(0)
     if not elegidos:
-        return {"cobertura_min": 0.0, "minutos": np.zeros(0), "latitude": np.zeros(0),
-                "longitude": np.zeros(0), "archivos": 0}
+        return {"cobertura_min": 0.0, "ventana_min": minutos, "minutos": vacio, "latitude": vacio,
+                "longitude": vacio, "area_km2": vacio, "energia_fj": vacio, "archivos": 0}
     return {
         "cobertura_min": min(minutos, len(elegidos) / 3.0),
-        "minutos": np.concatenate([np.full(a.size, (frame - t).total_seconds() / 60.0) for t, a, _ in elegidos]),
-        "latitude": np.concatenate([a for _, a, _ in elegidos]),
-        "longitude": np.concatenate([b for _, _, b in elegidos]),
+        "ventana_min": minutos,
+        "minutos": np.concatenate([np.full(r["lat"].size, (frame - r["fin"]).total_seconds() / 60.0)
+                                   for r in elegidos]),
+        "latitude": np.concatenate([r["lat"] for r in elegidos]),
+        "longitude": np.concatenate([r["lon"] for r in elegidos]),
+        "area_km2": np.concatenate([r["area_km2"] for r in elegidos]),
+        "energia_fj": np.concatenate([r["energia_fj"] for r in elegidos]),
         "archivos": len(elegidos),
     }
 
 
 def ventana_y_rayos_radar(ahora: datetime | None = None, centro=(-38.7342, -62.1654), radio_km: float = 240.0,
                           frame_radar: datetime | None = None,
-                          minutos_radar: float = 10.0) -> tuple[dict[str, Any], dict[str, Any] | None]:
+                          minutos_radar: float = 14.0) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Una sola descarga para dos usos:
 
     1. ventana: últimos 20 min hasta el archivo más reciente (por localidad,
        como siempre: con el radar atrasado los rayos siguen siendo de ahora);
-    2. rayos_radar: los 10 min que terminan en la imagen de radar, para
-       atribuir rayos a cada tormenta en el mismo instante que el radar.
+    2. rayos_radar: los 14 min que terminan en la imagen de radar (lo que
+       pide el algoritmo de salto de rayos), para atribuir rayos a cada
+       tormenta en el mismo instante que el radar.
     """
     ahora = ahora or datetime.now(timezone.utc)
     horas = [ahora, ahora - timedelta(hours=1)]
@@ -220,7 +238,7 @@ def ventana_y_rayos_radar(ahora: datetime | None = None, centro=(-38.7342, -62.1
     union = {m["key"]: m for m in recientes + del_radar}
     res = _bajar_y_leer(sorted(union.values(), key=lambda m: m["end_time_utc"]), centro, radio_km)
     fines_recientes = {_parse_utc(m["end_time_utc"]) for m in recientes}
-    salida = _resumen_ventana([r for r in res if r[0] in fines_recientes])
+    salida = _resumen_ventana([r for r in res if r["fin"] in fines_recientes])
     if "archivos_leidos" in salida:
         salida["archivos_esperados"] = len(recientes)
     rayos = _rayos_radar(res, frame_radar, minutos_radar) if frame_radar is not None else None

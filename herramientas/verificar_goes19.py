@@ -25,7 +25,7 @@ for n, v in {**s["products"], **s["cloudtop"]}.items():
           {k: round(x, 1) for k, x in (v.get("statistics") or {}).items() if k in ("min", "median", "max")}, v.get("error", ""))
 print("GLM:", s["glm"].get("rayos_frame_radar"), s["glm"]["ventana"].get("archivos_leidos"), s["glm"]["ventana"].get("archivos_esperados"))
 pt = s["por_tormenta"]
-print("POR TORMENTA:", pt["estado"], len(pt["tormentas"]))
+print("POR TORMENTA:", pt["estado"], len(pt["tormentas"]), "saltos de rayos:", pt.get("saltos_de_rayos"))
 for t in pt["tormentas"]:
     print(f"  tormenta {t['track_id']}: radar {t['dbz_max']} r {t['radio_km']} km | C13 {t['c13'].get('estado')} min {t['c13'].get('min_c')} p10 {t['c13'].get('p10_c')} corr {t['c13'].get('corrimiento_km')} px {t['c13'].get('pixeles')} | C08 min {t['c08'].get('min_c')} | altura max {t['altura_topes'].get('max_km')} ({t['altura_paralaje_km']} {t['altura_paralaje_origen']}) | pres min {t['presion_topes'].get('min_hpa')} | rayos {t['rayos'].get('cantidad')}")
     sev = t.get("senales_severas") or {}
@@ -38,6 +38,11 @@ for t in pt["tormentas"]:
           f"vapor-IR max {vi.get('max_c')} | hielo {fa.get('fraccion_hielo_en_nubes')} | "
           f"altura 2 km {a2.get('estado')} {a2.get('max_km')} | congelamiento {(co.get('nivel') or {}).get('metros')} m, "
           f"tope sobre 0 °C {co.get('tope_sobre_congelamiento_km')} km")
+    sr = (t.get("rayos") or {}).get("salto_rayos") or {}
+    tr = (t.get("rayos") or {}).get("tamano_rayos") or {}
+    print(f"     rayos: tasas 2 min {sr.get('tasas_por_min')} salto {sr.get('salto')} nivel {sr.get('nivel_sigma')} "
+          f"({sr.get('estado')}) | área mín {tr.get('area_minima_km2')} km², mediana {tr.get('area_mediana_km2')}, "
+          f"chicos {tr.get('fraccion_chicos')}")
 for n, v in ((s.get("senales_severas") or {}).get("productos") or {}).items():
     print(n, v.get("status"), v.get("lectura"), v.get("sincronizacion"), v.get("pixeles_buenos_240km"), v.get("error", ""))
 print("Topes sobresalientes en la zona:", (s.get("senales_severas") or {}).get("topes_sobresalientes_zona"))
