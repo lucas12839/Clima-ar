@@ -77,7 +77,7 @@ distintas (~270 casos cada una):
 
 Decisión: **ANVIL entra desde 30 min** (a 10 y 20 min no aporta de forma pareja). Con su propio
 movimiento (Lucas-Kanade de pysteps) rindió más que con el nuestro. Costo: ~2 s más por ciclo.
-pysteps se agregó a `requirements.txt` (se instala en ~1 min en GitHub, probado).
+pysteps va en `requirements-nowcast.txt` y se instala solo en Intelligence (la cadena del radar no se demora).
 Si pysteps falta o falla, siguen los escenarios solos y el archivo lo dice (`anvil.usado`).
 
 ## Validación automática (en vivo)
