@@ -733,6 +733,13 @@ jobs:
           # se corta a los 5 min (una corrida nueva del WRF se baja una sola vez).
           timeout 300 python scripts/modelos_region.py || echo "AVISO: modelos por localidad no disponibles en este ciclo"
 
+      - name: Ambiente medido por el satélite (en paralelo, no cambia lo que se ve)
+        run: |
+          set -euo pipefail
+          # Punto 8 del plan. Falla segura: el script nunca corta el ciclo.
+          # En los refrescos reutiliza lo ya leído (mismos archivos).
+          timeout 180 python scripts/ambiente_satelite.py || echo "AVISO: ambiente del satélite no disponible en este ciclo"
+
       - name: Control de salud de la cadena (en paralelo, no cambia lo que se ve)
         env:
           CLIMAAR_DETECTOR_LATIDO: ${{ vars.CLIMAAR_DETECTOR_LATIDO }}
@@ -794,6 +801,12 @@ jobs:
 
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Restos viejos borrados en la auditoría del 20/11/2026: si una corrida
+          # anterior los trae de vuelta desde el artefacto, no se vuelven a guardar.
+          rm -f data/radar/status.json data/radar/latest.png data/radar/radar_features_rma10.csv \
+            data/radar/captura_error_1.png data/radar/captura_error_2.png data/radar/captura_error_3.png \
+            data/radar/continuidad.txt data/radar/ultimo_radar_sha256.txt
 
           # Casos guardados (regla 7): la carpeta aparece con la primera tormenta.
           historial_goes=""

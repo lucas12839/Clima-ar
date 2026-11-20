@@ -202,7 +202,10 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
    `docs/VALIDACION_MODELOS.md`)**: se corrigió la lectura de la lluvia del WRF; el WRF no acierta
    cuándo ni dónde llueve por localidad (~1 de cada 3 horas con lluvia): se usa como ambiente.
 8. **Ambiente medido por el satélite** (inestabilidad, agua precipitable, perfiles) antes de que
-   se nuble.
+   se nuble. **Terminado en paralelo (20/11)**: `scripts/ambiente_satelite.py` →
+   `data/ia/ambiente_satelite.json` (por localidad y región, última medición despejada hasta
+   6 h, comparación con el ECMWF). Validado con 25 días (`docs/VALIDACION_AMBIENTE_SATELITE.md`):
+   no anticipa solo el día de tormenta, pero corrige al modelo y marcó el agua del 13/11.
 9. **Calibración y medición continua:** lluvia con estaciones, puntaje con estaciones y rayos,
    informe mensual de aciertos.
 10. **Nunca a ciegas:** probar el modo sin radar (satélite + rayos + estaciones) con una tormenta

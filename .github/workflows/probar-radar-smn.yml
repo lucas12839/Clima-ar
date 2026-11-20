@@ -1045,6 +1045,12 @@ jobs:
           # un commit de los cambios producidos por el pipeline.
           # --------------------------------------------------
 
+          # Restos viejos borrados en la auditoría del 20/11/2026: si una corrida
+          # anterior los trae de vuelta desde el artefacto, no se vuelven a guardar.
+          rm -f data/radar/status.json data/radar/latest.png data/radar/radar_features_rma10.csv \
+            data/radar/captura_error_1.png data/radar/captura_error_2.png data/radar/captura_error_3.png \
+            data/radar/continuidad.txt data/radar/ultimo_radar_sha256.txt
+
           git add -A
 
           if git diff --cached --quiet; then

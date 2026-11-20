@@ -256,6 +256,41 @@ def validar_modelos_region() -> None:
           f"ensambles {e.get('estado')}")
 
 
+def validar_ambiente_satelite(radar_ts: datetime) -> None:
+    """Ambiente medido por el satélite (punto 8, en paralelo): de esta imagen de
+    radar, nunca con un barrido posterior ni más de 20 min anterior, y la
+    memoria de cielo despejado nunca del futuro ni de más de 6 h. Puede faltar."""
+    path = IA / "ambiente_satelite.json"
+    if not path.is_file() or path.stat().st_size == 0:
+        print("Ambiente del satélite: sin archivo (permitido)")
+        return
+    a = load(path)
+    if a.get("en_paralelo") is not True:
+        fail("ambiente del satélite: todavía debe correr en paralelo")
+    if not a.get("disponible"):
+        print(f"Ambiente del satélite: no disponible ({a.get('motivo')}) (permitido)")
+        return
+    if parse_utc(a.get("frame_radar_utc"), "ambiente.frame_radar_utc") != radar_ts:
+        fail(f"ambiente del satélite desincronizado: {a.get('frame_radar_utc')!r}")
+    for nombre, p in (a.get("productos") or {}).items():
+        if p.get("estado") != "ok":
+            continue
+        fin = parse_utc(p.get("fin_barrido_utc"), f"ambiente.{nombre}.fin")
+        desfase = (radar_ts - fin).total_seconds() / 60.0
+        if desfase < -1.0:
+            fail(f"ambiente del satélite: {nombre} es posterior a la imagen de radar")
+        if desfase > 20.0:
+            fail(f"ambiente del satélite: {nombre} con {desfase:.0f} min de desfase (máximo 20)")
+    for loc_id, loc in (a.get("localidades") or {}).items():
+        for grupo, m in (loc.get("ultimo_despejado") or {}).items():
+            h = parse_utc(m.get("hora_utc"), f"ambiente.{loc_id}.{grupo}")
+            edad = (radar_ts - h).total_seconds() / 60.0
+            if edad < -1.0 or edad > 361.0:
+                fail(f"ambiente del satélite: memoria {loc_id}/{grupo} con edad inválida ({edad:.0f} min)")
+    print(f"Ambiente del satélite: sincronizado (barrido {a.get('hora_satelite_utc')}, "
+          f"reutilizado={a.get('reutilizado')})")
+
+
 def validar_sin_actividad(nc, state, ml, radar_intel, final, radar_meteo) -> None:
     """Frame sin ecos operativos: ningún componente puede declarar principal."""
     if nc.get("actividad") is not False:
@@ -343,6 +378,7 @@ def main() -> None:
     validar_formacion(radar_ts)
     validar_nowcast_capas(radar_ts)
     validar_modelos_region()
+    validar_ambiente_satelite(radar_ts)
 
     candidate = tracking.get("track_principal_candidato_id")
     if candidate is None:
