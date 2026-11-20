@@ -102,6 +102,24 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
 2. Viernes 13/11: ¿cuánto llovió exactamente en Punta Alta y en Bahía Blanca, y a qué hora fue
    lo fuerte? (el radar crudo dio ~190 mm en Punta Alta: parece sobreestimar).
 
+## Punto 4 del plan terminado EN PARALELO (19/11/2026, 22:30 hora de Argentina) — esperando a Lucas para el 5
+- `scripts/puntaje_gravedad.py` (paso nuevo de Intelligence, antes de la integridad): por
+  tormenta, potencial 0-1 y grado (0, 2 posible, 3 probable, 4 severo) de **granizo, ráfagas y
+  lluvia intensa**, estilo NowCastMIX (reglas graduales, sin entrenamiento) con radar (p99 de
+  dBZ, velocidad), satélite (tope frío, tope sobresaliente, tope sobre 0 °C, enfriamiento),
+  rayos (salto 2σ, frecuencia, rayos chicos) y ambiente ECMWF (CAPE, cizalladura, gradiente,
+  aire seco, 0 °C, agua precipitable).
+- Reglas: sin núcleo fuerte en el radar no hay granizo/ráfagas; **"severo" exige confirmación
+  de satélite o rayos** (el radar solo llega a "probable": caso Punta Alta 13/11 → "posible");
+  eco fuerte + tope > −20 °C + 0 rayos = **probable eco no meteorológico** (sierras/Tornquist,
+  cerca del radar); 0 °C muy alto baja el granizo; si falta una fuente baja la confianza.
+- **EN PARALELO (regla 5): NO cambia lo que se ve.** Salida `data/ia/puntaje_tormentas.json`
+  (`modo: en_paralelo_no_se_muestra`, la integridad exige ese modo) y comparación por
+  localidad con lo que mostró ClimaAR en `data/ia/puntaje/AAAA-MM-DD.jsonl`. Pasar a mostrarlo
+  es decisión de Lucas después de las simulaciones.
+- Prueba real (21:50 hora de Argentina): 10 tormentas comunes, ninguna con granizo/ráfagas; el eco de 62 dBZ
+  cerca del radar marcado como sospechoso.
+
 ## Punto 3 del plan terminado (19/11/2026, 22:00 hora de Argentina) — esperando a Lucas para el 4
 - `goes19/rayos_tormenta.py`, dentro de `rayos` de cada tormenta en `por_tormenta`:
   - **asignación exclusiva:** cada rayo cuenta para una sola tormenta (la más cercana en el
@@ -184,26 +202,40 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - Hecho: `getdata` de Pillow reemplazado (mismo resultado comprobado en 40 frames).
 
 
-## Contexto rápido para un chat nuevo (19/11/2026, 16:40)
-- Lucas trabaja desde el celular, no sabe validar pull requests: Claude prueba, valida, abre
-  el PR y lo une a main (permiso dado). Probar siempre con `pytest`, `herramientas/emular_workflow.py`
-  (con tormenta y sin actividad) y, si cambia la clasificación, el 13/11 con
-  `herramientas/simular_evento_real.py` (frames en `data/radar/historico`).
-- Hechos con Claude y en producción: PR #15 a #45 (#40-41 plan, #42 punto 1, #43 punto 2, #44 casos guardados, #45 punto 3) (ayer: plan 1-7 y puntos 1-5; hoy: índices
-  por fenómeno, localidades, GOES-19, ambiente, calidad de estaciones, calibración de lluvia,
-  estado de fuentes, estación CWOP).
+## Contexto rápido para un chat nuevo (19/11/2026, 22:30 hora de Argentina)
+- Lucas trabaja desde el celular, no sabe inglés ni validar pull requests: Claude prueba,
+  valida, abre el PR y lo une a main (permiso dado). Todo en español, horarios en hora de
+  Argentina. Avisar al terminar cada punto y **no avanzar al siguiente sin que Lucas lo diga**.
+- **Plan único y vigente: `docs/INSPECCION_FUENTES.md`** (objetivo: sistema confiable que en el
+  futuro pueda avisar tormentas severas). 8 reglas de confiabilidad + 11 puntos. La corrección
+  de umbrales (Punta Alta, Tornquist) quedó dentro del punto 4.
+- Estado: **puntos 1 a 4 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
+  severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46 puntaje de gravedad EN PARALELO).
+  **Sigue el punto 5** (aviso de tormenta que se forma en el lugar, antes del radar). Después
+  6 a 11, luego simulaciones con casos reales para medir aciertos (regla 6, decisión de Lucas)
+  y recién ahí decidir avisos y mostrar el puntaje. Al final Render y Netlify.
+- Cómo probar: `pytest`; `herramientas/emular_workflow.py` en una copia, con tormenta y sin
+  actividad (para "sin actividad": imagen de radar toda de índice 253, guardarla también en
+  `data/radar/historico/AAAAmmddHHMMSS.png`, nuevo `radar_timestamp.txt`, correr
+  `probar-radar-smn.yml` de "Procesar radar" a "Validar cadena Radar" y después Intelligence).
+  Este entorno no tiene internet hacia NOAA/Open-Meteo: las pruebas reales se hacen en GitHub
+  con la rama temporal `prueba-inspeccion` (workflow con `on: push`), y después de unir se
+  revisa el primer ciclo en producción. Nunca commitear `data/` en PR de código
+  (`git checkout origin/main -- data .climaar` antes de commitear). PR por la API REST
+  (`gh api repos/lucas12839/clima-ar/pulls`), GraphQL no está disponible.
+- Pendiente menor: `tests/test_data_quality_contracts.py::...explicit_no_motion_state` usa los
+  datos en vivo y falla cuando la tormenta principal es nueva y no tiene predicción de
+  evolución (falla también sin cambios, 19/11 22:30). Hacerla independiente de los datos.
+- Datos por tormenta: `data/goes19/goes19_state.json` (`por_tormenta`, versión 1.7),
+  `data/ia/puntaje_tormentas.json`; casos guardados en `data/goes19/historial/` y
+  `data/ia/puntaje/`.
 - Localidades: Bahía Blanca, Ingeniero White, General Daniel Cerri, Punta Alta, Tornquist,
   Médanos, Sierra de la Ventana (Lucas sacó Monte Hermoso, Dorrego y Pehuen-Co).
 - Estaciones: solo fuentes con permiso de lectura automática (BCP, SMN, CWOP). No usar el
   usuario de Lucas ni claves internas de Ecowitt, WeatherLink, Weather Underground o
-  Weathercloud. MeteoPunta descartado (no respondió). Sí se puede pedir acceso a
-  instituciones (UNS, CONICET, Municipalidad, red provincial de 11 estaciones).
-- **Próximo trabajo de Lucas:** corrección de los umbrales de tormentas (granizo severo con
-  radar crudo está bajo: el 13/11 en Punta Alta cayó granizo chico y ClimaAR dijo "posible
-  severo"). Ahora es el punto 4 de `docs/INSPECCION_FUENTES.md`: un puntaje de gravedad por tormenta
-  (radar + satélite + rayos + modelo), después de los puntos 1 a 3. **Puntos 1 (#42), 2 (#43) y 3
-  (#45) terminados: no avanzar al punto 4 sin que Lucas lo diga.**
+  Weathercloud. MeteoPunta descartado. Pedidos a instituciones descartados por Lucas (casi
+  imposible); los datos completos del RMA10 (Doppler) ya los pidió Lucas: si llegan, se suman.
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
-`indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-inspeccion` y las ramas ya unidas de cada PR.
+`indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-inspeccion` (temporal de pruebas reales: borrar al final) y las ramas ya unidas de cada PR (`goes-zona-tormentas`, `senales-severas`, `casos-guardados`, `rayos-mejorados`, `puntaje-gravedad`, etc.).
