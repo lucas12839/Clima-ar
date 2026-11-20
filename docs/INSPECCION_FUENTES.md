@@ -124,7 +124,8 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
    una sola tormenta.
 4. **Puntaje de gravedad por tormenta (estilo NowCastMIX):** granizo, ráfagas y lluvia intensa con
    radar + satélite + rayos + modelo. **Reemplaza la corrección de umbrales** (Punta Alta,
-   Tornquist). Mientras tanto se mantiene "posible severa".
+   Tornquist). Mientras tanto se mantiene "posible severa". **Terminado en paralelo (#46)**:
+   `scripts/puntaje_gravedad.py`, no cambia lo que se ve hasta las simulaciones.
 5. **Aviso de tormenta que se forma en el lugar,** antes del radar (enfriamiento de topes,
    congelamiento, diferencias entre canales; estilo RDT).
 6. **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
