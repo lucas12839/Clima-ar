@@ -724,6 +724,14 @@ jobs:
           # Punto 5 del plan. Falla segura: el script nunca corta el ciclo.
           python scripts/aviso_formacion.py
 
+      - name: Nowcast en capas, nunca a ciegas sin radar nuevo (en paralelo, no cambia lo que se ve)
+        run: |
+          set -euo pipefail
+
+          # Punto 5b del plan. Falla segura: el script nunca corta el ciclo.
+          python scripts/nowcast_capas.py
+          test -s data/radar/nowcast_capas.json
+
       - name: Validar integridad completa de ClimaAR
         run: |
           set -euo pipefail

@@ -636,6 +636,44 @@ def leer_c13_previos(temp_dir: Path, reference_time: datetime,
     return campos, info
 
 
+def satelite_ahora(temp_dir: Path, ahora: datetime | None = None) -> dict:
+    """Punto 5b: la imagen MÁS RECIENTE del canal 13 (no la de la hora del
+    radar) y la anterior, por localidad. Con el radar atrasado o faltante, el
+    satélite sigue diciendo qué pasa ahora sobre cada localidad."""
+    from datetime import timedelta
+
+    from .topes_localidad import con_enfriamiento, estadisticas
+
+    ahora = ahora or datetime.now(timezone.utc)
+    locs = []
+    try:
+        locs = json.loads((BASE_DIR / "config" / "localidades.json").read_text(encoding="utf-8"))["localidades"]
+    except Exception:
+        pass
+    meta = latest_product_object("abi_c13", now=ahora, hours_back=1)
+    if meta is None:
+        return {"estado": "sin_imagen"}
+    dominio, lectura = leer_dominio(meta, ["CMI"], temp_dir, "abi_c13_ahora")
+    actual = estadisticas(dominio["datos"]["CMI"], dominio["latitude"], dominio["longitude"], locs)
+    hora = _hora_satelite(meta, dominio)
+    salida = {"estado": "ok", "hora_satelite_utc": por_tormenta.iso(hora),
+              "inicio_utc": meta.get("start_time_utc"), "lectura": lectura,
+              "edad_min": round((ahora - hora).total_seconds() / 60.0, 1) if hora else None}
+    previo = {}
+    minutos = None
+    inicio = por_tormenta.parse_utc(meta.get("start_time_utc"))
+    if inicio is not None:
+        meta_p = product_object_for_scan("abi_c13", por_tormenta.iso(inicio - timedelta(minutes=10)),
+                                         now=ahora, tolerance_seconds=60.0)
+        if meta_p is not None:
+            dom_p, _ = leer_dominio(meta_p, ["CMI"], temp_dir, "abi_c13_ahora_previa")
+            previo = estadisticas(dom_p["datos"]["CMI"], dom_p["latitude"], dom_p["longitude"], locs)
+            hora_p = _hora_satelite(meta_p, dom_p)
+            minutos = (hora - hora_p).total_seconds() / 60.0 if hora and hora_p else None
+    salida["por_localidad"] = con_enfriamiento(actual, previo, minutos)
+    return salida
+
+
 def _cargar_json(path: Path) -> dict | None:
     try:
         valor = json.loads(path.read_text(encoding="utf-8"))
@@ -740,6 +778,13 @@ def build_state(reference_time: datetime | None = None) -> dict:
             state["dmw"] = process_dmw(temp_dir, reference_time)
         except Exception as exc:
             state["dmw"] = {"status": "unavailable", "error": str(exc)}
+
+        # Punto 5b: la imagen más reciente del satélite, para cubrir el radar
+        # atrasado o faltante.
+        try:
+            state["satelite_ahora"] = satelite_ahora(temp_dir)
+        except Exception as exc:
+            state["satelite_ahora"] = {"estado": "error", "error": f"{type(exc).__name__}: {exc}"[:200]}
 
         # Punto 5: canal 13 de 10 y 20 min antes (mismo recorte), para ver
         # nubes que se están convirtiendo en tormenta.
