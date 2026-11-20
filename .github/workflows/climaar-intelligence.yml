@@ -762,12 +762,19 @@ jobs:
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # Casos guardados (regla 7): la carpeta aparece con la primera tormenta.
+          historial_goes=""
+          if [ -d data/goes19/historial ]; then
+            historial_goes="data/goes19/historial"
+          fi
+
           git add -A \
             data/radar \
             data/ia \
             data/meteorologia \
             data/sazb \
-            data/goes19/goes19_state.json
+            data/goes19/goes19_state.json \
+            $historial_goes
 
           if git diff --cached --quiet; then
             echo "No hay cambios para publicar."

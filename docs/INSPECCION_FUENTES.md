@@ -97,12 +97,20 @@ Objetivo: un sistema confiable que en el futuro pueda dar avisos de tormentas se
 5. **Prueba en paralelo:** cada mejora corre primero "en sombra" (calcula y guarda, pero no se
    muestra) junto a la versión actual, y la reemplaza solo si acierta más.
 6. **Medición de aciertos:** por fenómeno, porcentaje de tormentas detectadas, falsas alarmas y
-   minutos de anticipación, contra estaciones y rayos de GOES-19. Informe mensual.
+   minutos de anticipación, contra estaciones y rayos de GOES-19. **Decisión de Lucas
+   (19/11): se mide con simulaciones de casos reales al terminar los 11 puntos**, y recién ahí
+   se decide sobre avisos.
 7. **Casos guardados:** cada tormenta real queda como caso de prueba; todo cambio se vuelve a
-   correr sobre esos casos antes de unirse a main.
+   correr sobre esos casos antes de unirse a main. Radar: `data/radar/historico`. Satélite y
+   rayos por tormenta: `data/goes19/historial/AAAA-MM-DD.jsonl` (desde el 19/11/2026, #44;
+   `goes19/historial.py` tiene `leer()` para las simulaciones).
 8. **Pruebas:** con tormenta y sin actividad, `pytest` y emulación de los procesos reales.
 
 ## 5. Orden de trabajo
+
+Historia: se empezó por la corrección de umbrales (Punta Alta, Tornquist); Lucas pidió revisar
+todas las herramientas y salió este plan. La corrección de umbrales quedó dentro del punto 4,
+porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
 
 1. **Base del satélite:** leer solo la zona de 240 km de GOES-19 y calcular por tormenta seguida
    por el radar. **Terminado (#42)**: además se corrigió la ubicación de los píxeles (los datos

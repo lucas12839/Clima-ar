@@ -102,6 +102,13 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
 2. Viernes 13/11: ¿cuánto llovió exactamente en Punta Alta y en Bahía Blanca, y a qué hora fue
    lo fuerte? (el radar crudo dio ~190 mm en Punta Alta: parece sobreestimar).
 
+## Regla 7 (casos guardados) hecha (19/11/2026, 21:40 hora de Argentina) — sigue el punto 3
+- `goes19/historial.py`: en cada ciclo con tormentas, una línea por imagen de radar en
+  `data/goes19/historial/AAAA-MM-DD.jsonl` (día UTC) con satélite, rayos y señales de cada
+  tormenta (~0,3 KB por tormenta). Una sola vez por imagen; se reemplaza solo si después llegan
+  más productos del satélite. 400 días. Nunca corta el ciclo. `leer(desde, hasta)` para
+  simulaciones. El workflow Intelligence agrega la carpeta al guardar resultados.
+
 ## Punto 2 del plan terminado (19/11/2026, 20:50 hora de Argentina) — esperando a Lucas para el 3
 - **Señales de tormenta severa por satélite**, por tormenta (`senales_severas` dentro de cada
   tormenta en `por_tormenta`), con la misma sincronización, movimiento y perspectiva del punto 1:
@@ -165,7 +172,7 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   el PR y lo une a main (permiso dado). Probar siempre con `pytest`, `herramientas/emular_workflow.py`
   (con tormenta y sin actividad) y, si cambia la clasificación, el 13/11 con
   `herramientas/simular_evento_real.py` (frames en `data/radar/historico`).
-- Hechos con Claude y en producción: PR #15 a #43 (#40-41 plan, #42 punto 1, #43 punto 2) (ayer: plan 1-7 y puntos 1-5; hoy: índices
+- Hechos con Claude y en producción: PR #15 a #44 (#40-41 plan, #42 punto 1, #43 punto 2, #44 casos guardados) (ayer: plan 1-7 y puntos 1-5; hoy: índices
   por fenómeno, localidades, GOES-19, ambiente, calidad de estaciones, calibración de lluvia,
   estado de fuentes, estación CWOP).
 - Localidades: Bahía Blanca, Ingeniero White, General Daniel Cerri, Punta Alta, Tornquist,

@@ -779,6 +779,11 @@ def main() -> None:
         encoding="utf-8",
     )
 
+    # Regla 7 del plan: caso guardado (datos por tormenta de esta imagen).
+    from .historial import guardar
+
+    print(f"Caso guardado: {guardar(state)}")
+
     print("ClimaAR GOES-19 State Engine")
     print(f"Frame RMA10: {reference_time.isoformat()}")
     print(f"Estado: {state['status']}")
