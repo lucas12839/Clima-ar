@@ -132,9 +132,10 @@ def test_registro_de_errores_viejo_se_descarta(tmp_path, monkeypatch):
 
 def test_seguimiento_no_reinicia_la_numeracion(tmp_path, monkeypatch):
     """Cielo limpio en el estado previo -> reconstrucción. Antes volvía a 1."""
-    frames = sorted((ROOT / "data/radar/historico").glob("20261120*.png"))[-3:]
-    if len(frames) < 3:
-        pytest.skip("sin imágenes de radar guardadas")
+    frames = [ROOT / "data/radar/historico" / n
+              for n in ("20261120185000.png", "20261120190000.png", "20261120191000.png")]
+    if not all(f.exists() for f in frames):
+        pytest.skip("sin las imágenes de radar de la prueba")
     radar = tmp_path / "data/radar"
     (radar / "historico").mkdir(parents=True)
     (radar / "seguimiento").mkdir()
@@ -253,9 +254,12 @@ def test_capturador_no_toca_el_estado_del_seguimiento():
 
 
 def test_seguimiento_sigue_las_mismas_tormentas_entre_imagenes(tmp_path, monkeypatch):
-    frames = sorted((ROOT / "data/radar/historico").glob("20261120*.png"))[-4:]
-    if len(frames) < 4:
-        pytest.skip("sin imágenes de radar guardadas")
+    # Imágenes fijas (tormentas del 20/11, 15:40-16:10 hora de Argentina). El
+    # histórico se poda a los 30 días: después la prueba se saltea.
+    nombres = ("20261120184000.png", "20261120185000.png", "20261120190000.png", "20261120191000.png")
+    frames = [ROOT / "data/radar/historico" / n for n in nombres]
+    if not all(f.exists() for f in frames):
+        pytest.skip("sin las imágenes de radar de la prueba")
     radar = tmp_path / "data/radar"
     (radar / "historico").mkdir(parents=True)
     (radar / "seguimiento").mkdir()
