@@ -271,6 +271,9 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
     acumulado); medido con 26 días: el WRF no acierta cuándo ni dónde llueve por localidad
     (~1 de cada 3 horas con lluvia), sirve como ambiente. `docs/VALIDACION_MODELOS.md`.
     Historial en la rama `datos-wrf-historial`.
+- **5b CERRADO (20/11, 16:25, Lucas lo deja a criterio de Claude):** cerrado con la envolvente
+  (#61). Primer ciclo en vivo OK (19:00 UTC, tormentas con 413 rayos). Se sigue midiendo solo en
+  vivo (`verificacion_nowcast.json` → `llegadas_acumulado`); se revisa en las simulaciones finales.
 - **SIGUIENTE (esperar a Lucas):** punto 8 (ambiente medido por el satélite).
 - Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,

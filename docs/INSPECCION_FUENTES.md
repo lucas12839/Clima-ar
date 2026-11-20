@@ -130,7 +130,7 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
    congelamiento, diferencias entre canales; estilo RDT). **Terminado en paralelo (#48)**:
    `goes19/formacion.py` + `scripts/aviso_formacion.py`, no cambia lo que se ve. Simulado con
    3 días reales: grado "probable" o más acierta 58-85 % con ~20 min de ventaja.
-5b. **Terminado en paralelo (#53, #57, #59 y envolvente de llegadas del 20/11 tarde; validado: `docs/VALIDACION_NOWCAST_CAPAS.md`)**. Tormenta en la próxima hora hasta 10 km: 74 % "probable" / 81 % "posible"; lluvia 82 % / 87 %. **Nunca a ciegas cuando no hay imagen de radar nueva** (agregado el 20/11 por pedido de
+5b. **CERRADO el 20/11 (decisión de Lucas, a criterio de Claude).** **Terminado en paralelo (#53, #57, #59 y envolvente de llegadas #61; validado: `docs/VALIDACION_NOWCAST_CAPAS.md`)**. Tormenta en la próxima hora hasta 10 km: 74 % "probable" / 81 % "posible"; lluvia 82 % / 87 %. **Nunca a ciegas cuando no hay imagen de radar nueva** (agregado el 20/11 por pedido de
    Lucas, va antes del 6). Noche del 19/11: SINARAME publicó con 16-18 min de atraso casi toda
    la noche y faltaron las imágenes de 22:20 y 00:00, justo cuando la tormenta pasaba por Bahía
    (caso: `docs/casos/2026-11-19_nube_rodillo_bahia.md`). **No se crea otro nowcast: se mejora
