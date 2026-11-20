@@ -569,6 +569,46 @@ def con_anvil(cfg: dict, flujo: dict, campos: dict[float, np.ndarray], salida: d
         return campos
 
 
+def movimiento(radar_dt: datetime, campo: np.ndarray, actual_dbz: np.ndarray, clutter: np.ndarray,
+               cfg: dict) -> dict[str, Any] | None:
+    """Campo de movimiento del nowcast en capas (px/min): flujo óptico con la
+    imagen anterior, controlado contra velocidades imposibles y mezclado con el
+    par anterior (3 imágenes). Lo usan el nowcast y las trayectorias por tormenta."""
+    previo = nf.frame_previo(radar_dt) if int((campo >= nf.UMBRAL_ECO_DBZ).sum()) >= 30 else None
+    if previo is None:
+        return None
+    prev_dbz = nf.cargar_dbz(previo[0])
+    if prev_dbz is None or prev_dbz.shape != actual_dbz.shape:
+        return None
+    gap = (radar_dt - previo[1]).total_seconds() / 60.0
+    prev = nc.campo_limpio(prev_dbz, clutter)
+    km_px = nf.km_por_pixel(actual_dbz.shape[1])
+    f1 = nf.estimar_flujo(prev, campo, gap, km_px)
+    if not f1["valido"]:
+        return None
+    try:
+        previas = nf.velocidades_previas(previo[1], prev_dbz, clutter)
+    except Exception:
+        previas = []
+    f1 = nf.controlar_velocidad(f1, previas)
+    u, v = f1["u"], f1["v"]
+    prev2 = None
+    if cfg.get("movimiento_3_imagenes") or cfg.get("anvil"):
+        pp = nf.frame_previo(previo[1])
+        if pp is not None:
+            ppd = nf.cargar_dbz(pp[0])
+            if ppd is not None and ppd.shape == actual_dbz.shape:
+                prev2 = nc.campo_limpio(ppd, clutter)
+                f2 = nf.estimar_flujo(prev2, prev, (previo[1] - pp[1]).total_seconds() / 60.0, km_px)
+                if f2["valido"] and cfg.get("movimiento_3_imagenes"):
+                    u = (0.6 * u + 0.4 * f2["u"]).astype(np.float32)
+                    v = (0.6 * v + 0.4 * f2["v"]).astype(np.float32)
+    tasa = nc.tendencia(prev, campo, u, v, gap) if cfg.get("tendencia_radar") else None
+    return {"u": u, "v": v, "tasa": tasa, "tres": [prev2, prev, campo] if prev2 is not None else None,
+            "velocidad_kmh": f1["velocidad_media_kmh"], "direccion_hacia_grados": f1["direccion_hacia_grados"],
+            "coherencia": f1["coherencia"], "intervalo_min": round(gap, 1), "km_px": km_px}
+
+
 def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     ahora = ahora or datetime.now(timezone.utc)
     cfg = {**CONFIG_DEFECTO, **leer_json(CONFIG)}
@@ -585,7 +625,10 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     firmas = firmas_localidades(senales)
     tormentas = tendencia_tormentas(goes)
     salida: dict[str, Any] = {
-        "version": VERSION, "en_paralelo": True, "generado_utc": iso(ahora),
+        "version": VERSION, "en_paralelo": False, "generado_utc": iso(ahora),
+        # Desde el 20/11/2026 se usa para lo que se ve (motor_decision_climaar.py).
+        "en_uso": ("llegadas a la zona de cada localidad (tormenta a <= 10 km, grado probable) "
+                   "y movimiento de las trayectorias por tormenta"),
         "radar_timestamp": radar_ts, "edad_radar_min": edad,
         "confianza_radar_por_edad": nc.confianza_por_edad(edad) if edad is not None else 0.0,
         "configuracion": cfg,
@@ -609,37 +652,7 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
         campo = nc.campo_limpio(actual_dbz, clutter)
         if cfg.get("control_calidad_satelite"):
             campo = control_calidad(campo, radar_dt, salida)
-        previo = nf.frame_previo(radar_dt) if int((campo >= nf.UMBRAL_ECO_DBZ).sum()) >= 30 else None
-        if previo is not None:
-            prev_dbz = nf.cargar_dbz(previo[0])
-            if prev_dbz is not None and prev_dbz.shape == actual_dbz.shape:
-                gap = (radar_dt - previo[1]).total_seconds() / 60.0
-                prev = nc.campo_limpio(prev_dbz, clutter)
-                km_px = nf.km_por_pixel(actual_dbz.shape[1])
-                f1 = nf.estimar_flujo(prev, campo, gap, km_px)
-                if f1["valido"]:
-                    try:
-                        previas = nf.velocidades_previas(previo[1], prev_dbz, clutter)
-                    except Exception:
-                        previas = []
-                    f1 = nf.controlar_velocidad(f1, previas)
-                    u, v = f1["u"], f1["v"]
-                    prev2 = None
-                    if cfg.get("movimiento_3_imagenes") or cfg.get("anvil"):
-                        pp = nf.frame_previo(previo[1])
-                        if pp is not None:
-                            ppd = nf.cargar_dbz(pp[0])
-                            if ppd is not None and ppd.shape == actual_dbz.shape:
-                                prev2 = nc.campo_limpio(ppd, clutter)
-                                f2 = nf.estimar_flujo(prev2, prev,
-                                                      (previo[1] - pp[1]).total_seconds() / 60.0, km_px)
-                                if f2["valido"] and cfg.get("movimiento_3_imagenes"):
-                                    u = (0.6 * u + 0.4 * f2["u"]).astype(np.float32)
-                                    v = (0.6 * v + 0.4 * f2["v"]).astype(np.float32)
-                    tasa = nc.tendencia(prev, campo, u, v, gap) if cfg.get("tendencia_radar") else None
-                    flujo = {"u": u, "v": v, "tasa": tasa, "tres": [prev2, prev, campo] if prev2 is not None else None, "velocidad_kmh": f1["velocidad_media_kmh"],
-                             "direccion_hacia_grados": f1["direccion_hacia_grados"],
-                             "coherencia": f1["coherencia"], "intervalo_min": round(gap, 1)}
+        flujo = movimiento(radar_dt, campo, actual_dbz, clutter, cfg)
     salida["movimiento"] = None if flujo is None else {
         k: flujo[k] for k in ("velocidad_kmh", "direccion_hacia_grados", "coherencia", "intervalo_min")}
     if campo is None:
