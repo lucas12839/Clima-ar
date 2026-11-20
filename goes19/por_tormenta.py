@@ -35,7 +35,7 @@ ALTURA_TOPE_DEFECTO_KM = 10.0  # para ubicar la tormenta si no hay altura medida
 ALTURA_TOPE_MIN_KM = 3.0
 ALTURA_TOPE_MAX_KM = 16.0
 DESFASE_MAX_MIN = 20.0         # satélite hasta 20 min antes que el radar
-RAYOS_VENTANA_MIN = 10.0
+RAYOS_VENTANA_MIN = 14.0   # ventana de rayos hasta la imagen de radar (salto 2σ)
 KM_POR_GRADO_LAT = 111.195
 
 
@@ -235,40 +235,11 @@ def estadistica_campo(campo: dict, tormenta: dict, frame: datetime, altura_km: f
 
 
 def rayos_por_tormenta(rayos: dict | None, tormenta: dict, frame: datetime) -> dict:
-    """Rayos GLM de la tormenta en los 10 min que terminan en la imagen de radar.
+    """Rayos de UNA tormenta (sin otras que compitan por los mismos rayos).
+    El cálculo general usa la asignación exclusiva de rayos_tormenta."""
+    from . import rayos_tormenta as rt
 
-    rayos: {"minutos": edad respecto del radar (positivo = antes),
-            "latitude", "longitude", "cobertura_min"}.
-    Cada rayo se compara con la posición que tenía la tormenta en ese minuto.
-    """
-    if not rayos or rayos.get("cobertura_min", 0) < 5:
-        return {"estado": "no_disponible", "ventana_min": RAYOS_VENTANA_MIN,
-                "fin_utc": iso(frame)}
-    edad = np.asarray(rayos["minutos"], dtype=float)
-    lat = np.asarray(rayos["latitude"], dtype=float)
-    lon = np.asarray(rayos["longitude"], dtype=float)
-    usar = (edad >= 0) & (edad < RAYOS_VENTANA_MIN)
-    edad, lat, lon = edad[usar], lat[usar], lon[usar]
-    if edad.size:
-        lat_t = tormenta["latitud"] - tormenta["norte_km_min"] * edad / KM_POR_GRADO_LAT
-        lon_t = tormenta["longitud"] - tormenta["este_km_min"] * edad / (
-            KM_POR_GRADO_LAT * math.cos(math.radians(tormenta["latitud"])))
-        r = 6371.0088
-        la1, lo1, la2, lo2 = map(np.radians, (lat, lon, lat_t, lon_t))
-        a = np.sin((la2 - la1) / 2) ** 2 + np.cos(la1) * np.cos(la2) * np.sin((lo2 - lo1) / 2) ** 2
-        d = 2 * r * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
-        cantidad = int(np.sum(d <= tormenta["radio_km"]))
-    else:
-        cantidad = 0
-    cobertura = min(RAYOS_VENTANA_MIN, float(rayos["cobertura_min"]))
-    return {
-        "estado": "ok",
-        "ventana_min": RAYOS_VENTANA_MIN,
-        "fin_utc": iso(frame),
-        "cobertura_min": round(cobertura, 1),
-        "cantidad": cantidad,
-        "tasa_por_min": round(cantidad / cobertura, 2) if cobertura > 0 else None,
-    }
+    return rt.por_tormenta(rayos, rt.asignar(rayos, [tormenta]), 0, iso(frame))
 
 
 def _anteriores(estado_previo: dict | None) -> dict[str, dict]:
@@ -328,9 +299,12 @@ def calcular(radar_nowcast: dict | None, frame: datetime, campos: dict[str, dict
     if not tormentas:
         return {"estado": "sin_tormentas", "frame_radar_utc": iso(frame), "tormentas": []}
 
+    from . import rayos_tormenta as rt
+
+    asignado = rt.asignar(rayos, tormentas)
     previos = _anteriores(estado_previo)
     salida = []
-    for t in tormentas:
+    for indice, t in enumerate(tormentas):
         # Para ubicar la tormenta: altura de 2 km si llegó a tiempo, si no 10 km.
         campo_altura = None
         for nombre_altura in ("altura_topes_2km", "altura_topes"):
@@ -367,7 +341,7 @@ def calcular(radar_nowcast: dict | None, frame: datetime, campos: dict[str, dict
             else:
                 item[nombre] = estadistica_campo(campo, t, frame, altura_km, tipo)
         item["c13"]["enfriamiento_c_10min"] = enfriamiento(item, previos.get(str(t["track_id"])))
-        item["rayos"] = rayos_por_tormenta(rayos, t, frame)
+        item["rayos"] = rt.por_tormenta(rayos, asignado, indice, iso(frame))
         item["senales_severas"] = senales_de_tormenta(
             t, frame, altura_km, campos, c13_campo, topes_sobresalientes, campo_dif, ambiente)
         salida.append(item)
@@ -377,6 +351,7 @@ def calcular(radar_nowcast: dict | None, frame: datetime, campos: dict[str, dict
         "frame_radar_utc": iso(frame),
         "metodo": "posición corregida por hora del satélite y por perspectiva (paralaje)",
         "topes_sobresalientes_zona": len(topes_sobresalientes),
+        "saltos_de_rayos": sum(1 for x in salida if ((x["rayos"].get("salto_rayos") or {}).get("salto"))),
         "tormentas": salida,
     }
 
