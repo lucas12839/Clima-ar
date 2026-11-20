@@ -138,3 +138,21 @@ Región: también mejora en todos los atrasos.
 - Límite: la limpieza de la "verdad" usa el mismo criterio del satélite, así que parte de la mejora
   es justamente haber sacado los ecos falsos; eso es real (no había nube), pero se va a confirmar con
   la validación automática en vivo.
+
+## La pregunta útil: "¿llega a mi localidad en la próxima hora?" (20/11/2026, 11:00 hora de Argentina)
+
+`herramientas/simular_llegadas.py`, 458 casos (26 días), radar atrasado 10, 20 y 30 min, verdad
+limpia de ecos falsos. Nowcast en capas con corrector (lo que corre hoy en paralelo):
+
+| Próxima hora | Detecta (llegó y avisó) | Falsas alarmas | Acierto total* | Hora ±15 min |
+|---|---|---|---|---|
+| Tormenta, en la localidad | 48-53 % (antes 29-35 %) | 25-35 % (antes 33-41 %) | 91-92 % | 72-79 % |
+| Tormenta, hasta 10 km | 63-64 % (antes 50-53 %) | 16-22 % (antes 38-46 %) | 86-87 % | 74-80 % |
+| Lluvia, hasta 10 km | 68-73 % (antes 74-76 %) | **5-7 %** (antes 39-41 %) | 81-84 % | 80-86 % |
+
+\* Incluye las horas en que no pasó nada y no se avisó: por eso es alto.
+
+**Veredicto: el 5b NO queda cerrado para el objetivo de 80-100 %.** Mejoró mucho (sobre todo
+menos falsas alarmas), pero la detección de tormentas en la próxima hora está en ~50 % (localidad)
+y ~63 % (con 10 km de margen). Lo que falta son, sobre todo, tormentas que **nacen o crecen durante
+la hora** (el radar viejo no las tiene).
