@@ -130,22 +130,34 @@ porque necesita antes los datos de los puntos 1 a 3. Es un solo plan.
    congelamiento, diferencias entre canales; estilo RDT). **Terminado en paralelo (#48)**:
    `goes19/formacion.py` + `scripts/aviso_formacion.py`, no cambia lo que se ve. Simulado con
    3 días reales: grado "probable" o más acierta 58-85 % con ~20 min de ventaja.
-5b. **Nunca a ciegas cuando el radar se atrasa o falta** (agregado el 20/11 por pedido de Lucas,
-   va antes del 6). Noche del 19/11: SINARAME publicó con 16-18 min de atraso casi toda la
-   noche y faltaron las imágenes de 22:20 y 00:00 (hora de Argentina), justo cuando la
-   tormenta pasaba por Bahía Blanca (llegó débil, se intensificó y se deshizo entre dos
-   imágenes). Qué hacer: (1) medir y mostrar la edad del radar en cada dato; (2) mover las
-   tormentas a la hora actual con su velocidad (radar adelantado); (3) cubrir el hueco con lo
-   que llega casi en tiempo real: rayos GLM (cada 20 s), satélite (cada 10 min, tendencia del
-   tope por localidad) y estaciones (cada ~5 min: lluvia, ráfaga, salto de presión, caída de
-   temperatura = frente de ráfagas); (4) buscar otra fuente de radar que llegue antes
-   (otros productos de SINARAME, mosaico del SMN) y recuperar imágenes que faltan;
-   (5) detectar **convección elevada sobre capa estable** (inversión cerca del suelo:
-   temperatura a 925 hPa mayor que la de 2 m, inhibición alta, capa límite baja, de noche) y
-   bajar el viento y el granizo esperados en superficie; (6) leer la **firma de las
-   estaciones** (temperatura que sube + humedad que baja + presión que sube de a poco = frente
-   de ráfagas débil; bajón fuerte de temperatura + salto de presión + ráfaga fuerte =
-   reventón). Caso guardado: `docs/casos/2026-11-19_nube_rodillo_bahia.md`.
+5b. **Nunca a ciegas cuando no hay imagen de radar nueva** (agregado el 20/11 por pedido de
+   Lucas, va antes del 6). Noche del 19/11: SINARAME publicó con 16-18 min de atraso casi toda
+   la noche y faltaron las imágenes de 22:20 y 00:00, justo cuando la tormenta pasaba por Bahía
+   (caso: `docs/casos/2026-11-19_nube_rodillo_bahia.md`). **No se crea otro nowcast: se mejora
+   el que ya existe** (`scripts/nowcast_flujo_optico.py`, flujo óptico, corre también en cada
+   refresco de 5 min) hasta que sirva al 100 % entre imágenes:
+   1. **"Ahora" adelantado:** lo que se muestra como "ahora" es la última imagen movida a la
+      hora actual (hoy se muestra la imagen tal como llegó, con el atraso).
+   2. **No rendirse a los 40 min:** seguir pronosticando con confianza que baja de a poco, y
+      apoyarse cada vez más en las fuentes en tiempo real.
+   3. **Corregirse con lo que llega en tiempo real:** rayos GLM (cada 20 s), la imagen más
+      reciente del satélite por localidad (cada 10 min: tope y enfriamiento) y las estaciones
+      (cada ~5 min: lluvia, ráfaga, presión, temperatura). Si el radar viejo dice "nada" pero
+      hay rayos o lluvia medida, manda lo medido.
+   4. **Capa fría y estable abajo (convección elevada):** con inversión cerca del suelo
+      (temperatura a 925 hPa mayor que la de 2 m, inhibición alta, capa límite baja) se baja el
+      viento y el granizo esperados en superficie.
+   5. **Firma de las estaciones:** temperatura que sube + humedad que baja + presión que sube de
+      a poco = frente de ráfagas débil; bajón fuerte de temperatura + salto de presión + ráfaga
+      fuerte = reventón.
+   6. **Mostrar siempre la edad del radar** y de qué fuente sale cada dato.
+   7. **Otra fuente de radar** que llegue antes (otros productos de SINARAME, mosaico del SMN) y
+      recuperar imágenes que faltan.
+   8. **Validación obligatoria:** con el radar guardado se simulan huecos (se saca la imagen
+      nueva y se pronostica con la anterior, 10 a 60 min de atraso) y se compara con la imagen
+      real que llegó después, por localidad. Se mide el acierto con y sin las mejoras; se une
+      solo si mejora y se repite con los casos guardados (19/11, 13/11, 3/11 y otros días con
+      tormentas).
 6. **Mejorar nuestro pronóstico** (mismo proceso y mismos archivos): movimiento con 3 o más
    imágenes, crecimiento o debilitamiento según el puntaje, varios escenarios y porcentaje de
    llegada (pysteps sobre nuestra grilla de 512 × 512, solo si su costo en el ciclo lo permite).
