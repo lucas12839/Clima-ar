@@ -144,6 +144,14 @@ def revisar(ahora: datetime | None = None, latido: str | None = None,
             alertas.append(f"La predicción por tormenta erra {mediana_km:.0f} km a 10 min "
                            "(¿se comparan tormentas distintas?).")
 
+    # Ambiente medido por el satélite (punto 8) --------------------------------
+    amb = leer(DATA / "ia/ambiente_satelite.json")
+    if isinstance(amb, dict):
+        datos["ambiente_satelite"] = {"disponible": amb.get("disponible"),
+                                      "hora_satelite_utc": amb.get("hora_satelite_utc")}
+        if amb.get("disponible") is False:
+            alertas.append(f"El ambiente del satélite no se pudo leer: {amb.get('motivo')}.")
+
     # Tamaño de lo que se guarda en cada ciclo -----------------------------------
     tamanos = {}
     for rel in ARCHIVOS_CICLO:
