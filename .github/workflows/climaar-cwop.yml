@@ -128,7 +128,8 @@ jobs:
     needs: [vigilar-detector, escuchar, publicar]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    # Puede esperar hasta 8 min (vuelta mínima): el límite tiene que ser mayor.
+    timeout-minutes: 12
     steps:
       - name: Lanzar la siguiente vuelta del reloj
         env:
