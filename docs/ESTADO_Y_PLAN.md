@@ -253,7 +253,18 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - **20/11 mañana:** máscara de clutter que no borra tormentas reales (#57); corrector con rayos y
   satélite medidos + control de calidad del radar con el satélite (ecos falsos de noche); ANVIL
   apagado (no aporta con el corrector). Lucas pidió después medir con la pregunta útil ("¿llega a
-  mi localidad en la próxima hora?") para ver si el 5b queda cerrado: TODAVÍA NO HECHO.
+  mi localidad en la próxima hora?") para ver si el 5b queda cerrado: HECHO (#59,
+  `herramientas/simular_llegadas.py`). **El 5b NO queda cerrado**: tormenta en la próxima hora,
+  detección ~50 % en la localidad y ~63 % hasta 10 km (falsas alarmas 16-35 %); lluvia hasta
+  10 km: detección ~70 %, falsas alarmas 5-7 %. Objetivo de Lucas: 80-100 %.
+- **SIGUIENTE (chat nuevo, esperar "arrancá"):** subir la detección de tormentas que nacen o
+  crecen durante la hora. Pasos: (1) analizar las omisiones (¿nacieron cerca o venían de lejos?)
+  con `simular_llegadas.py`; (2) conectar al pronóstico el aviso de formación por satélite
+  (punto 5, hoy en paralelo) y el salto de rayos (punto 3); (3) volver a simular y comparar.
+  Historial real de GOES-19 de los 26 días: rama `datos-goes-historial` (clonarla y pasar
+  `--goes <carpeta>`). Reglas: los rayos solos = tormenta eléctrica (no lluvia ni viento);
+  ANVIL quedó apagado (Lucas no quiere prolongar tendencias sin datos reales); lo que se ve en
+  la app todavía NO tiene el control de calidad con satélite (ecos falsos de noche).
 - Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
   #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).
