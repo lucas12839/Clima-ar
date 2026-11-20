@@ -126,6 +126,9 @@ def test_reloj_encadenado_cwop_vigila_al_detector_y_sigue_solo():
     assert set(sig["needs"]) == {"vigilar-detector", "escuchar", "publicar"}
     assert "gh workflow run climaar-cwop.yml" in str(sig)
     assert "480" in str(sig)  # vuelta mínima de 8 min
+    # El límite del trabajo tiene que dejar terminar esa espera (primera vuelta
+    # real del 20/11: cortado a los 3 min y la cadena se detuvo).
+    assert sig["timeout-minutes"] * 60 > 480 + 60
     assert data["permissions"]["actions"] == "write"
     assert jobs["publicar"]["concurrency"]["group"] == "climaar-production-writes"
     # nunca lanza el radar
