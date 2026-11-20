@@ -236,6 +236,14 @@ def comparar(medido: dict, modelo: dict | None) -> dict[str, Any]:
         d = v["temperatura_500_c"]["diferencia"]
         if abs(d) >= 2:
             lectura.append(f"en 500 hPa el aire medido es {abs(d):.1f} °C más {'cálido' if d > 0 else 'frío'} que en el modelo")
+    if "humedad_700_pct" in v:
+        d = v["humedad_700_pct"]["diferencia"]
+        if abs(d) >= 25:
+            lectura.append(f"en 700 hPa el aire medido está más {'húmedo' if d > 0 else 'seco'} que en el modelo ({d:+.0f} %)")
+    if "nivel_0c_m" in v:
+        d = v["nivel_0c_m"]["diferencia"]
+        if abs(d) >= 400:
+            lectura.append(f"el nivel de 0 °C medido está {abs(d):.0f} m más {'alto' if d > 0 else 'bajo'} que en el modelo")
     salida["lectura"] = lectura or ["el modelo coincide con lo medido"]
     if not v:
         salida["estado"] = "sin_medicion_despejada"
