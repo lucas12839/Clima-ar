@@ -175,6 +175,58 @@ def campos_escenarios(actual: np.ndarray, u: np.ndarray, v: np.ndarray, tiempos,
     return {float(t): campo_escenarios(np.stack([s[float(t)] for s in series]), float(t)) for t in tiempos}
 
 
+# Punto 6: crecimiento y debilitamiento con ANVIL (pysteps; física y estadística,
+# sin entrenamiento). Validado con herramientas/comparar_pysteps.py (2 muestras de
+# ~270 casos): combinado con los escenarios ("hay eco si lo dan los escenarios o
+# ANVIL") mejora desde 30 min; a 10 y 20 min no aporta y no se usa. ANVIL va con su
+# propio movimiento (Lucas-Kanade de pysteps): con el nuestro rindió menos.
+ANVIL_DESDE_MIN = 20.0
+
+
+def a_lluvia(dbz: np.ndarray) -> np.ndarray:
+    """dBZ -> mm/h (Marshall-Palmer), 0 debajo del umbral de eco."""
+    d = np.nan_to_num(dbz, nan=0.0)
+    r = (10 ** (d / 10.0) / 200.0) ** (1 / 1.6)
+    r[d < nf.UMBRAL_ECO_DBZ - 5.0] = 0.0
+    return r
+
+
+def a_dbz(r: np.ndarray) -> np.ndarray:
+    r = np.nan_to_num(r, nan=0.0)
+    z = 10 * np.log10(np.maximum(200.0 * np.maximum(r, 1e-6) ** 1.6, 1e-6))
+    z[r < 0.05] = 0.0
+    return z.astype(np.float32)
+
+
+def anvil(campos_3: list[np.ndarray], tiempos) -> dict[float, np.ndarray]:
+    """ANVIL de pysteps. `campos_3` = [hace 20 min, hace 10 min, actual] en dBZ limpios.
+    Devuelve dBZ a los minutos pedidos (desde la imagen)."""
+    import contextlib
+    import io
+
+    with contextlib.redirect_stdout(io.StringIO()):  # pysteps escribe mucho en pantalla
+        from pysteps import motion, nowcasts
+
+    validos = sorted(float(t) for t in tiempos if float(t) > ANVIL_DESDE_MIN)
+    if not validos:
+        return {}
+    with contextlib.redirect_stdout(io.StringIO()):
+        vel = motion.get_method("LK")(np.stack([np.nan_to_num(c) for c in campos_3]).astype(float))
+        r3 = np.stack([a_lluvia(c) for c in campos_3])
+        salida = nowcasts.get_method("anvil")(r3, vel, [t / 10.0 for t in validos],
+                                              ar_window_radius=25, ar_order=1)
+    return {t: a_dbz(c) for t, c in zip(validos, salida)}
+
+
+def combinar_anvil(escenarios: dict[float, np.ndarray], anv: dict[float, np.ndarray]) -> dict[float, np.ndarray]:
+    """Hay eco si lo dan los escenarios o ANVIL (desde ANVIL_DESDE_MIN de la imagen)."""
+    salida = {}
+    for t, c in escenarios.items():
+        a = anv.get(float(t))
+        salida[t] = np.maximum(c, a) if (a is not None and float(t) > ANVIL_DESDE_MIN) else c
+    return salida
+
+
 def picos_por_zona(campo: np.ndarray, zonas: dict[str, np.ndarray], min_pixeles: int = 3) -> dict[str, float]:
     """dBZ que cubre al menos `min_pixeles` píxeles de cada zona."""
     salida = {}

@@ -63,8 +63,22 @@ todavía no (se cambia cuando el nowcast en capas pase a mostrarse).
 | pysteps S-PROG | 0,518 | 0,420 | 0,335 | 0,286 | 0,221 | 0,9 s |
 | pysteps ANVIL (crece/se debilita) | 0,553 | **0,479** | 0,393 | 0,338 | 0,274 | 1,3 s |
 
-Nuestro nowcast en capas gana en la región en casi todo. ANVIL es el único que se acerca y en
-las localidades, a 35 dBZ, es algo mejor a 10 y 40 min. Combinación capas + ANVIL: ver abajo.
+Nuestro nowcast en capas gana en la región en casi todo. ANVIL (el único que ve crecer y
+debilitarse la lluvia) se acerca y en algunas localidades es algo mejor.
+
+**Combinación (punto 6):** "hay eco si lo dan los escenarios o ANVIL". Se probó en dos muestras
+distintas (~270 casos cada una):
+
+| Tormentas | 20 min | 30 min | 40 min | 60 min |
+|---|---|---|---|---|
+| Localidades, muestra 1: capas / capas + ANVIL | 0,448 / 0,453 | 0,354 / **0,378** | 0,333 / **0,401** | 0,278 / **0,311** |
+| Localidades, muestra 2: capas / capas + ANVIL | **0,527** / 0,507 | 0,414 / **0,425** | 0,350 / **0,369** | 0,286 / **0,305** |
+| Región, muestra 2: capas / capas + ANVIL | 0,461 / **0,472** | 0,411 / **0,419** | 0,355 / **0,369** | 0,294 / **0,299** |
+
+Decisión: **ANVIL entra desde 30 min** (a 10 y 20 min no aporta de forma pareja). Con su propio
+movimiento (Lucas-Kanade de pysteps) rindió más que con el nuestro. Costo: ~2 s más por ciclo.
+pysteps se agregó a `requirements.txt` (se instala en ~1 min en GitHub, probado).
+Si pysteps falta o falla, siguen los escenarios solos y el archivo lo dice (`anvil.usado`).
 
 ## Validación automática (en vivo)
 

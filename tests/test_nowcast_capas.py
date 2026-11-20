@@ -166,3 +166,23 @@ def test_main_nunca_corta_el_ciclo(entorno, monkeypatch):
     assert ncap.main([]) == 0
     s = json.loads(ncap.SALIDA.read_text(encoding="utf-8"))
     assert s["disponible"] is False and "ERROR" in s["motivo"]
+
+
+def test_anvil_suma_crecimiento_y_falla_segura(entorno, monkeypatch):
+    pytest.importorskip("pysteps")
+    ncap.CONFIG.write_text(json.dumps({"anvil": True}), encoding="utf-8")
+    s = ncap.ejecutar(T0 + timedelta(minutes=25))
+    assert s["anvil"]["usado"] is True
+    assert s["localidades"]["bahia_blanca"]["estado_ahora"]["categoria"] == "tormenta"
+    # Sin pysteps (o con error) siguen los escenarios solos y lo dice.
+    monkeypatch.setattr(nc, "anvil", lambda *a, **k: (_ for _ in ()).throw(ImportError("sin pysteps")))
+    s = ncap.ejecutar(T0 + timedelta(minutes=25))
+    assert s["anvil"]["usado"] is False and "ImportError" in s["anvil"]["motivo"]
+    assert s["localidades"]["bahia_blanca"]["estado_ahora"]["categoria"] == "tormenta"
+
+
+def test_combinar_anvil_solo_desde_30_min():
+    a = {20.0: np.zeros(SHAPE, np.float32), 30.0: np.zeros(SHAPE, np.float32)}
+    b = {20.0: np.full(SHAPE, 40.0, np.float32), 30.0: np.full(SHAPE, 40.0, np.float32)}
+    c = nc.combinar_anvil(a, b)
+    assert c[20.0].max() == 0.0 and c[30.0].min() == 40.0

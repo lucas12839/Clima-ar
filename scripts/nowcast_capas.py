@@ -67,6 +67,7 @@ CONFIG_DEFECTO = {
     "movimiento_3_imagenes": True,
     "tendencia_radar": False,
     "escenarios": True,
+    "anvil": False,
     "nota": "Lo deciden las simulaciones de herramientas/simular_huecos.py.",
 }
 
@@ -350,6 +351,27 @@ def resumen_verificacion(verif: dict) -> dict[str, Any]:
 # ciclo
 # ------------------------------------------------------------
 
+def con_anvil(cfg: dict, flujo: dict, campos: dict[float, np.ndarray], salida: dict | None):
+    """Punto 6: suma ANVIL (crecimiento y debilitamiento) si está encendido. Falla segura."""
+    if not cfg.get("anvil") or not flujo.get("tres"):
+        if salida is not None:
+            salida["anvil"] = {"usado": False, "motivo": "apagado" if not cfg.get("anvil") else "faltan 3 imágenes"}
+        return campos
+    try:
+        cache = flujo.setdefault("anvil_cache", {})
+        faltan = [t for t in campos if float(t) > nc.ANVIL_DESDE_MIN and float(t) not in cache]
+        if faltan:
+            cache.update(nc.anvil(flujo["tres"], faltan))
+        anv = {t: cache[float(t)] for t in campos if float(t) in cache}
+        if salida is not None:
+            salida["anvil"] = {"usado": True, "desde_min": nc.ANVIL_DESDE_MIN}
+        return nc.combinar_anvil(campos, anv)
+    except Exception as exc:  # sin pysteps o error: siguen los escenarios solos
+        if salida is not None:
+            salida["anvil"] = {"usado": False, "motivo": f"{type(exc).__name__}: {str(exc)[:120]}"}
+        return campos
+
+
 def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     ahora = ahora or datetime.now(timezone.utc)
     cfg = {**CONFIG_DEFECTO, **leer_json(CONFIG)}
@@ -403,18 +425,20 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
                         previas = []
                     f1 = nf.controlar_velocidad(f1, previas)
                     u, v = f1["u"], f1["v"]
-                    if cfg.get("movimiento_3_imagenes"):
+                    prev2 = None
+                    if cfg.get("movimiento_3_imagenes") or cfg.get("anvil"):
                         pp = nf.frame_previo(previo[1])
                         if pp is not None:
                             ppd = nf.cargar_dbz(pp[0])
                             if ppd is not None and ppd.shape == actual_dbz.shape:
-                                f2 = nf.estimar_flujo(nf.campo_limpio(ppd, clutter), prev,
+                                prev2 = nf.campo_limpio(ppd, clutter)
+                                f2 = nf.estimar_flujo(prev2, prev,
                                                       (previo[1] - pp[1]).total_seconds() / 60.0, km_px)
-                                if f2["valido"]:
+                                if f2["valido"] and cfg.get("movimiento_3_imagenes"):
                                     u = (0.6 * u + 0.4 * f2["u"]).astype(np.float32)
                                     v = (0.6 * v + 0.4 * f2["v"]).astype(np.float32)
                     tasa = nc.tendencia(prev, campo, u, v, gap) if cfg.get("tendencia_radar") else None
-                    flujo = {"u": u, "v": v, "tasa": tasa, "velocidad_kmh": f1["velocidad_media_kmh"],
+                    flujo = {"u": u, "v": v, "tasa": tasa, "tres": [prev2, prev, campo] if prev2 is not None else None, "velocidad_kmh": f1["velocidad_media_kmh"],
                              "direccion_hacia_grados": f1["direccion_hacia_grados"],
                              "coherencia": f1["coherencia"], "intervalo_min": round(gap, 1)}
     salida["movimiento"] = None if flujo is None else {
@@ -429,6 +453,7 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     if campo is not None:
         if flujo is not None and cfg.get("escenarios"):
             campos = nc.campos_escenarios(campo, flujo["u"], flujo["v"], tiempos, flujo["tasa"])
+            campos = con_anvil(cfg, flujo, campos, salida)
         elif flujo is not None:
             campos = nc.serie(campo, flujo["u"], flujo["v"], tiempos, flujo["tasa"])
         else:
@@ -481,23 +506,27 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
         if campos:
             base = radar_dt
             emit = {(p.get("emitido_utc"), p.get("objetivo_utc")) for p in verif.get("pendientes") or []}
+            objetivos = []
             for n in range(1, 10):
                 obj = base + timedelta(minutes=10 * n)
                 plazo = (obj - ahora).total_seconds() / 60.0
-                if plazo < 0 or plazo > 90:
-                    continue
-                t_img = 10.0 * n
-                if (iso(ahora), iso(obj)) in emit:
-                    continue
-                if flujo is None:
-                    cmp_ = campo
-                elif cfg.get("escenarios"):
-                    cmp_ = nc.campos_escenarios(campo, flujo["u"], flujo["v"], [t_img], flujo["tasa"])[t_img]
-                else:
-                    cmp_ = nc.serie(campo, flujo["u"], flujo["v"], [t_img], flujo["tasa"])[t_img]
+                if 0 <= plazo <= 90 and (iso(ahora), iso(obj)) not in emit:
+                    objetivos.append((obj, plazo, 10.0 * n))
+            t_imgs = [t for _, _, t in objetivos]
+            if not t_imgs:
+                futuros = {}
+            elif flujo is None:
+                futuros = {t: campo for t in t_imgs}
+            elif cfg.get("escenarios"):
+                futuros = con_anvil(cfg, flujo, nc.campos_escenarios(campo, flujo["u"], flujo["v"], t_imgs,
+                                                                     flujo["tasa"]), None)
+            else:
+                futuros = nc.serie(campo, flujo["u"], flujo["v"], t_imgs, flujo["tasa"])
+            for obj, plazo, t_img in objetivos:
+                cmp_ = futuros[t_img]
                 verif.setdefault("pendientes", []).append({
                     "emitido_utc": iso(ahora), "radar_utc": radar_ts, "edad_radar_min": edad,
-                    "objetivo_utc": iso(obj), "plazo_min": round(plazo + edad, 1),
+                    "objetivo_utc": iso(obj), "plazo_min": round(t_img, 1),
                     "hoy": {"loc": {k: round(x, 1) for k, x in obs_loc.items()},
                             "reg": [round(obs_reg[z], 1) for z in sorted(obs_reg)]},
                     "capas": {"loc": {k: round(x, 1) for k, x in nc.picos_por_zona(cmp_, zl).items()},
