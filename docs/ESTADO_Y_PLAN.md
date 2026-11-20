@@ -264,8 +264,9 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - Simulaciones: `herramientas/simular_formacion.py` (punto 5) vuelve a correr días pasados con
   el radar guardado y el satélite de NOAA; en GitHub con la rama `prueba-inspeccion` (matriz de
   días en paralelo). Días con tormentas en el radar guardado: 27/10-6/11, 12/11, 13/11.
-- **Punto 5b nuevo (va antes del 6): nunca a ciegas cuando el radar se atrasa o falta**
-  (ver `docs/INSPECCION_FUENTES.md`). Noche 19/11: atraso de SINARAME 16-18 min y faltaron
+- **Punto 5b nuevo (va antes del 6): nunca a ciegas cuando no hay imagen de radar nueva.**
+  Decisión de Lucas (20/11): NO crear otro nowcast, mejorar al 100 % y validar el que ya existe
+  (`nowcast_flujo_optico.py`); 8 tareas en `docs/INSPECCION_FUENTES.md`. Noche 19/11: atraso de SINARAME 16-18 min y faltaron
   las imágenes de 22:20 y 00:00 justo cuando la tormenta pasaba por Bahía. En la ciudad no
   hubo nada: convección elevada sobre capa estable, nube de arco al norte (caso y foto en
   `docs/casos/2026-11-19_nube_rodillo_bahia.md`, con el análisis de Alex Gonzalez).
