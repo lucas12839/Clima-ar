@@ -102,6 +102,40 @@ Días con grado 4 ("posible severa") por localidad, del 20/10 al 19/11:
 2. Viernes 13/11: ¿cuánto llovió exactamente en Punta Alta y en Bahía Blanca, y a qué hora fue
    lo fuerte? (el radar crudo dio ~190 mm en Punta Alta: parece sobreestimar).
 
+## Punto 5 del plan terminado EN PARALELO (20/11/2026, 00:30 hora de Argentina) — esperando a Lucas para el 6
+- **Satélite** (`goes19/formacion.py`, en `goes19_state.json` → `formacion_satelite`, versión
+  1.8): el ciclo lee además el canal 13 de 10 y 20 min antes (mismo recorte, ~0,3 s cada uno).
+  Junta RDT (objetos seguidos), UW-CI (enfriamiento que no confunde movimiento con
+  crecimiento) y SATCAST (cruce de 0 °C, enfriamiento en 10 y 20 min, vapor − infrarrojo):
+  cada píxel se compara con el **más frío a 12 km (20 km) en la imagen anterior**; si al lado
+  hay nube igual de fría que no creció es **borde de yunque o banda alta** y se descarta.
+  Por objeto: tope, enfriamiento, hielo, altura, vapor − infrarrojo, rayos, posición en el
+  suelo (paralaje).
+- **Aviso** (`scripts/aviso_formacion.py`, paso nuevo de Intelligence): control con la imagen de
+  radar (sin contar ecos fijos) y los núcleos: si ya hay ≥ 35 dBZ es "tormenta que crece"
+  (punto 4), si no es "en formación". Grados **calibrados con la simulación**: 0 tope sobre
+  −10 °C o tope muy frío sin nada de precipitación a ≤ 160 km (nube alta); 1 vigilancia;
+  2 probable (eco débil 20-35 dBZ, rayo, o tope −20/−25 °C con hielo cerca del radar);
+  3 inminente (eco débil o rayo con tope bajo −20 °C). Ambiente estable o frente: máximo 1.
+  Seguimiento entre ciclos con número; **ventaja** = minutos entre el primer aviso y el eco de
+  tormenta; sin eco en 60 min = probable falsa alarma; cada tormenta nueva del radar se anota
+  con o sin aviso previo. Salida `data/ia/formacion_tormentas.json` (`modo:
+  en_paralelo_no_se_muestra`, la integridad lo exige) e historial `data/ia/formacion/`.
+- **Simulación con datos reales** (`herramientas/simular_formacion.py desde hasta --rayos`,
+  imágenes de `data/radar/historico` + NOAA): 19/11, 13/11 y 3/11 (este último no se usó para
+  calibrar). Grado ≥ 2: acierto 24 % / 85 % / 58 %, ventaja mediana ~20 min (hasta 60-70);
+  grado 3: 67 % / 79 % / 68 %. Vigilancia sola: 13-49 % (es solo "atención"). Del total de
+  tormentas nuevas del radar se anticiparon 9-30 %: las que nacen pegadas a otra tormenta o
+  bajo su yunque el satélite no las ve (límite físico). Los números de la simulación
+  arman núcleos desde la imagen (≥ 40 dBZ), así que las "tormentas nuevas" están algo infladas.
+- Arreglos del mismo PR: **velocidad con varias imágenes** (`nowcast_flujo_optico.py`): si un
+  par de imágenes da una velocidad muy distinta de los dos pares anteriores, se usa la mediana
+  (19/11 23:10: un par dio 58 km/h y los vecinos 22-25; ClimaAR mostró "viento fuerte" por
+  eso). Prueba `explicit_no_motion_state` ya no depende de los datos en vivo.
+- **Para decidir al final (regla 6):** el granizo que se muestra sigue saliendo solo de dBZ
+  (19/11 23:20 mostró "granizo probable" con 56 dBZ, CAPE 0, tope −37 °C, sin rayos; el
+  puntaje del punto 4 dio 0). Se cambia cuando Lucas decida, con las simulaciones.
+
 ## Punto 4 del plan terminado EN PARALELO (19/11/2026, 22:30 hora de Argentina) — esperando a Lucas para el 5
 - `scripts/puntaje_gravedad.py` (paso nuevo de Intelligence, antes de la integridad): por
   tormenta, potencial 0-1 y grado (0, 2 posible, 3 probable, 4 severo) de **granizo, ráfagas y
@@ -202,17 +236,17 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - Hecho: `getdata` de Pillow reemplazado (mismo resultado comprobado en 40 frames).
 
 
-## Contexto rápido para un chat nuevo (19/11/2026, 22:30 hora de Argentina)
+## Contexto rápido para un chat nuevo (20/11/2026, 00:30 hora de Argentina)
 - Lucas trabaja desde el celular, no sabe inglés ni validar pull requests: Claude prueba,
   valida, abre el PR y lo une a main (permiso dado). Todo en español, horarios en hora de
   Argentina. Avisar al terminar cada punto y **no avanzar al siguiente sin que Lucas lo diga**.
 - **Plan único y vigente: `docs/INSPECCION_FUENTES.md`** (objetivo: sistema confiable que en el
   futuro pueda avisar tormentas severas). 8 reglas de confiabilidad + 11 puntos. La corrección
   de umbrales (Punta Alta, Tornquist) quedó dentro del punto 4.
-- Estado: **puntos 1 a 4 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
-  severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46 puntaje de gravedad EN PARALELO).
-  **Sigue el punto 5** (aviso de tormenta que se forma en el lugar, antes del radar). Después
-  6 a 11, luego simulaciones con casos reales para medir aciertos (regla 6, decisión de Lucas)
+- Estado: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
+  severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
+  #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).
+  **Sigue el punto 6** (mejorar nuestro pronóstico). Después 7 a 11, luego simulaciones con casos reales para medir aciertos (regla 6, decisión de Lucas)
   y recién ahí decidir avisos y mostrar el puntaje. Al final Render y Netlify.
 - Cómo probar: `pytest`; `herramientas/emular_workflow.py` en una copia, con tormenta y sin
   actividad (para "sin actividad": imagen de radar toda de índice 253, guardarla también en
@@ -225,11 +259,12 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   (`gh api repos/lucas12839/clima-ar/pulls`), GraphQL no está disponible. **Antes de unir,
   revisar la lista de archivos del PR** (`gh api .../pulls/N/files`): el #46 se unió sin 3
   archivos (paso del workflow, integridad, plan) y se completó en el #47.
-- Pendiente menor: `tests/test_data_quality_contracts.py::...explicit_no_motion_state` usa los
-  datos en vivo y falla cuando la tormenta principal es nueva y no tiene predicción de
-  evolución (falla también sin cambios, 19/11 22:30). Hacerla independiente de los datos.
-- Datos por tormenta: `data/goes19/goes19_state.json` (`por_tormenta`, versión 1.7),
-  `data/ia/puntaje_tormentas.json`; casos guardados en `data/goes19/historial/` y
+- Simulaciones: `herramientas/simular_formacion.py` (punto 5) vuelve a correr días pasados con
+  el radar guardado y el satélite de NOAA; en GitHub con la rama `prueba-inspeccion` (matriz de
+  días en paralelo). Días con tormentas en el radar guardado: 27/10-6/11, 12/11, 13/11.
+- Pendiente para el final (regla 6): el granizo que se muestra sale solo de dBZ (ver punto 5).
+- Datos por tormenta: `data/goes19/goes19_state.json` (`por_tormenta` y `formacion_satelite`,
+  versión 1.8), `data/ia/puntaje_tormentas.json`, `data/ia/formacion_tormentas.json`; casos guardados en `data/goes19/historial/`, `data/ia/formacion/` y
   `data/ia/puntaje/`.
 - Localidades: Bahía Blanca, Ingeniero White, General Daniel Cerri, Punta Alta, Tornquist,
   Médanos, Sierra de la Ventana (Lucas sacó Monte Hermoso, Dorrego y Pehuen-Co).

@@ -311,6 +311,32 @@ class EvolutionConnectorTests(unittest.TestCase):
                 self.skipTest(
                     "Los datos actuales del repo no tienen actividad (sin principal)."
                 )
+            # Los datos en vivo pueden quedar a mitad de un ciclo: se elige una
+            # tormenta que esté en el nowcast y se la marca como principal en
+            # el seguimiento, para que la prueba no dependa del momento.
+            tracks_nowcast = [
+                n.get("track_id")
+                for n in json.loads(
+                    (radar_dir / "radar_nowcast.json").read_text(encoding="utf-8")
+                )["nowcast"]["nucleos"]
+                if n.get("track_id") is not None
+            ]
+            activos_estado = {
+                str(t.get("track_id"))
+                for t in json.loads(
+                    (track_dir / "estado.json").read_text(encoding="utf-8")
+                ).get("tracks", [])
+                if t.get("activo") is True and t.get("presente_en_ultimo_frame") is True
+            }
+            validos = [t for t in tracks_nowcast if str(t) in activos_estado]
+            if not validos:
+                self.skipTest("Los datos actuales no tienen una tormenta activa en todos los archivos.")
+            if str(candidate) not in {str(t) for t in validos}:
+                candidate = validos[0]
+                seguimiento_path = track_dir / "seguimiento_temporal.json"
+                seguimiento = json.loads(seguimiento_path.read_text(encoding="utf-8"))
+                seguimiento["track_principal_candidato_id"] = candidate
+                seguimiento_path.write_text(json.dumps(seguimiento), encoding="utf-8")
 
             principal_fields = {
                 radar_dir / "radar_nowcast.json": (
@@ -353,10 +379,19 @@ class EvolutionConnectorTests(unittest.TestCase):
             evolution_path = track_dir / "prediccion_evolucion.json"
             evolution = json.loads(evolution_path.read_text(encoding="utf-8"))
             evolution_track = next(
-                item
-                for item in evolution["nucleos"]
-                if str(item["track_id"]) == str(candidate)
+                (
+                    item
+                    for item in evolution["nucleos"]
+                    if str(item["track_id"]) == str(candidate)
+                ),
+                None,
             )
+            if evolution_track is None:
+                # Tormenta principal nueva: todavía sin predicción de evolución.
+                # La prueba no depende de los datos en vivo: se agrega la entrada.
+                evolution_track = dict(evolution["nucleos"][0]) if evolution["nucleos"] else {}
+                evolution_track["track_id"] = candidate
+                evolution["nucleos"].append(evolution_track)
             evolution_track.update(
                 {
                     "pronostico_disponible": False,
