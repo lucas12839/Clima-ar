@@ -528,9 +528,9 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
                     "emitido_utc": iso(ahora), "radar_utc": radar_ts, "edad_radar_min": edad,
                     "objetivo_utc": iso(obj), "plazo_min": round(t_img, 1),
                     "hoy": {"loc": {k: round(x, 1) for k, x in obs_loc.items()},
-                            "reg": [round(obs_reg[z], 1) for z in sorted(obs_reg)]},
+                            "reg": [int(round(obs_reg[z])) for z in sorted(obs_reg)]},
                     "capas": {"loc": {k: round(x, 1) for k, x in nc.picos_por_zona(cmp_, zl).items()},
-                              "reg": [round(x, 1) for _, x in sorted(nc.picos_por_zona(cmp_, zr).items())]},
+                              "reg": [int(round(x)) for _, x in sorted(nc.picos_por_zona(cmp_, zr).items())]},
                 })
         # Tope de tamaño: solo pendientes dentro de la ventana.
         verif["pendientes"] = [p for p in verif.get("pendientes") or []
@@ -545,13 +545,28 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     return salida
 
 
+def escribir_compacto(path: Path, data: dict) -> None:
+    """Sin espacios ni sangría: el archivo se guarda en git en cada ciclo (cuida el tamaño)."""
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name, suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as h:
+            json.dump(data, h, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
 def main(argv=None) -> int:
     ahora = parse_utc(os.environ["CLIMAAR_AHORA_UTC"]) if os.environ.get("CLIMAAR_AHORA_UTC") else None
     try:
         salida = ejecutar(ahora)
         verif = salida.pop("_verificacion", None)
         if verif is not None:
-            nf.escribir_json_atomico(VERIFICACION, verif)
+            escribir_compacto(VERIFICACION, verif)
     except Exception as exc:  # nunca corta el ciclo
         salida = {"version": VERSION, "en_paralelo": True, "disponible": False,
                   "motivo": f"ERROR: {type(exc).__name__}: {str(exc)[:200]}",
