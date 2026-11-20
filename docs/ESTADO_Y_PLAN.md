@@ -250,6 +250,10 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   cambian lo que se ve) y validados (`docs/VALIDACION_NOWCAST_CAPAS.md`). Archivos nuevos:
   `data/radar/nowcast_capas.json`, `data/ia/verificacion_nowcast.json` (validación automática en
   vivo), `data/ia/modelos_region.json`, `data/ia/modelos/`. Sigue el **punto 8** (esperar a Lucas).
+- **20/11 mañana:** máscara de clutter que no borra tormentas reales (#57); corrector con rayos y
+  satélite medidos + control de calidad del radar con el satélite (ecos falsos de noche); ANVIL
+  apagado (no aporta con el corrector). Lucas pidió después medir con la pregunta útil ("¿llega a
+  mi localidad en la próxima hora?") para ver si el 5b queda cerrado: TODAVÍA NO HECHO.
 - Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
   #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).
