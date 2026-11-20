@@ -1,8 +1,13 @@
 {
-  "version": "1.1.0",
+  "version": "2.0.0",
   "movimiento_3_imagenes": true,
   "tendencia_radar": false,
   "escenarios": true,
-  "nota": "Decidido con herramientas/simular_huecos.py (26 días, 655 imágenes de partida, huecos de 10 a 90 min): movimiento de 3 imágenes y escenarios mejoran en todos los huecos; la tendencia del radar empeora y queda apagada. Detalle en docs/VALIDACION_NOWCAST_CAPAS.md. Punto 6: ANVIL de pysteps (crecimiento y debilitamiento) combinado con los escenarios desde 30 min (herramientas/comparar_pysteps.py, 2 muestras de ~270 casos).",
-  "anvil": true
+  "nota": "Decidido con herramientas/simular_huecos.py --goes (26 días, 457 casos, historial real de GOES-19): el corrector con rayos y satélite mejora en todos los atrasos; ANVIL casi no aporta una vez que está el corrector y queda apagado; los ecos del radar sin ninguna nube encima se borran (ecos falsos de noche). Detalle en docs/VALIDACION_NOWCAST_CAPAS.md.",
+  "anvil": false,
+  "corrector": true,
+  "reglas_corrector": {
+    "tope_frio_rayos_c": -25.0
+  },
+  "control_calidad_satelite": true
 }

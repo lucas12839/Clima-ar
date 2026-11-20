@@ -105,3 +105,36 @@ Revisado en producción después de unir #53, #54 y #55:
 | ¿Alguna se bloquea? | No. Ciclo de Intelligence: ~3 min 30 s (antes ~2 min 30 s; tope de 15 min). Nowcast en capas ~9 s, modelos ~1 s (13-25 s cuando sale una corrida nueva del WRF, tope 5 min). Todas con falla segura. pysteps solo en Intelligence: la cadena del radar no se demora. |
 | ¿Se pierden datos? | No. Todo se guarda en git en el paso "Persistir". El archivo de validación automática se achicó de 300 kB a ~70 kB por ciclo (sin sangría y con números enteros en la región). |
 | ¿Están sincronizadas? | Sí. La integridad exige que el nowcast en capas sea de la misma imagen de radar, con la edad del radar bien calculada y ninguna fuente del futuro. Hora de cada fuente en `fuentes` (radar, rayos, satélite, estaciones, ambiente). Ciclos reales con integridad OK. |
+
+## Corrector con rayos y satélite medidos + control de calidad del radar (20/11/2026, mañana)
+
+Con el **historial real de GOES-19** de los mismos 26 días (`herramientas/historial_goes.py`, rama
+`datos-goes-historial`) se simularon los huecos con radar, rayos y satélite juntos, usando solo lo
+que ya estaría publicado a cada hora (satélite con ~8 min de demora, rayos de los últimos 10 min).
+
+**Hallazgo: ecos falsos del radar.** Varias noches (26 y 30/10, 5, 7, 8 y 9/11) el radar mostraba
+ecos de hasta 75 dBZ con el cielo despejado según el satélite (ej.: 8/11 00:10 hora de Argentina,
+ninguna nube más fría que +2 °C en todo el radio). Es propagación anómala (el haz se curva hacia el
+suelo con aire estable). Ahora el nowcast en capas borra los ecos sin ninguna nube encima
+(`control_calidad_satelite`) y la simulación también los saca de la "verdad".
+**Lo que se ve hoy en la pantalla todavía no tiene este control.**
+
+Resultado (457 casos; CSI, más alto = mejor):
+
+| Tormentas (35 dBZ), localidades | 10 min | 20 min | 30 min | 40 min | 60 min | 90 min |
+|---|---|---|---|---|---|---|
+| Hoy (imagen vieja) | 0,475 | 0,398 | 0,315 | 0,306 | 0,187 | 0,175 |
+| Capas (antes del corrector) | 0,519 | 0,407 | 0,338 | 0,313 | 0,223 | 0,194 |
+| **Capas + corrector** | **0,607** | **0,466** | **0,428** | **0,397** | **0,292** | **0,276** |
+
+Lluvia (20 dBZ) en localidades: 0,342 → **0,483** a 30 min y 0,294 → **0,431** a 60 min.
+Región: también mejora en todos los atrasos.
+
+- **ANVIL:** con el corrector casi no aporta (gana en unos plazos y pierde en otros): queda
+  **apagado** y pysteps ya no se instala. El código queda por si más adelante sirve.
+- **Rayos:** marcan **tormenta eléctrica** como fenómeno aparte (`fenomenos.tormenta_electrica`).
+  Solo agregan lluvia de tormenta si el satélite ve un tope de -25 °C o más frío encima.
+- Regla que se probó y quedó apagada: bajar tormentas sin rayos (empeora a 10-40 min).
+- Límite: la limpieza de la "verdad" usa el mismo criterio del satélite, así que parte de la mejora
+  es justamente haber sacado los ecos falsos; eso es real (no había nube), pero se va a confirmar con
+  la validación automática en vivo.

@@ -42,6 +42,7 @@ for _p in (ROOT, ROOT / "scripts"):
 import localidades_radar as lr  # noqa: E402
 import nowcast_capas_nucleo as nc  # noqa: E402
 import nowcast_flujo_optico as nf  # noqa: E402
+import corrector_tiempo_real as ct  # noqa: E402
 
 HUECOS = (10, 20, 30, 40, 60, 90)
 UMBRALES = (20.0, 35.0)
@@ -97,12 +98,75 @@ def flujo_promediado(f1: dict, f2: dict | None) -> tuple[np.ndarray, np.ndarray]
     return (0.6 * f1["u"] + 0.4 * f2["u"]).astype(np.float32), (0.6 * f1["v"] + 0.4 * f2["v"]).astype(np.float32)
 
 
+METODOS_GOES = ("hoy", "capas", "capas_anvil", "capas_corr", "capas_anvil_quitar", "capas_anvil_agregar",
+                "capas_anvil_corr", "capas_anvil_corr_bajar")
+
+
+def cargar_goes(carpeta: Path) -> dict | None:
+    """Junta todos los goes_<dia>.npz: barridos del canal 13 y rayos con su hora."""
+    inicios, valores, glm_fin, glm_lat, glm_lon, lat, lon = [], [], [], [], [], None, None
+    for p in sorted(carpeta.rglob("goes_*.npz")):
+        z = np.load(p)
+        if z["c13_valores"].size:
+            if lat is None:
+                lat, lon = z["lat"], z["lon"]
+            if z["c13_valores"].shape[1] == lat.shape[0]:
+                inicios += [np.datetime64(str(t).replace("Z", "")) for t in z["c13_inicio"]]
+                valores.append(z["c13_valores"])
+        if z["glm_fin"].size:
+            glm_fin.append(np.array([np.datetime64(str(t)[:19]) for t in z["glm_fin"]]))
+            glm_lat.append(z["glm_lat"])
+            glm_lon.append(z["glm_lon"])
+    if lat is None:
+        return None
+    orden = np.argsort(np.array(inicios))
+    return {"inicios": np.array(inicios)[orden], "valores": np.concatenate(valores)[orden], "lat": lat, "lon": lon,
+            "glm_fin": np.concatenate(glm_fin) if glm_fin else np.array([], "datetime64[s]"),
+            "glm_lat": np.concatenate(glm_lat) if glm_lat else np.zeros(0),
+            "glm_lon": np.concatenate(glm_lon) if glm_lon else np.zeros(0), "cache": {}}
+
+
+def satelite_cercano(goes: dict, hora, shape):
+    """Barrido del satélite más cercano a la hora de la imagen de radar (para limpiar la VERDAD)."""
+    h = np.datetime64(hora.replace(tzinfo=None))
+    d = np.abs(goes["inicios"] - (h - np.timedelta64(5, "m")))
+    i = int(np.argmin(d))
+    if d[i] > np.timedelta64(10, "m"):
+        return None
+    clave = ("c", i)
+    if clave not in goes["cache"]:
+        goes["cache"][clave] = ct.grilla_satelite(goes["lat"], goes["lon"], goes["valores"][i].astype(np.float32), shape)
+    return goes["cache"][clave]
+
+
+def datos_reales(goes: dict, hora, shape):
+    """Satélite ya publicado y rayos de los últimos 10 min a la hora `hora` (como en vivo)."""
+    h = np.datetime64(hora.replace(tzinfo=None))
+    limite = h - np.timedelta64(8, "m")       # el barrido se publica ~8 min después de empezar
+    i = int(np.searchsorted(goes["inicios"], limite, side="right")) - 1
+    sat = None
+    if i >= 0 and (h - goes["inicios"][i]) <= np.timedelta64(25, "m"):
+        if i not in goes["cache"]:
+            if len(goes["cache"]) > 40:
+                goes["cache"].pop(next(iter(goes["cache"])))
+            goes["cache"][i] = ct.grilla_satelite(goes["lat"], goes["lon"],
+                                                  goes["valores"][i].astype(np.float32), shape)
+        sat = goes["cache"][i]
+    f = goes["glm_fin"]
+    sel = (f > h - np.timedelta64(10, "m")) & (f <= h)
+    return sat, goes["glm_lat"][sel], goes["glm_lon"][sel]
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--desde", default="2026")
     ap.add_argument("--hasta", default="2100")
     ap.add_argument("--paso", type=int, default=1, help="usar 1 de cada N imágenes de partida")
     ap.add_argument("--salida", default=None)
+    ap.add_argument("--goes", default=None, help="carpeta con goes_<dia>.npz (historial_goes.py)")
+    ap.add_argument("--sin-anvil", action="store_true")
+    ap.add_argument("--variantes", default=None,
+                    help='JSON {"nombre": {reglas}}: prueba varias reglas del corrector (sin ANVIL)')
     ap.add_argument("--sin-clutter-intermitente", action="store_true",
                     help="usar solo la máscara de clutter vieja (para comparar)")
     args = ap.parse_args(argv)
@@ -124,6 +188,10 @@ def main(argv=None) -> int:
                 cache.pop(next(iter(cache)))
         return cache[dt]
 
+    goes = cargar_goes(Path(args.goes)) if args.goes else None
+    variantes = json.loads(args.variantes) if args.variantes else None
+    if goes is not None:
+        globals()["METODOS"] = METODOS_GOES if not variantes else ("hoy", "capas", *variantes)
     primero = nf.cargar_dbz(next(iter(frames.values())))
     shape = primero.shape
     clutter = nc.cargar_clutter_total(shape)
@@ -135,6 +203,8 @@ def main(argv=None) -> int:
     mae = {m: {g: [0.0, 0] for g in HUECOS} for m in METODOS}
     casos, dias, t_ini = 0, set(), time.time()
     por_loc: dict = {}
+    con_sat = [0, 0]
+    limpiados = [0]
 
     for i, t0 in enumerate(sorted(frames)):
         if i % args.paso:
@@ -158,12 +228,25 @@ def main(argv=None) -> int:
         s3 = nc.serie(act, u3, v3, gs)
         s32 = nc.serie(act, u3, v3, gs, tasa3)
         esc = [nc.serie(act, *nc.rotar(u3, v3, d, f), gs) for f, d in nc.ESCENARIOS]
+        anv = {}
+        if goes is not None and not args.sin_anvil and not variantes and pprev is not None:
+            try:
+                anv = nc.anvil([pprev, prev, act], [float(x) for x in gs])
+            except Exception as exc:
+                print("anvil:", exc, file=sys.stderr)
         casos += 1
         dias.add(t0.strftime("%Y-%m-%d"))
         for g, tg in objetivos.items():
             obs = campo(tg)
             if obs is None:
                 continue
+            if goes is not None:
+                # La verdad también se limpia: ecos del radar donde el satélite no ve ninguna
+                # nube (cielo despejado) son ecos falsos (propagación anómala de noche).
+                sat_obs = satelite_cercano(goes, tg, obs.shape)
+                if sat_obs is not None:
+                    obs = ct.quitar_ecos_sin_nube(obs, sat_obs)
+                    limpiados[0] += 1
             g = float(g)
             pron = {"hoy": act, "capa1": s1[g], "capa1_mov3": s3[g], "capa1_2_mov3": s32[g]}
             pila = np.stack([e[g] for e in esc])
@@ -172,9 +255,26 @@ def main(argv=None) -> int:
                 pron[nombre] = np.sort(pila, axis=0)[-n]
             # "capas" = lo que usa scripts/nowcast_capas.py (mismo criterio).
             pron["capas"] = nc.campo_escenarios(pila, g)
+            if goes is not None and variantes:
+                sat, rlat, rlon = datos_reales(goes, tg, act.shape)
+                for nombre, reglas in variantes.items():
+                    pron[nombre] = ct.corregir(pron["capas"], sat, rlat, rlon, reglas)[0]
+            elif goes is not None:
+                ca = nc.combinar_anvil({g: pron["capas"]}, anv)[g]
+                pron["capas_anvil"] = ca
+                sat, rlat, rlon = datos_reales(goes, tg, act.shape)
+                pron["capas_corr"] = ct.corregir(pron["capas"], sat, rlat, rlon)[0]
+                pron["capas_anvil_quitar"] = ct.corregir(ca, sat, rlat, rlon, {"agregar_con_rayos": False})[0]
+                pron["capas_anvil_agregar"] = ct.corregir(ca, sat, rlat, rlon, {"quitar_sin_nube": False})[0]
+                pron["capas_anvil_corr"] = ct.corregir(ca, sat, rlat, rlon)[0]
+                pron["capas_anvil_corr_bajar"] = ct.corregir(ca, sat, rlat, rlon, {"bajar_sin_rayos": True})[0]
+                con_sat[0] += sat is not None
+                con_sat[1] += 1
             g = int(g)
             o_l, o_r = nc.picos_por_zona(obs, zl), nc.picos_por_zona(obs, zr)
             for m, c in pron.items():
+                if m not in METODOS:
+                    continue
                 p_l, p_r = nc.picos_por_zona(c, zl), nc.picos_por_zona(c, zr)
                 sumar(tab_loc, m, g, p_l, o_l)
                 for k in o_l:
@@ -210,7 +310,7 @@ def main(argv=None) -> int:
     print("\nerror medio dBZ región " + "  ".join(f"{g:>5}" for g in HUECOS))
     for m in METODOS:
         print(f"{m:14s}" + "  ".join(f"{(resumen['error_medio_dbz_region'][m][f'{g}min'] or 0):5.2f}" for g in HUECOS))
-    print(f"\ncasos: {casos}, días: {len(dias)}")
+    print(f"\ncasos: {casos}, días: {len(dias)}, con satélite: {con_sat[0]}/{con_sat[1]}, verdad limpiada: {limpiados[0]}")
     return 0
 
 
