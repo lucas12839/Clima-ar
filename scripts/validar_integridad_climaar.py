@@ -179,6 +179,46 @@ def validar_formacion(radar_ts: datetime) -> None:
           f"{len(f.get('seguimiento') or [])} seguimientos)")
 
 
+CATEGORIAS_CAPAS = {"sin_eco", "lluvia", "tormenta", "posible_convectiva", "sin_datos_radar",
+                    "posible_ya_paso_o_se_deshizo"}
+
+
+def validar_nowcast_capas(radar_ts: datetime) -> None:
+    """Nowcast en capas (punto 5b, en paralelo): de esta imagen, con la edad
+    del radar bien calculada y ninguna fuente del futuro. Puede faltar."""
+    path = RADAR / "nowcast_capas.json"
+    if not path.is_file() or path.stat().st_size == 0:
+        print("Nowcast en capas: sin archivo (permitido)")
+        return
+    n = load(path)
+    if not n.get("disponible"):
+        print(f"Nowcast en capas: no disponible ({n.get('motivo')}) (permitido)")
+        return
+    if n.get("en_paralelo") is not True:
+        fail("nowcast en capas: todavía debe correr en paralelo")
+    if n.get("radar_timestamp") is None or parse_utc(n["radar_timestamp"], "capas.radar_timestamp") != radar_ts:
+        fail(f"nowcast en capas desincronizado: {n.get('radar_timestamp')!r}")
+    generado = parse_utc(n.get("generado_utc"), "capas.generado_utc")
+    edad = (generado - radar_ts).total_seconds() / 60.0
+    if n.get("edad_radar_min") is None or abs(max(edad, 0.0) - float(n["edad_radar_min"])) > 0.2:
+        fail(f"nowcast en capas con edad del radar mal calculada: {n.get('edad_radar_min')} != {edad:.1f}")
+    for nombre, fuente in (n.get("fuentes") or {}).items():
+        hora = fuente.get("hora")
+        if nombre != "ambiente" and hora:
+            h = parse_utc(hora if ("Z" in hora or "+" in hora) else hora + "Z", f"capas.fuentes.{nombre}")
+            if (h - generado).total_seconds() > 120:
+                fail(f"nowcast en capas: la fuente {nombre} es del futuro ({hora})")
+    for loc_id, item in (n.get("localidades") or {}).items():
+        cat = (item.get("estado_ahora") or {}).get("categoria")
+        if cat not in CATEGORIAS_CAPAS:
+            fail(f"nowcast en capas: categoría inválida en {loc_id}: {cat!r}")
+        c = item.get("confianza")
+        if not isinstance(c, (int, float)) or not 0.0 <= c <= 1.0:
+            fail(f"nowcast en capas: confianza inválida en {loc_id}: {c!r}")
+    print(f"Nowcast en capas: sincronizado (radar de hace {n['edad_radar_min']} min, "
+          f"{len(n.get('localidades') or {})} localidades)")
+
+
 def validar_sin_actividad(nc, state, ml, radar_intel, final, radar_meteo) -> None:
     """Frame sin ecos operativos: ningún componente puede declarar principal."""
     if nc.get("actividad") is not False:
@@ -264,6 +304,7 @@ def main() -> None:
     validar_goes19(radar_ts, nc)
     validar_puntaje(radar_ts, nc)
     validar_formacion(radar_ts)
+    validar_nowcast_capas(radar_ts)
 
     candidate = tracking.get("track_principal_candidato_id")
     if candidate is None:

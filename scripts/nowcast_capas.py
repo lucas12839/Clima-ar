@@ -1,0 +1,539 @@
+#!/usr/bin/env python3
+"""Nowcast en capas (punto 5b): nunca a ciegas cuando no hay imagen de radar nueva.
+
+No es otro nowcast: toma el mismo radar, el mismo flujo óptico y la misma
+advección que `nowcast_flujo_optico.py` y le suma, en capas, lo que llega en
+tiempo real. Cada capa corrige a la anterior; si falta una fuente, siguen las demás.
+
+- Capa 1, movimiento: la última imagen movida a la HORA ACTUAL; los plazos se
+  cuentan desde ahora y no se corta a los 40 min (la confianza baja de a poco).
+- Capa 2, crecimiento y debilitamiento: tendencia del radar siguiendo al eco
+  (solo si la validación simulada la aprueba: config/nowcast_capas.json) y,
+  por tormenta, satélite (tope que se enfría o se calienta) y rayos (salto o caída).
+- Capa 3, relleno en tiempo real: rayos GLM (ventana que termina ahora), la
+  imagen más reciente del satélite por localidad y las estaciones. Cuanto más
+  viejo el radar, más pesan; lo medido manda sobre el radar viejo.
+- Capa 4, qué llega al suelo: capa fría y estable abajo (convección elevada) y
+  firma de las estaciones (frente de ráfagas débil o reventón).
+- Capa 5, incertidumbre: escenarios con la velocidad y la dirección corridas;
+  porcentaje de llegada por localidad; edad y fuente de cada dato.
+- Capa 6, validación automática: cada pronóstico se guarda y, cuando llega la
+  imagen real de esa hora, se compara por localidad y en la región.
+
+EN PARALELO (regla 5): calcula y guarda, no cambia lo que se ve.
+Salidas: data/radar/nowcast_capas.json y data/ia/verificacion_nowcast.json.
+Falla segura: nunca corta el ciclo; si falta el radar lo dice y sigue con lo medido.
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+for _p in (ROOT, ROOT / "scripts"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+import localidades_radar as lr  # noqa: E402
+import nowcast_capas_nucleo as nc  # noqa: E402
+import nowcast_flujo_optico as nf  # noqa: E402
+from scripts.rma10_features import parse_utc  # noqa: E402
+
+VERSION = "nowcast-capas-1.0"
+SALIDA = ROOT / "data" / "radar" / "nowcast_capas.json"
+VERIFICACION = ROOT / "data" / "ia" / "verificacion_nowcast.json"
+CONFIG = ROOT / "config" / "nowcast_capas.json"
+GOES = ROOT / "data" / "goes19" / "goes19_state.json"
+SENALES = ROOT / "data" / "ia" / "estaciones" / "senales_superficie.json"
+METEO = ROOT / "data" / "ia" / "estado_meteorologico.json"
+
+PLAZOS_DESDE_AHORA = (0, 10, 20, 30, 60)
+UMBRAL_LLUVIA = nf.UMBRAL_ECO_DBZ
+UMBRAL_TORMENTA = nf.UMBRAL_TORMENTA_DBZ
+EDAD_ESTACIONES_MAX_MIN = 20.0
+EDAD_SATELITE_MAX_MIN = 20.0
+PENDIENTES_MAX_MIN = 100.0
+TOLERANCIA_VERIF_MIN = 2.5
+REGION_PASO_KM = 30
+
+CONFIG_DEFECTO = {
+    "movimiento_3_imagenes": True,
+    "tendencia_radar": False,
+    "escenarios": True,
+    "nota": "Lo deciden las simulaciones de herramientas/simular_huecos.py.",
+}
+
+
+def iso(dt: datetime | None) -> str | None:
+    return nf.iso(dt)
+
+
+def leer_json(path: Path) -> dict:
+    try:
+        valor = json.loads(path.read_text(encoding="utf-8"))
+        return valor if isinstance(valor, dict) else {}
+    except Exception:
+        return {}
+
+
+def edad_min(texto: Any, ahora: datetime) -> float | None:
+    dt = parse_utc(str(texto)) if texto else None
+    return None if dt is None else round((ahora - dt).total_seconds() / 60.0, 1)
+
+
+def categoria(dbz: float) -> str:
+    if dbz >= UMBRAL_TORMENTA:
+        return "tormenta"
+    if dbz >= UMBRAL_LLUVIA:
+        return "lluvia"
+    return "sin_eco"
+
+
+# ------------------------------------------------------------
+# zonas
+# ------------------------------------------------------------
+
+def zonas_localidades(shape, localidades) -> dict[str, np.ndarray]:
+    return {k: z for k, (z, _, _) in lr._zonas(shape, localidades).items()}
+
+
+def zonas_region(shape) -> dict[str, np.ndarray]:
+    """Puntos de la región cada 30 km (círculo de 5 km), de 20 a 200 km del radar."""
+    h, w = shape
+    km_px = nf.km_por_pixel(w)
+    c = (w - 1) / 2.0
+    zonas = {}
+    for dx in range(-210, 211, REGION_PASO_KM):
+        for dy in range(-210, 211, REGION_PASO_KM):
+            if 20 <= math.hypot(dx, dy) <= 200:
+                zonas[f"{dx}_{dy}"] = nf.disco((h, w), c + dx / km_px, c + dy / km_px, 5.0 / km_px)
+    return zonas
+
+
+# ------------------------------------------------------------
+# capa 2 (satélite y rayos por tormenta) y capa 3 (relleno)
+# ------------------------------------------------------------
+
+def tendencia_tormentas(goes: dict) -> list[dict[str, Any]]:
+    """Crecimiento o debilitamiento de cada tormenta seguida, por satélite y rayos."""
+    salida = []
+    for t in ((goes.get("por_tormenta") or {}).get("tormentas") or []):
+        c13 = t.get("c13") or {}
+        rayos = t.get("rayos") or {}
+        salto = (rayos.get("salto_rayos") or {})
+        enfr = c13.get("enfriamiento_c_10min")
+        dfrdt = salto.get("dfrdt_actual")
+        senales_crece, senales_baja = [], []
+        if isinstance(enfr, (int, float)):
+            if enfr >= 4.0:
+                senales_crece.append(f"tope que se enfría {enfr} °C en 10 min")
+            elif enfr <= -4.0:
+                senales_baja.append(f"tope que se calienta {abs(enfr)} °C en 10 min")
+        if salto.get("salto"):
+            senales_crece.append("salto de rayos")
+        elif isinstance(dfrdt, (int, float)) and (rayos.get("tasa_por_min") or 0) >= 1.0:
+            if dfrdt <= -1.0:
+                senales_baja.append("rayos en caída")
+        estado = "creciendo" if senales_crece and not senales_baja else \
+            "debilitandose" if senales_baja and not senales_crece else \
+            "mixto" if senales_crece else "sin_cambio_claro"
+        salida.append({"track_id": t.get("track_id"), "latitud": t.get("latitud"), "longitud": t.get("longitud"),
+                       "dbz_max": t.get("dbz_max"), "estado": estado,
+                       "senales": senales_crece + senales_baja})
+    return salida
+
+
+def relleno_localidad(loc_id: str, goes: dict, senales: dict, ahora: datetime) -> dict[str, Any]:
+    """Capa 3: lo que dicen ahora los rayos, el satélite y las estaciones."""
+    salida: dict[str, Any] = {}
+    ventana = ((goes.get("glm") or {}).get("ventana")) or {}
+    if ventana.get("disponible"):
+        r = (ventana.get("por_localidad") or {}).get(loc_id) or {}
+        salida["rayos"] = {
+            "a_15km_10min": r.get("rayos_15km_10min"), "a_30km_10min": r.get("rayos_30km_10min"),
+            "tasa_30km_por_min": r.get("tasa_30km_por_min"), "distancia_rayo_km": r.get("distancia_km"),
+            "edad_min": edad_min(ventana.get("fin_ventana_utc"), ahora), "fuente": "GOES-19 GLM",
+        }
+    sat = goes.get("satelite_ahora") or {}
+    if sat.get("estado") == "ok":
+        s = (sat.get("por_localidad") or {}).get(loc_id) or {}
+        salida["satelite"] = {
+            "tope_p10_c_15km": s.get("p10_c_15km"), "tope_min_c_15km": s.get("min_c_15km"),
+            "enfriamiento_c_10min": s.get("enfriamiento_c_10min"),
+            "edad_min": edad_min(sat.get("hora_satelite_utc"), ahora), "fuente": "GOES-19 canal 13 (imagen más reciente)",
+        }
+    loc = (senales.get("localidades") or {}).get(loc_id)
+    if loc:
+        salida["estaciones"] = {
+            "cantidad": loc.get("estaciones"), "lluvia_1h_mm": loc.get("lluvia_1h_mm"),
+            "rafaga_max_kmh": loc.get("rafaga_max_kmh"), "frente_de_rafagas": loc.get("frente_de_rafagas"),
+            "nombres": loc.get("nombres"), "edad_min": edad_min(senales.get("generado_utc"), ahora),
+            "fuente": "estaciones BCP / SMN / CWOP",
+        }
+    return salida
+
+
+def estado_ahora(dbz_radar: float | None, edad_radar: float | None, relleno: dict) -> dict[str, Any]:
+    """Combina radar movido y fuentes en tiempo real. Lo medido manda sobre el radar viejo."""
+    peso_radar = nc.confianza_por_edad(edad_radar) if dbz_radar is not None else 0.0
+    cat_radar = categoria(dbz_radar) if dbz_radar is not None else None
+    evidencias = []
+    rayos = relleno.get("rayos") or {}
+    sat = relleno.get("satelite") or {}
+    est = relleno.get("estaciones") or {}
+    rayos_ok = rayos and (rayos.get("edad_min") is None or rayos["edad_min"] <= 15)
+    sat_ok = sat and sat.get("edad_min") is not None and sat["edad_min"] <= EDAD_SATELITE_MAX_MIN
+    est_ok = est and est.get("edad_min") is not None and est["edad_min"] <= EDAD_ESTACIONES_MAX_MIN
+
+    medido = None
+    if rayos_ok and (rayos.get("a_15km_10min") or 0) >= 1:
+        medido = "tormenta"
+        evidencias.append(f"{rayos['a_15km_10min']} rayos a menos de 15 km en 10 min")
+    if est_ok and (est.get("lluvia_1h_mm") or 0) >= 0.4:
+        evidencias.append(f"lluvia medida {est['lluvia_1h_mm']} mm en 1 h")
+        medido = medido or "lluvia"
+    if est_ok and est.get("frente_de_rafagas"):
+        evidencias.append("frente de ráfagas en estaciones")
+        medido = "tormenta"
+    satelite_conv = sat_ok and isinstance(sat.get("tope_p10_c_15km"), (int, float)) and sat["tope_p10_c_15km"] <= -45.0
+    if satelite_conv:
+        evidencias.append(f"tope de nube {sat['tope_p10_c_15km']} °C encima")
+    sat_despejado = sat_ok and isinstance(sat.get("tope_p10_c_15km"), (int, float)) and sat["tope_p10_c_15km"] > -10.0
+    sin_rayos = rayos_ok and (rayos.get("a_30km_10min") or 0) == 0
+
+    orden = {"sin_eco": 0, "lluvia": 1, "tormenta": 2}
+    if cat_radar is None:
+        final = medido or ("posible_convectiva" if satelite_conv else "sin_datos_radar")
+        manda = "medido" if medido else ("satelite" if satelite_conv else "ninguna")
+    elif medido and orden[medido] > orden[cat_radar]:
+        final, manda = medido, "medido"
+    elif cat_radar != "sin_eco" and peso_radar < 0.6 and sat_despejado and sin_rayos and not medido:
+        # Radar viejo dice algo y ahora no hay nube alta, ni rayos, ni lluvia medida.
+        final, manda = "posible_ya_paso_o_se_deshizo", "medido"
+        evidencias.append("radar viejo sin confirmación: sin nube alta ni rayos ahora")
+    else:
+        final, manda = cat_radar, "radar_movido"
+    return {"categoria": final, "manda": manda, "categoria_radar_movido": cat_radar,
+            "peso_radar": round(peso_radar, 2), "evidencias": evidencias}
+
+
+# ------------------------------------------------------------
+# capa 4: qué llega al suelo
+# ------------------------------------------------------------
+
+def capa_estable(meteo: dict) -> dict[str, Any]:
+    """Convección elevada: aire frío y estable pegado al suelo (inversión)."""
+    amb = meteo.get("ambiente_actual") or {}
+    t2, t925 = amb.get("temperature_2m"), amb.get("temperature_925hPa")
+    cin, pbl = amb.get("convective_inhibition"), amb.get("boundary_layer_height")
+    motivos = []
+    if isinstance(t2, (int, float)) and isinstance(t925, (int, float)) and t925 > t2:
+        motivos.append(f"inversión: 925 hPa {t925} °C más cálido que 2 m {t2} °C")
+    if isinstance(cin, (int, float)) and cin <= -100:
+        motivos.append(f"inhibición alta ({cin} J/kg)")
+    if isinstance(pbl, (int, float)) and pbl < 300:
+        motivos.append(f"capa límite baja ({pbl} m)")
+    elevada = bool(motivos) and (len(motivos) >= 2 or motivos[0].startswith("inversión"))
+    return {
+        "conveccion_elevada": elevada, "motivos": motivos,
+        "factor_viento_superficie": 0.5 if elevada else 1.0,
+        "factor_granizo_superficie": 0.7 if elevada else 1.0,
+        "fuente": "modelo (estado_meteorologico.json)", "hora": amb.get("tiempo_utc"),
+        "nota": ("Tormenta por encima de una capa fría: rayos y lluvia, pero el viento fuerte "
+                 "y el granizo llegan debilitados al suelo (caso 19/11/2026).") if elevada else None,
+    }
+
+
+def firma_estacion(e: dict) -> str | None:
+    """Reventón: bajón fuerte de temperatura + salto de presión + ráfaga fuerte.
+    Frente de ráfagas débil: presión que sube de a poco sin bajón de temperatura."""
+    dt = e.get("cambio_temperatura_30min_c")
+    dp = e.get("salto_presion_30min_hpa")
+    raf = e.get("rafaga_kmh") or e.get("viento_kmh") or 0
+    if not isinstance(dt, (int, float)) or not isinstance(dp, (int, float)):
+        return None
+    if dt <= -5.0 and dp >= 2.0 and raf >= 70:
+        return "reventon"
+    if dt <= -3.0 and dp >= 1.0:
+        return "frente_de_rafagas"
+    if dt >= -1.0 and 0.5 <= dp < 2.0 and raf < 50:
+        return "frente_de_rafagas_debil"
+    return None
+
+
+def firmas_localidades(senales: dict) -> dict[str, list[dict[str, Any]]]:
+    por_nombre = {e.get("nombre"): e for e in (senales.get("estaciones") or [])}
+    salida = {}
+    for loc_id, loc in (senales.get("localidades") or {}).items():
+        lista = []
+        for nombre in loc.get("nombres") or []:
+            e = por_nombre.get(nombre) or {}
+            f = firma_estacion(e)
+            if f:
+                lista.append({"estacion": nombre, "firma": f, "utc": e.get("utc")})
+        salida[loc_id] = lista
+    return salida
+
+
+# ------------------------------------------------------------
+# capa 6: validación automática
+# ------------------------------------------------------------
+
+def verificar(verif: dict, radar_dt: datetime, obs_loc: dict, obs_reg: dict) -> list[dict]:
+    """Compara los pronósticos guardados para la hora de esta imagen con lo observado."""
+    hechos = []
+    pendientes = []
+    tot = verif.setdefault("acumulado", {})
+    for p in verif.get("pendientes") or []:
+        obj = parse_utc(p.get("objetivo_utc"))
+        if obj is None:
+            continue
+        dif = abs((obj - radar_dt).total_seconds()) / 60.0
+        if dif <= TOLERANCIA_VERIF_MIN:
+            res = {"objetivo_utc": p["objetivo_utc"], "emitido_utc": p.get("emitido_utc"),
+                   "edad_radar_al_emitir_min": p.get("edad_radar_min"), "plazo_min": p.get("plazo_min")}
+            for metodo in ("hoy", "capas"):
+                pl, pr = p.get(metodo, {}).get("loc", {}), p.get(metodo, {}).get("reg", [])
+                clave = f"{metodo}|{bucket(p.get('plazo_min'))}"
+                acc = tot.setdefault(clave, {"20": [0, 0, 0, 0], "35": [0, 0, 0, 0], "error_abs": 0.0, "n": 0})
+                pares = [(pl.get(k), obs_loc.get(k)) for k in obs_loc] + list(zip(pr, [obs_reg[k] for k in sorted(obs_reg)]))
+                for a, b in pares:
+                    if a is None or b is None:
+                        continue
+                    for u in ("20", "35"):
+                        x, y = a >= float(u), b >= float(u)
+                        acc[u][0 if x and y else 1 if x else 2 if y else 3] += 1
+                    if a >= 20 or b >= 20:
+                        acc["error_abs"] = round(acc["error_abs"] + abs(a - b), 1)
+                        acc["n"] += 1
+                res[metodo] = {k: [pl.get(k), round(obs_loc[k], 1)] for k in obs_loc}
+            hechos.append(res)
+        elif obj > radar_dt - timedelta(minutes=TOLERANCIA_VERIF_MIN):
+            pendientes.append(p)
+    verif["pendientes"] = pendientes
+    verif["ultimas"] = (hechos + (verif.get("ultimas") or []))[:40]
+    return hechos
+
+
+def bucket(plazo: Any) -> str:
+    try:
+        p = float(plazo)
+    except (TypeError, ValueError):
+        return "?"
+    for b in (10, 20, 30, 40, 60, 90):
+        if p <= b + 2.5:
+            return f"hasta_{b}min"
+    return "mas_90min"
+
+
+def resumen_verificacion(verif: dict) -> dict[str, Any]:
+    salida = {}
+    for clave, acc in sorted((verif.get("acumulado") or {}).items()):
+        fila = {}
+        for u in ("20", "35"):
+            a, b, c, _ = acc[u]
+            fila[f"csi_{u}dbz"] = round(a / (a + b + c), 3) if a + b + c else None
+            fila[f"casos_{u}dbz"] = a + b + c
+        fila["error_medio_dbz"] = round(acc["error_abs"] / acc["n"], 2) if acc.get("n") else None
+        salida[clave] = fila
+    return salida
+
+
+# ------------------------------------------------------------
+# ciclo
+# ------------------------------------------------------------
+
+def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
+    ahora = ahora or datetime.now(timezone.utc)
+    cfg = {**CONFIG_DEFECTO, **leer_json(CONFIG)}
+    goes, senales, meteo = leer_json(GOES), leer_json(SENALES), leer_json(METEO)
+    localidades = lr.cargar_localidades()
+    nombres = {l["id"]: l["nombre"] for l in localidades}
+
+    radar_ts = nf.TIMESTAMP_FILE.read_text(encoding="utf-8").strip() if nf.TIMESTAMP_FILE.exists() else None
+    radar_dt = parse_utc(radar_ts) if radar_ts else None
+    edad = round(max(0.0, (ahora - radar_dt).total_seconds() / 60.0), 1) if radar_dt else None
+    actual_dbz = nf.cargar_dbz(nf.ACTUAL) if (radar_dt and nf.ACTUAL.exists()) else None
+
+    estable = capa_estable(meteo)
+    firmas = firmas_localidades(senales)
+    tormentas = tendencia_tormentas(goes)
+    salida: dict[str, Any] = {
+        "version": VERSION, "en_paralelo": True, "generado_utc": iso(ahora),
+        "radar_timestamp": radar_ts, "edad_radar_min": edad,
+        "confianza_radar_por_edad": nc.confianza_por_edad(edad) if edad is not None else 0.0,
+        "configuracion": cfg,
+        "fuentes": {
+            "radar": {"hora": radar_ts, "edad_min": edad, "fuente": "SINARAME RMA10"},
+            "rayos": {"hora": ((goes.get("glm") or {}).get("ventana") or {}).get("fin_ventana_utc"),
+                      "fuente": "GOES-19 GLM"},
+            "satelite": {"hora": (goes.get("satelite_ahora") or {}).get("hora_satelite_utc"),
+                         "fuente": "GOES-19 canal 13"},
+            "estaciones": {"hora": senales.get("generado_utc"), "fuente": "BCP / SMN / CWOP"},
+            "ambiente": {"hora": (meteo.get("ambiente_actual") or {}).get("tiempo_utc"), "fuente": "modelos"},
+        },
+        "suelo": {"capa_estable": estable},
+        "tormentas": tormentas,
+    }
+
+    flujo = None
+    campo = None
+    if actual_dbz is not None:
+        clutter = nc.cargar_clutter_total(actual_dbz.shape)
+        campo = nf.campo_limpio(actual_dbz, clutter)
+        previo = nf.frame_previo(radar_dt) if int((campo >= nf.UMBRAL_ECO_DBZ).sum()) >= 30 else None
+        if previo is not None:
+            prev_dbz = nf.cargar_dbz(previo[0])
+            if prev_dbz is not None and prev_dbz.shape == actual_dbz.shape:
+                gap = (radar_dt - previo[1]).total_seconds() / 60.0
+                prev = nf.campo_limpio(prev_dbz, clutter)
+                km_px = nf.km_por_pixel(actual_dbz.shape[1])
+                f1 = nf.estimar_flujo(prev, campo, gap, km_px)
+                if f1["valido"]:
+                    try:
+                        previas = nf.velocidades_previas(previo[1], prev_dbz, clutter)
+                    except Exception:
+                        previas = []
+                    f1 = nf.controlar_velocidad(f1, previas)
+                    u, v = f1["u"], f1["v"]
+                    if cfg.get("movimiento_3_imagenes"):
+                        pp = nf.frame_previo(previo[1])
+                        if pp is not None:
+                            ppd = nf.cargar_dbz(pp[0])
+                            if ppd is not None and ppd.shape == actual_dbz.shape:
+                                f2 = nf.estimar_flujo(nf.campo_limpio(ppd, clutter), prev,
+                                                      (previo[1] - pp[1]).total_seconds() / 60.0, km_px)
+                                if f2["valido"]:
+                                    u = (0.6 * u + 0.4 * f2["u"]).astype(np.float32)
+                                    v = (0.6 * v + 0.4 * f2["v"]).astype(np.float32)
+                    tasa = nc.tendencia(prev, campo, u, v, gap) if cfg.get("tendencia_radar") else None
+                    flujo = {"u": u, "v": v, "tasa": tasa, "velocidad_kmh": f1["velocidad_media_kmh"],
+                             "direccion_hacia_grados": f1["direccion_hacia_grados"],
+                             "coherencia": f1["coherencia"], "intervalo_min": round(gap, 1)}
+    salida["movimiento"] = None if flujo is None else {
+        k: flujo[k] for k in ("velocidad_kmh", "direccion_hacia_grados", "coherencia", "intervalo_min")}
+    if campo is None:
+        salida["motivo_sin_radar"] = "SIN_RADAR_ACTUAL"
+
+    zl = zonas_localidades(campo.shape, localidades) if campo is not None else {}
+    zr = zonas_region(campo.shape) if campo is not None else {}
+    tiempos = [edad + p for p in PLAZOS_DESDE_AHORA] if edad is not None else []
+    campos: dict[float, np.ndarray] = {}
+    if campo is not None:
+        if flujo is not None and cfg.get("escenarios"):
+            campos = nc.campos_escenarios(campo, flujo["u"], flujo["v"], tiempos, flujo["tasa"])
+        elif flujo is not None:
+            campos = nc.serie(campo, flujo["u"], flujo["v"], tiempos, flujo["tasa"])
+        else:
+            campos = {float(t): campo for t in tiempos}  # sin movimiento: persistencia (se dice)
+    picos_loc = {p: nc.picos_por_zona(campos[float(edad + p)], zl) for p in PLAZOS_DESDE_AHORA} if campos else {}
+    llegada = {}
+    if flujo is not None:
+        llegada = nc.escenarios_llegada(campo, flujo["u"], flujo["v"], zl, edad, edad + 60.0,
+                                        UMBRAL_TORMENTA, flujo["tasa"])
+
+    locs = {}
+    for loc in localidades:
+        k = loc["id"]
+        rell = relleno_localidad(k, goes, senales, ahora)
+        dbz_ahora = picos_loc[0][k] if picos_loc else None
+        item: dict[str, Any] = {"nombre": nombres[k], "relleno_tiempo_real": rell}
+        item["radar_movido_a_ahora"] = None if dbz_ahora is None else {
+            "dbz": round(dbz_ahora, 1), "categoria": categoria(dbz_ahora),
+            "movido_min": edad if flujo is not None else 0.0,
+            "fuente": "radar SINARAME movido a la hora actual" if flujo is not None
+            else "radar SINARAME sin mover (no hay movimiento calculable)"}
+        item["estado_ahora"] = estado_ahora(dbz_ahora, edad, rell)
+        if picos_loc:
+            item["pronostico_desde_ahora"] = {
+                f"{p}min": {"dbz": round(picos_loc[p][k], 1), "categoria": categoria(picos_loc[p][k])}
+                for p in PLAZOS_DESDE_AHORA if p > 0}
+        if k in llegada:
+            l = llegada[k]
+            item["tormenta_proxima_hora"] = {
+                "porcentaje_escenarios": l["porcentaje"],
+                "minutos_desde_ahora": None if l["minutos_desde_imagen"] is None else round(l["minutos_desde_imagen"] - edad, 1),
+                "rango_min": None if l["primera_min"] is None else [round(l["primera_min"] - edad, 1), round(l["ultima_min"] - edad, 1)],
+            }
+        item["suelo"] = {"firmas_estaciones": firmas.get(k, []),
+                         "conveccion_elevada": estable["conveccion_elevada"]}
+        item["confianza"] = round(nc.confianza_por_edad(edad) * (0.4 + 0.6 * flujo["coherencia"]), 3) \
+            if (flujo is not None and edad is not None) else (0.3 if campo is not None else 0.0)
+        locs[k] = item
+    salida["localidades"] = locs
+
+    # Capa 6: validación automática.
+    verif = leer_json(VERIFICACION) or {"version": VERSION, "pendientes": [], "acumulado": {}, "ultimas": []}
+    if campo is not None:
+        obs_loc = nc.picos_por_zona(campo, zl)
+        obs_reg = nc.picos_por_zona(campo, zr)
+        if verif.get("ultima_imagen_verificada") != radar_ts:
+            verificar(verif, radar_dt, obs_loc, obs_reg)
+            verif["ultima_imagen_verificada"] = radar_ts
+        # Guardar los pronósticos para las próximas horas de imagen (cada 10 min).
+        if campos:
+            base = radar_dt
+            emit = {(p.get("emitido_utc"), p.get("objetivo_utc")) for p in verif.get("pendientes") or []}
+            for n in range(1, 10):
+                obj = base + timedelta(minutes=10 * n)
+                plazo = (obj - ahora).total_seconds() / 60.0
+                if plazo < 0 or plazo > 90:
+                    continue
+                t_img = 10.0 * n
+                if (iso(ahora), iso(obj)) in emit:
+                    continue
+                if flujo is None:
+                    cmp_ = campo
+                elif cfg.get("escenarios"):
+                    cmp_ = nc.campos_escenarios(campo, flujo["u"], flujo["v"], [t_img], flujo["tasa"])[t_img]
+                else:
+                    cmp_ = nc.serie(campo, flujo["u"], flujo["v"], [t_img], flujo["tasa"])[t_img]
+                verif.setdefault("pendientes", []).append({
+                    "emitido_utc": iso(ahora), "radar_utc": radar_ts, "edad_radar_min": edad,
+                    "objetivo_utc": iso(obj), "plazo_min": round(plazo + edad, 1),
+                    "hoy": {"loc": {k: round(x, 1) for k, x in obs_loc.items()},
+                            "reg": [round(obs_reg[z], 1) for z in sorted(obs_reg)]},
+                    "capas": {"loc": {k: round(x, 1) for k, x in nc.picos_por_zona(cmp_, zl).items()},
+                              "reg": [round(x, 1) for _, x in sorted(nc.picos_por_zona(cmp_, zr).items())]},
+                })
+        # Tope de tamaño: solo pendientes dentro de la ventana.
+        verif["pendientes"] = [p for p in verif.get("pendientes") or []
+                               if (parse_utc(p["objetivo_utc"]) - ahora).total_seconds() / 60.0 > -PENDIENTES_MAX_MIN][-60:]
+    verif["actualizado_utc"] = iso(ahora)
+    verif["resumen"] = resumen_verificacion(verif)
+    salida["validacion_automatica"] = {
+        "resumen": verif["resumen"],
+        "nota": "'hoy' = imagen vieja tal como llegó; 'capas' = nowcast en capas. CSI más alto = mejor.",
+    }
+    salida["_verificacion"] = verif
+    return salida
+
+
+def main(argv=None) -> int:
+    ahora = parse_utc(os.environ["CLIMAAR_AHORA_UTC"]) if os.environ.get("CLIMAAR_AHORA_UTC") else None
+    try:
+        salida = ejecutar(ahora)
+        verif = salida.pop("_verificacion", None)
+        if verif is not None:
+            nf.escribir_json_atomico(VERIFICACION, verif)
+    except Exception as exc:  # nunca corta el ciclo
+        salida = {"version": VERSION, "en_paralelo": True, "disponible": False,
+                  "motivo": f"ERROR: {type(exc).__name__}: {str(exc)[:200]}",
+                  "generado_utc": iso(datetime.now(timezone.utc))}
+    salida.setdefault("disponible", "localidades" in salida)
+    nf.escribir_json_atomico(SALIDA, salida)
+    resumen = {k: salida.get(k) for k in ("disponible", "radar_timestamp", "edad_radar_min", "motivo")}
+    resumen["localidades"] = {k: v["estado_ahora"]["categoria"] for k, v in (salida.get("localidades") or {}).items()}
+    print(json.dumps(resumen, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

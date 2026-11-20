@@ -64,6 +64,9 @@ def entorno(tmp_path, monkeypatch):
 
     monkeypatch.setattr(st, "_buscar_objeto", buscar)
     monkeypatch.setattr(st, "product_object_for_scan", previo)
+    monkeypatch.setattr(st, "latest_product_object", lambda product, now=None, hours_back=6: {
+        "key": f"{product}.nc", "url": f"https://x/{product}.nc", "start_time_utc": INICIO,
+        "end_time_utc": FIN, "size": 1})
     monkeypatch.setattr(st, "leer_dominio", leer)
     monkeypatch.setattr(st, "process_glm", lambda temp_dir, ref: {"status": "sin_actividad"})
     monkeypatch.setattr(st, "process_dmw", lambda temp_dir, ref: {"status": "unavailable"})
@@ -123,10 +126,15 @@ def test_estado_con_tormenta_mantiene_contrato_y_agrega_por_tormenta(entorno):
     assert all(inicio == INICIO for p, inicio in llamados[1:] if not p.endswith("_previo"))
     # Punto 5: canal 13 de 10 y 20 min antes del mismo barrido de referencia.
     previos = [inicio for p, inicio in llamados if p.endswith("_previo")]
-    assert previos == ["2026-11-19T22:20:20Z", "2026-11-19T22:10:20Z"]
+    # (la primera es la previa de "satelite_ahora", punto 5b)
+    assert previos == ["2026-11-19T22:20:20Z", "2026-11-19T22:20:20Z", "2026-11-19T22:10:20Z"]
     fs = s["formacion_satelite"]
     assert fs["frame_radar_utc"] == "2026-11-19T22:40:00Z"
     assert fs["lectura_previas"]["10"]["estado"] == "ok"
+    # Punto 5b: la imagen más reciente del satélite por localidad.
+    sa = s["satelite_ahora"]
+    assert sa["estado"] == "ok" and "bahia_blanca" in sa["por_localidad"]
+    assert sa["por_localidad"]["bahia_blanca"]["enfriamiento_c_10min"] == 0.0
     # La tormenta fija no se enfría (misma imagen antes y ahora): no es formación.
     assert fs["estado"] == "sin_crecimiento" and fs["objetos"] == []
     # Datos por tormenta.
