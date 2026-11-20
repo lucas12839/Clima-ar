@@ -710,6 +710,13 @@ jobs:
           test -s \
             data/ia/resultado_final.json
 
+      - name: Puntaje de gravedad por tormenta (en paralelo, no cambia lo que se ve)
+        run: |
+          set -euo pipefail
+
+          # Punto 4 del plan. Falla segura: el script nunca corta el ciclo.
+          python scripts/puntaje_gravedad.py
+
       - name: Validar integridad completa de ClimaAR
         run: |
           set -euo pipefail

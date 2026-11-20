@@ -222,7 +222,9 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   con la rama temporal `prueba-inspeccion` (workflow con `on: push`), y después de unir se
   revisa el primer ciclo en producción. Nunca commitear `data/` en PR de código
   (`git checkout origin/main -- data .climaar` antes de commitear). PR por la API REST
-  (`gh api repos/lucas12839/clima-ar/pulls`), GraphQL no está disponible.
+  (`gh api repos/lucas12839/clima-ar/pulls`), GraphQL no está disponible. **Antes de unir,
+  revisar la lista de archivos del PR** (`gh api .../pulls/N/files`): el #46 se unió sin 3
+  archivos (paso del workflow, integridad, plan) y se completó en el #47.
 - Pendiente menor: `tests/test_data_quality_contracts.py::...explicit_no_motion_state` usa los
   datos en vivo y falla cuando la tormenta principal es nueva y no tiene predicción de
   evolución (falla también sin cambios, 19/11 22:30). Hacerla independiente de los datos.

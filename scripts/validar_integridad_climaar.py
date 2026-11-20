@@ -123,6 +123,30 @@ def validar_goes19(radar_ts: datetime, nc: dict) -> None:
     print(f"GOES-19: sincronizado ({pt.get('estado')}, {len(pt['tormentas'])} tormentas)")
 
 
+def validar_puntaje(radar_ts: datetime, nc: dict) -> None:
+    """Puntaje de gravedad (en paralelo): de esta imagen, de tormentas del
+    radar y nunca mostrado al público todavía. Puede faltar."""
+    path = IA / "puntaje_tormentas.json"
+    if not path.is_file() or path.stat().st_size == 0:
+        print("Puntaje de gravedad: sin archivo (permitido)")
+        return
+    p = load(path)
+    if p.get("frame_radar_utc") is None or parse_utc(p["frame_radar_utc"], "puntaje.frame_radar_utc") != radar_ts:
+        print("Puntaje de gravedad: de otra imagen (permitido)")
+        return
+    if p.get("modo") != "en_paralelo_no_se_muestra":
+        fail(f"puntaje de gravedad en modo {p.get('modo')!r}: todavía debe correr en paralelo")
+    tracks = {sid(n.get("track_id")) for n in (nc.get("nucleos_georreferenciados") or [])}
+    for t in p.get("tormentas") or []:
+        if sid(t.get("track_id")) not in tracks:
+            fail(f"puntaje de gravedad de una tormenta que el radar no tiene: {t.get('track_id')}")
+        for fen in ("granizo", "rafagas", "lluvia_intensa"):
+            g = (t.get(fen) or {}).get("grado")
+            if g not in (0, 2, 3, 4):
+                fail(f"puntaje {fen} de la tormenta {t.get('track_id')} con grado inválido: {g}")
+    print(f"Puntaje de gravedad: sincronizado ({p.get('estado')}, {len(p.get('tormentas') or [])} tormentas)")
+
+
 def validar_sin_actividad(nc, state, ml, radar_intel, final, radar_meteo) -> None:
     """Frame sin ecos operativos: ningún componente puede declarar principal."""
     if nc.get("actividad") is not False:
@@ -206,6 +230,7 @@ def main() -> None:
     require_same_timestamp(radar_ts, final_nc.get("frame_actual_utc"), "resultado_final.radar.nowcast.frame_actual_utc")
 
     validar_goes19(radar_ts, nc)
+    validar_puntaje(radar_ts, nc)
 
     candidate = tracking.get("track_principal_candidato_id")
     if candidate is None:
