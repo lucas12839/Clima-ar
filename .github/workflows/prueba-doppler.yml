@@ -1,0 +1,19 @@
+name: Prueba única - productos de SINARAME
+on:
+  push:
+    branches: [prueba-doppler]
+permissions:
+  contents: read
+jobs:
+  sondear:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "playwright==$(grep -i '^playwright' requirements.txt | cut -d= -f3)" || pip install playwright
+      - run: python herramientas/sondear_sinarame_productos.py chrome
