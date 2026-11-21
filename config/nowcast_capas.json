@@ -15,5 +15,19 @@
     "k_probable": 2,
     "k_posible": 1,
     "nota": "¿Llega a mi localidad en la próxima hora? Decidido con herramientas/simular_envolvente.py (26 días, 684 casos, radar atrasado 10-30 min, con corrector): tormenta hasta 10 km, hoy 63,5 % detectada / 16 % falsas alarmas; 'probable' (2 de 25 caminos) 74 % / 24 %; 'posible' (1 de 25) 81 % / 34 %. Lluvia hasta 10 km: 'probable' 82 % / 10 %, 'posible' 87 % / 14 %."
+  },
+  "estaciones_etapa_a": {
+    "activo": false,
+    "en_paralelo": true,
+    "parametros": {},
+    "nota": "Etapa A punto 1 (21/11/2026): corrector con la lluvia medida por las estaciones. En la simulación (herramientas/simular_etapa_a.py, 6 días con lluvia en estaciones, 230 casos) no cambió nada medible: el historial de estaciones empieza el 6/11 y casi no tiene lluvia. Queda en paralelo: cada ciclo se guarda el pronóstico con y sin el corrector y se compara con el radar real (verificacion_nowcast.json, método 'estaciones'). Se activa cuando la validación en vivo muestre que mejora."
+  },
+  "satelite_etapa_a": {
+    "activo": false,
+    "en_paralelo": false,
+    "trayectorias": false,
+    "movimiento_si_falta_radar": false,
+    "parametros": {},
+    "nota": "Etapa A puntos 2-4 (21/11/2026): probados con 26 días y 1.419 casos (docs/VALIDACION_ETAPA_A.md). Posición y movimiento con los topes del satélite empeoran (las nubes de arriba se mueven distinto que la lluvia); por núcleo frío o rayos, igual o peor; crecimiento medido, ±1 % (ruido). Ninguno mejora: apagados. El código queda para probar de nuevo con datos nuevos."
   }
 }

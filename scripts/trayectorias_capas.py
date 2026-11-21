@@ -90,7 +90,25 @@ def avanzar(u: np.ndarray, v: np.ndarray, x: float, y: float, radio_px: float,
     return x, y
 
 
-def trayectoria(u: np.ndarray, v: np.ndarray, km_px: float, track: dict, radar_dt: datetime) -> dict[str, Any]:
+def avanzar_tramos(prep: dict | None, u: np.ndarray, v: np.ndarray, x: float, y: float, radio_px: float,
+                   desde: float, hasta: float) -> tuple[float, float]:
+    """Avanza de `desde` a `hasta` (min desde la imagen). Con satélite (etapa A): hasta la
+    hora del barrido nuevo con el movimiento corregido por los topes y después con el
+    movimiento controlado por el satélite."""
+    if prep is None:
+        return avanzar(u, v, x, y, radio_px, hasta - desde)
+    corte = prep["tramo"]
+    if desde < corte:
+        t1 = min(hasta, corte)
+        x, y = avanzar(prep["ua"], prep["va"], x, y, radio_px, t1 - desde)
+        desde = t1
+    if hasta > desde:
+        x, y = avanzar(prep["ub"], prep["vb"], x, y, radio_px, hasta - desde)
+    return x, y
+
+
+def trayectoria(u: np.ndarray, v: np.ndarray, km_px: float, track: dict, radar_dt: datetime,
+                prep: dict | None = None) -> dict[str, Any]:
     x0, y0 = float(track["x"]), float(track["y"])
     radio_px = math.sqrt(max(float(track.get("pixeles") or 1.0), 1.0) / math.pi)
     ux, vy = velocidad_celda(u, v, x0, y0, radio_px)
@@ -99,7 +117,7 @@ def trayectoria(u: np.ndarray, v: np.ndarray, km_px: float, track: dict, radar_d
     horizontes = []
     x, y, t_prev = x0, y0, 0.0
     for h in HORIZONTES_MIN:
-        x, y = avanzar(u, v, x, y, radio_px, h - t_prev)
+        x, y = avanzar_tramos(prep, u, v, x, y, radio_px, t_prev, h)
         t_prev = h
         horizontes.append({
             "minutos": h,
@@ -118,7 +136,10 @@ def trayectoria(u: np.ndarray, v: np.ndarray, km_px: float, track: dict, radar_d
     }
 
 
-def calcular(radar_dt: datetime, tracks: list[dict], ahora: datetime | None = None) -> dict[str, Any]:
+def calcular(radar_dt: datetime, tracks: list[dict], ahora: datetime | None = None,
+             satelite: dict | None = None, parametros_satelite: dict | None = None) -> dict[str, Any]:
+    """`satelite` = {"radar", "nuevo", "previo" (grillas °C), "tramo", "entre" (min)} para la
+    corrección de la etapa A (scripts/corrector_satelite.py). Sin eso, como antes."""
     ahora = ahora or datetime.now(timezone.utc)
     base = {"version": VERSION, "radar_timestamp": iso(radar_dt), "generado_utc": iso(ahora),
             "fuente": "movimiento del nowcast en capas (5b)", "horizontes_minutos": list(HORIZONTES_MIN)}
@@ -131,8 +152,25 @@ def calcular(radar_dt: datetime, tracks: list[dict], ahora: datetime | None = No
     flujo = capas.movimiento(radar_dt, campo, actual, clutter, cfg)
     if flujo is None:
         return {**base, "disponible": False, "motivo": "SIN_MOVIMIENTO_VALIDO", "tracks": {}}
+    prep = None
+    sat_cfg = cfg.get("satelite_etapa_a") or {}
+    params = parametros_satelite if parametros_satelite is not None else \
+        (sat_cfg.get("parametros") if sat_cfg.get("trayectorias") else None)
+    info_sat: dict[str, Any] = {"usado": False}
+    if satelite is not None and params is not None:
+        try:
+            import corrector_satelite as cs
+            prep = cs.preparar(campo, flujo["u"], flujo["v"], satelite.get("radar"), satelite.get("nuevo"),
+                               satelite.get("previo"), satelite.get("tramo"), satelite.get("entre"),
+                               flujo["km_px"], params, None, info_sat)
+            info_sat["usado"] = bool(info_sat.get("posicion") or info_sat.get("movimiento"))
+            if not info_sat["usado"]:
+                prep = None
+        except Exception as exc:  # falla segura: sin satélite
+            prep = None
+            info_sat = {"usado": False, "motivo": f"{type(exc).__name__}: {exc}"[:150]}
     salida = {
-        **base, "disponible": True, "motivo": None,
+        **base, "disponible": True, "motivo": None, "satelite": info_sat,
         "movimiento": {k: flujo[k] for k in ("velocidad_kmh", "direccion_hacia_grados", "coherencia",
                                               "intervalo_min")},
         "tracks": {},
@@ -141,7 +179,7 @@ def calcular(radar_dt: datetime, tracks: list[dict], ahora: datetime | None = No
         if t.get("x") is None or t.get("y") is None:
             continue
         salida["tracks"][str(t.get("track_id"))] = trayectoria(flujo["u"], flujo["v"], flujo["km_px"],
-                                                              t, radar_dt)
+                                                              t, radar_dt, prep)
     return salida
 
 
