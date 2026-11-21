@@ -32,10 +32,10 @@ jobs:
             git show FETCH_HEAD:goes_$x.npz > /tmp/goes/goes_$x.npz 2>/dev/null || rm -f /tmp/goes/goes_$x.npz
           done
           ls -la /tmp/goes
-      - name: Simular
+      - name: Simular sin radar
         run: |
-          python herramientas/simular_etapa_a.py --goes /tmp/goes --dias ${{ matrix.dia }} --paso 1 --procesos 4 \
-            --variantes "$(cat herramientas/variantes_etapa_a.json)" --salida resultado_${{ matrix.dia }}.json | tail -5
+          python herramientas/simular_sin_radar.py --goes /tmp/goes --dias ${{ matrix.dia }} --paso 1 --procesos 4 \
+            --salida resultado_${{ matrix.dia }}.json | tail -3
           echo "RESULTADO_JSON $(gzip -c resultado_${{ matrix.dia }}.json | base64 -w0)"
       - uses: actions/upload-artifact@v4
         with:
