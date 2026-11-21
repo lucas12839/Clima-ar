@@ -34,20 +34,31 @@ def rumbo(a, b):
 
 
 def bcp():
-    print("=== BCP coordenadas ===")
+    print("=== BCP jsDatos ===")
     html = requests.get("https://info.bcp.org.ar/Estaciones/MapaG_NvoBCP.asp", timeout=30, headers=UA).text
-    i = html.find("for (iEstacion=0")
-    print("FOR:", re.sub(r"\s+", " ", html[i: i + 1800]))
-    for m in re.finditer(r"(\w*(?:[Ll]at|[Ll]on|LatLng|Pos|Coord)\w*)\s*(?:\[(\d+)\])?\s*=\s*([^;\n]{0,120})", html):
-        if "Estac" in m.group(1) or m.group(2):
-            print("ASIG", m.group(1), m.group(2), m.group(3))
-    for sid in (76, 59, 3, 97):
-        time.sleep(1.0)
-        t = requests.get(f"https://info.bcp.org.ar/Estaciones/Mapa_NvoBCP.asp?Estacion={sid}", timeout=20, headers=UA).text
-        txt = re.sub(r"<[^>]+>", " ", t)
-        txt = re.sub(r"\s+", " ", txt)
-        print("PAG", sid, txt[:1500])
-        print("PAGCOORD", sid, re.findall(r"-3\d\.\d{3,}[^0-9]{1,5}-6\d\.\d{3,}", t)[:5])
+    i = html.find("jsDatos")
+    print("PRIMERO:", re.sub(r"\s+", " ", html[i: i + 700]))
+    j = html.find("[", html.find("jsDatos", i + 1) if html[i:i+40].count("=") == 0 else i)
+    k = html.find("jsDatos =")
+    if k < 0:
+        k = html.find("jsDatos=")
+    if k >= 0:
+        ini = html.find("[", k)
+        prof, fin = 0, ini
+        for n, ch in enumerate(html[ini:], ini):
+            prof += ch == "["
+            prof -= ch == "]"
+            if prof == 0:
+                fin = n
+                break
+        texto = html[ini: fin + 1]
+        print("LARGO", len(texto))
+        try:
+            datos = json.loads(texto.replace("'", '"'))
+            for n, fila in enumerate(datos):
+                print("FILA", n, json.dumps([x[:2] if isinstance(x, list) else x for x in fila[:4]], ensure_ascii=False)[:300])
+        except Exception as e:
+            print("no se pudo leer:", e, texto[:600])
 
 
 def cwop(minutos=12):
