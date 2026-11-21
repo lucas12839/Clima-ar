@@ -1,0 +1,41 @@
+name: Prueba etapa A (temporal)
+on:
+  push:
+    branches: [prueba-etapa-a]
+jobs:
+  dia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        dia: [20261024, 20261026, 20261027, 20261028, 20261029, 20261030, 20261031, 20261101, 20261102,
+              20261103, 20261104, 20261105, 20261106, 20261107, 20261108, 20261109, 20261110, 20261111,
+              20261112, 20261113, 20261114, 20261116, 20261117, 20261118, 20261119, 20261120]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+      - run: pip install -q -r requirements.txt
+      - name: Historial de GOES-19 (el día y sus vecinos)
+        run: |
+          git fetch -q --depth 1 origin datos-goes-historial
+          mkdir -p /tmp/goes
+          d=${{ matrix.dia }}
+          for x in $(date -d "$d -1 day" +%Y%m%d) $d $(date -d "$d +1 day" +%Y%m%d); do
+            git show FETCH_HEAD:goes_$x.npz > /tmp/goes/goes_$x.npz 2>/dev/null || rm -f /tmp/goes/goes_$x.npz
+          done
+          ls -la /tmp/goes
+      - name: Simular
+        run: |
+          python herramientas/simular_etapa_a.py --goes /tmp/goes --dias ${{ matrix.dia }} --paso 1 --procesos 4 \
+            --variantes "$(cat herramientas/variantes_etapa_a.json)" --salida resultado_${{ matrix.dia }}.json | tail -5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resultado_${{ matrix.dia }}
+          path: resultado_${{ matrix.dia }}.json
