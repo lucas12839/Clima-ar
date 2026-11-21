@@ -194,8 +194,16 @@ def lluvia_en(serie: list[dict], ahora: datetime, horas: float) -> float | None:
     if len(puntos) < 2:
         return None
     total = 0.0
-    for (_, a), (_, b) in zip(puntos, puntos[1:]):
-        total += (b - a) if b >= a else b  # reinicio diario: cuenta lo nuevo
+    ref_t, ref_v = puntos[0]
+    local = timezone(timedelta(hours=-3))
+    for t, v in puntos[1:]:
+        if v >= ref_v:
+            total += v - ref_v
+        elif t.astimezone(local).date() != ref_t.astimezone(local).date():
+            total += v  # reinicio diario (medianoche local): cuenta lo nuevo
+        else:
+            continue    # bajada sin cruzar la medianoche = lectura errónea (La Vitícola 21/11 02:47)
+        ref_t, ref_v = t, v
     return round(max(total, 0.0), 1)
 
 

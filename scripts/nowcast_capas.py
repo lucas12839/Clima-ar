@@ -42,6 +42,7 @@ for _p in (ROOT, ROOT / "scripts"):
         sys.path.insert(0, str(_p))
 
 import localidades_radar as lr  # noqa: E402
+import corrector_satelite as cs  # noqa: E402
 import corrector_tiempo_real as ct  # noqa: E402
 import nowcast_capas_nucleo as nc  # noqa: E402
 import nowcast_flujo_optico as nf  # noqa: E402
@@ -73,7 +74,12 @@ CONFIG_DEFECTO = {
     "control_calidad_satelite": True,
     "reglas_corrector": {},
     "llegada_envolvente": {"activa": False, "k_probable": 2, "k_posible": 1},
-    "nota": "Lo deciden las simulaciones de herramientas/simular_huecos.py.",
+    # Etapa A: satélite más nuevo que el radar (posición, movimiento, crecimiento) y lluvia
+    # medida por las estaciones. "activo" = cambia lo que se pronostica; "en_paralelo" =
+    # se calcula y se valida en vivo (verificacion_nowcast.json) sin cambiar nada.
+    "satelite_etapa_a": {"activo": False, "en_paralelo": False, "trayectorias": False, "parametros": {}},
+    "estaciones_etapa_a": {"activo": False, "en_paralelo": False, "parametros": {}},
+    "nota": "Lo deciden las simulaciones de herramientas/simular_huecos.py y simular_etapa_a.py.",
 }
 
 
@@ -400,8 +406,16 @@ def verificar(verif: dict, radar_dt: datetime, obs_loc: dict, obs_reg: dict) -> 
         if dif <= TOLERANCIA_VERIF_MIN:
             res = {"objetivo_utc": p["objetivo_utc"], "emitido_utc": p.get("emitido_utc"),
                    "edad_radar_al_emitir_min": p.get("edad_radar_min"), "plazo_min": p.get("plazo_min")}
-            for metodo in ("hoy", "capas"):
-                pl, pr = p.get(metodo, {}).get("loc", {}), p.get(metodo, {}).get("reg", [])
+            # Etapa A: "satelite"/"estaciones" = con esa corrección; "sin_satelite" = sin ella
+            # (cuando está activa). Sin la clave, el pronóstico fue igual al de "capas".
+            for metodo in ("hoy", "capas", "satelite", "estaciones", "sin_satelite"):
+                if metodo in ("hoy", "capas") or metodo in p:
+                    datos = p.get(metodo, {})
+                elif metodo in p.get("etapa_a", []):
+                    datos = p.get("capas", {})
+                else:
+                    continue
+                pl, pr = datos.get("loc", {}), datos.get("reg", [])
                 clave = f"{metodo}|{bucket(p.get('plazo_min'))}"
                 acc = tot.setdefault(clave, {"20": [0, 0, 0, 0], "35": [0, 0, 0, 0], "error_abs": 0.0, "n": 0})
                 pares = [(pl.get(k), obs_loc.get(k)) for k in obs_loc] + list(zip(pr, [obs_reg[k] for k in sorted(obs_reg)]))
@@ -414,7 +428,8 @@ def verificar(verif: dict, radar_dt: datetime, obs_loc: dict, obs_reg: dict) -> 
                     if a >= 20 or b >= 20:
                         acc["error_abs"] = round(acc["error_abs"] + abs(a - b), 1)
                         acc["n"] += 1
-                res[metodo] = {k: [pl.get(k), round(obs_loc[k], 1)] for k in obs_loc}
+                if metodo in ("hoy", "capas"):
+                    res[metodo] = {k: [pl.get(k), round(obs_loc[k], 1)] for k in obs_loc}
             hechos.append(res)
         elif obj > radar_dt - timedelta(minutes=TOLERANCIA_VERIF_MIN):
             pendientes.append(p)
@@ -502,6 +517,81 @@ def datos_corrector(goes: dict, ahora: datetime, shape) -> dict[str, Any]:
         datos["rayos_lon"] = [p[1] for p in pos]
         datos["info"]["rayos"] = len(pos)
     return datos
+
+
+C13_AHORA_PREVIA = Path(__import__("tempfile").gettempdir()) / "climaar_c13_ahora_previa.npz"
+DIF_SATELITE_RADAR_MAX_MIN = 6.0
+
+
+def _leer_c13(path: Path, shape):
+    if not path.exists():
+        return None, None
+    z = np.load(path)
+    return ct.grilla_satelite(z["lat"], z["lon"], z["temp_c"], shape), parse_utc(str(z["hora"]))
+
+
+def satelites_etapa_a(radar_dt: datetime, ahora: datetime, shape) -> tuple[dict | None, dict[str, Any]]:
+    """Barrido de la hora del radar, el más nuevo y el anterior a ese (los deja goes19/state.py
+    en el mismo ciclo). Las edades se calculan AHORA con la hora de cada barrido."""
+    info: dict[str, Any] = {}
+    try:
+        nuevo, h_n = _leer_c13(C13_AHORA, shape)
+        if nuevo is None or h_n is None:
+            return None, {"motivo": "sin barrido nuevo"}
+        info["edad_barrido_nuevo_min"] = round((ahora - h_n).total_seconds() / 60.0, 1)
+        if not (-1.0 <= info["edad_barrido_nuevo_min"] <= EDAD_SATELITE_MAX_MIN + 5):
+            return None, {**info, "motivo": "barrido nuevo viejo o del futuro"}
+        radar, h_r = _leer_c13(C13_RADAR, shape)
+        if h_r is None or abs((h_r - radar_dt).total_seconds()) / 60.0 > DIF_SATELITE_RADAR_MAX_MIN:
+            radar = None
+        previo, h_p = _leer_c13(C13_AHORA_PREVIA, shape)
+        entre = None if h_p is None else (h_n - h_p).total_seconds() / 60.0
+        if entre is not None and not (5.0 <= entre <= 15.0):
+            previo, entre = None, None
+        tramo = (h_n - radar_dt).total_seconds() / 60.0
+        info.update({"tramo_min": round(tramo, 1), "barrido_radar": radar is not None,
+                     "entre_barridos_min": None if entre is None else round(entre, 1)})
+        return {"radar": radar, "nuevo": nuevo, "previo": previo, "tramo": tramo, "entre": entre}, info
+    except Exception as exc:
+        return None, {"motivo": f"{type(exc).__name__}: {str(exc)[:100]}"}
+
+
+def preparar_satelite(campo: np.ndarray, flujo: dict, radar_dt: datetime, ahora: datetime, sat_cfg: dict,
+                      goes: dict, salida: dict) -> dict | None:
+    """Etapa A, puntos 2-4: radar llevado a la hora del barrido más nuevo con lo que midió el
+    satélite. Falla segura: None y el motivo en salida["satelite_etapa_a"]."""
+    sats, info = satelites_etapa_a(radar_dt, ahora, campo.shape)
+    info = {"activo": bool(sat_cfg.get("activo")), **info}
+    prep = None
+    if sats is not None:
+        try:
+            prep = cs.preparar(campo, flujo["u"], flujo["v"], sats["radar"], sats["nuevo"], sats["previo"],
+                               sats["tramo"], sats["entre"], flujo["km_px"], sat_cfg.get("parametros"), None, info)
+            if not (info.get("posicion") or info.get("movimiento") or info.get("crecimiento")):
+                prep = None
+                info.setdefault("motivo", "el satélite no agrega nada en este ciclo (barrido de la misma hora o sin topes fríos)")
+        except Exception as exc:
+            prep = None
+            info["motivo"] = f"{type(exc).__name__}: {str(exc)[:100]}"
+    info["usado"] = prep is not None
+    salida["satelite_etapa_a"] = info
+    return prep
+
+
+def datos_estaciones(senales: dict) -> dict | None:
+    """Lluvia de cada estación (historial de 6 h) con su posición; sin las de lluvia dudosa."""
+    import corrector_estaciones as ce
+
+    try:
+        sys.path.insert(0, str(ROOT / "scripts" / "estaciones"))
+        import senales_superficie as ss
+
+        hist = leer_json(ss.HISTORIAL)
+        dudosas = [e.get("nombre") for e in senales.get("estaciones") or []
+                   if e.get("calidad_lluvia") == "dudosa" or e.get("calidad") == "dudosa"]
+        return ce.desde_historial(hist, ss.coordenadas(), dudosas) if hist else None
+    except Exception:
+        return None
 
 
 def con_corrector(cfg: dict, campos: dict[float, np.ndarray], edad: float, flujo: dict | None,
@@ -663,14 +753,43 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     tiempos = [edad + p for p in PLAZOS_DESDE_AHORA] if edad is not None else []
     campos: dict[float, np.ndarray] = {}
     datos_corr = None
+    # Etapa A: satélite más nuevo que el radar y lluvia de las estaciones.
+    sat_cfg = cfg.get("satelite_etapa_a") or {}
+    est_cfg = cfg.get("estaciones_etapa_a") or {}
+    prep_sat = None
+    if campo is not None and flujo is not None and (sat_cfg.get("activo") or sat_cfg.get("en_paralelo")):
+        prep_sat = preparar_satelite(campo, flujo, radar_dt, ahora, sat_cfg, goes, salida)
+    usar_sat = bool(prep_sat is not None and sat_cfg.get("activo") and cfg.get("escenarios"))
+    est_datos = datos_estaciones(senales) if (campo is not None and (est_cfg.get("activo") or est_cfg.get("en_paralelo"))) else None
+    usar_est = bool(est_datos and est_cfg.get("activo"))
+
+    def estaciones(c: dict[float, np.ndarray], info: dict | None = None) -> dict[float, np.ndarray]:
+        import corrector_estaciones as ce
+        try:
+            return ce.corregir_campos(c, est_datos, ahora, edad, flujo, campo.shape,
+                                      est_cfg.get("parametros"), campo, info)
+        except Exception as exc:
+            if info is not None:
+                info.update({"usado": False, "motivo": f"{type(exc).__name__}: {str(exc)[:100]}"})
+            return c
+
+    if est_datos:
+        info_est: dict[str, Any] = {}
+        estaciones({float(edad): campo}, info_est)   # solo para informar qué haría ahora
+        salida["corrector_estaciones"] = {"activo": usar_est, **{k: info_est.get(k) for k in
+                                          ("usado", "estaciones", "agregadas", "bajadas", "motivo") if k in info_est}}
     if campo is not None:
-        if flujo is not None and cfg.get("escenarios"):
+        if usar_sat:
+            campos = cs.campos(prep_sat, tiempos)
+        elif flujo is not None and cfg.get("escenarios"):
             campos = nc.campos_escenarios(campo, flujo["u"], flujo["v"], tiempos, flujo["tasa"])
             campos = con_anvil(cfg, flujo, campos, salida)
         elif flujo is not None:
             campos = nc.serie(campo, flujo["u"], flujo["v"], tiempos, flujo["tasa"])
         else:
             campos = {float(t): campo for t in tiempos}  # sin movimiento: persistencia (se dice)
+        if usar_est:
+            campos = estaciones(campos)
         # Corrector con rayos y satélite medidos ahora (agrega y quita).
         datos_corr = datos_corrector(goes, ahora, campo.shape) if cfg.get("corrector") else None
         campos = con_corrector(cfg, campos, edad, flujo, datos_corr, salida) if datos_corr else campos
@@ -681,7 +800,9 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     if campo is not None and edad is not None:
         try:
             t_lleg = [float(edad + p) for p in PLAZOS_LLEGADA]
-            if flujo is not None and cfg.get("escenarios"):
+            if usar_sat:
+                prob = cs.campos(prep_sat, t_lleg)
+            elif flujo is not None and cfg.get("escenarios"):
                 prob = nc.campos_escenarios(campo, flujo["u"], flujo["v"], t_lleg, flujo["tasa"])
             elif flujo is not None:
                 prob = nc.serie(campo, flujo["u"], flujo["v"], t_lleg, flujo["tasa"])
@@ -692,11 +813,14 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
                 # Validado (herramientas/simular_envolvente.py, 684 casos): con 25 caminos,
                 # "probable" = 2 de 25 y "posible" = 1 de 25 (algún camino la trae).
                 kp, kq = int(env_cfg.get("k_probable", 2)), int(env_cfg.get("k_posible", 1))
-                pilas = nc.campos_envolvente(campo, flujo["u"], flujo["v"], t_lleg, (kp, kq), flujo["tasa"])
+                pilas = cs.campos(prep_sat, t_lleg, "envolvente", (kp, kq)) if usar_sat else \
+                    nc.campos_envolvente(campo, flujo["u"], flujo["v"], t_lleg, (kp, kq), flujo["tasa"])
                 env = {"probable": pilas[kp], "posible": pilas[kq]}
                 grados = {"probable": {t: np.maximum(env["probable"][t], prob[t]) for t in t_lleg}}
                 # "posible" nunca dice menos que "probable".
                 grados["posible"] = {t: np.maximum(env["posible"][t], grados["probable"][t]) for t in t_lleg}
+            if usar_est:
+                grados = {g: estaciones(c) for g, c in grados.items()}
             if datos_corr:
                 grados = {g: con_corrector(cfg, c, edad, flujo, datos_corr, None) for g, c in grados.items()}
             grados = {g: {p: c[float(edad + p)] for p in PLAZOS_LLEGADA} for g, c in grados.items()}
@@ -794,16 +918,27 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
                 if 0 <= plazo <= 90 and (iso(ahora), iso(obj)) not in emit:
                     objetivos.append((obj, plazo, 10.0 * n))
             t_imgs = [t for _, _, t in objetivos]
+            extra: dict[str, Any] = {}
             if not t_imgs:
                 futuros = {}
             elif flujo is None:
                 futuros = {t: campo for t in t_imgs}
             elif cfg.get("escenarios"):
-                futuros = con_anvil(cfg, flujo, nc.campos_escenarios(campo, flujo["u"], flujo["v"], t_imgs,
-                                                                     flujo["tasa"]), None)
-                if cfg.get("corrector"):
-                    futuros = con_corrector(cfg, futuros, edad, flujo,
-                                            datos_corr or datos_corrector(goes, ahora, campo.shape), None)
+                # Sin la etapa A (base) y, aparte, con cada parte de la etapa A (activa o en paralelo).
+                base_f = con_anvil(cfg, flujo, nc.campos_escenarios(campo, flujo["u"], flujo["v"], t_imgs,
+                                                                    flujo["tasa"]), None)
+                sat_f = cs.campos(prep_sat, t_imgs) if prep_sat is not None else None
+                corr = datos_corr or (datos_corrector(goes, ahora, campo.shape) if cfg.get("corrector") else None)
+
+                def terminar(c):
+                    return con_corrector(cfg, c, edad, flujo, corr, None) if (cfg.get("corrector") and corr) else c
+
+                futuros = terminar(estaciones(sat_f if usar_sat else base_f) if usar_est else (sat_f if usar_sat else base_f))
+                if prep_sat is not None:
+                    extra["satelite"] = terminar(sat_f) if not usar_sat else futuros
+                    extra["sin_satelite"] = terminar(estaciones(base_f) if usar_est else base_f) if usar_sat else None
+                if est_datos:
+                    extra["estaciones"] = terminar(estaciones(sat_f if usar_sat else base_f)) if not usar_est else futuros
             else:
                 futuros = nc.serie(campo, flujo["u"], flujo["v"], t_imgs, flujo["tasa"])
             for obj, plazo, t_img in objetivos:
@@ -815,6 +950,12 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
                             "reg": [int(round(obs_reg[z])) for z in sorted(obs_reg)]},
                     "capas": {"loc": {k: round(x, 1) for k, x in nc.picos_por_zona(cmp_, zl).items()},
                               "reg": [int(round(x)) for _, x in sorted(nc.picos_por_zona(cmp_, zr).items())]},
+                    # Etapa A en vivo: lo mismo con y sin cada corrección (se guarda solo si cambia
+                    # algo; si no, "etapa_a" dice que se calculó y fue igual a "capas").
+                    "etapa_a": [m for m, c in extra.items() if c is not None],
+                    **{m: {"loc": {k: round(x, 1) for k, x in nc.picos_por_zona(c[t_img], zl).items()},
+                           "reg": [int(round(x)) for _, x in sorted(nc.picos_por_zona(c[t_img], zr).items())]}
+                       for m, c in extra.items() if c is not None and not np.array_equal(c[t_img], cmp_)},
                 })
         # Tope de tamaño: solo pendientes dentro de la ventana.
         verif["pendientes"] = [p for p in verif.get("pendientes") or []

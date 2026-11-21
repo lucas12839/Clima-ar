@@ -51,7 +51,19 @@ except Exception:
     pass
 obs = {str(t["track_id"]): [t["x"], t["y"]] for t in tracks}
 nuevas = {k: {str(h["minutos"]): [h["x"], h["y"]] for h in v["horizontes"]} for k, v in (nueva.get("tracks") or {}).items()}
-print(json.dumps({"obs": obs, "vieja": vieja, "nueva": nuevas, "disponible": nueva.get("disponible")}))
+salida = {"obs": obs, "vieja": vieja, "nueva": nuevas, "disponible": nueva.get("disponible")}
+# Etapa A: misma trayectoria con lo que ya mide el satélite a la hora de llegada del radar.
+import os
+if os.path.exists("sat.npz"):
+    import numpy as np
+    z = np.load("sat.npz")
+    sat = {k: (None if not z[k].size else z[k]) for k in ("radar", "nuevo", "previo")}
+    sat["tramo"], sat["entre"] = float(z["tramo"]), (None if float(z["entre"]) < 0 else float(z["entre"]))
+    for nombre, par in json.loads(Path("variantes.json").read_text()).items():
+        r = tc.calcular(radar_dt, tracks, satelite=sat, parametros_satelite=par)
+        salida[nombre] = {k: {str(h["minutos"]): [h["x"], h["y"]] for h in v["horizontes"]}
+                          for k, v in (r.get("tracks") or {}).items()}
+print(json.dumps(salida))
 '''
 
 
@@ -82,8 +94,21 @@ def main(argv=None) -> int:
     ap.add_argument("--desde-hora", type=int, default=15)
     ap.add_argument("--horas", type=int, default=12)
     ap.add_argument("--salida", default=None)
+    ap.add_argument("--goes", default=None, help="historial de GOES-19 (etapa A: corrección por satélite)")
+    ap.add_argument("--llegada", type=float, default=20.0,
+                    help="minutos entre la hora de la imagen y cuando se usa (atraso de SINARAME + cadena)")
+    ap.add_argument("--variantes", default='{"satelite": {"peso_posicion": 1.0}}')
     a = ap.parse_args(argv)
-    errores = {m: defaultdict(list) for m in ("vieja", "nueva")}
+    variantes = json.loads(a.variantes) if a.goes else {}
+    metodos = ("vieja", "nueva", *variantes)
+    errores = {m: defaultdict(list) for m in metodos}
+    goes = None
+    if a.goes:
+        sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "herramientas"), str(ROOT)]
+        import numpy as np
+        import simular_etapa_a as sea
+        import simular_huecos as sh
+        goes = sh.cargar_goes(Path(a.goes))
     pares = 0
     for dia in a.dias.split(","):
         tmp = preparar_copia()
@@ -92,13 +117,23 @@ def main(argv=None) -> int:
         fin = ini + timedelta(hours=a.horas)
         frames = [p for p in sorted((ROOT / "data/radar/historico").glob("20*.png"))
                   if ini <= datetime.strptime(p.stem, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc) <= fin]
-        pred = {"vieja": {}, "nueva": {}}   # (track, hora objetivo, plazo) -> (x, y)
+        pred = {m: {} for m in metodos}   # (track, hora objetivo, plazo) -> (x, y)
+        if variantes:
+            (tmp / "variantes.json").write_text(json.dumps(variantes))
         n_ok = 0
         for p in frames:
             t = datetime.strptime(p.stem, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
             shutil.copy(p, radar / "historico" / p.name)
             shutil.copy(p, radar / "actual.png")
             (radar / "radar_timestamp.txt").write_text(t.isoformat())
+            if goes is not None:
+                sats = sea.satelites_para(goes, t, t + timedelta(minutes=a.llegada), (512, 512))
+                if sats is None:
+                    (tmp / "sat.npz").unlink(missing_ok=True)
+                else:
+                    vacio = np.zeros(0, np.float32)
+                    np.savez(tmp / "sat.npz", **{k: (vacio if sats[k] is None else sats[k]) for k in ("radar", "nuevo", "previo")},
+                             tramo=sats["tramo"], entre=-1.0 if sats["entre"] is None else sats["entre"])
             try:
                 correr([sys.executable, "seguimiento_temporal.py"], tmp)
                 correr([sys.executable, "scripts/prediccion_evolucion.py"], tmp)
@@ -108,7 +143,7 @@ def main(argv=None) -> int:
                 continue
             n_ok += 1
             # Comparar lo que se predijo para esta hora con lo observado ahora.
-            for metodo in ("vieja", "nueva"):
+            for metodo in metodos:
                 for (tid, objetivo, plazo), (x, y) in list(pred[metodo].items()):
                     if abs((objetivo - t).total_seconds()) > 60:
                         continue
@@ -119,13 +154,15 @@ def main(argv=None) -> int:
                     del pred[metodo][(tid, objetivo, plazo)]
             # Solo tormentas con predicción de los DOS métodos (comparación justa).
             comunes = set(r["vieja"]) & set(r["nueva"])
+            for m in variantes:   # sin satélite a esa hora: la variante es igual a "nueva"
+                r.setdefault(m, r["nueva"])
             for tid in comunes:
                 for h in HORIZONTES:
                     k = str(h)
-                    if k in r["vieja"][tid] and k in r["nueva"][tid]:
+                    if all(tid in r[m] and k in r[m][tid] for m in metodos):
                         obj = t + timedelta(minutes=h)
-                        pred["vieja"][(tid, obj, h)] = tuple(r["vieja"][tid][k])
-                        pred["nueva"][(tid, obj, h)] = tuple(r["nueva"][tid][k])
+                        for m in metodos:
+                            pred[m][(tid, obj, h)] = tuple(r[m][tid][k])
         print(f"{dia}: {n_ok}/{len(frames)} imágenes")
         shutil.rmtree(tmp, ignore_errors=True)
     resumen = {}

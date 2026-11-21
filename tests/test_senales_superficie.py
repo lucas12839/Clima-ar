@@ -18,8 +18,16 @@ class SenalesTest(unittest.TestCase):
         self.assertEqual(ss.lluvia_en(serie, AHORA, 3), 38.0)
 
     def test_reinicio_a_medianoche_suma_lo_nuevo(self):
-        serie = [r("09:20", lluvia_dia=12.0), r("09:40", lluvia_dia=1.5), r("10:00", lluvia_dia=4.0)]
-        self.assertEqual(ss.lluvia_en(serie, AHORA, 1), 4.0)
+        # BCP reinicia el acumulado a la medianoche local (03 UTC).
+        ahora = datetime(2026, 11, 19, 3, 30, tzinfo=timezone.utc)
+        serie = [r("02:40", lluvia_dia=12.0), r("03:05", lluvia_dia=1.5), r("03:30", lluvia_dia=4.0)]
+        self.assertEqual(ss.lluvia_en(serie, ahora, 1), 4.0)
+
+    def test_bajada_sin_medianoche_es_lectura_erronea(self):
+        # Caso La Vitícola 21/11 02:47 UTC: 6,0 -> 0,0 -> 6,0 no son 6 mm nuevos.
+        serie = [r("09:20", lluvia_dia=6.0), r("09:30", lluvia_dia=0.0), r("09:40", lluvia_dia=6.0),
+                 r("10:00", lluvia_dia=6.4)]
+        self.assertEqual(ss.lluvia_en(serie, AHORA, 1), 0.4)
 
     def test_frente_de_rafagas(self):
         serie = [r("09:35", temp=24.0, presion=1000.0), r("10:00", temp=18.5, presion=1003.1)]
