@@ -303,21 +303,37 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
     `docs/ESTACIONES_NUEVAS.md`.
   - Doppler en vivo: comprobado que la página de SINARAME no lo publica (rama `prueba-doppler`).
     El gancho se descarta (dura poco y el PNG no lo resuelve lejos del radar).
-- **LISTA DE PENDIENTES (21/11/2026) — esperar el "arrancá" de Lucas:**
-  1. **Propuesto, falta el sí de Lucas:** reemplazo del Doppler con reglas, **sin el gancho**: forma de
-     arco (viento) en ZH MAX, rayos y topes de GOES-19, viento que gira con la altura desde los
-     modelos, y calibrar el puntaje de gravedad (punto 4) en el punto 9.
-  2. **Tema nuevo de Lucas:** el radar llega como mínimo 10 min tarde (a veces 30+). Ver cómo
-     compensarlo mejor (no se puede achicar el atraso de SINARAME).
-  3. Decidir qué se muestra para "justo sobre la localidad" con la validación en vivo
-     (`celdas_localidad.json` → resumen y `resumen.aviso_fuerte`; `alarma_llegada.json` → resumen).
-  4. Puntos **9, 10 y 11** de `docs/INSPECCION_FUENTES.md` (11: VPS que se actualiza solo y reloj
-     externo de respaldo con una clave que tiene que crear Lucas).
-  5. Simulaciones finales de aciertos con casos reales; recién ahí decidir avisos y mostrar el puntaje.
-  6. Repasar: umbrales de la escala de gravedad; pasar a lo que se ve lo que está en paralelo
-     (4, 5, 7, 8, paso 2, ideas 2 y 3) cuando esté medido; borrar el predictor viejo; ramas de prueba
-     (abajo); revisar Sierra de la Ventana (falsas alarmas).
-  7. Al final: Render y Netlify (interfaz).
+- **Investigación del 21/11 (madrugada):** el atraso del radar es casi todo de SINARAME (mediana
+  16 min hasta que lo vemos; nuestra cadena suma ~4,5 min: radar 2 + Intelligence 2,4; sin cola).
+  SINARAME publica en dos tandas (1/3 de las imágenes a 4-7 min, 2/3 a 14-17). Descartados por Lucas:
+  más radares (vecinos de SINARAME = mismo atraso; INTA Anguil se rompe seguido; no hay otros que
+  lleguen a Bahía), radar simulado por satélite (GREMLIN: es una estimación), enlaces de celular
+  (datos privados), prueba del detector más rápido.
+- **PLAN DE TRABAJO (21/11/2026, 00:30 hora de Argentina) — en este orden, esperar el "arrancá" de
+  Lucas en cada etapa:**
+  - **Etapa A — Compensar el atraso del radar** (solo datos medidos; cada mejora se mide con
+    `herramientas/simular_huecos.py` antes de usarla; en paralelo hasta validarla):
+    1. Corrector con estaciones: lluvia medida cada minuto por las 13 estaciones (agregar donde
+       miden lluvia fuerte, bajar donde no miden nada).
+    2. Posición de ahora con el satélite: topes fríos de la imagen más nueva de GOES-19 (~10 min más
+       fresca que el radar) para corregir dónde está cada tormenta, también las que no tienen rayos.
+    3. Movimiento medido por el satélite (topes fríos entre imágenes) para controlar el del radar.
+    4. Crece o se debilita: enfriamiento del tope y aumento de rayos para subir o bajar la
+       intensidad pronosticada.
+    5. Punto 10: probar el modo sin radar (satélite + rayos + estaciones) con una tormenta real.
+  - **Etapa B — Punto 9: calibración y medición continua:** lluvia con estaciones, puntaje de
+    gravedad con estaciones y rayos, informe mensual de aciertos.
+  - **Etapa C — Punto 11: vigilancia:** VPS que se actualice solo, control de cada fuente, reloj
+    externo de respaldo (clave que tiene que crear Lucas).
+  - **Etapa D — Simulaciones finales de aciertos** con casos reales.
+  - **Etapa E — Decidir qué se muestra** con los números en vivo y de la etapa D: "justo sobre la
+    localidad" (`celdas_localidad.json`, ideas 2 y 3), puntaje de gravedad, avisos.
+  - **Etapa F — Repasos:** umbrales de la escala de gravedad; pasar a lo que se ve lo que esté
+    medido; borrar el predictor viejo y las ramas de prueba; revisar Sierra de la Ventana (falsas
+    alarmas); Pasman sin datos.
+  - **Etapa G — Reemplazo del Doppler sin el gancho** (Lucas: "lo dejamos para lo último"): arco en
+    ZH MAX, rayos y topes de GOES-19, viento que gira con la altura desde los modelos.
+  - **Al final — Render y Netlify** (interfaz).
 - Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
   #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).
