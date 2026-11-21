@@ -77,7 +77,8 @@ CONFIG_DEFECTO = {
     # Etapa A: satélite más nuevo que el radar (posición, movimiento, crecimiento) y lluvia
     # medida por las estaciones. "activo" = cambia lo que se pronostica; "en_paralelo" =
     # se calcula y se valida en vivo (verificacion_nowcast.json) sin cambiar nada.
-    "satelite_etapa_a": {"activo": False, "en_paralelo": False, "trayectorias": False, "parametros": {}},
+    "satelite_etapa_a": {"activo": False, "en_paralelo": False, "trayectorias": False,
+                         "movimiento_si_falta_radar": False, "parametros": {}},
     "estaciones_etapa_a": {"activo": False, "en_paralelo": False, "parametros": {}},
     "nota": "Lo deciden las simulaciones de herramientas/simular_huecos.py y simular_etapa_a.py.",
 }
@@ -578,6 +579,27 @@ def preparar_satelite(campo: np.ndarray, flujo: dict, radar_dt: datetime, ahora:
     return prep
 
 
+def movimiento_satelite(radar_dt: datetime, ahora: datetime, campo: np.ndarray, salida: dict) -> dict | None:
+    """Etapa A, punto 3: si el radar no da movimiento (falta la imagen anterior, como el
+    19/11 a las 22:20 y 00:00), el movimiento de los topes fríos entre los dos barridos más
+    nuevos reemplaza a la persistencia. Simulado (herramientas/simular_etapa_a.py): mucho
+    mejor que dejar la tormenta quieta. Falla segura: None."""
+    sats, info = satelites_etapa_a(radar_dt, ahora, campo.shape)
+    if sats is None:
+        return None
+    km_px = nf.km_por_pixel(campo.shape[1])
+    p = cs.PARAMETROS_DEFECTO
+    fs = cs.flujo_satelite(sats["previo"], sats["nuevo"], sats["entre"], km_px, p)
+    if fs is None:
+        fs = cs.flujo_satelite(sats["radar"], sats["nuevo"], sats["tramo"], km_px, p)
+    salida["movimiento_satelite_si_falta_radar"] = {"usado": fs is not None, **info}
+    if fs is None:
+        return None
+    return {"u": fs["u"], "v": fs["v"], "tasa": None, "tres": None, "velocidad_kmh": fs["velocidad_kmh"],
+            "direccion_hacia_grados": fs["direccion_hacia_grados"], "coherencia": fs["coherencia"],
+            "intervalo_min": round(fs["minutos"], 1), "km_px": km_px, "fuente": "satelite (topes fríos)"}
+
+
 def datos_estaciones(senales: dict) -> dict | None:
     """Lluvia de cada estación (historial de 6 h) con su posición; sin las de lluvia dudosa."""
     import corrector_estaciones as ce
@@ -743,8 +765,12 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
         if cfg.get("control_calidad_satelite"):
             campo = control_calidad(campo, radar_dt, salida)
         flujo = movimiento(radar_dt, campo, actual_dbz, clutter, cfg)
+        if flujo is None and (cfg.get("satelite_etapa_a") or {}).get("movimiento_si_falta_radar"):
+            flujo = movimiento_satelite(radar_dt, ahora, campo, salida)
     salida["movimiento"] = None if flujo is None else {
         k: flujo[k] for k in ("velocidad_kmh", "direccion_hacia_grados", "coherencia", "intervalo_min")}
+    if flujo is not None:
+        salida["movimiento"]["fuente"] = flujo.get("fuente", "radar")
     if campo is None:
         salida["motivo_sin_radar"] = "SIN_RADAR_ACTUAL"
 
