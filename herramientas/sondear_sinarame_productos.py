@@ -41,14 +41,18 @@ def main():
             print(" ", t.replace("\n", " | ")[:150])
 
         # Elegir el RMA10 (Bahía Blanca) como haría una persona, si aparece.
-        for sel in ("text=RMA10", "text=Bahía Blanca", "text=Bahia Blanca"):
-            try:
-                page.click(sel, timeout=4000)
-                page.wait_for_timeout(8000)
-                print("clic en", sel)
-                break
-            except Exception:
-                pass
+        for i, sel in enumerate(page.query_selector_all("select")):
+            ops = sel.eval_on_selector_all("option", "o => o.map(x => [x.value, x.innerText])") if False else \
+                page.evaluate("s => [...s.options].map(o => [o.value, o.text])", sel)
+            print(f"select {i}:", ops[:30])
+            for v, t in ops:
+                if "RMA10" in t:
+                    sel.select_option(value=v)
+                    page.wait_for_timeout(20000)
+                    print("elegido", t)
+        js = page.evaluate("fetch('/js/radar.bwas0cb2os.js').then(r => r.text())")
+        print("radar.js palabras:", sorted(set(PALABRAS.findall(js))))
+        print("radar.js rutas:", sorted(set(re.findall(r"['\"`]([^'\"`]*(?:cache|png|api|/)[^'\"`]*)['\"`]", js)))[:60])
         textos2 = page.eval_on_selector_all(
             "button, option, label, a, li, [role=option], select",
             "els => els.map(e => (e.innerText || e.value || '').trim()).filter(t => t)")
