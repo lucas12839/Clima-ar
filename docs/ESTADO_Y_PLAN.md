@@ -287,8 +287,27 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   (`data/ia/celdas_localidad.json`, validación en vivo). Simulado con 703 casos: 5b y celdas juntos
   = 62 % detectado / 34 % falsas alarmas (5b solo 73/46); el objetivo 70-80 % no se alcanzó.
   `docs/VALIDACION_CELDAS_RAYOS.md`.
-- **SIGUIENTE (esperar a Lucas):** decidir qué se muestra para "justo sobre la localidad" con la
-  validación en vivo; después el punto 9.
+- **LISTA DE PENDIENTES (20/11/2026, 21:45 hora de Argentina) — esperar el "arrancá" de Lucas:**
+  1. **Idea 2 (aprobada):** aviso de localidad exacta solo para tormentas fuertes (>= 45 dBZ) o con
+     rayos, con las celdas de rayos. Validar con los 26 días y el historial GOES (rama
+     `datos-goes-historial`) usando `herramientas/simular_celdas_rayos.py`. En paralelo. Lo demás
+     lo sigue cubriendo la zona de 10 km.
+  2. **Idea 3 (aprobada):** estaciones como alarma de "ya llega" (frente de ráfagas: salto de viento,
+     caída de temperatura, subida de presión en BCP de 1 min y estaciones aguas arriba). Respetar el
+     límite de 15 min (`frescura.py`): estación vieja = no se usa. Solo se valida en vivo.
+  3. **Propuesto, falta el sí de Lucas:** reemplazo del Doppler al estilo ProbSevere (con reglas):
+     forma de arco (viento) y de gancho (giro) en ZH MAX, helicidad y viento que gira con la altura
+     desde los modelos, y calibrar el puntaje de gravedad (punto 4) en el punto 9.
+  4. **Tema nuevo de Lucas:** el radar llega como mínimo 10 min tarde (a veces 30+). Ver cómo
+     compensarlo mejor (no se puede achicar el atraso de SINARAME).
+  5. Decidir qué se muestra para "justo sobre la localidad" con la validación en vivo
+     (`celdas_localidad.json` → resumen).
+  6. Puntos **9, 10 y 11** de `docs/INSPECCION_FUENTES.md` (11: VPS que se actualiza solo y reloj
+     externo de respaldo con una clave que tiene que crear Lucas).
+  7. Simulaciones finales de aciertos con casos reales; recién ahí decidir avisos y mostrar el puntaje.
+  8. Repasar: umbrales de la escala de gravedad; pasar a lo que se ve lo que está en paralelo
+     (4, 5, 7, 8, paso 2) cuando esté medido; borrar el predictor viejo; ramas de prueba (abajo).
+  9. Al final: Render y Netlify (interfaz).
 - Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
   #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).
@@ -328,5 +347,5 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   imposible); los datos completos del RMA10 (Doppler) ya los pidió Lucas: si llegan, se suman.
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
-`auditoria-cadena` (después de unir), `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
+`auditoria-cadena`, `paso1-5b-visible`, `punto8-ambiente-satelite`, `paso2-celdas-rayos`, `reloj-cwop-tiempo`, `plan-pendientes`, `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
 `indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-wrf`, `datos-wrf-historial` (historial del WRF, borrar al final), `prueba-inspeccion` (temporal de pruebas reales: borrar al final), `nowcast-sin-radar`, `nowcast-capas`, `punto6-anvil`, `punto7-modelos`, `validacion-sistema` y las ramas ya unidas de cada PR (`goes-zona-tormentas`, `senales-severas`, `casos-guardados`, `rayos-mejorados`, `puntaje-gravedad`, etc.).
