@@ -287,27 +287,37 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   (`data/ia/celdas_localidad.json`, validación en vivo). Simulado con 703 casos: 5b y celdas juntos
   = 62 % detectado / 34 % falsas alarmas (5b solo 73/46); el objetivo 70-80 % no se alcanzó.
   `docs/VALIDACION_CELDAS_RAYOS.md`.
-- **LISTA DE PENDIENTES (20/11/2026, 21:45 hora de Argentina) — esperar el "arrancá" de Lucas:**
-  1. **Idea 2 (aprobada):** aviso de localidad exacta solo para tormentas fuertes (>= 45 dBZ) o con
-     rayos, con las celdas de rayos. Validar con los 26 días y el historial GOES (rama
-     `datos-goes-historial`) usando `herramientas/simular_celdas_rayos.py`. En paralelo. Lo demás
-     lo sigue cubriendo la zona de 10 km.
-  2. **Idea 3 (aprobada):** estaciones como alarma de "ya llega" (frente de ráfagas: salto de viento,
-     caída de temperatura, subida de presión en BCP de 1 min y estaciones aguas arriba). Respetar el
-     límite de 15 min (`frescura.py`): estación vieja = no se usa. Solo se valida en vivo.
-  3. **Propuesto, falta el sí de Lucas:** reemplazo del Doppler al estilo ProbSevere (con reglas):
-     forma de arco (viento) y de gancho (giro) en ZH MAX, helicidad y viento que gira con la altura
-     desde los modelos, y calibrar el puntaje de gravedad (punto 4) en el punto 9.
-  4. **Tema nuevo de Lucas:** el radar llega como mínimo 10 min tarde (a veces 30+). Ver cómo
+- **21/11/2026, madrugada (Lucas: "empezá con la idea 1 y la 2, terminalas, y buscá más estaciones"):**
+  - **Idea 2 HECHA EN PARALELO:** aviso de la localidad exacta solo para tormentas fuertes o con
+    rayos (`celdas_localidad.json` → `fuerte_o_rayos`, versión 1.1, validación en vivo propia en
+    `resumen.aviso_fuerte`). Simulado con 718 casos: 60 % detectado / 43 % falsas alarmas (5b
+    solo 78/67). **El objetivo 70-80 % no se alcanzó.** Con rayos es muy seguro (7 % falsas) pero
+    cubre 1 de cada 5. Sierra de la Ventana: 81 % falsas alarmas. `docs/VALIDACION_AVISO_FUERTE.md`.
+  - **Idea 3 HECHA EN PARALELO:** alarma de "ya llega" por estaciones aguas arriba
+    (`scripts/estaciones/alarma_llegada.py` → `data/ia/estaciones/alarma_llegada.json`, validación
+    en vivo). Probada con el 19/11 y el 20/11: 3 de 3 alarmas acertadas (Bahía Centro → Punta Alta),
+    pocos casos. `docs/ALARMA_ESTACIONES.md`.
+  - **5 estaciones BCP nuevas:** Punta Alta, La Vitícola, Villa Ventana, Sierras Grandes y
+    Macachín (19 estaciones en total). Radio del resumen de Bahía: 20 km (antes 25) para no mezclar
+    Punta Alta. Falta cobertura al oeste y suroeste. Pasman sin datos hace 20 días.
+    `docs/ESTACIONES_NUEVAS.md`.
+  - Doppler en vivo: comprobado que la página de SINARAME no lo publica (rama `prueba-doppler`).
+    El gancho se descarta (dura poco y el PNG no lo resuelve lejos del radar).
+- **LISTA DE PENDIENTES (21/11/2026) — esperar el "arrancá" de Lucas:**
+  1. **Propuesto, falta el sí de Lucas:** reemplazo del Doppler con reglas, **sin el gancho**: forma de
+     arco (viento) en ZH MAX, rayos y topes de GOES-19, viento que gira con la altura desde los
+     modelos, y calibrar el puntaje de gravedad (punto 4) en el punto 9.
+  2. **Tema nuevo de Lucas:** el radar llega como mínimo 10 min tarde (a veces 30+). Ver cómo
      compensarlo mejor (no se puede achicar el atraso de SINARAME).
-  5. Decidir qué se muestra para "justo sobre la localidad" con la validación en vivo
-     (`celdas_localidad.json` → resumen).
-  6. Puntos **9, 10 y 11** de `docs/INSPECCION_FUENTES.md` (11: VPS que se actualiza solo y reloj
+  3. Decidir qué se muestra para "justo sobre la localidad" con la validación en vivo
+     (`celdas_localidad.json` → resumen y `resumen.aviso_fuerte`; `alarma_llegada.json` → resumen).
+  4. Puntos **9, 10 y 11** de `docs/INSPECCION_FUENTES.md` (11: VPS que se actualiza solo y reloj
      externo de respaldo con una clave que tiene que crear Lucas).
-  7. Simulaciones finales de aciertos con casos reales; recién ahí decidir avisos y mostrar el puntaje.
-  8. Repasar: umbrales de la escala de gravedad; pasar a lo que se ve lo que está en paralelo
-     (4, 5, 7, 8, paso 2) cuando esté medido; borrar el predictor viejo; ramas de prueba (abajo).
-  9. Al final: Render y Netlify (interfaz).
+  5. Simulaciones finales de aciertos con casos reales; recién ahí decidir avisos y mostrar el puntaje.
+  6. Repasar: umbrales de la escala de gravedad; pasar a lo que se ve lo que está en paralelo
+     (4, 5, 7, 8, paso 2, ideas 2 y 3) cuando esté medido; borrar el predictor viejo; ramas de prueba
+     (abajo); revisar Sierra de la Ventana (falsas alarmas).
+  7. Al final: Render y Netlify (interfaz).
 - Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
   #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).
@@ -348,4 +358,4 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
 `auditoria-cadena`, `paso1-5b-visible`, `punto8-ambiente-satelite`, `paso2-celdas-rayos`, `reloj-cwop-tiempo`, `plan-pendientes`, `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
-`indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-wrf`, `datos-wrf-historial` (historial del WRF, borrar al final), `prueba-inspeccion` (temporal de pruebas reales: borrar al final), `nowcast-sin-radar`, `nowcast-capas`, `punto6-anvil`, `punto7-modelos`, `validacion-sistema` y las ramas ya unidas de cada PR (`goes-zona-tormentas`, `senales-severas`, `casos-guardados`, `rayos-mejorados`, `puntaje-gravedad`, etc.).
+`indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-doppler`, `idea2-aviso-fuerte` (ya unida), `prueba-wrf`, `datos-wrf-historial` (historial del WRF, borrar al final), `prueba-inspeccion` (temporal de pruebas reales: borrar al final), `nowcast-sin-radar`, `nowcast-capas`, `punto6-anvil`, `punto7-modelos`, `validacion-sistema` y las ramas ya unidas de cada PR (`goes-zona-tormentas`, `senales-severas`, `casos-guardados`, `rayos-mejorados`, `puntaje-gravedad`, etc.).

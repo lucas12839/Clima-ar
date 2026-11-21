@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Valida y resume las 14 estaciones operativas de ClimaAR.
+"""Valida y resume las estaciones operativas de ClimaAR (19 desde el 21/11/2026).
 
 No importa PyTorch ni utiliza el encoder neuronal experimental sin entrenar.
 La frescura se calcula exclusivamente desde observation_time, con la edad

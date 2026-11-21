@@ -25,6 +25,13 @@ STATIONS = {
     60: "ARROYO PANTANOSO",
     83: "PASMAN",
     104: "BAHIA BLANCA CENTRO",
+    # Estaciones nuevas en puntos estratégicos (búsqueda del 20/11/2026,
+    # docs/ESTACIONES_NUEVAS.md): todas publican cada pocos minutos.
+    3: "LA VITICOLA",        # 28 km al norte de Bahía, camino a Tornquist
+    76: "PUNTA ALTA",        # dentro de Punta Alta (la localidad no tenía estación)
+    59: "VILLA VENTANA",     # entre Tornquist y Sierra de la Ventana
+    97: "SIERRAS GRANDES",   # sobre las sierras, junto a Sierra de la Ventana
+    95: "MACACHIN",          # 205 km al noroeste (La Pampa): de ahí vienen muchas tormentas
 }
 
 def clean(text):

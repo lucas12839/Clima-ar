@@ -108,3 +108,52 @@ def test_verificacion_en_vivo_cuenta_aciertos(monkeypatch):
     assert out["acumulado"]["combinado"] == [1, 0, 0, 1]         # solo a tenía el 5b
     assert out["acumulado"]["rayos"] == [0, 1, 1, 0]             # b avisó por rayos y no pasó
     assert len(out["pendientes"]) == 1                          # el de 21:20 todavía no se puede verificar
+
+
+def test_idea2_solo_fuertes_o_con_rayos():
+    """Idea 2: una celda débil (40 dBZ) sin rayos no entra; una fuerte (50 dBZ) o con rayos, sí."""
+    u = np.full(SHAPE, 1.0, dtype=np.float32)
+    v = np.zeros(SHAPE, dtype=np.float32)
+    locs = {"loc": (100.0, 100.0, 3.0)}
+    debil = np.zeros(SHAPE, dtype=np.float32)
+    debil[95:105, 65:75] = 40.0
+    fuerte = debil.copy()
+    fuerte[98:102, 68:72] = 50.0
+    par = {"solo_fuertes_dbz": 45.0}
+    assert cr.probabilidades_celdas(debil, u, v, KM, 10.0, [], locs)["loc"]["probabilidad"] > 0.5
+    assert cr.probabilidades_celdas(debil, u, v, KM, 10.0, [], locs, par)["loc"]["probabilidad"] == 0.0
+    assert cr.probabilidades_celdas(fuerte, u, v, KM, 10.0, [], locs, par)["loc"]["probabilidad"] > 0.5
+    con_rayos = cr.probabilidades_celdas(debil, u, v, KM, 10.0,
+                                         [{"x": 80.0, "y": 100.0, "radio_km": 3.0, "rayos": 20}], locs, par)
+    assert con_rayos["loc"]["probabilidad"] > 0.5 and con_rayos["loc"]["celdas_corregidas_con_rayos"] == 1
+
+
+def test_idea2_verificacion_con_su_propia_verdad():
+    """El aviso fuerte se valida con 45 dBZ o rayos dentro de la localidad, no con 35 dBZ."""
+    import celdas_localidad as cl
+    t0 = datetime(2026, 11, 20, 21, 0, tzinfo=timezone.utc)
+    zona = np.zeros(SHAPE, dtype=bool)
+    zona[90:110, 90:110] = True
+    lluvia = np.zeros(SHAPE, np.float32)
+    lluvia[95:100, 95:100] = 40.0                       # tormenta débil: no cuenta para la idea 2
+    campos = {t0 + timedelta(minutes=m): lluvia for m in (0, 10, 20, 30)}
+    previo = {"pendientes": [{"ahora_utc": "2026-11-20T21:00:00Z",
+                              "localidades": {"a": {"p": 0.8, "pr": 0.0, "b5": True, "pf": 0.9},
+                                              "b": {"p": 0.0, "pr": 0.0, "b5": False, "pf": 0.0}}}],
+              "rayos_en_localidad": {"b": ["2026-11-20T21:15:00Z"]}}   # rayos sobre b sin aviso
+    out = cl.verificar(previo, campos, {"a": zona, "b": np.zeros(SHAPE, bool)}, t0 + timedelta(minutes=30))
+    assert out["acumulado_fuerte"] == [0, 1, 1, 0]   # a: avisó y no fue fuerte; b: rayos sin aviso
+    assert out["resumen"]["aviso_fuerte"]["falsas_alarmas_pct"] == 100.0
+
+
+def test_idea2_registra_rayos_dentro_de_la_localidad():
+    import celdas_localidad as cl
+    ahora = datetime(2026, 11, 20, 21, 0, tzinfo=timezone.utc)
+    goes = {"glm": {"ventana": {"disponible": True, "fin_ventana_utc": "2026-11-20T20:59:00Z",
+                                "rayos_10min": [[-38.72, -62.27, 1.0], [-37.0, -60.0, 2.0]]}}}
+    locs = [{"id": "bahia", "lat": -38.7183, "lon": -62.2663, "radio_km": 10.0},
+            {"id": "tornquist", "lat": -38.1, "lon": -62.2233, "radio_km": 4.0}]
+    reg = cl.registrar_rayos({}, goes, locs, ahora)
+    assert list(reg) == ["bahia"] and len(reg["bahia"]) == 2
+    viejo = cl.registrar_rayos({"rayos_en_localidad": {"bahia": ["2026-11-20T15:00:00Z"]}}, {}, locs, ahora)
+    assert viejo == {}                                # más de 3 h: se borra

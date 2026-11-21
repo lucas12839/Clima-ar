@@ -200,6 +200,9 @@ PARAMETROS_RADAR = {
     "distancia_union_rayos_km": 15.0,   # celda del radar movida a "ahora" <-> celda de rayos
     "error_por_minuto_km": 0.25,        # error del lugar que crece con el atraso del radar
     "error_lugar_con_rayos_km": 3.0,
+    # Idea 2 (aviso de la localidad exacta): si se da, solo cuentan las celdas del radar
+    # con un pico de al menos este valor (tormenta fuerte) o con rayos encima ahora.
+    "solo_fuertes_dbz": None,
 }
 
 
@@ -221,7 +224,8 @@ def celdas_radar(campo: np.ndarray, u: np.ndarray | None, v: np.ndarray | None, 
         # celda, corrida, toca una localidad (sin suponer que es redonda).
         dist = cv2.distanceTransform((~m).astype(np.uint8), cv2.DIST_L2, 3)
         salida.append({"x": float(centros[i][0]), "y": float(centros[i][1]),
-                       "pixeles": int(stats[i, cv2.CC_STAT_AREA]), "vx": vx, "vy": vy, "dist": dist})
+                       "pixeles": int(stats[i, cv2.CC_STAT_AREA]), "vx": vx, "vy": vy, "dist": dist,
+                       "max_dbz": float(np.nanmax(campo[m]))})
     return salida
 
 
@@ -258,12 +262,16 @@ def probabilidades_celdas(campo: np.ndarray, u: np.ndarray | None, v: np.ndarray
             d = math.hypot(r["x"] - ax, r["y"] - ay)
             if d <= dmin:
                 mejor, dmin = j, d
+        if mejor is not None:
+            usadas.add(mejor)
+        fuerte = p["solo_fuertes_dbz"]
+        if fuerte is not None and mejor is None and c["max_dbz"] < float(fuerte):
+            continue  # Idea 2: ni fuerte ni con rayos -> la cubre la zona de 10 km
         rapidez, angulo = math.hypot(c["vx"], c["vy"]), math.atan2(c["vy"], c["vx"])
         f = 1.0 + p["error_velocidad"] * rng.standard_normal(n)
         a = angulo + math.radians(p["error_direccion_grados"]) * rng.standard_normal(n)
         vxs, vys = rapidez * f * np.cos(a), rapidez * f * np.sin(a)
         if mejor is not None:
-            usadas.add(mejor)
             r = rayos[mejor]
             sigma = p["error_lugar_con_rayos_km"] / km_px
             ox = (r["x"] - c["x"]) + sigma * rng.standard_normal(n)

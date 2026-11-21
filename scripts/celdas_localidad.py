@@ -35,7 +35,7 @@ import nowcast_capas as capas  # noqa: E402
 import nowcast_capas_nucleo as nc  # noqa: E402
 import nowcast_flujo_optico as nf  # noqa: E402
 
-VERSION = "celdas-localidad-1.0"
+VERSION = "celdas-localidad-1.1"
 SALIDA = ROOT / "data" / "ia" / "celdas_localidad.json"
 GOES = ROOT / "data" / "goes19" / "goes19_state.json"
 HORIZONTE_MIN = 30.0
@@ -55,6 +55,14 @@ CRITERIOS = {
     "5b_localidad": lambda r: bool(r.get("b5")),
 }
 PARAMETROS: dict[str, Any] = {}
+# Idea 2 (20/11/2026): aviso de la localidad EXACTA solo para tormentas fuertes (>= 45 dBZ)
+# o con rayos; lo demás lo cubre la zona de 10 km. Verdad propia: 45 dBZ o más dentro de
+# la localidad o rayos dentro de ella (radio + 4 km, error de ubicación del GLM).
+# Umbral elegido con herramientas/simular_aviso_fuerte.py (docs/VALIDACION_AVISO_FUERTE.md).
+UMBRAL_FUERTE_DBZ = 45.0
+UMBRAL_AVISO_FUERTE = 0.7
+MARGEN_RAYO_KM = 4.0
+PARAMETROS_FUERTE: dict[str, Any] = {"solo_fuertes_dbz": UMBRAL_FUERTE_DBZ}
 PENDIENTES_MAX = 200
 EDAD_RADAR_MAX_MIN = 90.0
 
@@ -108,9 +116,12 @@ def grado(prob: float) -> str | None:
 
 def verificar(previo: dict, campos_por_hora: dict[datetime, np.ndarray], zonas: dict, ultima: datetime) -> dict:
     """Valida los pronósticos guardados cuyo plazo (30 min) ya cubren las imágenes
-    de radar llegadas: ¿hubo tormenta sobre la localidad entre ahora y +30?"""
+    de radar llegadas: ¿hubo tormenta sobre la localidad entre ahora y +30?
+    El aviso de la idea 2 se valida con su propia verdad: tormenta fuerte o rayos."""
     pend = []
     acum = previo.get("acumulado") or {}
+    acum_fuerte = previo.get("acumulado_fuerte") or [0, 0, 0, 0]
+    rayos_loc = previo.get("rayos_en_localidad") or {}
     for p in previo.get("pendientes") or []:
         desde = parse_utc(p.get("ahora_utc"))
         if desde is None:
@@ -131,15 +142,55 @@ def verificar(previo: dict, campos_por_hora: dict[datetime, np.ndarray], zonas: 
                 a = acum.setdefault(nombre, [0, 0, 0, 0])
                 dijo = criterio(reg)
                 a[0 if dijo and hubo else 1 if dijo else 2 if hubo else 3] += 1
+            if "pf" in reg:
+                fuerte = any(nc.picos_por_zona(campos_por_hora[t], {loc: zonas[loc]})[loc] >= UMBRAL_FUERTE_DBZ
+                             for t in horas)
+                electrica = any(desde <= (parse_utc(x) or desde - timedelta(days=1)) <= hasta
+                                for x in rayos_loc.get(loc, []))
+                hubo_f = fuerte or electrica
+                dijo = reg["pf"] >= UMBRAL_AVISO_FUERTE
+                acum_fuerte[0 if dijo and hubo_f else 1 if dijo else 2 if hubo_f else 3] += 1
     previo["pendientes"] = pend[-PENDIENTES_MAX:]
     previo["acumulado"] = acum
+    previo["acumulado_fuerte"] = acum_fuerte
     resumen = {}
     for nombre, (a, b, c, d) in acum.items():
         resumen[nombre] = {"paso_y_aviso": a, "aviso_y_no_paso": b, "paso_sin_aviso": c,
                            "deteccion_pct": round(100 * a / (a + c), 1) if a + c else None,
                            "falsas_alarmas_pct": round(100 * b / (a + b), 1) if a + b else None}
+    a, b, c, _ = acum_fuerte
+    resumen["aviso_fuerte"] = {"paso_y_aviso": a, "aviso_y_no_paso": b, "paso_sin_aviso": c,
+                               "deteccion_pct": round(100 * a / (a + c), 1) if a + c else None,
+                               "falsas_alarmas_pct": round(100 * b / (a + b), 1) if a + b else None,
+                               "verdad": "45 dBZ o más dentro de la localidad, o rayos dentro de ella"}
     previo["resumen"] = resumen
     return previo
+
+
+def registrar_rayos(previo: dict, goes: dict, locs: list[dict], ahora: datetime) -> dict[str, list[str]]:
+    """Guarda cuándo cayeron rayos dentro de cada localidad (verdad de la idea 2).
+
+    Cada ventana de rayos de 10 min se anota con su hora de fin; se guardan 3 h."""
+    import math
+
+    reg = {k: list(v) for k, v in (previo.get("rayos_en_localidad") or {}).items()}
+    ventana = ((goes.get("glm") or {}).get("ventana")) or {}
+    fin = parse_utc(ventana.get("fin_ventana_utc"))
+    if ventana.get("disponible") and fin is not None and ahora - fin <= timedelta(minutes=15):
+        pos = [p for p in ventana.get("rayos_10min") or [] if len(p) >= 2]
+        for loc in locs:
+            radio = float(loc.get("radio_km", 4.0)) + MARGEN_RAYO_KM
+            cos0 = math.cos(math.radians(loc["lat"]))
+            cerca = any(math.hypot((p[1] - loc["lon"]) * 111.32 * cos0, (p[0] - loc["lat"]) * 110.57) <= radio
+                        for p in pos)
+            if cerca:
+                # La ventana cubre los 10 min anteriores: se anota el comienzo y el fin.
+                for t in (fin - timedelta(minutes=10), fin):
+                    if iso(t) not in reg.setdefault(loc["id"], []):
+                        reg[loc["id"]].append(iso(t))
+    limite = ahora - timedelta(hours=3)
+    reg = {k: sorted(x for x in v if (parse_utc(x) or limite) > limite) for k, v in reg.items()}
+    return {k: v for k, v in reg.items() if v}
 
 
 def campos_recientes(ultima: datetime, horas: int = 2) -> dict[datetime, np.ndarray]:
@@ -160,8 +211,12 @@ def calcular(ahora: datetime | None = None) -> dict[str, Any]:
     radar_dt = parse_utc(radar_ts)
     previo = leer(SALIDA)
     base = {"version": VERSION, "en_paralelo": True, "generado_utc": iso(ahora), "radar_timestamp": radar_ts,
-            "horizonte_min": HORIZONTE_MIN, "umbrales": {"probable": UMBRAL_PROBABLE, "posible": UMBRAL_POSIBLE}}
-    verif = {"pendientes": previo.get("pendientes") or [], "acumulado": previo.get("acumulado") or {}}
+            "horizonte_min": HORIZONTE_MIN, "umbrales": {"probable": UMBRAL_PROBABLE, "posible": UMBRAL_POSIBLE,
+                                                         "aviso_fuerte": UMBRAL_AVISO_FUERTE,
+                                                         "fuerte_dbz": UMBRAL_FUERTE_DBZ}}
+    verif = {"pendientes": previo.get("pendientes") or [], "acumulado": previo.get("acumulado") or {},
+             "acumulado_fuerte": previo.get("acumulado_fuerte") or [0, 0, 0, 0],
+             "rayos_en_localidad": previo.get("rayos_en_localidad") or {}}
     actual = nf.cargar_dbz(nf.ACTUAL) if (radar_dt and nf.ACTUAL.exists()) else None
     if actual is None:
         return {**base, "disponible": False, "motivo": "SIN_RADAR_ACTUAL", **verif}
@@ -178,7 +233,12 @@ def calcular(ahora: datetime | None = None) -> dict[str, Any]:
         campo = ct.quitar_ecos_sin_nube(campo, datos["satelite"])
     zonas = {}
     locs_px = {}
-    for loc in lr.cargar_localidades():
+    lista_locs = lr.cargar_localidades()
+    try:
+        verif["rayos_en_localidad"] = registrar_rayos(verif, goes, lista_locs, ahora)
+    except Exception as exc:
+        verif["error_rayos_localidad"] = f"{type(exc).__name__}: {str(exc)[:120]}"
+    for loc in lista_locs:
         x, y = nf.latlon_to_pixel(loc["lat"], loc["lon"], w, h)
         r = float(loc.get("radio_km", 4.0)) / km_px
         locs_px[loc["id"]] = (x, y, r)
@@ -196,6 +256,8 @@ def calcular(ahora: datetime | None = None) -> dict[str, Any]:
     rayos, info_rayos = rayos_ahora(goes, ahora, shape)
     prob = cr.probabilidades_celdas(campo, u, v, km_px, edad, rayos, locs_px, PARAMETROS)
     prob_rayos = cr.probabilidades(rayos, u, v, km_px, locs_px, PARAMETROS)
+    prob_fuerte = cr.probabilidades_celdas(campo, u, v, km_px, edad, rayos, locs_px,
+                                           {**PARAMETROS, **PARAMETROS_FUERTE})
     capas_loc = (leer(capas.SALIDA).get("localidades") or {}) \
         if leer(capas.SALIDA).get("radar_timestamp") == radar_ts else {}
     localidades = {}
@@ -203,12 +265,21 @@ def calcular(ahora: datetime | None = None) -> dict[str, Any]:
         b5 = ((((capas_loc.get(k) or {}).get("llegada_proxima_hora") or {}).get("tormenta") or {})
               .get("probable") or {}).get("localidad")
         reg = {"p": r["probabilidad"], "pr": prob_rayos[k]["probabilidad"],
-               "b5": b5 is not None and b5 <= HORIZONTE_MIN}
+               "b5": b5 is not None and b5 <= HORIZONTE_MIN, "pf": prob_fuerte[k]["probabilidad"]}
+        pf = prob_fuerte[k]
         localidades[k] = {**r, "grado": grado(r["probabilidad"]),
                           "probabilidad_solo_rayos": prob_rayos[k]["probabilidad"],
                           "5b_la_trae_en_30min": reg["b5"],
                           "aviso_combinado": CRITERIOS["combinado"](reg),
                           "aviso_rayos": CRITERIOS["rayos"](reg),
+                          # Idea 2: tormenta fuerte o con rayos SOBRE la localidad (en paralelo).
+                          "fuerte_o_rayos": {
+                              "probabilidad": pf["probabilidad"],
+                              "aviso": pf["probabilidad"] >= UMBRAL_AVISO_FUERTE,
+                              "minutos": pf["minutos"] if pf["probabilidad"] >= UMBRAL_AVISO_FUERTE else None,
+                              "hora_estimada_utc": iso(ahora + timedelta(minutes=pf["minutos"]))
+                              if pf["minutos"] is not None and pf["probabilidad"] >= UMBRAL_AVISO_FUERTE else None,
+                          },
                           "hora_estimada_utc": iso(ahora + timedelta(minutes=r["minutos"]))
                           if r["minutos"] is not None and grado(r["probabilidad"]) else None,
                           "_reg": reg}
@@ -246,6 +317,8 @@ def main() -> int:
         salida = {"version": VERSION, "en_paralelo": True, "disponible": False,
                   "motivo": f"{type(exc).__name__}: {exc}"[:200], "generado_utc": iso(datetime.now(timezone.utc)),
                   "pendientes": previo.get("pendientes") or [], "acumulado": previo.get("acumulado") or {},
+                  "acumulado_fuerte": previo.get("acumulado_fuerte") or [0, 0, 0, 0],
+                  "rayos_en_localidad": previo.get("rayos_en_localidad") or {},
                   "resumen": previo.get("resumen") or {}}
     SALIDA.parent.mkdir(parents=True, exist_ok=True)
     tmp = SALIDA.with_suffix(".json.tmp")
