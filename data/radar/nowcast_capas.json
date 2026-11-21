@@ -1,11 +1,11 @@
 {
   "version": "nowcast-capas-1.1",
   "en_paralelo": false,
-  "generado_utc": "2026-11-21T10:19:56.909063Z",
+  "generado_utc": "2026-11-21T10:23:38.094075Z",
   "en_uso": "llegadas a la zona de cada localidad (tormenta a <= 10 km, grado probable) y movimiento de las trayectorias por tormenta",
   "radar_timestamp": "2026-11-21T10:10:00+00:00",
-  "edad_radar_min": 9.9,
-  "confianza_radar_por_edad": 1.0,
+  "edad_radar_min": 13.6,
+  "confianza_radar_por_edad": 0.92,
   "configuracion": {
     "movimiento_3_imagenes": true,
     "tendencia_radar": false,
@@ -42,19 +42,19 @@
   "fuentes": {
     "radar": {
       "hora": "2026-11-21T10:10:00+00:00",
-      "edad_min": 9.9,
+      "edad_min": 13.6,
       "fuente": "SINARAME RMA10"
     },
     "rayos": {
-      "hora": "2026-11-21T10:19:20Z",
+      "hora": "2026-11-21T10:23:00Z",
       "fuente": "GOES-19 GLM"
     },
     "satelite": {
-      "hora": "2026-11-21T10:08:27.312750Z",
+      "hora": "2026-11-21T10:18:27.227853Z",
       "fuente": "GOES-19 canal 13"
     },
     "estaciones": {
-      "hora": "2026-11-21T10:19:24.021583+00:00",
+      "hora": "2026-11-21T10:23:06.227528+00:00",
       "fuente": "BCP / SMN / CWOP"
     },
     "ambiente": {
@@ -193,9 +193,9 @@
   "corrector": {
     "usado": true,
     "pixeles_cambiados": {
-      "quitado_sin_nube": 15
+      "quitado_sin_nube": 1366
     },
-    "satelite_edad_min": 11.5,
+    "satelite_edad_min": 5.2,
     "rayos_edad_min": 0.6,
     "rayos": 0
   },
@@ -224,10 +224,10 @@
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": 3.7,
-          "tope_min_c_15km": -4.2,
-          "enfriamiento_c_10min": 7.0,
-          "edad_min": 11.5,
+          "tope_p10_c_15km": -3.5,
+          "tope_min_c_15km": -8.3,
+          "enfriamiento_c_10min": 6.2,
+          "edad_min": 5.2,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         },
         "estaciones": {
@@ -248,14 +248,14 @@
       "radar_movido_a_ahora": {
         "dbz": 0.0,
         "categoria": "sin_eco",
-        "movido_min": 9.9,
+        "movido_min": 13.6,
         "fuente": "radar SINARAME movido a la hora actual"
       },
       "estado_ahora": {
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 1.0,
+        "peso_radar": 0.92,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
@@ -310,10 +310,16 @@
         }
       },
       "suelo": {
-        "firmas_estaciones": [],
+        "firmas_estaciones": [
+          {
+            "estacion": "BAHIA BLANCA CENTRO",
+            "firma": "frente_de_rafagas_debil",
+            "utc": "2026-11-21T10:18:00+00:00"
+          }
+        ],
         "conveccion_elevada": true
       },
-      "confianza": 0.862
+      "confianza": 0.793
     },
     "ingeniero_white": {
       "nombre": "Ingeniero White",
@@ -327,10 +333,10 @@
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": 0.4,
-          "tope_min_c_15km": -3.2,
-          "enfriamiento_c_10min": 6.6,
-          "edad_min": 11.5,
+          "tope_p10_c_15km": -10.2,
+          "tope_min_c_15km": -16.6,
+          "enfriamiento_c_10min": 1.8,
+          "edad_min": 5.2,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         },
         "estaciones": {
@@ -351,14 +357,14 @@
       "radar_movido_a_ahora": {
         "dbz": 0.0,
         "categoria": "sin_eco",
-        "movido_min": 9.9,
+        "movido_min": 13.6,
         "fuente": "radar SINARAME movido a la hora actual"
       },
       "estado_ahora": {
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 1.0,
+        "peso_radar": 0.92,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
@@ -413,10 +419,16 @@
         }
       },
       "suelo": {
-        "firmas_estaciones": [],
+        "firmas_estaciones": [
+          {
+            "estacion": "BAHIA BLANCA CENTRO",
+            "firma": "frente_de_rafagas_debil",
+            "utc": "2026-11-21T10:18:00+00:00"
+          }
+        ],
         "conveccion_elevada": true
       },
-      "confianza": 0.862
+      "confianza": 0.793
     },
     "general_cerri": {
       "nombre": "General Daniel Cerri",
@@ -430,16 +442,16 @@
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": -0.0,
-          "tope_min_c_15km": -4.2,
-          "enfriamiento_c_10min": 5.1,
-          "edad_min": 11.5,
+          "tope_p10_c_15km": -7.2,
+          "tope_min_c_15km": -10.8,
+          "enfriamiento_c_10min": 2.6,
+          "edad_min": 5.2,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         },
         "estaciones": {
           "cantidad": 2,
           "lluvia_1h_mm": 0.0,
-          "rafaga_max_kmh": 6.4,
+          "rafaga_max_kmh": 1.6,
           "frente_de_rafagas": false,
           "nombres": [
             "BAHIA BLANCA CENTRO",
@@ -452,19 +464,19 @@
       "radar_movido_a_ahora": {
         "dbz": 0.0,
         "categoria": "sin_eco",
-        "movido_min": 9.9,
+        "movido_min": 13.6,
         "fuente": "radar SINARAME movido a la hora actual"
       },
       "estado_ahora": {
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 1.0,
+        "peso_radar": 0.92,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
           "tormenta_electrica": false,
-          "viento_medido_kmh": 6.4,
+          "viento_medido_kmh": 1.6,
           "lluvia_medida_1h_mm": 0.0
         }
       },
@@ -514,10 +526,16 @@
         }
       },
       "suelo": {
-        "firmas_estaciones": [],
+        "firmas_estaciones": [
+          {
+            "estacion": "BAHIA BLANCA CENTRO",
+            "firma": "frente_de_rafagas_debil",
+            "utc": "2026-11-21T10:18:00+00:00"
+          }
+        ],
         "conveccion_elevada": true
       },
-      "confianza": 0.862
+      "confianza": 0.793
     },
     "punta_alta": {
       "nombre": "Punta Alta",
@@ -531,10 +549,10 @@
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": -4.3,
-          "tope_min_c_15km": -9.6,
-          "enfriamiento_c_10min": 9.6,
-          "edad_min": 11.5,
+          "tope_p10_c_15km": -7.5,
+          "tope_min_c_15km": -12.0,
+          "enfriamiento_c_10min": 5.6,
+          "edad_min": 5.2,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         },
         "estaciones": {
@@ -553,14 +571,14 @@
       "radar_movido_a_ahora": {
         "dbz": 0.0,
         "categoria": "sin_eco",
-        "movido_min": 9.9,
+        "movido_min": 13.6,
         "fuente": "radar SINARAME movido a la hora actual"
       },
       "estado_ahora": {
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 1.0,
+        "peso_radar": 0.92,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
@@ -615,16 +633,10 @@
         }
       },
       "suelo": {
-        "firmas_estaciones": [
-          {
-            "estacion": "PUNTA ALTA",
-            "firma": "frente_de_rafagas_debil",
-            "utc": "2026-11-21T10:13:00+00:00"
-          }
-        ],
+        "firmas_estaciones": [],
         "conveccion_elevada": true
       },
-      "confianza": 0.862
+      "confianza": 0.793
     },
     "tornquist": {
       "nombre": "Tornquist",
@@ -638,24 +650,24 @@
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": -20.1,
-          "tope_min_c_15km": -23.3,
-          "enfriamiento_c_10min": -4.9,
-          "edad_min": 11.5,
+          "tope_p10_c_15km": -3.7,
+          "tope_min_c_15km": -15.1,
+          "enfriamiento_c_10min": -7.2,
+          "edad_min": 5.2,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         }
       },
       "radar_movido_a_ahora": {
-        "dbz": 56.7,
+        "dbz": 47.9,
         "categoria": "tormenta",
-        "movido_min": 9.9,
+        "movido_min": 13.6,
         "fuente": "radar SINARAME movido a la hora actual"
       },
       "estado_ahora": {
         "categoria": "tormenta",
         "manda": "radar_movido",
         "categoria_radar_movido": "tormenta",
-        "peso_radar": 1.0,
+        "peso_radar": 0.92,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "tormenta",
@@ -666,11 +678,11 @@
       },
       "pronostico_desde_ahora": {
         "10min": {
-          "dbz": 56.7,
+          "dbz": 50.5,
           "categoria": "tormenta"
         },
         "20min": {
-          "dbz": 56.7,
+          "dbz": 50.5,
           "categoria": "tormenta"
         },
         "30min": {
@@ -678,8 +690,8 @@
           "categoria": "tormenta"
         },
         "60min": {
-          "dbz": 56.7,
-          "categoria": "tormenta"
+          "dbz": 32.8,
+          "categoria": "lluvia"
         }
       },
       "tormenta_proxima_hora": {
@@ -716,7 +728,7 @@
         "firmas_estaciones": [],
         "conveccion_elevada": true
       },
-      "confianza": 0.862
+      "confianza": 0.793
     },
     "medanos": {
       "nombre": "Médanos",
@@ -730,24 +742,24 @@
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": -12.3,
-          "tope_min_c_15km": -15.5,
-          "enfriamiento_c_10min": -1.8,
-          "edad_min": 11.5,
+          "tope_p10_c_15km": -10.1,
+          "tope_min_c_15km": -12.9,
+          "enfriamiento_c_10min": -3.6,
+          "edad_min": 5.2,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         }
       },
       "radar_movido_a_ahora": {
         "dbz": 35.3,
         "categoria": "tormenta",
-        "movido_min": 9.9,
+        "movido_min": 13.6,
         "fuente": "radar SINARAME movido a la hora actual"
       },
       "estado_ahora": {
         "categoria": "tormenta",
         "manda": "radar_movido",
         "categoria_radar_movido": "tormenta",
-        "peso_radar": 1.0,
+        "peso_radar": 0.92,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "tormenta",
@@ -808,7 +820,7 @@
         "firmas_estaciones": [],
         "conveccion_elevada": true
       },
-      "confianza": 0.862
+      "confianza": 0.793
     },
     "sierra_de_la_ventana": {
       "nombre": "Sierra de la Ventana",
@@ -822,10 +834,10 @@
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": -29.8,
-          "tope_min_c_15km": -31.9,
-          "enfriamiento_c_10min": -3.5,
-          "edad_min": 11.5,
+          "tope_p10_c_15km": -22.3,
+          "tope_min_c_15km": -28.5,
+          "enfriamiento_c_10min": -4.5,
+          "edad_min": 5.2,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         },
         "estaciones": {
@@ -844,14 +856,14 @@
       "radar_movido_a_ahora": {
         "dbz": 0.0,
         "categoria": "sin_eco",
-        "movido_min": 9.9,
+        "movido_min": 13.6,
         "fuente": "radar SINARAME movido a la hora actual"
       },
       "estado_ahora": {
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 1.0,
+        "peso_radar": 0.92,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
@@ -897,7 +909,7 @@
         "tormenta": {
           "probable": {
             "localidad": null,
-            "hasta_10km": null
+            "hasta_10km": 60
           },
           "posible": {
             "localidad": null,
@@ -909,7 +921,7 @@
         "firmas_estaciones": [],
         "conveccion_elevada": true
       },
-      "confianza": 0.862
+      "confianza": 0.793
     }
   },
   "validacion_automatica": {
