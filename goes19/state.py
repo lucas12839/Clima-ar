@@ -639,8 +639,6 @@ def leer_c13_previos(temp_dir: Path, reference_time: datetime,
 
 C13_AHORA = Path(tempfile.gettempdir()) / "climaar_c13_ahora.npz"
 C13_RADAR = Path(tempfile.gettempdir()) / "climaar_c13_radar.npz"
-# Etapa A (punto 3): el barrido anterior al más reciente, para medir el movimiento de los topes.
-C13_AHORA_PREVIA = Path(tempfile.gettempdir()) / "climaar_c13_ahora_previa.npz"
 
 
 def guardar_c13_ahora(dominio: dict, hora: datetime | None, destino: Path | None = None) -> None:
@@ -689,7 +687,6 @@ def satelite_ahora(temp_dir: Path, ahora: datetime | None = None) -> dict:
             dom_p, _ = leer_dominio(meta_p, ["CMI"], temp_dir, "abi_c13_ahora_previa")
             previo = estadisticas(dom_p["datos"]["CMI"], dom_p["latitude"], dom_p["longitude"], locs)
             hora_p = _hora_satelite(meta_p, dom_p)
-            guardar_c13_ahora(dom_p, hora_p, C13_AHORA_PREVIA)
             minutos = (hora - hora_p).total_seconds() / 60.0 if hora and hora_p else None
     salida["por_localidad"] = con_enfriamiento(actual, previo, minutos)
     return salida

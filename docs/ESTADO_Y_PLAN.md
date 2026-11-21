@@ -311,6 +311,12 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   (datos privados), prueba del detector más rápido.
 - **PLAN DE TRABAJO (21/11/2026, 00:30 hora de Argentina) — en este orden, esperar el "arrancá" de
   Lucas en cada etapa:**
+  - **Etapa A, puntos 1 a 4: HECHOS y medidos el 21/11 (madrugada), `docs/VALIDACION_ETAPA_A.md`.**
+    Punto 1 (estaciones): queda en paralelo, validándose en vivo (en la simulación no cambió nada:
+    falta historia de lluvia en las estaciones). Puntos 2-4 (posición, movimiento y crecimiento con
+    el satélite): probados con 26 días y 1.419 casos, **ninguno mejora** (el yunque se mueve distinto
+    que la lluvia); quedan apagados. Trayectoria sin cambios: 4,5 / 9,5 / 14,7 km. Arreglado: una
+    lectura errónea de una estación (bajada sin medianoche) sumaba lluvia falsa. Falta el punto 5.
   - **Etapa A — Compensar el atraso del radar** (solo datos medidos; cada mejora se mide con
     `herramientas/simular_huecos.py` antes de usarla; en paralelo hasta validarla):
     1. Corrector con estaciones: lluvia medida cada minuto por las 13 estaciones (agregar donde
@@ -377,5 +383,7 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   imposible); los datos completos del RMA10 (Doppler) ya los pidió Lucas: si llegan, se suman.
 
 ## Ramas de prueba para borrar (Claude no puede borrarlas)
+
+- `prueba-etapa-a` (simulaciones de la etapa A, 21/11).
 `auditoria-cadena`, `paso1-5b-visible`, `punto8-ambiente-satelite`, `paso2-celdas-rayos`, `reloj-cwop-tiempo`, `plan-pendientes`, `prueba-intermedios`, `prueba-intermedios2`, `prueba-captura-chrome`, `prueba-goes-red`,
 `indices-fenomenos-localidades`, `prueba-estaciones`, `prueba-doppler`, `idea2-aviso-fuerte` (ya unida), `prueba-wrf`, `datos-wrf-historial` (historial del WRF, borrar al final), `prueba-inspeccion` (temporal de pruebas reales: borrar al final), `nowcast-sin-radar`, `nowcast-capas`, `punto6-anvil`, `punto7-modelos`, `validacion-sistema` y las ramas ya unidas de cada PR (`goes-zona-tormentas`, `senales-severas`, `casos-guardados`, `rayos-mejorados`, `puntaje-gravedad`, etc.).
