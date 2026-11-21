@@ -36,6 +36,7 @@ jobs:
         run: |
           python herramientas/simular_etapa_a.py --goes /tmp/goes --dias ${{ matrix.dia }} --paso 1 --procesos 4 \
             --variantes "$(cat herramientas/variantes_etapa_a.json)" --salida resultado_${{ matrix.dia }}.json | tail -5
+          echo "RESULTADO_JSON $(gzip -c resultado_${{ matrix.dia }}.json | base64 -w0)"
       - uses: actions/upload-artifact@v4
         with:
           name: resultado_${{ matrix.dia }}
