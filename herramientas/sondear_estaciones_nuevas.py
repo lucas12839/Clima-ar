@@ -38,6 +38,14 @@ def bcp():
     url = "https://info.bcp.org.ar/Estaciones/MapaG_NvoBCP.asp"
     html = requests.get(url, timeout=30, headers=UA).text
     print("tamaño", len(html))
+    pares = list(re.finditer(r"(-3\d\.\d{3,})\s*,\s*(-6\d\.\d{3,})", html))
+    print("pares de coordenadas:", len(pares))
+    for m in pares[:60]:
+        print("COORD", m.group(1), m.group(2), "|", re.sub(r"\s+", " ", html[m.end(): m.end() + 260]))
+    for pal in ("Estacion", "estacion", "Mapa_NvoBCP", "marker", "addListener"):
+        print(pal, html.count(pal))
+    i = html.find("Mapa_NvoBCP")
+    print("MUESTRA:", re.sub(r"\s+", " ", html[max(0, i - 600): i + 400]))
     ids = sorted(set(int(x) for x in re.findall(r"Estacion=(\d+)", html)))
     print("ids en el mapa:", ids)
     # posiciones: buscar pares lat/lon cerca de cada id
@@ -117,7 +125,3 @@ if __name__ == "__main__":
         bcp()
     except Exception as e:
         print("BCP ERROR", e)
-    try:
-        cwop()
-    except Exception as e:
-        print("CWOP ERROR", e)
