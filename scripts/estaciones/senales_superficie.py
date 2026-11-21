@@ -9,7 +9,7 @@ colectores), guarda un historial de 6 h por estación y calcula:
 - salto de presión y caída de temperatura en 30 min: la firma del frente de
   ráfagas de una tormenta (aire frío que baja y se expande),
 
-para la zona de Bahía Blanca (estaciones a <=25 km) y para la región.
+para la zona de Bahía Blanca (estaciones a <=20 km) y para la región.
 
 Salida: data/ia/estaciones/senales_superficie.json
 """
@@ -41,7 +41,10 @@ HISTORIAL = EST / "historial_superficie.json"
 SALIDA = EST / "senales_superficie.json"
 
 BAHIA_LAT, BAHIA_LON = -38.7196, -62.2724
-RADIO_BAHIA_KM = 25.0
+# 20 km (antes 25): la estación nueva de Punta Alta (21/11/2026) está a 24,8 km y
+# su lluvia no tiene que mezclarse con la de Bahía (13/11: 70 mm en Punta Alta, poco
+# en Bahía). Las estaciones de Bahía de siempre están a menos de 15 km.
+RADIO_BAHIA_KM = 20.0
 HISTORIAL_HORAS = 6
 VENTANA_SALTO_MIN = 30.0
 SALTO_PRESION_HPA = 2.0

@@ -56,8 +56,8 @@ class StationValidationTests(unittest.TestCase):
         self.write_inputs(catalog, bcp, smn)
         self.assertEqual(module.main(), 0)
         result = json.loads(self.output_path.read_text(encoding="utf-8"))
-        self.assertEqual((result["station_count"], result["valid_count"]), (14, 14))
-        self.assertEqual(result["bcp"], {"total": 9, "valid": 9})
+        self.assertEqual((result["station_count"], result["valid_count"]), (19, 19))
+        self.assertEqual(result["bcp"], {"total": 14, "valid": 14})
         self.assertEqual(result["smn"], {"total": 5, "valid": 5})
 
     def test_descarta_vencida_futura_y_timestamp_ausente(self):

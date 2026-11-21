@@ -175,7 +175,7 @@ jobs:
           test -s data/ia/estaciones/observaciones/bcp_actual.json
           test -s data/ia/estaciones/observaciones/smn_synop_actual.json
 
-      - name: Validar frescura y publicar estado de las 14 estaciones
+      - name: Validar frescura y publicar estado de las 19 estaciones
         run: |
           set -euo pipefail
 
@@ -755,6 +755,13 @@ jobs:
           set -euo pipefail
           # Paso 2. Falla segura: el script nunca corta el ciclo. Se valida solo en vivo.
           timeout 120 python scripts/celdas_localidad.py || echo "AVISO: celdas por localidad no disponibles en este ciclo"
+
+      - name: Alarma "ya llega" por estaciones aguas arriba (en paralelo, no cambia lo que se ve)
+        run: |
+          set -euo pipefail
+          # Idea 3. Frente de ráfagas en estaciones de <= 15 min -> llegada a las localidades
+          # aguas abajo. Falla segura: el script nunca corta el ciclo. Se valida solo en vivo.
+          timeout 90 python scripts/estaciones/alarma_llegada.py || echo "AVISO: alarma de estaciones no disponible en este ciclo"
 
       - name: Control de salud de la cadena (en paralelo, no cambia lo que se ve)
         env:
