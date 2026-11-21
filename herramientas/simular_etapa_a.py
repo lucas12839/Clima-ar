@@ -170,6 +170,19 @@ def procesar_dia(dia: str) -> dict:
                     "produccion": nc.campos_escenarios(act, u, v, leads)}
             cambio_r = None
             for nombre, par in variantes.items():
+                if par.get("sin_movimiento_radar"):
+                    # Caso real: falta la imagen anterior (SINARAME saltea imágenes) y el radar
+                    # no da movimiento. Hoy: persistencia. Con satélite: movimiento de los topes.
+                    fs = None
+                    if par.get("sin_movimiento_radar") == "satelite":
+                        pp = {**cs.PARAMETROS_DEFECTO, **par}
+                        fs = cs.flujo_satelite(sats["previo"], sats["nuevo"], sats["entre"], km_px, pp)
+                        if fs is None:
+                            fs = cs.flujo_satelite(sats["radar"], sats["nuevo"], sats["tramo"], km_px, pp)
+                    pron[nombre] = nc.campos_escenarios(act, fs["u"], fs["v"], leads) if fs is not None \
+                        else {L: act for L in leads}
+                    usos[nombre] += fs is not None
+                    continue
                 if par.get("estaciones"):
                     import corrector_estaciones as ce
                     base = pron["produccion"]

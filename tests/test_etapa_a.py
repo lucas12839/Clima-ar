@@ -233,3 +233,23 @@ def test_trayectoria_con_satelite(ciclo, monkeypatch):
     h_con = {h["minutos"]: h["x"] for h in con["tracks"]["7"]["horizontes"]}
     # Radar: 1 px/min; topes: 1,5 px/min en los 18 min medidos -> hasta 9 px más adelante.
     assert 1.5 < h_con[20] - h_sin[20] <= 10
+
+
+def test_sin_movimiento_del_radar_usa_el_de_los_topes(ciclo, monkeypatch):
+    """Falta la imagen anterior (SINARAME la salteó): hoy persistencia; con satélite, se mueve."""
+    import corrector_tiempo_real as ct
+    ncap = ciclo["ncap"]
+    monkeypatch.setattr(ct, "desplazamiento_paralaje_km_por_km", lambda: (0.0, 0.0))
+    monkeypatch.setattr(ct, "_PARALAJE", None)
+    monkeypatch.setattr(nf, "frame_previo", lambda dt, historico=None: None)
+    ahora = T0 + timedelta(minutes=22)
+    bx, by = ciclo["bx"], ciclo["by"]
+    _guardar_sat(ncap.C13_AHORA_PREVIA, bx - 40 + 8, by, T0 + timedelta(minutes=8))
+    _guardar_sat(ncap.C13_AHORA, bx - 40 + 18, by, T0 + timedelta(minutes=18))
+    s = ncap.ejecutar(ahora)
+    assert s["movimiento"] is None   # apagado: como siempre
+    ncap.CONFIG.write_text(json.dumps({"satelite_etapa_a": {"movimiento_si_falta_radar": True}}), encoding="utf-8")
+    s = ncap.ejecutar(ahora)
+    assert s["movimiento"]["fuente"].startswith("satelite")
+    assert 0 < s["movimiento"]["direccion_hacia_grados"] < 180   # hacia el este
+    assert s["movimiento_satelite_si_falta_radar"]["usado"] is True
