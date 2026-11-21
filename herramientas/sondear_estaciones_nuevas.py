@@ -37,54 +37,56 @@ def bcp():
     print("=== BCP ===")
     url = "https://info.bcp.org.ar/Estaciones/MapaG_NvoBCP.asp"
     html = requests.get(url, timeout=30, headers=UA).text
-    print("tamaño", len(html))
-    pares = list(re.finditer(r"(-3\d\.\d{3,})\s*,\s*(-6\d\.\d{3,})", html))
-    print("pares de coordenadas:", len(pares))
-    for m in pares[:60]:
-        print("COORD", m.group(1), m.group(2), "|", re.sub(r"\s+", " ", html[m.end(): m.end() + 260]))
-    for pal in ("Estacion", "estacion", "Mapa_NvoBCP", "marker", "addListener"):
-        print(pal, html.count(pal))
-    i = html.find("Mapa_NvoBCP")
-    print("MUESTRA:", re.sub(r"\s+", " ", html[max(0, i - 600): i + 400]))
-    ids = sorted(set(int(x) for x in re.findall(r"Estacion=(\d+)", html)))
-    print("ids en el mapa:", ids)
-    # posiciones: buscar pares lat/lon cerca de cada id
-    coords = {}
-    for m in re.finditer(r"(-3\d\.\d+)\s*,\s*(-6\d\.\d+)", html):
-        trozo = html[m.end(): m.end() + 600]
-        mi = re.search(r"Estacion=(\d+)", trozo)
-        if mi and int(mi.group(1)) not in coords:
-            coords[int(mi.group(1))] = (float(m.group(1)), float(m.group(2)))
-    print("con coordenadas:", len(coords))
-    if not coords:
-        i = html.find("Estacion=")
-        print("muestra:", html[max(0, i - 800): i + 300])
-    ahora = datetime.now(timezone(timedelta(hours=-3)))
+    tabla = {}
+    for m in re.finditer(r"(\w*Estac\w*)\[(\d+)\]\s*=\s*([^;\n]+)", html):
+        tabla.setdefault(int(m.group(2)), {})[m.group(1)] = m.group(3).strip().strip("'\"")[:60]
+    campos = sorted({k for v in tabla.values() for k in v})
+    print("campos:", campos)
+    print("estaciones en el mapa:", len(tabla))
     filas = []
-    for sid in ids:
+    for i, f in sorted(tabla.items()):
+        lat = lon = None
+        for k, v in f.items():
+            if re.fullmatch(r"-3\d\.\d+", v) and lat is None and "at" in k.lower():
+                lat = float(v)
+            if re.fullmatch(r"-6\d\.\d+", v) and lon is None and ("on" in k.lower() or "ng" in k.lower()):
+                lon = float(v)
+        if lat is None:
+            nums = [float(v) for v in f.values() if re.fullmatch(r"-3\d\.\d+", v)]
+            lat = nums[0] if nums else None
+        if lon is None:
+            nums = [float(v) for v in f.values() if re.fullmatch(r"-6\d\.\d+", v)]
+            lon = nums[0] if nums else None
+        filas.append((i, f, lat, lon))
+        print("EST", i, json.dumps(f, ensure_ascii=False))
+    ahora = datetime.now(timezone(timedelta(hours=-3)))
+    print("\n=== estado de cada estación habilitada ===")
+    for i, f, lat, lon in filas:
+        sitio = f.get("sitioEstacion")
+        if not sitio or not sitio.isdigit():
+            continue
         time.sleep(1.0)
         try:
-            t = requests.get(f"https://info.bcp.org.ar/Estaciones/Mapa_NvoBCP.asp?Estacion={sid}", timeout=20, headers=UA).text
+            t = requests.get(f"https://info.bcp.org.ar/Estaciones/Mapa_NvoBCP.asp?Estacion={sitio}", timeout=20, headers=UA).text
         except Exception as e:
-            print(sid, "error", e)
+            print(i, sitio, "error", e)
             continue
-        nombre = re.search(r"<title>(.*?)</title>", t, re.S)
-        tit = re.findall(r"Estaci[oó&;a-z]+n\s*[:\-]?\s*</?[^>]*>?\s*([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .\-]{2,40})", t)
         ult = re.search(r"(?:&Uacute;ltimo|Último)\s+Dato\s+Recibido.*?(\d{2}/\d{2}/\d{4}\s+\d{1,2}:\d{2}:\d{2})", t, re.S | re.I)
         edad = None
         if ult:
             dt = datetime.strptime(ult.group(1), "%d/%m/%Y %H:%M:%S").replace(tzinfo=timezone(timedelta(hours=-3)))
             edad = round((ahora - dt).total_seconds() / 60, 1)
-        tiene = {k: bool(re.search(p, t, re.I)) and not re.search(p + r".*?</td>\s*<td[^>]*>\s*N/D", t, re.I | re.S)
-                 for k, p in (("presion", r"Presi(?:ó|&oacute;)n"), ("rafaga", r"R(?:á|&aacute;)faga"),
-                              ("viento", r"Velocidad del Viento"), ("temp", r"ltima Temperatura"))}
-        c = coords.get(sid)
-        d = round(dist(BAHIA, c)) if c else None
-        r = round(rumbo(BAHIA, c)) if c else None
-        filas.append({"id": sid, "nombres": tit[:2], "titulo": (nombre.group(1).strip()[:60] if nombre else None),
-                      "edad_min": edad, "coord": c, "dist_bahia_km": d, "rumbo_desde_bahia": r, **tiene})
-    for f in sorted(filas, key=lambda f: (f["dist_bahia_km"] or 9999)):
-        print(json.dumps(f, ensure_ascii=False))
+
+        def val(p):
+            m = re.search(p + r".*?</td>\s*<td[^>]*>(.*?)</td>", t, re.I | re.S)
+            return re.sub(r"<[^>]+>|&nbsp;|\s+", " ", m.group(1)).strip()[:20] if m else None
+        c = (lat, lon) if lat and lon else None
+        print(json.dumps({"i": i, "sitio": sitio, "nombre": f.get("nombreEstacion") or f.get("descEstacion"),
+                          "habil": f.get("habilEstacion"), "baja": f.get("bajadefEstacion"), "edad_min": edad,
+                          "dist_km": round(dist(BAHIA, c)) if c else None, "rumbo": round(rumbo(BAHIA, c)) if c else None,
+                          "lat": lat, "lon": lon, "temp": val(r"ltima Temperatura"),
+                          "presion": val(r"Presi(?:ó|&oacute;)n"), "viento": val(r"Velocidad del Viento"),
+                          "rafaga": val(r"M(?:á|&aacute;)xima R(?:á|&aacute;)faga")}, ensure_ascii=False))
 
 
 def cwop(minutos=12):
