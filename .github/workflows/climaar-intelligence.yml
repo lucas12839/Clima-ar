@@ -750,6 +750,12 @@ jobs:
           # En los refrescos reutiliza lo ya leído (mismos archivos).
           timeout 180 python scripts/ambiente_satelite.py || echo "AVISO: ambiente del satélite no disponible en este ciclo"
 
+      - name: Tormenta sobre cada localidad, celda por celda con rayos (en paralelo, no cambia lo que se ve)
+        run: |
+          set -euo pipefail
+          # Paso 2. Falla segura: el script nunca corta el ciclo. Se valida solo en vivo.
+          timeout 120 python scripts/celdas_localidad.py || echo "AVISO: celdas por localidad no disponibles en este ciclo"
+
       - name: Control de salud de la cadena (en paralelo, no cambia lo que se ve)
         env:
           CLIMAAR_DETECTOR_LATIDO: ${{ vars.CLIMAAR_DETECTOR_LATIDO }}

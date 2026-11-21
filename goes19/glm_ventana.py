@@ -191,8 +191,10 @@ def _resumen_ventana(res: list[dict]) -> dict[str, Any]:
     # Posición de los rayos de los últimos 10 min (para el corrector del nowcast en capas).
     recientes = edades <= 10.0
     orden = np.argsort(edades[recientes])[:MAX_RAYOS_POSICION]
-    salida["rayos_10min"] = [[round(float(a), 3), round(float(b), 3)] for a, b in
-                             zip(lat[recientes][orden], lon[recientes][orden])]
+    # [latitud, longitud, minutos antes del fin de la ventana] (la edad la usa el
+    # seguimiento de celdas con rayos, paso 2; los que leen solo [0] y [1] siguen igual).
+    salida["rayos_10min"] = [[round(float(a), 3), round(float(b), 3), round(float(c), 2)] for a, b, c in
+                             zip(lat[recientes][orden], lon[recientes][orden], edades[recientes][orden])]
     salida["rayos_10min_total"] = int(recientes.sum())
     return salida
 
