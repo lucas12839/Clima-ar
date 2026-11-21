@@ -34,59 +34,20 @@ def rumbo(a, b):
 
 
 def bcp():
-    print("=== BCP ===")
-    url = "https://info.bcp.org.ar/Estaciones/MapaG_NvoBCP.asp"
-    html = requests.get(url, timeout=30, headers=UA).text
-    tabla = {}
-    for m in re.finditer(r"(\w*Estac\w*)\[(\d+)\]\s*=\s*([^;\n]+)", html):
-        tabla.setdefault(int(m.group(2)), {})[m.group(1)] = m.group(3).strip().strip("'\"")[:60]
-    campos = sorted({k for v in tabla.values() for k in v})
-    print("campos:", campos)
-    print("estaciones en el mapa:", len(tabla))
-    filas = []
-    for i, f in sorted(tabla.items()):
-        lat = lon = None
-        for k, v in f.items():
-            if re.fullmatch(r"-3\d\.\d+", v) and lat is None and "at" in k.lower():
-                lat = float(v)
-            if re.fullmatch(r"-6\d\.\d+", v) and lon is None and ("on" in k.lower() or "ng" in k.lower()):
-                lon = float(v)
-        if lat is None:
-            nums = [float(v) for v in f.values() if re.fullmatch(r"-3\d\.\d+", v)]
-            lat = nums[0] if nums else None
-        if lon is None:
-            nums = [float(v) for v in f.values() if re.fullmatch(r"-6\d\.\d+", v)]
-            lon = nums[0] if nums else None
-        filas.append((i, f, lat, lon))
-        print("EST", i, json.dumps(f, ensure_ascii=False))
-    ahora = datetime.now(timezone(timedelta(hours=-3)))
-    print("\n=== estado de cada estación habilitada ===")
-    for i, f, lat, lon in filas:
-        sitio = f.get("sitioEstacion")
-        if not sitio or not sitio.isdigit():
-            continue
+    print("=== BCP coordenadas ===")
+    html = requests.get("https://info.bcp.org.ar/Estaciones/MapaG_NvoBCP.asp", timeout=30, headers=UA).text
+    i = html.find("for (iEstacion=0")
+    print("FOR:", re.sub(r"\s+", " ", html[i: i + 1800]))
+    for m in re.finditer(r"(\w*(?:[Ll]at|[Ll]on|LatLng|Pos|Coord)\w*)\s*(?:\[(\d+)\])?\s*=\s*([^;\n]{0,120})", html):
+        if "Estac" in m.group(1) or m.group(2):
+            print("ASIG", m.group(1), m.group(2), m.group(3))
+    for sid in (76, 59, 3, 97):
         time.sleep(1.0)
-        try:
-            t = requests.get(f"https://info.bcp.org.ar/Estaciones/Mapa_NvoBCP.asp?Estacion={sitio}", timeout=20, headers=UA).text
-        except Exception as e:
-            print(i, sitio, "error", e)
-            continue
-        ult = re.search(r"(?:&Uacute;ltimo|Último)\s+Dato\s+Recibido.*?(\d{2}/\d{2}/\d{4}\s+\d{1,2}:\d{2}:\d{2})", t, re.S | re.I)
-        edad = None
-        if ult:
-            dt = datetime.strptime(ult.group(1), "%d/%m/%Y %H:%M:%S").replace(tzinfo=timezone(timedelta(hours=-3)))
-            edad = round((ahora - dt).total_seconds() / 60, 1)
-
-        def val(p):
-            m = re.search(p + r".*?</td>\s*<td[^>]*>(.*?)</td>", t, re.I | re.S)
-            return re.sub(r"<[^>]+>|&nbsp;|\s+", " ", m.group(1)).strip()[:20] if m else None
-        c = (lat, lon) if lat and lon else None
-        print(json.dumps({"i": i, "sitio": sitio, "nombre": f.get("nombreEstacion") or f.get("descEstacion"),
-                          "habil": f.get("habilEstacion"), "baja": f.get("bajadefEstacion"), "edad_min": edad,
-                          "dist_km": round(dist(BAHIA, c)) if c else None, "rumbo": round(rumbo(BAHIA, c)) if c else None,
-                          "lat": lat, "lon": lon, "temp": val(r"ltima Temperatura"),
-                          "presion": val(r"Presi(?:ó|&oacute;)n"), "viento": val(r"Velocidad del Viento"),
-                          "rafaga": val(r"M(?:á|&aacute;)xima R(?:á|&aacute;)faga")}, ensure_ascii=False))
+        t = requests.get(f"https://info.bcp.org.ar/Estaciones/Mapa_NvoBCP.asp?Estacion={sid}", timeout=20, headers=UA).text
+        txt = re.sub(r"<[^>]+>", " ", t)
+        txt = re.sub(r"\s+", " ", txt)
+        print("PAG", sid, txt[:1500])
+        print("PAGCOORD", sid, re.findall(r"-3\d\.\d{3,}[^0-9]{1,5}-6\d\.\d{3,}", t)[:5])
 
 
 def cwop(minutos=12):
