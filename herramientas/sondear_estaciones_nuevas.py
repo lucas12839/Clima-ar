@@ -34,31 +34,18 @@ def rumbo(a, b):
 
 
 def bcp():
-    print("=== BCP jsDatos ===")
+    print("=== BCP coordenadas ===")
     html = requests.get("https://info.bcp.org.ar/Estaciones/MapaG_NvoBCP.asp", timeout=30, headers=UA).text
-    i = html.find("jsDatos")
-    print("PRIMERO:", re.sub(r"\s+", " ", html[i: i + 700]))
-    j = html.find("[", html.find("jsDatos", i + 1) if html[i:i+40].count("=") == 0 else i)
-    k = html.find("jsDatos =")
-    if k < 0:
-        k = html.find("jsDatos=")
-    if k >= 0:
-        ini = html.find("[", k)
-        prof, fin = 0, ini
-        for n, ch in enumerate(html[ini:], ini):
-            prof += ch == "["
-            prof -= ch == "]"
-            if prof == 0:
-                fin = n
-                break
-        texto = html[ini: fin + 1]
-        print("LARGO", len(texto))
-        try:
-            datos = json.loads(texto.replace("'", '"'))
-            for n, fila in enumerate(datos):
-                print("FILA", n, json.dumps([x[:2] if isinstance(x, list) else x for x in fila[:4]], ensure_ascii=False)[:300])
-        except Exception as e:
-            print("no se pudo leer:", e, texto[:600])
+    vals = {}
+    for m in re.finditer(r"jsDatos\[(\d+)\]\[(\d+)\]\[(\w+)\]\s*=\s*([^;\n]+)", html):
+        if m.group(2) in ("0", "1"):
+            vals.setdefault(int(m.group(1)), {})[(m.group(2), m.group(3))] = m.group(4).strip()[:30]
+    print("con datos:", len(vals))
+    for i in sorted(vals):
+        print("COORD", i, json.dumps({f"{k[0]}_{k[1]}": v for k, v in vals[i].items()}))
+    if not vals:
+        i = html.find("jsDatos[0][0]")
+        print("MUESTRA:", re.sub(r"\s+", " ", html[i: i + 800]))
 
 
 def cwop(minutos=12):
