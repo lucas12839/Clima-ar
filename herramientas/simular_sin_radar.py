@@ -99,8 +99,12 @@ REGLAS = {
     "debil40_tope50_r15": {"tope_probable": -50.0, "tope_debil": -40.0, "rayos_moderada": 1},
     "tope55_r15": {"tope_probable": -55.0, "rayos_moderada": 1},
     "tope50_r30": {"tope_probable": -50.0, "rayos_moderada": 3},
+    "tope55": {"tope_probable": -55.0},
+    "tope60_r15": {"tope_probable": -60.0, "rayos_moderada": 1},
+    "tope55_r15_debil35": {"tope_probable": -55.0, "rayos_moderada": 1, "tope_debil": -35.0},
+    "tope55_r15_debil45": {"tope_probable": -55.0, "rayos_moderada": 1, "tope_debil": -45.0},
 }
-COMBINADOS = ("viejo_o_tope50_r15", "viejo_o_debil30_tope50_rayos")
+COMBINADOS = ("viejo_o_tope50_r15", "viejo_o_tope55_r15", "viejo_o_tope55", "viejo_o_tope60_r15")
 
 
 def nueva():
