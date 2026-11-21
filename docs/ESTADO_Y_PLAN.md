@@ -321,6 +321,10 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
     4. Crece o se debilita: enfriamiento del tope y aumento de rayos para subir o bajar la
        intensidad pronosticada.
     5. Punto 10: probar el modo sin radar (satélite + rayos + estaciones) con una tormenta real.
+    - Medida de la etapa: además de los huecos del radar, el error de la trayectoria de cada
+      tormenta (`herramientas/comparar_trayectorias.py`; hoy 4,5 / 9,5 / 15 km a 10 / 20 / 30 min).
+      Lo esperable con estos datos: bajar 20-30 % (~3,5 / 7 / 11 km); por debajo de ~3 km a 10 min
+      y ~8 km a 30 min no se llega con un radar cada 10 min (las tormentas cambian de forma).
   - **Etapa B — Punto 9: calibración y medición continua:** lluvia con estaciones, puntaje de
     gravedad con estaciones y rayos, informe mensual de aciertos.
   - **Etapa C — Punto 11: vigilancia:** VPS que se actualice solo, control de cada fuente, reloj
