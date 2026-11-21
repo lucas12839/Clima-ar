@@ -1,4 +1,4 @@
-name: Prueba única - productos de SINARAME
+name: Prueba única - estaciones abiertas alrededor de Bahía
 on:
   push:
     branches: [prueba-doppler]
@@ -7,7 +7,7 @@ permissions:
 jobs:
   sondear:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -15,5 +15,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install "playwright==$(grep -i '^playwright' requirements.txt | cut -d= -f3)" || pip install playwright
-      - run: python herramientas/sondear_sinarame_productos.py chrome
+      - run: pip install requests==2.34.2
+      - run: python herramientas/sondear_estaciones_nuevas.py
