@@ -261,6 +261,10 @@ class EvolutionConnectorTests(unittest.TestCase):
             )
             for source, destination in paths:
                 shutil.copy2(source, destination)
+            # Desde el 20/11/2026 las proyecciones pueden venir del 5b: va su archivo.
+            trayectorias = integrity_validator.RADAR / "trayectorias_capas.json"
+            if trayectorias.exists():
+                shutil.copy2(trayectorias, radar_dir / "trayectorias_capas.json")
 
             radar_timestamp = (
                 radar_dir / "radar_timestamp.txt"
@@ -293,6 +297,8 @@ class EvolutionConnectorTests(unittest.TestCase):
                     ("radar", "nowcast", "frame_actual_utc"),
                 ),
             }
+            if (radar_dir / "trayectorias_capas.json").exists():
+                timestamp_fields[radar_dir / "trayectorias_capas.json"] = (("radar_timestamp",),)
             for path, fields in timestamp_fields.items():
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 for field_path in fields:

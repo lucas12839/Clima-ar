@@ -283,9 +283,12 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
 - **Paso 1 HECHO (20/11, noche, decisión de Lucas):** el 5b pasa a lo que se ve: llegadas a la zona
   de cada localidad (tormenta a <= 10 km, probable) y trayectorias por tormenta (16-25 % menos error
   que el predictor viejo). "Justo sobre la localidad" no se muestra. `docs/VALIDACION_NOWCAST_CAPAS.md`.
-- **SIGUIENTE (esperar a Lucas):** paso 2 = seguir cada celda con sus rayos minuto a minuto para la
-  localidad exacta (porcentaje, solo próximos ~30 min; objetivo 70-80 % detectado con < 40 % de
-  falsas alarmas), en paralelo y validado con 26 días. Después el punto 9.
+- **Paso 2 HECHO EN PARALELO (20/11, noche):** celdas seguidas con sus rayos para la localidad exacta
+  (`data/ia/celdas_localidad.json`, validación en vivo). Simulado con 703 casos: 5b y celdas juntos
+  = 62 % detectado / 34 % falsas alarmas (5b solo 73/46); el objetivo 70-80 % no se alcanzó.
+  `docs/VALIDACION_CELDAS_RAYOS.md`.
+- **SIGUIENTE (esperar a Lucas):** decidir qué se muestra para "justo sobre la localidad" con la
+  validación en vivo; después el punto 9.
 - Estado anterior: **puntos 1 a 5 terminados** (#42 GOES-19 bien ubicado y por tormenta, #43 señales
   severas y 0 °C, #44 casos guardados, #45 rayos 2σ, #46/#47 puntaje de gravedad EN PARALELO,
   #48 tormentas en formación EN PARALELO + velocidad con varias imágenes).

@@ -275,6 +275,30 @@ def validar_trayectorias_capas(radar_ts: datetime) -> None:
           f"(5b disponible={bool(t.get('disponible'))}, {len(t.get('tracks') or {})} tormentas)")
 
 
+def validar_celdas_localidad(radar_ts: datetime) -> None:
+    """Paso 2 (en paralelo): de esta imagen de radar y con probabilidades válidas."""
+    path = IA / "celdas_localidad.json"
+    if not path.is_file() or path.stat().st_size == 0:
+        print("Celdas por localidad: sin archivo (permitido)")
+        return
+    c = load(path)
+    if c.get("en_paralelo") is not True:
+        fail("celdas por localidad: todavía debe correr en paralelo")
+    if not c.get("disponible"):
+        print(f"Celdas por localidad: no disponible ({c.get('motivo')}) (permitido)")
+        return
+    if parse_utc(c.get("radar_timestamp"), "celdas.radar_timestamp") != radar_ts:
+        fail(f"celdas por localidad desincronizadas: {c.get('radar_timestamp')!r}")
+    for loc_id, l in (c.get("localidades") or {}).items():
+        pr = l.get("probabilidad")
+        if not isinstance(pr, (int, float)) or not 0.0 <= pr <= 1.0:
+            fail(f"celdas por localidad: probabilidad inválida en {loc_id}: {pr!r}")
+        m = l.get("minutos")
+        if m is not None and not 0 <= m <= c.get("horizonte_min", 30):
+            fail(f"celdas por localidad: minutos inválidos en {loc_id}: {m!r}")
+    print(f"Celdas por localidad: sincronizado ({len(c.get('localidades') or {})} localidades)")
+
+
 def validar_ambiente_satelite(radar_ts: datetime) -> None:
     """Ambiente medido por el satélite (punto 8, en paralelo): de esta imagen de
     radar, nunca con un barrido posterior ni más de 20 min anterior, y la
@@ -399,6 +423,7 @@ def main() -> None:
     validar_modelos_region()
     validar_ambiente_satelite(radar_ts)
     validar_trayectorias_capas(radar_ts)
+    validar_celdas_localidad(radar_ts)
 
     candidate = tracking.get("track_principal_candidato_id")
     if candidate is None:
