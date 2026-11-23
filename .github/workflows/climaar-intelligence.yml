@@ -769,6 +769,12 @@ jobs:
           # aguas abajo. Falla segura: el script nunca corta el ciclo. Se valida solo en vivo.
           timeout 90 python scripts/estaciones/alarma_llegada.py || echo "AVISO: alarma de estaciones no disponible en este ciclo"
 
+      - name: Indicios de tormenta severa sin Doppler (eco en arco; en paralelo, no cambia lo que se ve)
+        run: |
+          set -euo pipefail
+          # Etapa G (docs/ETAPA_G.md). Falla segura: el script nunca corta el ciclo.
+          timeout 120 python scripts/indicios_severos.py || echo "AVISO: indicios de tormenta severa no disponibles en este ciclo"
+
       - name: Puntaje de gravedad contra lo medido e informe mensual de aciertos (en paralelo)
         run: |
           set -euo pipefail
