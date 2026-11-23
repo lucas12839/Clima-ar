@@ -30,6 +30,21 @@ Revisión de punta a punta con las corridas reales de GitHub. Lo que se encontr�
   `/etc/systemd/system/climaar-detector.service` (o dejarlo: con 10 también funciona).
 - **Para decidir**: Pigüé llega tarde seguido (20-70 min) y queda afuera en casi la mitad de los ciclos.
 
+## PARA EL CHAT NUEVO (23/11/2026, 19:35) — estado de cada herramienta en %
+% = qué tan lista está para presentar (funciona en vivo + probada con casos reales + cumple el objetivo).
+- Base 85 %: captura 85, lectura del radar 90, seguimiento 85, vigilancia 80, estaciones 75.
+- Predicción ~60 %: dónde llueve 80 (en vivo, a 10 min, 43 % mejor que la imagen sin mover), trayectoria 70,
+  llegada a la localidad 65 (simulación 72/26; **en vivo 56/42, 159 llegadas**), tormenta eléctrica encima 55,
+  modo sin radar 50, tormentas en formación 35, alarma de estaciones 15.
+- Intensidad ~55 %: rayos 80, viento de estaciones 75, lluvia 60 (sin calibrar), eco en arco 50 (solo
+  EE. UU.), ambiente 50, granizo 40 (1 caso), puntaje 25.
+- Producto: servidor 60, interfaz 10 (desactualizada, sin revisar).
+- **Pueden llegar a 100 %:** interfaz, vigilancia (reloj externo), servidor (actualización automática +
+  claves 4/12). **A 90-95 %:** captura, lectura del radar, seguimiento, rayos, estaciones y viento medido
+  (con estaciones al oeste/suroeste). Predicción e intensidad suben con tormentas reales, sin llegar a 90 %
+  (límite: radar 17 min tarde, cada 10 min, sin Doppler).
+- Lucas elige por dónde empezar en el chat nuevo (sugerido: interfaz).
+
 ## Mejoras 1 a 4 (23/11/2026, noche) — `docs/MEJORAS_23_11.md`
 - Lluvia: calibración con el historial oficial del SMN (6 h). Mes casi seco: 6 ventanas con lluvia,
   el radar vio el 100 %; factor medido 0,25-0,29 contra 0,40 en uso: no alcanza para cambiarlo. Ahora
