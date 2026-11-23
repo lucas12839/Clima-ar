@@ -35,7 +35,13 @@ import nowcast_capas as capas  # noqa: E402
 import nowcast_capas_nucleo as nc  # noqa: E402
 import nowcast_flujo_optico as nf  # noqa: E402
 
-VERSION = "celdas-localidad-1.1"
+# 1.2 (23/11/2026): la verdad de la validación en vivo sale de cada imagen limpia con el
+# satélite, como el pronóstico. Antes se volvía a leer el PNG sin esa limpieza y los ecos
+# de terreno de la noche (Tornquist, Médanos: eco sin ninguna nube encima) contaban como
+# tormentas que pasaron: 136 "pasó sin aviso" falsos. Al cambiar de versión se reinicia
+# lo acumulado.
+VERSION = "celdas-localidad-1.2"
+OBSERVADO_HORAS = 3
 SALIDA = ROOT / "data" / "ia" / "celdas_localidad.json"
 GOES = ROOT / "data" / "goes19" / "goes19_state.json"
 HORIZONTE_MIN = 30.0
@@ -119,6 +125,7 @@ def verificar(previo: dict, campos_por_hora: dict[datetime, np.ndarray], zonas: 
     de radar llegadas: ¿hubo tormenta sobre la localidad entre ahora y +30?
     El aviso de la idea 2 se valida con su propia verdad: tormenta fuerte o rayos."""
     pend = []
+    observado = previo.get("observado") or {}
     acum = previo.get("acumulado") or {}
     acum_fuerte = previo.get("acumulado_fuerte") or [0, 0, 0, 0]
     rayos_loc = previo.get("rayos_en_localidad") or {}
@@ -133,18 +140,25 @@ def verificar(previo: dict, campos_por_hora: dict[datetime, np.ndarray], zonas: 
         horas = [t for t in campos_por_hora if desde - timedelta(minutes=5) <= t <= hasta]
         if len(horas) < 2:
             continue  # faltaron imágenes: no se cuenta
+
+        def pico(t, loc):
+            # Lo observado en esa imagen cuando fue la actual (limpia con el satélite);
+            # si no se guardó, la imagen guardada sin esa limpieza.
+            guardado = (observado.get(iso(t)) or {}).get(loc)
+            if guardado is not None:
+                return guardado
+            return nc.picos_por_zona(campos_por_hora[t], {loc: zonas[loc]})[loc]
+
         for loc, reg in (p.get("localidades") or {}).items():
             if loc not in zonas:
                 continue
-            hubo = any(nc.picos_por_zona(campos_por_hora[t], {loc: zonas[loc]})[loc] >= UMBRAL_TORMENTA
-                       for t in horas)
+            hubo = any(pico(t, loc) >= UMBRAL_TORMENTA for t in horas)
             for nombre, criterio in CRITERIOS.items():
                 a = acum.setdefault(nombre, [0, 0, 0, 0])
                 dijo = criterio(reg)
                 a[0 if dijo and hubo else 1 if dijo else 2 if hubo else 3] += 1
             if "pf" in reg:
-                fuerte = any(nc.picos_por_zona(campos_por_hora[t], {loc: zonas[loc]})[loc] >= UMBRAL_FUERTE_DBZ
-                             for t in horas)
+                fuerte = any(pico(t, loc) >= UMBRAL_FUERTE_DBZ for t in horas)
                 electrica = any(desde <= (parse_utc(x) or desde - timedelta(days=1)) <= hasta
                                 for x in rayos_loc.get(loc, []))
                 hubo_f = fuerte or electrica
@@ -214,8 +228,12 @@ def calcular(ahora: datetime | None = None) -> dict[str, Any]:
             "horizonte_min": HORIZONTE_MIN, "umbrales": {"probable": UMBRAL_PROBABLE, "posible": UMBRAL_POSIBLE,
                                                          "aviso_fuerte": UMBRAL_AVISO_FUERTE,
                                                          "fuerte_dbz": UMBRAL_FUERTE_DBZ}}
-    verif = {"pendientes": previo.get("pendientes") or [], "acumulado": previo.get("acumulado") or {},
-             "acumulado_fuerte": previo.get("acumulado_fuerte") or [0, 0, 0, 0],
+    mismo = previo.get("version") == VERSION
+    verif = {"pendientes": previo.get("pendientes") or [],
+             "acumulado": (previo.get("acumulado") or {}) if mismo else {},
+             "acumulado_fuerte": (previo.get("acumulado_fuerte") or [0, 0, 0, 0]) if mismo else [0, 0, 0, 0],
+             "acumulado_desde_utc": previo.get("acumulado_desde_utc") if mismo else iso(ahora),
+             "observado": previo.get("observado") or {},
              "rayos_en_localidad": previo.get("rayos_en_localidad") or {}}
     actual = nf.cargar_dbz(nf.ACTUAL) if (radar_dt and nf.ACTUAL.exists()) else None
     if actual is None:
@@ -243,6 +261,11 @@ def calcular(ahora: datetime | None = None) -> dict[str, Any]:
         r = float(loc.get("radio_km", 4.0)) / km_px
         locs_px[loc["id"]] = (x, y, r)
         zonas[loc["id"]] = nf.disco(shape, x, y, r)
+    # Lo observado en esta imagen (limpia con el satélite), para validar después.
+    obs_ahora = nc.picos_por_zona(campo, zonas)
+    verif["observado"][radar_ts and iso(radar_dt)] = {k: round(float(x), 1) for k, x in obs_ahora.items()}
+    limite_obs = radar_dt - timedelta(hours=OBSERVADO_HORAS)
+    verif["observado"] = {t: v for t, v in verif["observado"].items() if (parse_utc(t) or limite_obs) > limite_obs}
     # Validación en vivo con las imágenes que ya llegaron.
     try:
         verif = verificar(verif, campos_recientes(radar_dt), zonas, radar_dt)

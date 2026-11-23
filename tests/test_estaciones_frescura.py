@@ -43,7 +43,7 @@ class ObservationFreshnessTests(unittest.TestCase):
             {s["wigos_id"] for s in smn_catalog},
             set(SMN_STATIONS),
         )
-        self.assertEqual(len(bcp_catalog) + len(smn_catalog), 19)
+        self.assertEqual(len(bcp_catalog) + len(smn_catalog), 18)   # PASMAN desactivada (23/11)
 
 
 if __name__ == "__main__":

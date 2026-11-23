@@ -77,7 +77,13 @@ def revisar(ahora: datetime | None = None, latido: str | None = None,
         "sin_datos_24h": red.get("estaciones_sin_datos_24h") or [],
     }
     if smn.get("total") and not smn.get("valid"):
-        alertas.append("Ninguna estación del SMN entra (¿límite de edad o fuente caída?).")
+        edades_smn = [x.get("age_minutes") for x in red.get("stations") or []
+                      if x.get("network") == "smn" and isinstance(x.get("age_minutes"), (int, float))]
+        if edades_smn:
+            alertas.append(f"Ninguna estación del SMN entra: su dato más nuevo es de hace "
+                           f"{min(edades_smn) / 60:.1f} h (el SMN las publica con atraso; se usan las BCP y CWOP).")
+        else:
+            alertas.append("Ninguna estación del SMN entra: la fuente del SMN no devuelve datos.")
     if (red.get("bcp") or {}).get("total") and not (red.get("bcp") or {}).get("valid"):
         alertas.append("Ninguna estación BCP entra.")
     if datos["estaciones"]["sin_datos_24h"]:

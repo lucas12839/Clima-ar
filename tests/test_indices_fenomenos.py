@@ -28,8 +28,11 @@ class CombinacionesTest(unittest.TestCase):
         self.assertEqual(r["calificacion"]["etiqueta"], "Fuerte (viento)")
 
     def test_solo_viento_sin_lluvia(self):
-        r = fen.evaluar(radar=radar(), superficie={"rafaga_max_kmh": 65, "lluvia_1h_mm": 0})
+        r = fen.evaluar(radar=radar(), superficie={"rafaga_max_kmh": 75, "lluvia_1h_mm": 0})
         self.assertEqual(r["resumen"], "Viento fuerte, sin lluvia")
+        # Cortes del SMN (etapa F): una ráfaga de 65 km/h es "moderado".
+        r = fen.evaluar(radar=radar(), superficie={"rafaga_max_kmh": 65, "lluvia_1h_mm": 0})
+        self.assertEqual(r["resumen"], "Viento moderado, sin lluvia")
 
     def test_viento_por_modelo_sin_lluvia_no_llega_a_severo(self):
         r = fen.evaluar(radar=radar(), ambiente={"wind_gusts_10m": 110, "wind_speed_10m": 45})
@@ -110,7 +113,7 @@ class LlegadaTest(unittest.TestCase):
 
 class SinRadarTest(unittest.TestCase):
     def test_sin_radar_usa_estaciones_y_rayos(self):
-        r = fen.evaluar(radar={"disponible": False}, superficie={"lluvia_1h_mm": 8, "rafaga_max_kmh": 55},
+        r = fen.evaluar(radar={"disponible": False}, superficie={"lluvia_1h_mm": 8, "rafaga_max_kmh": 72},
                         rayos={"flashes": 3, "distancia_km": 12})
         self.assertEqual(r["fenomenos"]["lluvia"]["grado"], 2)
         self.assertEqual(r["fenomenos"]["viento"]["grado"], 3)
