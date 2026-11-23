@@ -3,16 +3,9 @@ on:
   push:
     branches: [prueba-etapa-a]
 jobs:
-  dia:
+  sondeo:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      max-parallel: 6
-      matrix:
-        dia: [20261024, 20261026, 20261027, 20261028, 20261029, 20261030, 20261031, 20261101, 20261102,
-              20261103, 20261104, 20261105, 20261106, 20261107, 20261108, 20261109, 20261110, 20261111,
-              20261112, 20261113, 20261114, 20261116, 20261117, 20261118, 20261119, 20261120]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,24 +13,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: requirements.txt
-      - run: pip install -q -r requirements.txt
-      - name: Historial de GOES-19 (el día y sus vecinos)
-        run: |
-          git fetch -q --depth 1 origin datos-goes-historial
-          mkdir -p /tmp/goes
-          d=${{ matrix.dia }}
-          for x in $(date -d "$d -1 day" +%Y%m%d) $d $(date -d "$d +1 day" +%Y%m%d); do
-            git show FETCH_HEAD:goes_$x.npz > /tmp/goes/goes_$x.npz 2>/dev/null || rm -f /tmp/goes/goes_$x.npz
-          done
-          ls -la /tmp/goes
-      - name: Simular sin radar
-        run: |
-          python herramientas/simular_sin_radar.py --goes /tmp/goes --dias ${{ matrix.dia }} --paso 1 --procesos 4 \
-            --salida resultado_${{ matrix.dia }}.json | tail -3
-          echo "RESULTADO_JSON $(gzip -c resultado_${{ matrix.dia }}.json | base64 -w0)"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: resultado_${{ matrix.dia }}
-          path: resultado_${{ matrix.dia }}.json
+      - run: |
+          pip install -q "$(grep -i '^playwright==' requirements.txt)" requests
+          python -m playwright install --with-deps chromium > /dev/null
+      - run: python herramientas/sondear_redes.py | gzip | base64 -w0 | sed 's/^/RESULTADO_GZ /'; echo
