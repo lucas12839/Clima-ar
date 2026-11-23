@@ -984,40 +984,6 @@ jobs:
           path: /tmp/radar-rma10
           retention-days: 7
 
-      - name: Disparar Intelligence con el artefacto recién publicado
-        if: steps.reclamar.outputs.procesar == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RADAR_RUN_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-
-          # Radar e Intelligence comparten el grupo de concurrencia, que
-          # admite 1 run en curso + 1 pendiente. Si ya hay un frame RMA10
-          # esperando, despachar Intelligence lo reemplazaría y GitHub
-          # cancelaría ese frame. En ese caso no se despacha: el próximo
-          # run de Radar dispara Intelligence con el frame más nuevo.
-          esperando=0
-          for estado in queued pending waiting requested; do
-            # Solo runs de la última hora: GitHub deja runs "fantasma" en
-            # queued que no se pueden cancelar (7/11/2026).
-            n="$(gh api "repos/$GH_REPO/actions/workflows/probar-radar-smn.yml/runs?status=$estado&per_page=30" \
-              --jq '[.workflow_runs[] | select((now - (.created_at | fromdateiso8601)) < 3600)] | length' \
-              2>/dev/null || echo 0)"
-            esperando=$((esperando + n))
-          done
-
-          if [ "$esperando" -gt 0 ]; then
-            echo "::notice::Hay $esperando frame(s) RMA10 esperando: Intelligence la dispara el próximo run de Radar."
-            exit 0
-          fi
-
-          gh workflow run climaar-intelligence.yml \
-            --repo "$GH_REPO" \
-            --ref main \
-            -f radar_run_id="$RADAR_RUN_ID"
-
       # ============================================================
       # PERSISTENCIA ROBUSTA
       # ============================================================
@@ -1091,14 +1057,20 @@ jobs:
           # sincronización.
           # --------------------------------------------------
 
-          for intento in 1 2 3; do
+          for intento in 1 2 3 4 5; do
 
             echo
             echo "======================================"
             echo "SINCRONIZACIÓN — INTENTO $intento"
             echo "======================================"
 
-            git fetch origin main
+            # Un corte de red no puede tirar el frame (23/11/2026).
+            if ! git fetch origin main; then
+              echo "No se pudo bajar main (red)."
+              if [ "$intento" -eq 5 ]; then exit 1; fi
+              sleep $((intento * 10))
+              continue
+            fi
 
             if git rebase --autostash origin/main; then
 
@@ -1110,7 +1082,7 @@ jobs:
 
               git rebase --abort 2>/dev/null || true
 
-              if [ "$intento" -eq 3 ]; then
+              if [ "$intento" -eq 5 ]; then
 
                 echo
                 echo "ERROR: no se pudo sincronizar main."
@@ -1177,6 +1149,44 @@ jobs:
           echo
           echo "ERROR: agotados los intentos de sincronización."
           exit 1
+
+      - name: Disparar Intelligence con el artefacto recién publicado
+        if: steps.reclamar.outputs.procesar == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RADAR_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # Se dispara DESPUÉS de guardar (23/11/2026): antes la IA quedaba en
+          # espera mientras el Radar guardaba y, si el guardado fallaba, corría
+          # con un frame que no estaba en main.
+
+          # Radar e Intelligence comparten el grupo de concurrencia, que
+          # admite 1 run en curso + 1 pendiente. Si ya hay un frame RMA10
+          # esperando, despachar Intelligence lo reemplazaría y GitHub
+          # cancelaría ese frame. En ese caso no se despacha: el próximo
+          # run de Radar dispara Intelligence con el frame más nuevo.
+          esperando=0
+          for estado in queued pending waiting requested; do
+            # Solo runs de la última hora: GitHub deja runs "fantasma" en
+            # queued que no se pueden cancelar (7/11/2026).
+            n="$(gh api "repos/$GH_REPO/actions/workflows/probar-radar-smn.yml/runs?status=$estado&per_page=30" \
+              --jq '[.workflow_runs[] | select((now - (.created_at | fromdateiso8601)) < 3600)] | length' \
+              2>/dev/null || echo 0)"
+            esperando=$((esperando + n))
+          done
+
+          if [ "$esperando" -gt 0 ]; then
+            echo "::notice::Hay $esperando frame(s) RMA10 esperando: Intelligence la dispara el próximo run de Radar."
+            exit 0
+          fi
+
+          gh workflow run climaar-intelligence.yml \
+            --repo "$GH_REPO" \
+            --ref main \
+            -f radar_run_id="$RADAR_RUN_ID"
 
       - name: Liberar reclamo si el procesamiento falló
         if: failure() && steps.reclamar.outputs.procesar == 'true'

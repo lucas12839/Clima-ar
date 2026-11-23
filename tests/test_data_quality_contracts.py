@@ -416,6 +416,9 @@ class EvolutionConnectorTests(unittest.TestCase):
             nowcast["proyecciones_metadata"].update(
                 {
                     "track_id": candidate,
+                    # Sin movimiento solo pasa cuando el 5b no tuvo trayectoria
+                    # y quedó el predictor viejo (conectar_evolucion_trayectoria).
+                    "fuente": "prediccion_evolucion",
                     "pronostico_disponible": False,
                     "motivo_no_disponible": "SIN_MOVIMIENTO_VALIDO",
                 }

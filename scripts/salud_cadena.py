@@ -44,6 +44,8 @@ LIMITE_CWOP_MIN = 30.0         # transmite cada 10 min; la vuelta del reloj dura
 LIMITE_LATIDO_MIN = 10.0
 LIMITE_RADAR_MIN = 40.0
 LIMITE_ERROR_10MIN_KM = 15.0   # una tormenta se mueve ~10 km en 10 min
+ERROR_5B_MEDIDO_10MIN_KM = 4.5  # herramientas/comparar_trayectorias.py (20/11/2026)
+LIMITE_ERROR_5B_10MIN_KM = 9.0  # el doble de lo medido: algo se rompió
 MIN_MUESTRAS_ERROR = 20
 LIMITE_ARCHIVO_KB = 800.0
 ARCHIVOS_CICLO = (
@@ -72,7 +74,9 @@ def revisar(ahora: datetime | None = None, latido: str | None = None,
     red = leer(DATA / "ia/estaciones/red_observaciones_estado.json") or {}
     smn = red.get("smn") or {}
     datos["estaciones"] = {
-        "validas": red.get("valid_count"), "total": red.get("station_count"),
+        "validas": red.get("valid_count"),
+        # Solo las activas: las dadas de baja (Cabildo, San Eloy, Pasman, SMN) no cuentan.
+        "total": red.get("activas", red.get("station_count")),
         "bcp": red.get("bcp"), "smn": smn,
         "sin_datos_24h": red.get("estaciones_sin_datos_24h") or [],
     }
@@ -150,7 +154,16 @@ def revisar(ahora: datetime | None = None, latido: str | None = None,
         alertas.append(f"El seguimiento se reconstruyó desde cero en {seguidas} imágenes seguidas: "
                        "las tormentas cambian de número.")
 
-    # Error de la predicción por tormenta a 10 min -----------------------------
+    # Error de la trayectoria que se ve (5b) a 10 min, medido en vivo ------------
+    # (23/11/2026: antes se miraba solo el predictor viejo, que ya no se ve).
+    ver = ((leer(DATA / "ia/verificacion_trayectorias.json") or {}).get("resumen") or {})
+    datos["trayectoria_5b_error_km"] = ver or None
+    diez = ver.get("10") or {}
+    if (diez.get("muestras") or 0) >= MIN_MUESTRAS_ERROR and (diez.get("mediana_km") or 0) > LIMITE_ERROR_5B_10MIN_KM:
+        alertas.append(f"La trayectoria que se ve erra {diez['mediana_km']:.0f} km a 10 min en vivo "
+                       f"(en las pruebas: {ERROR_5B_MEDIDO_10MIN_KM} km).")
+
+    # Error del predictor viejo (respaldo) a 10 min -----------------------------
     cal = leer(DATA / "radar/seguimiento/calibracion_prediccion.json") or {}
     errores = [r.get("error_pixeles") for r in cal.get("registros") or []
                if abs((r.get("horizonte_minutos") or 0) - 10) < 1 and r.get("error_pixeles") is not None]

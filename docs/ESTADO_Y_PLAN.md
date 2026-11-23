@@ -9,6 +9,27 @@ Leer junto con `CLAUDE.md` (reglas fijas del repo).
 - Claude genera, arregla, prueba y sube los cambios (rama + pull request + merge).
 - El VPS no se actualiza solo desde GitHub: si hay que tocarlo, darle el comando a Lucas.
 
+## Reparación de la sincronización de la cadena (23/11/2026, 17:00 hora de Argentina)
+Revisión de punta a punta con las corridas reales de GitHub. Lo que se encontró y se arregló:
+- **La IA rechazaba tormentas recién nacidas**: la validación comparaba la trayectoria del 5b con el
+  predictor viejo ("sin movimiento" en la primera imagen). Hoy dejó sin análisis las imágenes de
+  14:30 (2 corridas) y de 21:10/21:20 del 22/11. Ahora se valida contra el 5b.
+- **Un corte de red de GitHub tiraba el guardado** (sin reintento al bajar main). Radar, IA y CWOP
+  reintentan 5-6 veces con espera creciente.
+- **CWOP compartía la fila de escritura** con Radar e IA (el tercero que llega cancela al que espera):
+  sale de la fila (solo escribe su archivo). Una prueba impide que otro reloj vuelva a entrar.
+- **La IA se dispara después de guardar el radar** (antes quedaba esperando y podía correr con un
+  frame que no llegó a main).
+- **Redespacho del radar: 6 min** (antes 10) y solo si no hay un Radar en marcha.
+- **Error de la trayectoria que se ve (5b), medido en vivo**: `data/ia/verificacion_trayectorias.json`;
+  el control de salud avisa si a 10 min supera 9 km (medido en pruebas: 4,5). Antes se medía el viejo.
+- **La vigilancia avisa** si el último radar queda sin análisis o si la IA falla 2 veces seguidas.
+- **VPS**: el actualizador baja solo lo último (antes, toda la historia cada 10 min).
+- Control de salud: el total de estaciones cuenta solo las activas (11), no las dadas de baja.
+- **Para Lucas (VPS)**: el servicio instalado tiene `CLIMAAR_REDESPACHO_MIN=10`; cambiarlo a 6 en
+  `/etc/systemd/system/climaar-detector.service` (o dejarlo: con 10 también funciona).
+- **Para decidir**: Pigüé llega tarde seguido (20-70 min) y queda afuera en casi la mitad de los ciclos.
+
 ## Decisiones de Lucas
 - Sin modelos entrenados, todo por reglas y física (ver `CLAUDE.md`).
 - **Sin alertas de colores ni avisos a corto plazo.** Los avisos oficiales son del SMN.

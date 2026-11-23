@@ -547,7 +547,15 @@ def main() -> None:
         "pronostico_disponible",
         True,
     )
-    if metadata_availability is not forecast_available:
+    if metadata.get("fuente") == "nowcast_capas":
+        # Desde el 20/11/2026 la trayectoria sale del 5b, que da movimiento
+        # aunque el predictor viejo todavía no lo tenga (tormenta recién
+        # nacida: SIN_MOVIMIENTO_VALIDO). Comparar contra el viejo frenaba
+        # la IA de ese frame (23/11: 4 imágenes sin publicar).
+        if metadata_availability is not True:
+            fail("proyecciones_metadata del 5b sin pronóstico disponible")
+        forecast_available = True
+    elif metadata_availability is not forecast_available:
         fail(
             "proyecciones_metadata.pronostico_disponible no coincide "
             "con prediccion_evolucion"

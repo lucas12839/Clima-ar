@@ -69,7 +69,8 @@ def test_radar_idempotente_y_protegido_por_concurrencia():
     orden = [
         "Reclamar frame", "Procesar radar", "Ejecutar seguimiento temporal",
         "Marcar frame como procesado", "Publicar artefacto",
-        "Disparar Intelligence", "Persistir resultados",
+        # 23/11/2026: la IA se dispara después de guardar el radar en main.
+        "Persistir resultados", "Disparar Intelligence",
     ]
     pos = [next(j for j, n in enumerate(nombres) if n.startswith(o)) for o in orden]
     assert pos == sorted(pos)
@@ -130,7 +131,10 @@ def test_reloj_encadenado_cwop_vigila_al_detector_y_sigue_solo():
     # real del 20/11: cortado a los 3 min y la cadena se detuvo).
     assert sig["timeout-minutes"] * 60 > 480 + 60
     assert data["permissions"]["actions"] == "write"
-    assert jobs["publicar"]["concurrency"]["group"] == "climaar-production-writes"
+    # 23/11/2026: fuera del grupo de Radar/IA (el tercero que llega cancela al
+    # que espera). Solo escribe su archivo y publica con rebase y reintentos.
+    assert "concurrency" not in jobs["publicar"]
+    assert "for intento in 1 2 3 4 5 6" in str(jobs["publicar"])
     # nunca lanza el radar
     assert not re.search(r"gh workflow run\s+\\?\s*probar-radar-smn", texto)
 
@@ -143,3 +147,12 @@ def test_checkout_corto_y_python_unico():
         assert "lfs: true" not in texto, f.name
         for v in re.findall(r'python-version:\s*"([\d.]+)"', texto):
             assert v == "3.12", f.name
+
+
+def test_solo_radar_ia_y_sazb_comparten_la_fila_de_escritura():
+    # 23/11/2026: GitHub admite 1 en curso + 1 en espera por grupo; un tercero
+    # cancela al que espera. Nada que corra solo cada pocos minutos puede entrar.
+    permitidos = {"probar-radar-smn.yml", "climaar-intelligence.yml", "observaciones-sazb.yml"}
+    for f in WF.glob("*.yml"):
+        if "climaar-production-writes" in f.read_text(encoding="utf-8"):
+            assert f.name in permitidos, f.name
