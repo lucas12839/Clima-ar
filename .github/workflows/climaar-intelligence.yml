@@ -763,6 +763,13 @@ jobs:
           # aguas abajo. Falla segura: el script nunca corta el ciclo. Se valida solo en vivo.
           timeout 90 python scripts/estaciones/alarma_llegada.py || echo "AVISO: alarma de estaciones no disponible en este ciclo"
 
+      - name: Puntaje de gravedad contra lo medido e informe mensual de aciertos (en paralelo)
+        run: |
+          set -euo pipefail
+          # Etapa B (punto 9). Falla segura: los scripts nunca cortan el ciclo.
+          timeout 60 python scripts/verificar_puntaje.py || echo "AVISO: verificación del puntaje no disponible en este ciclo"
+          timeout 60 python scripts/informe_aciertos.py || echo "AVISO: informe de aciertos no disponible en este ciclo"
+
       - name: Control de salud de la cadena (en paralelo, no cambia lo que se ve)
         env:
           CLIMAAR_DETECTOR_LATIDO: ${{ vars.CLIMAAR_DETECTOR_LATIDO }}

@@ -15,15 +15,24 @@ Ni el radar ni las estaciones se creen a ciegas: se controlan entre sí.
    Una estación dudosa no se usa para calibrar ni para los índices.
 
 2. Registro de calibración (data/ia/calibracion/registro_lluvia.json)
-   Una fila por hora y estación confiable a <= 100 km del radar: lluvia
-   medida en la última hora y lluvia que estimó el radar sobre la estación
-   (sin corregir). Se guardan 120 días.
+   Una fila por hora y estación: lluvia medida y lluvia que estimó el radar
+   sobre la estación (sin corregir), las dos en LA MISMA hora (la que termina
+   en la primera imagen de radar de cada hora: la de en punto o hasta y 20). Antes la estación se medía en
+   la hora que terminaba "ahora" y el radar en la que terminaba en la imagen,
+   que llega 10 a 30 min tarde: las ventanas no coincidían (corregido el
+   23/11/2026, esas filas viejas quedan con "ventana": "desfasada" y no se
+   usan). Solo se registra si el radar tuvo la hora completa (>= 5 imágenes,
+   sin huecos de más de 20 min) y la estación datos al principio y al final.
+   Se guardan 120 días.
 
 3. Factor automático (data/ia/calibracion/factor_lluvia.json)
    lluvia real / lluvia del radar, con las horas en que llovió (>= 1 mm en
-   la estación o en el radar). Se usa recién con >= 20 horas de >= 3 días
-   distintos; mientras tanto rige el inicial (config/calibracion_lluvia.json,
-   Punta Alta 13/11/2026).
+   la estación o en el radar) en estaciones confiables a <= 100 km del radar.
+   Se usa recién con >= 20 horas de >= 3 días distintos y >= 30 mm medidos;
+   mientras tanto rige el inicial (config/calibracion_lluvia.json, Punta Alta
+   13/11/2026). Se recalcula solo en cada ciclo a medida que llueve.
+   También se guarda la relación por distancia al radar (informativa: lejos,
+   el haz pasa por arriba de la lluvia y el radar ve menos).
 """
 from __future__ import annotations
 
@@ -40,6 +49,7 @@ EST = BASE / "data/ia/estaciones"
 SENALES = EST / "senales_superficie.json"
 HISTORIAL_SUP = EST / "historial_superficie.json"
 NOWCAST = BASE / "data/radar/nowcast_flujo.json"
+HISTORIAL_PUNTOS = BASE / "data/radar/historial_puntos_control.json"
 CAL = BASE / "data/ia/calibracion"
 CALIDAD = CAL / "calidad_estaciones.json"
 REGISTRO = CAL / "registro_lluvia.json"
@@ -56,6 +66,11 @@ CALIBRAR_MAX_KM = 100.0
 LLUVIA_MIN_CALIBRAR_MM = 1.0
 HORAS_MIN = 20
 DIAS_MIN = 3
+MM_MIN = 30.0
+IMAGENES_HORA_MIN = 5
+HUECO_RADAR_MAX_MIN = 20.0
+BORDE_ESTACION_MIN = 10.0
+BANDAS_KM = ((0, 50), (50, 100), (100, 160), (160, 250))
 REGISTRO_DIAS = 120
 LIMITES = {"temperatura_c": (-20.0, 50.0), "viento_kmh": (0.0, 200.0), "rafaga_kmh": (0.0, 250.0),
            "lluvia_1h_mm": (0.0, 200.0)}
@@ -73,6 +88,16 @@ def escribir(path: Path, datos) -> None:
     fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(datos, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
+def escribir_compacto(path: Path, datos) -> None:
+    """Registro largo (120 días): una fila por línea, sin sangría."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("[\n" + ",\n".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) for r in datos)
+                 + ("\n" if datos else "") + "]\n")
     os.replace(tmp, path)
 
 
@@ -139,20 +164,71 @@ def desacuerdo_lluvia(est_1h: float | None, radar_1h_sin_corregir: float | None,
     return None
 
 
+def _llovio(r: dict) -> bool:
+    return (r.get("confiable") and r.get("ventana") == "alineada"
+            and max(r.get("estacion_mm", 0), r.get("radar_mm", 0)) >= LLUVIA_MIN_CALIBRAR_MM)
+
+
 def calcular_factor(registro: list[dict]) -> dict[str, Any]:
-    filas = [r for r in registro
-             if r.get("confiable") and r.get("distancia_radar_km", 999) <= CALIBRAR_MAX_KM
-             and max(r.get("estacion_mm", 0), r.get("radar_mm", 0)) >= LLUVIA_MIN_CALIBRAR_MM]
+    filas = [r for r in registro if _llovio(r) and r.get("distancia_radar_km", 999) <= CALIBRAR_MAX_KM]
     dias = {r["dia_local"] for r in filas}
     total_est = sum(r["estacion_mm"] for r in filas)
     total_rad = sum(r["radar_mm"] for r in filas)
     salida = {"horas": len(filas), "dias": sorted(dias), "estacion_mm": round(total_est, 1),
               "radar_mm": round(total_rad, 1), "valido": False, "factor": None,
-              "minimo_requerido": {"horas": HORAS_MIN, "dias": DIAS_MIN}}
-    if len(filas) >= HORAS_MIN and len(dias) >= DIAS_MIN and total_rad > 0:
+              "minimo_requerido": {"horas": HORAS_MIN, "dias": DIAS_MIN, "estacion_mm": MM_MIN}}
+    if len(filas) >= HORAS_MIN and len(dias) >= DIAS_MIN and total_est >= MM_MIN and total_rad > 0:
         salida["factor"] = round(total_est / total_rad, 3)
         salida["valido"] = True
+    bandas = {}
+    for lo, hi in BANDAS_KM:
+        f = [r for r in registro if _llovio(r) and lo <= r.get("distancia_radar_km", 999) < hi]
+        e, a = sum(r["estacion_mm"] for r in f), sum(r["radar_mm"] for r in f)
+        bandas[f"{lo}_{hi}_km"] = {"horas": len(f), "estacion_mm": round(e, 1), "radar_mm": round(a, 1),
+                                   "relacion": round(e / a, 2) if a > 0 else None}
+    salida["por_distancia"] = bandas
     return salida
+
+
+def lluvia_entre(serie: list[dict], desde: datetime, hasta: datetime) -> float | None:
+    """Lluvia medida por la estación entre dos horas (acumulado diario que se
+    reinicia a la medianoche local). None si la estación no tiene datos cerca
+    del principio y del final de la ventana."""
+    margen = timedelta(minutes=BORDE_ESTACION_MIN)
+    puntos = sorted((t, r.get("lluvia_dia")) for r in serie
+                    if r.get("lluvia_dia") is not None and (t := parse(r.get("utc"))) is not None
+                    and desde - margen <= t <= hasta + margen)
+    antes = [p for p in puntos if p[0] <= desde]
+    despues = [p for p in puntos if p[0] >= hasta - margen]
+    if not antes or not despues:
+        return None
+    puntos = [antes[-1]] + [p for p in puntos if desde < p[0] <= hasta]
+    if len(puntos) < 2:
+        return None
+    total, (ref_t, ref_v) = 0.0, puntos[0]
+    for t, v in puntos[1:]:
+        if v >= ref_v:
+            total += v - ref_v
+        elif dia_local(t) != dia_local(ref_t):
+            total += v       # reinicio diario
+        else:
+            continue         # bajada sin medianoche = lectura errónea
+        ref_t, ref_v = t, v
+    return round(total, 1)
+
+
+def radar_hora_completa(historial_puntos: list[dict], fin: datetime) -> bool:
+    """El radar cubrió la hora (fin - 60 min, fin]: >= 5 imágenes y ningún hueco
+    de más de 20 min (con huecos la suma del radar queda corta)."""
+    tiempos = sorted(t for r in historial_puntos if isinstance(r, dict)
+                     and (t := parse(r.get("utc"))) is not None and t <= fin)
+    inicio = fin - timedelta(hours=1)
+    dentro = [t for t in tiempos if t > inicio]
+    if len(dentro) < IMAGENES_HORA_MIN or not dentro or dentro[-1] != fin:
+        return False
+    previas = [t for t in tiempos if t <= inicio]
+    marcas = ([previas[-1]] if previas else [inicio]) + dentro
+    return all((b - a).total_seconds() / 60.0 <= HUECO_RADAR_MAX_MIN for a, b in zip(marcas, marcas[1:]))
 
 
 # --------------------------------------------------------------------------
@@ -164,6 +240,13 @@ def main(ahora: datetime | None = None) -> int:
     puntos = nowcast.get("puntos_control") or {}
     calidad = leer(CALIDAD, {"estaciones": {}})
     registro = leer(REGISTRO, [])
+    for r in registro:
+        r.setdefault("ventana", "desfasada")   # filas de antes del 23/11/2026
+    frame = parse(nowcast.get("radar_timestamp"))
+    # La primera imagen de cada hora (la de en punto o, si esa se salteó, una de
+    # hasta y 20) cierra una hora del registro: así las horas casi no se pisan.
+    hora_frame = frame if frame is not None and frame.minute <= 20 else None
+    hora_completa = hora_frame is not None and radar_hora_completa(leer(HISTORIAL_PUNTOS, []), hora_frame)
     sys.path.insert(0, str(BASE / "scripts"))
     sys.path.insert(0, str(BASE))
     try:
@@ -201,9 +284,11 @@ def main(ahora: datetime | None = None) -> int:
         if acumulado_inconsistente(serie):
             lluvia_problemas.append("la lluvia del día bajó sin cambiar el día")
         punto = next((p for k, p in puntos.items() if p.get("nombre") == nombre), None)
+        # Lluvia de la estación en la misma hora que suma el radar (termina en la imagen).
+        est_1h = lluvia_entre(serie, frame - timedelta(hours=1), frame) if frame else None
         if punto and "dato atrasado" not in problemas:
-            motivo = desacuerdo_lluvia(e.get("lluvia_1h_mm"), punto.get("lluvia_1h_sin_corregir_mm"),
-                                       punto.get("dbz_pico"), factor)
+            motivo = desacuerdo_lluvia(est_1h if est_1h is not None else e.get("lluvia_1h_mm"),
+                                       punto.get("lluvia_1h_sin_corregir_mm"), punto.get("dbz_pico"), factor)
             if motivo and not any(f.get("hora") == iso(hora) for f in faltas):
                 faltas.append({"utc": iso(ahora), "hora": iso(hora), "motivo": motivo})
         if len(faltas) >= FALTAS_DUDOSA:
@@ -219,16 +304,20 @@ def main(ahora: datetime | None = None) -> int:
             "faltas_lluvia": faltas,
             "revisado_utc": iso(ahora),
         }
-        # Registro de calibración: una fila por hora y estación.
-        if punto and e.get("lluvia_1h_mm") is not None and punto.get("lluvia_1h_sin_corregir_mm") is not None:
-            clave = (nombre, iso(hora))
+        # Registro de calibración: una fila por hora y estación, estación y radar en la
+        # misma hora (la que termina en la imagen de la hora en punto).
+        if (hora_completa and punto and est_1h is not None
+                and punto.get("lluvia_1h_sin_corregir_mm") is not None):
+            h_fin = hora_frame.replace(minute=0, second=0, microsecond=0)
+            clave = (nombre, iso(h_fin))
             if not any((r.get("estacion"), r.get("hora")) == clave for r in registro):
                 registro.append({
-                    "estacion": nombre, "hora": iso(hora), "dia_local": dia_local(hora),
-                    "estacion_mm": round(float(e["lluvia_1h_mm"]), 1),
+                    "estacion": nombre, "hora": iso(h_fin), "dia_local": dia_local(h_fin - timedelta(minutes=30)),
+                    "estacion_mm": est_1h,
                     "radar_mm": round(float(punto["lluvia_1h_sin_corregir_mm"]), 1),
                     "distancia_radar_km": punto.get("distancia_radar_km"),
                     "confiable": estado_lluvia == "confiable",
+                    "ventana": "alineada",
                 })
 
     corte = ahora - timedelta(days=REGISTRO_DIAS)
@@ -237,7 +326,7 @@ def main(ahora: datetime | None = None) -> int:
     factor_auto.update({"actualizado_utc": iso(ahora), "factor_en_uso": factor})
 
     escribir(CALIDAD, {"version": "1.0.0", "actualizado_utc": iso(ahora), "estaciones": estados})
-    escribir(REGISTRO, registro)
+    escribir_compacto(REGISTRO, registro)
     escribir(FACTOR, factor_auto)
     dudosas = [k for k, v in estados.items() if v["estado"] == "dudosa" or v["estado_lluvia"] == "dudosa"]
     print(f"Calidad: {len(estados)} estaciones, dudosas: {dudosas or 'ninguna'}. "

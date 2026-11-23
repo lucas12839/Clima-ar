@@ -307,3 +307,20 @@ def test_verificacion_en_vivo_de_llegadas(entorno):
     assert acc["lluvia|probable|localidad"] == [0, 0, 1, 1]     # Bahía: llegó sin aviso
     r = ncap.resumen_llegadas(verif)
     assert r["tormenta|posible|localidad"]["falsas_alarmas_pct"] == 50.0
+
+
+def test_verificacion_cuenta_aparte_el_modo_sin_radar():
+    from datetime import datetime, timezone
+    radar_dt = datetime(2026, 11, 23, 14, 40, tzinfo=timezone.utc)
+    obs = {"bahia_blanca": 40.0}
+    verif = {"pendientes": [
+        {"objetivo_utc": "2026-11-23T14:40:00Z", "plazo_min": 60, "edad_radar_min": 50.0,
+         "hoy": {"loc": {"bahia_blanca": 38.0}, "reg": []}, "capas": {"loc": {"bahia_blanca": 38.0}, "reg": []}},
+        {"objetivo_utc": "2026-11-23T14:40:00Z", "plazo_min": 30, "edad_radar_min": 15.0,
+         "hoy": {"loc": {"bahia_blanca": 0.0}, "reg": []}, "capas": {"loc": {"bahia_blanca": 0.0}, "reg": []}},
+    ]}
+    ncap.verificar(verif, radar_dt, obs, {})
+    acc = verif["acumulado"]
+    assert acc["capas|sin_radar_40min"]["35"] == [1, 0, 0, 0]   # solo el emitido con radar de 50 min
+    assert acc["capas|hasta_30min"]["35"] == [0, 0, 1, 0]
+    assert "estaciones|sin_radar_40min" not in acc
