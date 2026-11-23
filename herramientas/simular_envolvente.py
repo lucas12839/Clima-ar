@@ -46,6 +46,7 @@ def main(argv=None) -> int:
     ap.add_argument("--goes", required=True)
     ap.add_argument("--paso", type=int, default=2)
     ap.add_argument("--salida", default=None)
+    ap.add_argument("--dias", default=None, help="solo imágenes de partida de estos días, ej.: 20261113,20261121")
     ap.add_argument("--atrasos", default=None, help="ej.: 40,60,90 (por defecto 10,20,30)")
     args = ap.parse_args(argv)
     if args.atrasos:
@@ -54,6 +55,7 @@ def main(argv=None) -> int:
     cfg = {**ncap.CONFIG_DEFECTO, **json.loads((ROOT / "config" / "nowcast_capas.json").read_text(encoding="utf-8"))}
     frames = {nf.timestamp_de_nombre(p): p for p in nf.HISTORICO.glob("20*.png")}
     frames.pop(None, None)
+    dias = set(args.dias.split(",")) if args.dias else None
     shape = nf.cargar_dbz(next(iter(frames.values()))).shape
     clutter = nc.cargar_clutter_total(shape)
     km_px = nf.km_por_pixel(shape[1])
@@ -79,9 +81,12 @@ def main(argv=None) -> int:
 
     # tabla[variante][zona][umbral] = [si-si, si-no, no-si, no-no, hora_ok, hora_total]
     tabla = {k: {z: {u: [0] * 6 for u in sl.UMBRALES} for z in zonas} for k in VARIANTES}
+    # Por localidad, para lo que se ve (probable = 2 de 25; posible = 1 de 25).
+    POR_LOC = ("25_k2", "25_k1")
+    tabla_loc = {k: {z: {u: {} for u in sl.UMBRALES} for z in zonas} for k in POR_LOC}
     casos = 0
     for i, t0 in enumerate(sorted(frames)):
-        if i % args.paso:
+        if i % args.paso or (dias and t0.strftime("%Y%m%d") not in dias):
             continue
         act, prev, pprev = campo(t0), campo(t0 - timedelta(minutes=10)), campo(t0 - timedelta(minutes=20))
         if act is None or prev is None or int((act >= 20).sum()) < sh.MIN_PIX_ECO:
@@ -128,7 +133,10 @@ def main(argv=None) -> int:
                         for loc in zz:
                             fp, fo = sl.primera(picos, loc, umbral), sl.primera(obs, loc, umbral)
                             si_p, si_o = fp is not None, fo is not None
-                            acc[0 if si_p and si_o else 1 if si_p else 2 if si_o else 3] += 1
+                            celda = 0 if si_p and si_o else 1 if si_p else 2 if si_o else 3
+                            acc[celda] += 1
+                            if var in tabla_loc:
+                                tabla_loc[var][nz][nu].setdefault(loc, [0, 0, 0, 0])[celda] += 1
                             if si_p and si_o:
                                 acc[5] += 1
                                 acc[4] += abs(fp - fo) <= sl.TOLERANCIA_HORA_MIN
@@ -144,7 +152,8 @@ def main(argv=None) -> int:
                 "hora_acertada_pct": round(100 * hok / ht, 1) if ht else None}
 
     res = {"casos": casos, "resultado": {v: {z: {u: met(tabla[v][z][u]) for u in sl.UMBRALES} for z in zonas}
-                                         for v in VARIANTES}}
+                                         for v in VARIANTES},
+           "conteos": tabla, "conteos_por_localidad": tabla_loc}
     if args.salida:
         Path(args.salida).write_text(json.dumps(res, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     for z in zonas:
