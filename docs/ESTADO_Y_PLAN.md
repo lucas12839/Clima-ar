@@ -309,6 +309,18 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   más radares (vecinos de SINARAME = mismo atraso; INTA Anguil se rompe seguido; no hay otros que
   lleguen a Bahía), radar simulado por satélite (GREMLIN: es una estimación), enlaces de celular
   (datos privados), prueba del detector más rápido.
+- **PENDIENTES QUE DECIDE LUCAS (23/11/2026, 14:30):**
+  - Calibrar la lluvia con el historial oficial del SMN Bahía Blanca Aero (a 2 km del radar, zona sin
+    ecos fijos). Probado: el servicio WIS2 del SMN (`w2b.smn.gov.ar`, mismo que usaba el colector) da
+    lluvia cada 6 h y 24 h y viento medio horario desde al menos el 24/10 (`datetime` con intervalo).
+    Solo para calibrar, no entra en vivo. Es una sola estación: si no junta el mínimo de casos, no se
+    cambia el factor. Se suma el historial de la Bolsa de Cereales si Alex lo consigue.
+  - Su parte de la etapa C (VPS que se actualiza solo y reloj externo).
+  - Estaciones: desactivadas las que no cumplen (#78). Revisadas y descartadas por Lucas: SIMPARH (solo
+    repite la Bolsa de Cereales y no guarda historial), Bajo Hondo, Monte Hermoso, Pedro Luro (SNIH),
+    Redes Climáticas La Pampa, calidad del aire municipal (EMCABB), INTA SIGA, SNIH.
+  - Ramas de prueba para borrar a mano en GitHub: `prueba-etapa-d`, `prueba-etapa-d2`,
+    `prueba-fuentes-bahia`, `prueba-etapa-a` y las viejas de la lista de abajo.
 - **ETAPAS D, E y F HECHAS (23/11/2026, tarde): `docs/SIMULACION_FINAL.md`.** Simulación final con
   29 días: llegada a 10 km 72 % / 26 % (tormenta), 81 % / 11 % (lluvia). Pasa a verse la tormenta
   eléctrica sobre la localidad (2-9 % de avisos de más). Arreglos: ecos de terreno de la noche fuera de
