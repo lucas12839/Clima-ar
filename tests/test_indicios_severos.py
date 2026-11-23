@@ -79,7 +79,7 @@ def test_produccion_sin_radar(tmp_path, monkeypatch):
     import nowcast_flujo_optico as nf
     monkeypatch.setattr(nf, "TIMESTAMP_FILE", tmp_path / "no_existe.txt")
     s = ind._produccion()
-    assert s["disponible"] is False and s["en_paralelo"] and s["modo"] == "en_paralelo_no_se_muestra"
+    assert s["disponible"] is False and s["modo"] == "se_muestra_eco_en_arco"
 
 
 def test_produccion_con_tormenta_del_13_11(tmp_path, monkeypatch):
@@ -95,3 +95,19 @@ def test_produccion_con_tormenta_del_13_11(tmp_path, monkeypatch):
     assert s["disponible"] and s["arcos"] >= 1
     arco = next(t for t in s["tormentas"] if t["arco"])
     assert 30 <= arco["velocidad_kmh"] <= 120 and arco["largo_km"] >= 60
+
+
+def test_arco_para_encima_y_llegando():
+    import motor_decision_climaar as m
+    lat, lon = -38.7183, -62.2663
+    # Arco 40 km al oeste yendo al este a 80 km/h, 100 km de largo.
+    arco = {"arco": True, "lat": lat, "lon": lon - 40 / (111.32 * 0.7802), "largo_km": 100,
+            "area_km2": 0.0, "velocidad_kmh": 80, "direccion_hacia_grados": 90}
+    r = m.arco_para(lat, lon, [arco])
+    assert r and 28 <= r["minutos"] <= 32
+    # Si va hacia el oeste (se aleja), no afecta.
+    assert m.arco_para(lat, lon, [dict(arco, direccion_hacia_grados=270)]) is None
+    # Encima.
+    assert m.arco_para(lat, lon, [dict(arco, lon=lon)])["minutos"] == 0
+    # Demasiado lejos (> 60 min).
+    assert m.arco_para(lat, lon, [dict(arco, lon=lon - 120 / (111.32 * 0.7802))]) is None

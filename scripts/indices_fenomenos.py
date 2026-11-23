@@ -51,10 +51,7 @@ VIENTO_MODERADO_KMH = 40.0
 VIENTO_FUERTE_KMH = 70.0
 VIENTO_SEVERO_KMH = 90.0
 VIENTO_MEDIO_FUERTE_KMH = 45.0   # viento medio (no ráfaga) que ya es fuerte
-LINEA_RAPIDA_KMH = 60.0          # línea rápida: ráfagas fuertes posibles
-LINEA_SEVERA_KMH = 75.0          # 16/12/2023 (155 km/h de ráfaga): 75-84 km/h en dos frames
-LINEA_COHERENCIA = 0.85
-LINEA_DBZ = 45.0
+LINEA_DBZ = 45.0                 # núcleo fuerte (ambiente favorable a ráfagas)
 
 GRANIZO_POSIBLE_DBZ = 50.0
 GRANIZO_PROBABLE_DBZ = 55.0
@@ -273,49 +270,22 @@ def viento_por_modelo(amb: dict[str, Any]) -> dict[str, Any] | None:
                        {"rafaga_kmh": round(rafaga) if rafaga is not None else None})
 
 
-VELOCIDAD_SALTO_MAX = 0.4       # cambio máximo entre frames para creer la velocidad
-
-
-def velocidad_estable(vel: float, previa: float | None) -> bool:
-    """El flujo óptico a veces da saltos (13/11/2026: 35 -> 105 km/h en 10 min,
-    imposible para una tormenta). Solo se cree una velocidad alta si el frame
-    anterior dio algo parecido."""
-    return previa is not None and abs(vel - previa) <= VELOCIDAD_SALTO_MAX * max(vel, previa)
-
-
-def viento_por_radar(*, velocidad: float | None, coherencia: float | None,
-                     dbz_cercano: float | None, velocidad_previa: float | None = None,
-                     exigir_estable: bool = False) -> dict[str, Any] | None:
-    """Línea rápida y ordenada con núcleos fuertes cerca: firma de viento
-    destructivo en la tormenta (16/12/2023: 75-84 km/h, coherencia 0,94-0,98,
-    en dos frames seguidos). Con exigir_estable, la velocidad tiene que
-    repetirse en el frame anterior; si no, queda como mucho en "fuerte"."""
-    vel = numero(velocidad)
-    coh = numero(coherencia)
-    dbz = numero(dbz_cercano) or 0.0
-    if vel is None or coh is None or dbz < LINEA_DBZ:
+def viento_por_arco(arco: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Eco en arco (etapa G, docs/ETAPA_G.md): línea de tormentas curvada hacia adelante,
+    la firma de viento destructivo que se ve sin Doppler (16/12/2023 en Bahía). Medido con
+    46 jornadas severas verificadas de EE. UU.: 6 de cada 10 dieron ráfagas severas
+    (>= 93 km/h) en la hora siguiente, contra 1 de cada 10 de una tormenta cualquiera.
+    Reemplaza a la "línea rápida" por velocidad, que acertaba 15 % (casi como cualquier
+    tormenta). Llega como mucho a "fuerte": "severo" necesita una ráfaga medida."""
+    if not arco:
         return None
-    previa = numero(velocidad_previa)
-    estable = velocidad_estable(vel, previa) if exigir_estable else True
-    sostenida = (not exigir_estable) or (previa is not None and previa >= 0.85 * LINEA_SEVERA_KMH)
-    if vel >= LINEA_SEVERA_KMH and coh >= LINEA_COHERENCIA and not (estable and sostenida):
-        return _evaluacion("viento", 3, "radar", [
-            f"tormenta muy rápida ({vel:.0f} km/h) con núcleos de {dbz:.0f} dBZ; "
-            "falta confirmar la velocidad en el próximo frame"],
-            False, {"velocidad_sistema_kmh": round(vel)})
-    if LINEA_RAPIDA_KMH <= vel < LINEA_SEVERA_KMH and coh >= LINEA_COHERENCIA:
-        return _evaluacion("viento", 3, "radar", [
-            f"línea de tormentas avanzando a {vel:.0f} km/h con núcleos de {dbz:.0f} dBZ: "
-            "ráfagas fuertes posibles"], False, {"velocidad_sistema_kmh": round(vel)})
-    if vel >= LINEA_SEVERA_KMH and coh >= LINEA_COHERENCIA:
-        return _evaluacion("viento", 4, "radar", [
-            f"línea de tormentas avanzando a {vel:.0f} km/h en bloque (coherencia {coh:.2f}) "
-            f"con núcleos de {dbz:.0f} dBZ"], False, {"velocidad_sistema_kmh": round(vel)})
-    if vel >= 45 and coh >= 0.7:
-        return _evaluacion("viento", 3, "radar", [
-            f"tormenta rápida ({vel:.0f} km/h) con núcleos de {dbz:.0f} dBZ: ráfagas fuertes"],
-            False, {"velocidad_sistema_kmh": round(vel)})
-    return None
+    d, v = numero(arco.get("distancia_km")), numero(arco.get("velocidad_kmh"))
+    donde = "encima" if (d is None or d <= 0.5) else f"a {d:.0f} km"
+    razon = (f"eco en arco (línea de tormentas curvada hacia adelante) {donde}"
+             + (f", avanzando a {v:.0f} km/h" if v is not None else "")
+             + ": ráfagas fuertes posibles (6 de cada 10 dieron ráfagas severas)")
+    return _evaluacion("viento", 3, "radar", [razon], False,
+                       {"eco_en_arco": True, "velocidad_sistema_kmh": round(v) if v is not None else None})
 
 
 # --------------------------------------------------------------------------
@@ -621,11 +591,8 @@ def evaluar(
         dbz_nucleo = pico if pico is not None else dbz_c
         ahora["granizo"] = confirmar_granizo(ajustar_por_ambiente("granizo", ajustar_por_satelite(
             granizo_por_radar(dbz_nucleo, amb), sat), amb_sev, dbz_nucleo), sat, ev_rayos, amb_sev)
-        cercano = max(numero(radar.get("dbz_ciudad")) or 0, numero(radar.get("dbz_30km")) or 0)
-        ev_vr = viento_por_radar(velocidad=radar.get("velocidad_kmh"),
-                                 coherencia=radar.get("coherencia"), dbz_cercano=cercano,
-                                 velocidad_previa=radar.get("velocidad_previa_kmh"),
-                                 exigir_estable="velocidad_previa_kmh" in radar)
+        arco = radar.get("arco") or None
+        ev_vr = viento_por_arco(arco if arco and (numero(arco.get("minutos")) or 0) <= 0 else None)
     else:
         opciones = [o for o in (lluvia_por_satelite(sat, rayos), lluvia_por_radar_movido(radar.get("movido")))
                     if o is not None]
@@ -659,10 +626,8 @@ def evaluar(
             "granizo": confirmar_granizo(ajustar_por_ambiente("granizo", granizo_por_radar(dbz_l, amb),
                                                               amb_sev, dbz_l), sat, ev_rayos, amb_sev),
         }
-        ev_vl = viento_por_radar(velocidad=radar.get("velocidad_eco_kmh") or radar.get("velocidad_kmh"),
-                                 coherencia=radar.get("coherencia"), dbz_cercano=dbz_l,
-                                 velocidad_previa=radar.get("velocidad_eco_previa_kmh"),
-                                 exigir_estable="velocidad_previa_kmh" in radar)
+        arco_l = radar.get("arco") or None
+        ev_vl = viento_por_arco(arco_l if arco_l and (numero(arco_l.get("minutos")) or 0) > 0 else None)
         opciones = [o for o in (ev_vl, mod_viento) if o is not None]
         al_llegar["viento"] = ajustar_por_ambiente(
             "viento", _mejor(*opciones) if opciones else dict(nada["viento"]), amb_sev, dbz_l)

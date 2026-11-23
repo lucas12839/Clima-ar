@@ -46,8 +46,6 @@ ECO_MIN_DBZ = 5.0
 # evaluación, sin subir el nivel.
 AMENAZAS_CALIBRADAS = {"granizo": True, "viento": False, "inundacion": False}
 GRANIZO_DBZ = 55.0
-LINEA_RAPIDA_KMH = 60.0
-LINEA_COHERENCIA = 0.85
 LINEA_DBZ = 45.0
 INUNDACION_DBZ = 40.0
 INUNDACION_MINUTOS = 60.0
@@ -183,6 +181,7 @@ def clasificar(
     ambiente: dict[str, Any] | None = None,
     radar_disponible: bool = True,
     superficie: dict[str, Any] | None = None,
+    arco: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     rayos = rayos or {}
     ambiente = ambiente or {}
@@ -220,20 +219,14 @@ def clasificar(
     if pico >= GRANIZO_DBZ:
         amenazas["granizo"] = {"indicio": True, "razon": f"núcleo de {pico:.0f} dBZ"}
 
-    # Viento: línea rápida y ordenada con núcleos fuertes (firma de bow echo).
-    vel = numero(velocidad_kmh)
-    coh = numero(coherencia)
-    # Solo cuenta si los núcleos fuertes están sobre la ciudad, a <=30 km o
-    # llegando en <=60 min (una línea rápida lejana no afecta a Bahía Blanca).
-    cercano = max(dbz_ciudad or 0, dbz_30km or 0, (dbz_llegada or 0) if llega else 0)
-    if (
-        vel is not None and coh is not None
-        and vel >= LINEA_RAPIDA_KMH and coh >= LINEA_COHERENCIA
-        and cercano >= LINEA_DBZ
-    ):
+    # Viento: eco en arco encima o llegando en <= 60 min (etapa G, docs/ETAPA_G.md). La
+    # "línea rápida" por velocidad se sacó: acertaba 15 %, casi como cualquier tormenta.
+    if arco:
+        m = numero(arco.get("minutos"), 0) or 0
         amenazas["viento"] = {
             "indicio": True,
-            "razon": f"sistema avanzando a {vel:.0f} km/h en bloque (coherencia {coh:.2f})",
+            "razon": ("eco en arco encima" if m <= 0 else f"eco en arco llegando en {m:.0f} min")
+            + ": ráfagas fuertes posibles",
         }
 
     # Inundación: lluvia intensa persistente sobre la ciudad.
@@ -324,6 +317,7 @@ def clasificar(
             "eta_llegada_min": eta_llegada_min,
             "velocidad_kmh": velocidad_kmh,
             "coherencia": coherencia,
+            "arco": arco,
             "minutos_lluvia_intensa": minutos_lluvia_intensa,
             "lluvia_3h_mm": lluvia_3h_mm,
             "lluvia_6h_mm": lluvia_6h_mm,

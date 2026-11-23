@@ -60,13 +60,30 @@ class CombinacionesTest(unittest.TestCase):
 
 
 class SeveroTest(unittest.TestCase):
-    def test_linea_rapida_es_posible_severa_hasta_calibrar(self):
-        # 16/12/2023: línea a 75-84 km/h, coherencia 0,94-0,98, núcleos >=45 dBZ cerca.
+    def test_linea_rapida_sin_arco_ya_no_da_viento(self):
+        # La velocidad sola acertaba 15 %: ya no se muestra.
         r = fen.evaluar(radar=radar(dbz_ciudad=36, dbz_30km=50, velocidad_kmh=78, coherencia=0.95))
+        self.assertLess(r["fenomenos"]["viento"]["grado"], 3)
+
+    def test_eco_en_arco_encima_da_rafagas_fuertes_posibles(self):
+        r = fen.evaluar(radar=radar(dbz_ciudad=36, dbz_30km=50,
+                                    arco={"minutos": 0, "distancia_km": 3, "velocidad_kmh": 70}))
         v = r["fenomenos"]["viento"]
-        self.assertEqual(v["grado"], 4)
-        self.assertEqual(v["categoria"], "posible severo")
-        self.assertEqual(r["calificacion"]["etiqueta"], "Posible severa (viento)")
+        self.assertEqual(v["grado"], 3)
+        self.assertFalse(v["confirmado"])
+        self.assertTrue(any("eco en arco" in x for x in v["razones"]))
+        self.assertEqual(r["ahora"]["viento"]["grado"], 3)
+
+    def test_eco_en_arco_llegando_va_al_llegar(self):
+        r = fen.evaluar(radar=radar(dbz_ciudad=0, dbz_llegada=45, eta_llegada_min=30,
+                                    arco={"minutos": 30, "distancia_km": 40, "velocidad_kmh": 80}))
+        self.assertEqual(r["ahora"]["viento"]["grado"], 0)
+        self.assertEqual(r["al_llegar"]["viento"]["grado"], 3)
+
+    def test_arco_y_rafaga_medida_da_severo(self):
+        r = fen.evaluar(radar=radar(dbz_ciudad=36, arco={"minutos": 0, "velocidad_kmh": 70}),
+                        superficie={"rafaga_max_kmh": 120})
+        self.assertEqual(r["fenomenos"]["viento"]["categoria"], "severo")
 
     def test_rafaga_medida_confirma_severa(self):
         r = fen.evaluar(radar=radar(dbz_ciudad=36, dbz_30km=50, velocidad_kmh=78, coherencia=0.95),
@@ -139,11 +156,12 @@ class IntegracionTest(unittest.TestCase):
 
     def test_severo_se_mantiene_40_min(self):
         t0, t1, t2 = "2026-11-19T10:00:00+00:00", "2026-11-19T10:30:00+00:00", "2026-11-19T10:50:00+00:00"
-        severo = dict(dbz_ciudad=36, dbz_30km=50, velocidad_kmh=78, coherencia=0.95)
+        severo = dict(dbz_ciudad=36, dbz_30km=50, superficie={"rafaga_max_kmh": 95})
         r1 = ct.mantener_amenazas(self.base(**severo), None, t0, None)
         r2 = ct.mantener_amenazas(self.base(dbz_ciudad=30), r1, t1, t0)
         r3 = ct.mantener_amenazas(self.base(dbz_ciudad=30), r2, t2, t1)
-        self.assertEqual(r2["calificacion"]["etiqueta"], "Posible severa (viento)")
+        self.assertEqual(r2["calificacion"]["etiqueta"], r1["calificacion"]["etiqueta"])
+        self.assertEqual(r1["fenomenos"]["viento"]["grado"], 4)
         self.assertTrue(r2["fenomenos"]["viento"]["mantenido"])
         self.assertEqual(r2["ahora"]["viento"]["grado"], 0)
         self.assertEqual(r3["calificacion"]["etiqueta"], "Débil (lluvia)")
@@ -209,25 +227,6 @@ class AmbienteTest(unittest.TestCase):
     def test_granizo_sube_con_ambiente(self):
         r = fen.evaluar(radar=radar(dbz_ciudad=52), ambiente=self.AMB)
         self.assertEqual(r["fenomenos"]["granizo"]["categoria"], "probable")
-
-
-class VelocidadEstableTest(unittest.TestCase):
-    def test_salto_de_velocidad_no_da_severo(self):
-        # 13/11/2026 05:20 UTC: 35 -> 105 km/h en 10 min (artefacto del flujo óptico).
-        r = fen.evaluar(radar=radar(dbz_ciudad=40, dbz_30km=63, velocidad_kmh=105, coherencia=0.98,
-                                    velocidad_previa_kmh=35))
-        self.assertEqual(r["fenomenos"]["viento"]["grado"], 3)
-
-    def test_velocidad_repetida_da_posible_severo(self):
-        # 16/12/2023: 75 y 84 km/h en dos frames seguidos.
-        r = fen.evaluar(radar=radar(dbz_ciudad=40, dbz_30km=50, velocidad_kmh=84, coherencia=0.96,
-                                    velocidad_previa_kmh=75))
-        self.assertEqual(r["fenomenos"]["viento"]["categoria"], "posible severo")
-
-    def test_primer_frame_sin_previa_queda_en_fuerte(self):
-        r = fen.evaluar(radar=radar(dbz_ciudad=40, dbz_30km=50, velocidad_kmh=84, coherencia=0.96,
-                                    velocidad_previa_kmh=None))
-        self.assertEqual(r["fenomenos"]["viento"]["grado"], 3)
 
 
 class AcumuladoTest(unittest.TestCase):

@@ -18,6 +18,12 @@ OUT = BASE / "data/ia/resultado_final.json"
 FLUJO = BASE / "data/radar/nowcast_flujo.json"
 CAPAS = BASE / "data/radar/nowcast_capas.json"
 CELDAS = BASE / "data/ia/celdas_localidad.json"
+INDICIOS = BASE / "data/ia/indicios_severos.json"
+# Eco en arco (etapa G): encima si su borde está a <= 10 km de la localidad; llegando si
+# va hacia ella (su línea la cubre de costado) y llega en <= 60 min.
+ARCO_ENCIMA_KM = 10.0
+BAHIA_LAT_LON = (-38.7183, -62.2663)
+ARCO_LLEGADA_MAX_MIN = 60.0
 # Etapa E (23/11/2026): de "justo sobre la localidad" se muestra SOLO la tormenta
 # eléctrica (celdas con rayos, probabilidad >= 0,7). Simulación final, 29 días y 29.239
 # casos (docs/SIMULACION_FINAL.md): de cada 100 avisos, 2 a 9 sobraron (pasó una tormenta
@@ -459,6 +465,7 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
     topes = topes_por_localidad()
     tabla = load(CALIBRACION_LLEGADAS) if CALIBRACION_LLEGADAS.exists() else {}
     celdas = celdas_de(flujo)
+    arcos = arcos_de(flujo)
     previo = load(OUT) if OUT.exists() else {}
     previas = (((previo.get("tipo_tiempo") or {}).get("localidades")) or {}) if isinstance(previo, dict) else {}
     salida = {}
@@ -482,9 +489,8 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
                 "eta_llegada_min": finite(lleg.get("eta_desde_ahora_min")),
                 # Movimiento local (ecos a <= 20 km), no el promedio del radar.
                 "velocidad_kmh": finite(lleg.get("velocidad_local_kmh")),
-                # Del ciclo anterior: la velocidad alta tiene que repetirse.
-                "velocidad_previa_kmh": finite((previas.get(loc_id) or {}).get("velocidad_local_kmh")),
-                "velocidad_eco_previa_kmh": finite((previas.get(loc_id) or {}).get("velocidad_eco_kmh")),
+                # Viento por radar: solo el eco en arco (etapa G, docs/ETAPA_G.md).
+                "arco": arco_para(d.get("lat"), d.get("lon"), arcos) if radar_al_dia else None,
                 "velocidad_eco_kmh": finite(lleg.get("velocidad_eco_kmh")),
                 "coherencia": finite(mov.get("coherencia")),
                 "minutos_lluvia_intensa": finite(d.get("minutos_lluvia_intensa")),
@@ -514,6 +520,49 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
         ev["sobre_la_localidad"] = sobre_la_localidad(loc_id, celdas, radar_al_dia)
         salida[loc_id] = ev
     return salida
+
+
+def arcos_de(flujo):
+    """Ecos en arco de indicios_severos.json de la misma imagen de radar."""
+    c = load(INDICIOS) if INDICIOS.exists() else {}
+    if not isinstance(c, dict) or c.get("disponible") is not True:
+        return []
+    if timestamp_key(c.get("radar_timestamp")) != timestamp_key((flujo or {}).get("radar_timestamp")):
+        return []
+    return [t for t in c.get("tormentas") or [] if t.get("arco") and t.get("lat") is not None]
+
+
+def arco_para(lat, lon, arcos):
+    """El eco en arco que afecta a la localidad: encima (minutos 0) o llegando (<= 60 min)."""
+    import math
+
+    mejor = None
+    if lat is None or lon is None:
+        return None
+    for a in arcos:
+        cos0 = math.cos(math.radians(lat))
+        dx = (lon - a["lon"]) * 111.32 * cos0          # de la tormenta a la localidad (km)
+        dy = (lat - a["lat"]) * 110.57
+        mitad = (finite(a.get("largo_km")) or 0.0) / 2.0
+        radio = math.sqrt((finite(a.get("area_km2")) or 0.0) / math.pi)
+        dist = max(0.0, math.hypot(dx, dy) - radio)
+        if dist <= ARCO_ENCIMA_KM:
+            cand = {"minutos": 0, "distancia_km": round(dist, 1), "velocidad_kmh": a.get("velocidad_kmh")}
+        else:
+            vel, rumbo = finite(a.get("velocidad_kmh")), finite(a.get("direccion_hacia_grados"))
+            if not vel or rumbo is None:
+                continue
+            ux, uy = math.sin(math.radians(rumbo)), math.cos(math.radians(rumbo))
+            adelante, costado = dx * ux + dy * uy, abs(-dx * uy + dy * ux)
+            if adelante <= 0 or costado > mitad + ARCO_ENCIMA_KM:
+                continue
+            minutos = max(0.0, adelante - radio) / vel * 60.0
+            if minutos > ARCO_LLEGADA_MAX_MIN:
+                continue
+            cand = {"minutos": round(minutos), "distancia_km": round(dist, 1), "velocidad_kmh": vel}
+        if mejor is None or cand["minutos"] < mejor["minutos"]:
+            mejor = cand
+    return mejor
 
 
 def celdas_de(flujo):
@@ -683,6 +732,7 @@ def tipo_de_tiempo(flujo, intel, nowcast):
         ambiente=ambiente,
         radar_disponible=radar_ok and sincronizado,
         superficie=superficie_bahia(),
+        arco=arco_para(BAHIA_LAT_LON[0], BAHIA_LAT_LON[1], arcos_de(flujo)) if (radar_ok and sincronizado) else None,
     )
     localidades = tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado)
     # Bahía Blanca: los índices salen del análisis por localidad (lluvia media

@@ -724,6 +724,12 @@ jobs:
           # Paso 2. Falla segura: el script nunca corta el ciclo. Se valida solo en vivo.
           timeout 120 python scripts/celdas_localidad.py || echo "AVISO: celdas por localidad no disponibles en este ciclo"
 
+      - name: Indicios de tormenta severa sin Doppler (el eco en arco se ve en el viento de cada localidad)
+        run: |
+          set -euo pipefail
+          # Etapa G (docs/ETAPA_G.md). Falla segura: el script nunca corta el ciclo.
+          timeout 120 python scripts/indicios_severos.py || echo "AVISO: indicios de tormenta severa no disponibles en este ciclo"
+
       - name: Ejecutar Decision Engine
         run: |
           set -euo pipefail
@@ -768,12 +774,6 @@ jobs:
           # Idea 3. Frente de ráfagas en estaciones de <= 15 min -> llegada a las localidades
           # aguas abajo. Falla segura: el script nunca corta el ciclo. Se valida solo en vivo.
           timeout 90 python scripts/estaciones/alarma_llegada.py || echo "AVISO: alarma de estaciones no disponible en este ciclo"
-
-      - name: Indicios de tormenta severa sin Doppler (eco en arco; en paralelo, no cambia lo que se ve)
-        run: |
-          set -euo pipefail
-          # Etapa G (docs/ETAPA_G.md). Falla segura: el script nunca corta el ciclo.
-          timeout 120 python scripts/indicios_severos.py || echo "AVISO: indicios de tormenta severa no disponibles en este ciclo"
 
       - name: Puntaje de gravedad contra lo medido e informe mensual de aciertos (en paralelo)
         run: |

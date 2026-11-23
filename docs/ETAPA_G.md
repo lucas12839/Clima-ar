@@ -50,3 +50,10 @@ tormentas fuertes. No hay mediciones de ráfagas de esos días para confirmar el
 `scripts/indicios_severos.py` corre en cada ciclo de Intelligence **en paralelo**
 (`data/ia/indicios_severos.json`, historial en `data/ia/indicios/`). No cambia lo que se ve.
 Lo que no se traslada de EE. UU.: los números de intensidad y del ambiente.
+
+## 23/11/2026: el eco en arco pasa a verse
+
+- Se sacó la "línea rápida" (viento fuerte por velocidad de la tormenta): acertaba 15 %, casi igual que cualquier tormenta (9 %).
+- En su lugar, el viento por radar sale solo del eco en arco (6 de cada 10 dieron ráfagas severas): "ráfagas fuertes posibles" (grado 3), encima si el arco está a 10 km o menos, o al llegar si avanza hacia la localidad y llega en 60 min o menos (`motor_decision_climaar.arco_para`).
+- "Severo" sigue necesitando una ráfaga medida por estación (90 km/h o más).
+- El paso "Indicios" corre antes del Decision Engine; `modo` = `se_muestra_eco_en_arco`. La integridad controla que todo viento por arco tenga un arco en la misma imagen.

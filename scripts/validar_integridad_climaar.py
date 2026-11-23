@@ -276,19 +276,26 @@ def validar_trayectorias_capas(radar_ts: datetime) -> None:
 
 
 def validar_indicios_severos(radar_ts: datetime) -> None:
-    """Etapa G (en paralelo): de esta imagen de radar y sin cambiar lo que se ve."""
+    """Etapa G: de esta imagen de radar; el eco en arco es lo único que se ve."""
     path = IA / "indicios_severos.json"
     if not path.is_file() or path.stat().st_size == 0:
         print("Indicios de tormenta severa: sin archivo (permitido)")
         return
     c = load(path)
-    if c.get("en_paralelo") is not True or c.get("modo") != "en_paralelo_no_se_muestra":
-        fail("indicios de tormenta severa: todavía deben correr en paralelo")
+    if c.get("modo") != "se_muestra_eco_en_arco":
+        fail(f"indicios de tormenta severa: modo inesperado {c.get('modo')!r}")
     if not c.get("disponible"):
         print(f"Indicios de tormenta severa: no disponible ({c.get('motivo')}) (permitido)")
         return
     if parse_utc(c.get("radar_timestamp"), "indicios.radar_timestamp") != radar_ts:
         fail(f"indicios de tormenta severa desincronizados: {c.get('radar_timestamp')!r}")
+    # Lo que se ve: un viento por "eco en arco" tiene que tener un arco en esta imagen.
+    final = load(IA / "resultado_final.json") if (IA / "resultado_final.json").is_file() else {}
+    for loc_id, ev in (((final.get("tipo_tiempo") or {}).get("localidades")) or {}).items():
+        for momento in ("ahora", "al_llegar"):
+            v = ((ev or {}).get(momento) or {}).get("viento") or {}
+            if any("eco en arco" in str(r) for r in v.get("razones") or []) and not c.get("arcos"):
+                fail(f"{loc_id}: viento por eco en arco sin ningún arco en esta imagen")
     print(f"Indicios de tormenta severa: sincronizado ({c.get('arcos', 0)} ecos en arco)")
 
 
