@@ -24,6 +24,8 @@ on:
 permissions:
   actions: write
   contents: read
+  # Vigilancia (etapa C): abre un aviso (issue) que le llega a Lucas al celular.
+  issues: write
 
 concurrency:
   group: climaar-detector
@@ -55,6 +57,16 @@ jobs:
           vivo="$(python scripts/detector_sinarame.py --servicio-vivo "${LATIDO:-}")"
           echo "Latido del servicio: '${LATIDO:-<nunca>}' -> vivo=$vivo"
           echo "vivo=$vivo" >> "$GITHUB_OUTPUT"
+
+      - name: Vigilancia - avisar a tiempo (clave por vencer, sin latido, sin radar, respaldo que falla)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CLIMAAR_DETECTOR_LATIDO: ${{ vars.CLIMAAR_DETECTOR_LATIDO }}
+          CLIMAAR_DETECTOR_INFO: ${{ vars.CLIMAAR_DETECTOR_INFO }}
+        run: |
+          # Etapa C (punto 11). Nunca corta el vigilante.
+          timeout 60 python scripts/vigilancia.py || echo "::warning::Vigilancia no disponible."
 
       - name: Servicio sano - no se hace nada
         if: steps.latido.outputs.vivo == 'true'

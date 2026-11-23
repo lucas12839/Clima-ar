@@ -45,6 +45,12 @@ ESTADO_LOCAL = Path(".climaar/detector_estado.json")
 WORKFLOW_RADAR = "probar-radar-smn.yml"
 WORKFLOW_INTELLIGENCE = "climaar-intelligence.yml"
 VARIABLE_LATIDO = "CLIMAAR_DETECTOR_LATIDO"
+# Etapa C (23/11/2026): qué código corre en el VPS, cuándo vence su clave de
+# GitHub y cómo salió la última actualización automática. Lo leen la
+# vigilancia (scripts/vigilancia.py) y el control de salud de la cadena.
+VARIABLE_INFO = "CLIMAAR_DETECTOR_INFO"
+INFO_CADA_SEG = 6 * 3600.0
+ACTUALIZACION_LOCAL = Path(".climaar/actualizacion.json")
 # El watchdog considera caido al servicio si el latido supera esto.
 LATIDO_MAX_MIN = 5.0
 LATIDO_CADA_SEG = 120.0
@@ -134,6 +140,10 @@ class GitHub:
         self.repo = repo
         self.token = token
         self.ref = ref
+        # GitHub informa en cada respuesta cuándo vence una clave con fecha
+        # (encabezado github-authentication-token-expiration).
+        self.clave_vence = None
+        self.clave_rechazada_utc = None
 
     def _req(self, metodo, ruta, cuerpo=None, accept="application/vnd.github+json"):
         data = json.dumps(cuerpo).encode() if cuerpo is not None else None
@@ -148,8 +158,20 @@ class GitHub:
                 "Content-Type": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.read()
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                vence = resp.headers.get("github-authentication-token-expiration")
+                if vence:
+                    self.clave_vence = vence.strip()
+                self.clave_rechazada_utc = None
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                # 23/11/2026: la clave venció y el VPS quedó 6 h sin latido.
+                self.clave_rechazada_utc = re_.iso(re_.ahora_utc())
+                print("ERROR: GitHub rechazó la clave del detector (401): vencida o borrada. "
+                      "Crear una nueva y ponerla en /etc/climaar-detector.env", flush=True)
+            raise
 
     def despachar(self, workflow, inputs=None):
         self._req(
@@ -187,6 +209,9 @@ class GitHub:
             if exc.code != 404:
                 raise
             self._req("POST", "actions/variables", cuerpo)
+
+    def escribir_info(self, info, nombre=VARIABLE_INFO):
+        self.escribir_latido(json.dumps(info, ensure_ascii=False, separators=(",", ":")), nombre)
 
     def ultimo_procesado(self):
         raw = self._req(
@@ -333,6 +358,22 @@ class Detector:
         return accion
 
 
+def info_servicio(gh, raiz=None):
+    """Qué código corre, cuándo vence la clave y la última actualización automática."""
+    raiz = Path(raiz) if raiz else Path(__file__).resolve().parents[1]
+    try:
+        commit = subprocess.run(["git", "-C", str(raiz), "rev-parse", "--short=12", "HEAD"],
+                                capture_output=True, text=True, timeout=10).stdout.strip() or None
+    except Exception:
+        commit = None
+    try:
+        actualizacion = json.loads((raiz / ACTUALIZACION_LOCAL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        actualizacion = None
+    return {"utc": re_.iso(re_.ahora_utc()), "commit": commit, "clave_vence": gh.clave_vence,
+            "actualizacion": actualizacion, "python": sys.prefix}
+
+
 def mostrar_estado(ahora=None, estado_path=ESTADO_LOCAL, max_min=LATIDO_MAX_MIN):
     """Salud local: ultima consulta reciente y sin error persistente."""
     ahora = ahora or re_.ahora_utc()
@@ -430,10 +471,15 @@ def main(argv=None):
 
     inicio = time.monotonic()
     ultimo_latido = 0.0
+    ultima_info = 0.0
+    ticks = consultas_ok = 0
     while not parar["v"]:
         t0 = time.monotonic()
+        accion = det.tick()
+        ticks += 1
+        consultas_ok += not str(accion).startswith("error_sinarame")
         print(
-            f"{datetime.now(timezone.utc).isoformat()} tick: {det.tick()}",
+            f"{datetime.now(timezone.utc).isoformat()} tick: {accion}",
             flush=True,
         )
         if (
@@ -446,6 +492,12 @@ def main(argv=None):
                 ultimo_latido = time.monotonic()
             except Exception as exc:  # el latido nunca frena al detector
                 print(f"ADVERTENCIA: latido no publicado: {exc}", flush=True)
+            if ultimo_latido and time.monotonic() - ultima_info >= INFO_CADA_SEG:
+                try:
+                    gh.escribir_info(info_servicio(gh))
+                    ultima_info = time.monotonic()
+                except Exception as exc:
+                    print(f"ADVERTENCIA: información del servicio no publicada: {exc}", flush=True)
         if a.duracion_max_min and (
             time.monotonic() - inicio
         ) >= a.duracion_max_min * 60:
@@ -455,6 +507,12 @@ def main(argv=None):
         while not parar["v"] and time.monotonic() < fin:
             time.sleep(min(1.0, fin - time.monotonic()))
 
+    if a.duracion_max_min and ticks and not consultas_ok:
+        # Respaldo de GitHub: si ninguna consulta a SINARAME funcionó, la corrida
+        # termina con error para que se vea (23/11/2026: fallaba en cada consulta
+        # y la corrida igual salía "bien").
+        print(f"ERROR: ninguna de las {ticks} consultas a SINARAME funcionó.", flush=True)
+        return 1
     return 0
 
 

@@ -1,0 +1,12 @@
+# Actualización automática del VPS desde main (etapa C). La lanza climaar-actualizar.timer.
+[Unit]
+Description=ClimaAR - actualizar el VPS desde main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Como root: tiene que poder reiniciar el detector. Los comandos de git
+# corren como el dueño de la copia (ver deploy/actualizar_vps.sh).
+ExecStart=/bin/bash /opt/Clima-ar/deploy/actualizar_vps.sh
+TimeoutStartSec=600

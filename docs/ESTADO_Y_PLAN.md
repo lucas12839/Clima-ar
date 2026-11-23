@@ -309,6 +309,13 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   más radares (vecinos de SINARAME = mismo atraso; INTA Anguil se rompe seguido; no hay otros que
   lleguen a Bahía), radar simulado por satélite (GREMLIN: es una estimación), enlaces de celular
   (datos privados), prueba del detector más rápido.
+- **ETAPAS B y C HECHAS (23/11/2026, tarde).** Etapa B: `docs/ETAPA_B.md` (#75): calibración de la
+  lluvia con estación y radar en la misma hora (había un desfase), puntaje de gravedad contra lo
+  medido (`verificar_puntaje.py`), informe mensual automático (`data/ia/informe/AAAA-MM.md`).
+  Etapa C: `docs/ETAPA_C.md`: VPS que se actualiza solo (falta que Lucas lo instale por SSH, 2
+  comandos), `vigilancia.py` con avisos por issue de GitHub (clave por vencer, sin latido, sin radar,
+  respaldo que falla, relojes), reloj externo `docs/RELOJ_EXTERNO.md` (falta que Lucas cree la
+  clave `climaar-reloj-externo` y la tarea en cron-job.org). Sigue la etapa D cuando Lucas diga.
 - **PARA EL CHAT NUEVO (23/11/2026, 12:10 hora de Argentina) — pedido de Lucas: "valida y termina
   la etapa B (punto 9) y la etapa C (punto 11); controlá que esté todo bien, corregí los errores que
   vayan surgiendo y validá todo".** Permiso permanente para abrir y unir los pull requests a main.

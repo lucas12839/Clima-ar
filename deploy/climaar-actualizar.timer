@@ -1,0 +1,12 @@
+# Cada 10 min, y 3 min después de prender el VPS.
+[Unit]
+Description=ClimaAR - actualizar el VPS desde main cada 10 min
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target
