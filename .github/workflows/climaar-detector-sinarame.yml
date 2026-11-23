@@ -65,7 +65,10 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install playwright pillow
+          # Mismas versiones que producción. capturar_radar_smn.py también usa numpy:
+          # sin él, el respaldo fallaba en cada consulta (23/11: 6 h sin radar).
+          pip install "$(grep -i '^numpy==' requirements.txt)" "$(grep -i '^pillow==' requirements.txt)" \
+            "$(grep -i '^playwright==' requirements.txt)"
           if command -v google-chrome >/dev/null 2>&1; then
             echo "CLIMAAR_CHROMIUM_CHANNEL=chrome" >> "$GITHUB_ENV"
           else
