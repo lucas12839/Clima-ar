@@ -84,8 +84,11 @@ class SeveroTest(unittest.TestCase):
         self.assertEqual(r["calificacion"]["etiqueta"], "Severa (lluvia)")
 
     def test_granizo_por_intensidad(self):
-        for dbz, cat in ((48, "sin señal"), (52, "posible"), (57, "probable"), (62, "posible severo")):
+        for dbz, cat in ((48, "sin señal"), (52, "posible"), (57, "probable"), (62, "probable")):
             self.assertEqual(fen.evaluar(radar=radar(dbz_ciudad=dbz))["fenomenos"]["granizo"]["categoria"], cat, dbz)
+        # Severo solo con una prueba aparte del radar (etapa F): tope muy frío o muchos rayos.
+        r = fen.evaluar(radar=radar(dbz_ciudad=62), rayos={"tasa_30km_por_min": 4.0, "tasa_30km_previa_por_min": 3.5})
+        self.assertEqual(r["fenomenos"]["granizo"]["categoria"], "posible severo")
 
     def test_isoterma_alta_baja_el_granizo(self):
         r = fen.evaluar(radar=radar(dbz_ciudad=57), ambiente={"freezing_level_height": 4800})

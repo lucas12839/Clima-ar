@@ -417,6 +417,15 @@ def confirmar_granizo(ev: dict[str, Any], sat: dict[str, Any], ev_rayos: dict[st
     tope = numero((sat or {}).get("min_c_15km"))
     if tope is None:
         tope = numero((sat or {}).get("p10_c_30km"))
+    if ev["grado"] >= 4:
+        # Etapa F (23/11/2026): "severo" (granizo grande) necesita una prueba que no sea el
+        # radar: tope muy frío (<= -60 °C) o rayos frecuentes o en salto. El 13/11 Punta Alta
+        # tuvo 75 dBZ en el radar crudo y cayó granizo chico.
+        severo = ((tope is not None and tope <= TOPE_MUY_FRIO_C)
+                  or (ev_rayos or {}).get("grado", 0) >= 3)
+        if not severo:
+            ev = _evaluacion("granizo", 3, "radar", ev["razones"] + [
+                "granizo grande sin confirmar: falta un tope muy frío o muchos rayos"], False)
     enfr = numero((sat or {}).get("enfriamiento_c_10min"))
     nivel = (amb_sev or {}).get("nivel")
     if tope is None or nivel in (None, "sin_datos"):

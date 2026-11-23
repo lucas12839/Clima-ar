@@ -167,6 +167,40 @@ def generar_mascara_clutter(frames: list[Path], fraccion: float = CLUTTER_FRACCI
 # núcleo físico
 # ------------------------------------------------------------
 
+C13_RADAR = Path(tempfile.gettempdir()) / "climaar_c13_radar.npz"
+C13_MAX_DIF_MIN = 12.0
+
+
+def limpiar_para_localidades(dbz: np.ndarray, clutter: np.ndarray, radar_dt: datetime,
+                             c13: Path | None = None) -> tuple[np.ndarray, dict]:
+    """Campo para el análisis por localidad (etapa F, 23/11/2026): clutter fijo,
+    intermitente suelto y ecos sin ninguna nube encima según el canal 13 de la
+    misma hora (goes19/c13_radar.py). Si falta el satélite, sin ese último control."""
+    import nowcast_capas_nucleo as nc
+
+    campo = nc.campo_limpio(dbz, clutter)
+    info: dict = {"satelite_usado": False}
+    c13 = c13 or C13_RADAR
+    try:
+        if c13.exists():
+            import corrector_tiempo_real as ct
+
+            z = np.load(c13)
+            hora = parse_utc(str(z["hora"]))
+            dif = None if hora is None else abs((hora - radar_dt).total_seconds()) / 60.0
+            info["diferencia_satelite_radar_min"] = None if dif is None else round(dif, 1)
+            if dif is not None and dif <= C13_MAX_DIF_MIN:
+                sat = ct.grilla_satelite(z["lat"], z["lon"], z["temp_c"], campo.shape)
+                limpio = ct.quitar_ecos_sin_nube(campo, sat)
+                eco = int((campo >= UMBRAL_ECO_DBZ).sum())
+                quitados = int(((campo >= UMBRAL_ECO_DBZ) & (limpio < UMBRAL_ECO_DBZ)).sum())
+                info.update({"satelite_usado": True, "pixeles_eco": eco, "pixeles_sin_nube_quitados": quitados})
+                return limpio, info
+    except Exception as exc:  # el control nunca corta el ciclo
+        info["motivo"] = f"{type(exc).__name__}: {str(exc)[:100]}"
+    return campo, info
+
+
 def campo_limpio(dbz: np.ndarray, clutter: np.ndarray) -> np.ndarray:
     campo = np.nan_to_num(dbz.astype(np.float32), nan=0.0)
     campo[campo < UMBRAL_ECO_DBZ - 5.0] = 0.0
@@ -600,14 +634,18 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
 
     # Observación del frame actual: siempre, haya o no movimiento calculable.
     limpio_actual = campo_limpio(actual_dbz, clutter)
+    # Lo que se ve por localidad sale del campo con el mismo control que el nowcast en
+    # capas: ecos fijos intermitentes sueltos y ecos sin nube encima (satélite).
+    limpio_loc, control_loc = limpiar_para_localidades(actual_dbz, clutter, actual_dt)
     observacion = observar(limpio_actual)
     observacion.update(actualizar_historial_ciudad(actual_dt, observacion["dbz_ciudad"]))
-    extra = {"edad_radar_min": round(edad, 1), "observacion": observacion}
+    extra = {"edad_radar_min": round(edad, 1), "observacion": observacion,
+             "control_calidad_localidades": control_loc}
 
     def por_localidad(flujo=None, campos=None):
         import localidades_radar
         try:
-            return localidades_radar.analizar(actual_dt, limpio_actual, flujo, edad, campos)
+            return localidades_radar.analizar(actual_dt, limpio_loc, flujo, edad, campos)
         except Exception as exc:  # nunca cortar el ciclo por esto
             print(f"AVISO: análisis por localidad no disponible: {exc}")
             return {}
@@ -615,7 +653,7 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
     def puntos_control():
         import localidades_radar
         try:
-            return localidades_radar.analizar_puntos_control(actual_dt, limpio_actual)
+            return localidades_radar.analizar_puntos_control(actual_dt, limpio_loc)
         except Exception as exc:
             print(f"AVISO: puntos de control no disponibles: {exc}")
             return {}
@@ -693,6 +731,7 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
         },
         "pronostico": pron,
         "observacion": observacion,
+        "control_calidad_localidades": control_loc,
         "localidades": por_localidad(flujo, dict(resultado["campos"])),
         "puntos_control": puntos_control(),
         "confianza": confianza,

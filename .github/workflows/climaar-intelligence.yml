@@ -189,6 +189,12 @@ jobs:
           python scripts/estaciones/senales_superficie.py \
             || echo "::warning::No se pudieron calcular las señales de superficie."
 
+      - name: Canal 13 de GOES-19 a la hora del radar (control de ecos sin nube)
+        run: |
+          # Etapa F: el análisis por localidad saca los ecos sin ninguna nube encima
+          # (terreno de noche). Falla segura: sin satélite sigue sin ese control.
+          timeout 90 python -m goes19.c13_radar || echo "AVISO: canal 13 no disponible en este ciclo"
+
       - name: Nowcast por flujo óptico (física; da el movimiento al adaptador)
         run: |
           set -euo pipefail
