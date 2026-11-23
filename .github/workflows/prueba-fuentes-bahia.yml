@@ -7,36 +7,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Historial SIMPARH
+      - name: Historial SYNOP del SMN (Bahía Blanca Aero)
         run: |
           python3 - <<'PY'
-          import json, urllib.request, urllib.parse
-          UA = {"User-Agent": "Mozilla/5.0 ClimaAR/1.0"}
-          B = "https://public-map-simparh.ada.gba.gov.ar"
-          def get(p):
+          import json, urllib.request, urllib.parse, collections
+          U = "https://w2b.smn.gov.ar/oapi/collections/urn%3Awmo%3Amd%3Aar-smn%3Aslt0ci/items"
+          def get(q):
+              u = U + "?" + urllib.parse.urlencode(q)
+              return json.loads(urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "ClimaAR/1.0"}), timeout=60).read())
+          for intervalo in ("2026-11-13T00:00:00Z/2026-11-14T06:00:00Z", "2026-10-24T00:00:00Z/2026-10-25T00:00:00Z"):
               try:
-                  return urllib.request.urlopen(urllib.request.Request(B + p, headers=UA), timeout=60).read().decode("utf-8", "replace")
+                  d = get({"f": "json", "wigos_station_identifier": "0-20000-0-87750", "datetime": intervalo, "limit": 1000})
               except Exception as e:
-                  return f"ERROR {e}"
-          def probar(est, metrica, nombre, ini, fin):
-              q = {"fecha_inicio": ini, "fecha_fin": fin, "ema_id": est, "sensor_info": f"0|{metrica}|{nombre}"}
-              r = get("/api/get-chart-data?" + urllib.parse.urlencode(q))
-              try:
-                  d = json.loads(r)
-                  lab = d[0]["labels"] if d else []
-                  ds = d[0]["datasets"] if d else []
-                  print(est, metrica, ini, fin, "->", len(lab), "puntos", lab[:3], lab[-3:], [x.get("label") for x in ds],
-                        [x.get("data")[:5] for x in ds][:1], "suma", round(sum(float(v or 0) for v in ds[0]["data"]), 1) if ds else None)
-              except Exception:
-                  print(est, metrica, ini, fin, "->", r[:300])
-          probar("CEREAL-29", "precipitaciondiaria", "Lluvia Acumulada (Hoy)", "2026-11-23", "2026-11-23")
-          probar("CEREAL-29", "precipitaciondiaria", "Lluvia Acumulada (Hoy)", "2026-11-13", "2026-11-13")
-          probar("CEREAL-24", "precipitaciondiaria", "Lluvia Acumulada (Hoy)", "2026-11-13", "2026-11-13")
-          probar("CEREAL-24", "precipitaciondiaria", "Lluvia Acumulada (Hoy)", "2026-10-24", "2026-11-23")
-          probar("CEREAL-29", "temperatura", "Temperatura del Aire", "2026-11-13", "2026-11-13")
-          for m in ("Lluvia Acumulada", "Velocidad del Viento", "Presión Atmosférica"):
-              probar("SNIH-220272", m, m, "2026-11-13", "2026-11-13")
-              probar("SNIH-220272", m, m, "2026-11-23", "2026-11-23")
-          r = get("/api/map-status/SNIH-220272"); print(r[:1500])
-          r = get("/api/map-status/CEREAL-29"); print(r[:600])
+                  print(intervalo, "ERROR", e); continue
+              f = d.get("features", [])
+              print("\n==", intervalo, "features", len(f), "numberMatched", d.get("numberMatched"))
+              nombres = collections.Counter(x["properties"].get("name") for x in f)
+              print(nombres.most_common(60))
+              for x in f:
+                  p = x["properties"]
+                  n = str(p.get("name"))
+                  if any(k in n for k in ("precip", "gust", "wind_speed", "maximum_wind")):
+                      print(p.get("phenomenonTime"), n, p.get("value"), p.get("units"))
           PY
