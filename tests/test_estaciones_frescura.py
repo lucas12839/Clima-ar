@@ -39,11 +39,10 @@ class ObservationFreshnessTests(unittest.TestCase):
             {str(s["collector_id"]) for s in bcp_catalog},
             {str(k) for k in BCP_STATIONS},
         )
-        self.assertEqual(
-            {s["wigos_id"] for s in smn_catalog},
-            set(SMN_STATIONS),
-        )
-        self.assertEqual(len(bcp_catalog) + len(smn_catalog), 18)   # PASMAN desactivada (23/11)
+        # 23/11/2026: las del SMN, Cabildo, San Eloy y Pasman quedaron desactivadas.
+        self.assertEqual(smn_catalog, [])
+        self.assertTrue({s["wigos_id"] for s in stations if s["network"] == "smn"} <= set(SMN_STATIONS))
+        self.assertEqual(len(bcp_catalog), 11)
 
 
 if __name__ == "__main__":

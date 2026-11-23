@@ -17,11 +17,10 @@ OUTPUT = BASE / "data/ia/estaciones/observaciones/bcp_actual.json"
 
 STATIONS = {
     1: "GRUMBEIN",
-    2: "CABILDO",
+    # 2: "CABILDO" y 17: "SAN ELOY" desactivadas el 23/11/2026: llegan con horas de atraso.
     81: "PUAN",
     11: "PIGUE",
     15: "CURA MALAL",
-    17: "SAN ELOY",
     60: "ARROYO PANTANOSO",
     # 83: "PASMAN" desactivada el 23/11/2026: sin datos desde fines de octubre.
     104: "BAHIA BLANCA CENTRO",
