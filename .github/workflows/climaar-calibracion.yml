@@ -1,0 +1,78 @@
+name: ClimaAR Calibración con el SMN
+
+# Dos veces por día (23/11/2026): baja la lluvia oficial de 6 h de las
+# estaciones del SMN y la compara con la del radar en el mismo lugar y las
+# mismas horas (scripts/estaciones/calibracion_smn.py). Junta casos solos a
+# medida que llueve; el factor se usa recién con casos suficientes.
+# Mira 4 días para atrás: si GitHub saltea una corrida programada no se pierde
+# nada. Solo escribe sus dos archivos, así que no entra en la fila de escritura
+# del Radar y la IA (publica con rebase y reintentos). El control de salud avisa
+# si pasan más de 3 días sin correr.
+
+on:
+  schedule:
+    - cron: "41 9,21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: climaar-calibracion
+  cancel-in-progress: false
+
+jobs:
+  calibrar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+      - name: Dependencias
+        run: pip install --retries 5 -r requirements.txt
+      - name: Comparar la lluvia del SMN con la del radar
+        run: |
+          set -euo pipefail
+          python scripts/estaciones/calibracion_smn.py --dias 4
+          test -s data/ia/calibracion/factor_lluvia_smn.json
+      - name: Publicar con rebase y reintentos
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "climaar-bot"
+          git config user.email "bot@climaar.local"
+          git add data/ia/calibracion/registro_smn.json data/ia/calibracion/factor_lluvia_smn.json
+          if git diff --cached --quiet; then
+            echo "No hay cambios para publicar."
+            exit 0
+          fi
+          git commit -m "calibración: lluvia del SMN contra el radar"
+          for intento in 1 2 3 4 5 6; do
+            if ! git fetch --depth=20 origin main; then
+              echo "No se pudo bajar main (red) en intento $intento."
+              if [ "$intento" -eq 6 ]; then exit 1; fi
+              sleep $((intento * 5))
+              continue
+            fi
+            if ! git rebase origin/main; then
+              git rebase --abort || true
+              echo "Rebase falló en intento $intento."
+              if [ "$intento" -eq 6 ]; then exit 1; fi
+              sleep 3
+              continue
+            fi
+            if git push origin HEAD:main; then
+              echo "Push exitoso en intento $intento."
+              exit 0
+            fi
+            echo "Push falló en intento $intento."
+            if [ "$intento" -eq 6 ]; then exit 1; fi
+            sleep $((intento * 3))
+          done

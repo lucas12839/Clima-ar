@@ -197,7 +197,16 @@ def validar_nowcast_capas(radar_ts: datetime) -> None:
     if n.get("en_paralelo") is not True and not n.get("en_uso"):
         fail("nowcast en capas: si no corre en paralelo tiene que decir para qué se usa (en_uso)")
     if n.get("radar_timestamp") is None or parse_utc(n["radar_timestamp"], "capas.radar_timestamp") != radar_ts:
-        fail(f"nowcast en capas desincronizado: {n.get('radar_timestamp')!r}")
+        # Re-auditoría 23/11/2026: si el 5b falló en este ciclo, su archivo queda de otra
+        # imagen. Es válido solo si lo que se ve NO salió de él (respaldo: flujo óptico);
+        # el control de salud lo avisa. Antes esto cortaba todo el ciclo.
+        final = load(IA / "resultado_final.json") if (IA / "resultado_final.json").is_file() else {}
+        fuente = ((final.get("tipo_tiempo") or {}).get("fuente_llegadas")) if isinstance(final, dict) else None
+        if fuente == "nowcast_capas":
+            fail(f"nowcast en capas desincronizado y usado en lo que se ve: {n.get('radar_timestamp')!r}")
+        print(f"Nowcast en capas: no se actualizó en este ciclo ({n.get('radar_timestamp')}); "
+              f"lo que se ve salió de {fuente} (permitido)")
+        return
     generado = parse_utc(n.get("generado_utc"), "capas.generado_utc")
     edad = (generado - radar_ts).total_seconds() / 60.0
     if n.get("edad_radar_min") is None or abs(max(edad, 0.0) - float(n["edad_radar_min"])) > 0.2:
@@ -265,7 +274,13 @@ def validar_trayectorias_capas(radar_ts: datetime) -> None:
     t = load(path) if path.is_file() and path.stat().st_size else {}
     if t.get("disponible"):
         if parse_utc(t.get("radar_timestamp"), "trayectorias.radar_timestamp") != radar_ts:
-            fail(f"trayectorias del 5b desincronizadas: {t.get('radar_timestamp')!r}")
+            if meta.get("fuente") == "nowcast_capas":
+                fail(f"trayectorias del 5b desincronizadas y usadas: {t.get('radar_timestamp')!r}")
+            # Re-auditoría 23/11/2026: el paso que lo escribe nunca corta el ciclo; si
+            # falló, el archivo queda de otra imagen y lo que se ve no lo usa (controla
+            # la hora). Antes esto cortaba todo el ciclo. El control de salud lo avisa.
+            print(f"Trayectorias: el 5b no se actualizó en este ciclo; proyecciones desde {meta.get('fuente')} (permitido)")
+            return
     if meta.get("fuente") == "nowcast_capas":
         if not t.get("disponible"):
             fail("las proyecciones dicen venir del 5b pero las trayectorias no están disponibles")
@@ -288,7 +303,11 @@ def validar_indicios_severos(radar_ts: datetime) -> None:
         print(f"Indicios de tormenta severa: no disponible ({c.get('motivo')}) (permitido)")
         return
     if parse_utc(c.get("radar_timestamp"), "indicios.radar_timestamp") != radar_ts:
-        fail(f"indicios de tormenta severa desincronizados: {c.get('radar_timestamp')!r}")
+        # Re-auditoría 23/11/2026: el paso que lo escribe nunca corta el ciclo; si
+        # falló, el archivo queda de otra imagen y lo que se ve no lo usa (controla
+        # la hora). Antes esto cortaba todo el ciclo. El control de salud lo avisa.
+        print("Indicios de tormenta severa: no se actualizaron en este ciclo (permitido)")
+        return
     # Lo que se ve: un viento por "eco en arco" tiene que tener un arco en esta imagen.
     final = load(IA / "resultado_final.json") if (IA / "resultado_final.json").is_file() else {}
     for loc_id, ev in (((final.get("tipo_tiempo") or {}).get("localidades")) or {}).items():
@@ -312,7 +331,8 @@ def validar_celdas_localidad(radar_ts: datetime) -> None:
         print(f"Celdas por localidad: no disponible ({c.get('motivo')}) (permitido)")
         return
     if parse_utc(c.get("radar_timestamp"), "celdas.radar_timestamp") != radar_ts:
-        fail(f"celdas por localidad desincronizadas: {c.get('radar_timestamp')!r}")
+        print("Celdas por localidad: no se actualizaron en este ciclo (permitido)")
+        return
     for loc_id, l in (c.get("localidades") or {}).items():
         pr = l.get("probabilidad")
         if not isinstance(pr, (int, float)) or not 0.0 <= pr <= 1.0:
@@ -347,7 +367,11 @@ def validar_ambiente_satelite(radar_ts: datetime) -> None:
         print(f"Ambiente del satélite: no disponible ({a.get('motivo')}) (permitido)")
         return
     if parse_utc(a.get("frame_radar_utc"), "ambiente.frame_radar_utc") != radar_ts:
-        fail(f"ambiente del satélite desincronizado: {a.get('frame_radar_utc')!r}")
+        # Re-auditoría 23/11/2026: el paso que lo escribe nunca corta el ciclo; si
+        # falló, el archivo queda de otra imagen y lo que se ve no lo usa (controla
+        # la hora). Antes esto cortaba todo el ciclo. El control de salud lo avisa.
+        print("Ambiente del satélite: no se actualizó en este ciclo (permitido)")
+        return
     for nombre, p in (a.get("productos") or {}).items():
         if p.get("estado") != "ok":
             continue

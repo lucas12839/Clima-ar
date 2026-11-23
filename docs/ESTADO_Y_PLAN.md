@@ -30,6 +30,17 @@ Revisión de punta a punta con las corridas reales de GitHub. Lo que se encontr�
   `/etc/systemd/system/climaar-detector.service` (o dejarlo: con 10 también funciona).
 - **Para decidir**: Pigüé llega tarde seguido (20-70 min) y queda afuera en casi la mitad de los ciclos.
 
+## Mejoras 1 a 4 (23/11/2026, noche) — `docs/MEJORAS_23_11.md`
+- Lluvia: calibración con el historial oficial del SMN (6 h). Mes casi seco: 6 ventanas con lluvia,
+  el radar vio el 100 %; factor medido 0,25-0,29 contra 0,40 en uso: no alcanza para cambiarlo. Ahora
+  se junta solo dos veces por día (`climaar-calibracion.yml`). Viento y granizo: sin datos oficiales.
+- Falsas alarmas (27 %): 8 de cada 10 son casi aciertos (pasó a 10-25 km o llegó un poco más débil).
+  Ningún filtro mejora sin perder detección: queda igual.
+- Trayectoria: en vivo coincide con la simulación del mismo día; mezclar con la velocidad propia de
+  cada tormenta no mejora: queda igual (4,5 / 9,5 / 14,7 km).
+- 13/11 Punta Alta por la cadena completa: avisó ~13 min antes, lluvia fuerte y posible severa con
+  granizo probable (cayó chico). Encontró y se arreglaron 3 errores ocultos que cortaban todo el ciclo.
+
 ## Re-auditoría de la cadena (23/11/2026, 18:00 hora de Argentina)
 Con las 1000 corridas reales de GitHub desde el 22/11 y los avisos de las corridas "exitosas":
 - **Alertas que nadie veía**: el control de salud escribía alertas en `salud_cadena.json` (estaciones
@@ -359,7 +370,7 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   - Estaciones: desactivadas las que no cumplen (#78). Revisadas y descartadas por Lucas: SIMPARH (solo
     repite la Bolsa de Cereales y no guarda historial), Bajo Hondo, Monte Hermoso, Pedro Luro (SNIH),
     Redes Climáticas La Pampa, calidad del aire municipal (EMCABB), INTA SIGA, SNIH.
-  - Ramas de prueba para borrar a mano en GitHub: `prueba-etapa-d`, `prueba-etapa-d2`,
+  - Ramas de prueba para borrar a mano en GitHub: `prueba-calibracion`, `prueba-etapa-d`, `prueba-etapa-d2`,
     `prueba-fuentes-bahia`, `prueba-etapa-a` y las viejas de la lista de abajo.
 - **ETAPAS D, E y F HECHAS (23/11/2026, tarde): `docs/SIMULACION_FINAL.md`.** Simulación final con
   29 días: llegada a 10 km 72 % / 26 % (tormenta), 81 % / 11 % (lluvia). Pasa a verse la tormenta

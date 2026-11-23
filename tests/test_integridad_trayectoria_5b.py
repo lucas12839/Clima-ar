@@ -66,3 +66,42 @@ def test_5b_sin_pronostico_sigue_fallando(tmp_path, monkeypatch):
     _apuntar(monkeypatch, base)
     with pytest.raises(SystemExit):
         v.main()
+
+
+def _envejecer(base, rel, ruta):
+    p = base / rel
+    if not p.exists():
+        return False
+    d = json.loads(p.read_text())
+    obj = d
+    for k in ruta[:-1]:
+        obj = obj[k]
+    obj[ruta[-1]] = "2026-01-01T00:00:00Z"
+    p.write_text(json.dumps(d))
+    return True
+
+
+def test_pasos_en_paralelo_que_fallan_no_cortan_el_ciclo(tmp_path, monkeypatch):
+    """Re-auditoría 23/11/2026: un archivo viejo de un paso que falló cortaba toda la IA."""
+    base = _copia(tmp_path)
+    for rel, ruta in (("data/ia/indicios_severos.json", ("radar_timestamp",)),
+                      ("data/ia/celdas_localidad.json", ("radar_timestamp",)),
+                      ("data/ia/ambiente_satelite.json", ("frame_radar_utc",))):
+        _envejecer(base, rel, ruta)
+    _apuntar(monkeypatch, base)
+    v.main()
+
+
+def test_5b_viejo_vale_solo_si_lo_que_se_ve_salio_del_respaldo(tmp_path, monkeypatch):
+    base = _copia(tmp_path)
+    if not _envejecer(base, "data/radar/nowcast_capas.json", ("radar_timestamp",)):
+        pytest.skip("sin nowcast en capas en los datos actuales")
+    final_p = base / "data/ia/resultado_final.json"
+    final = json.loads(final_p.read_text())
+    _apuntar(monkeypatch, base)
+    if (final.get("tipo_tiempo") or {}).get("fuente_llegadas") == "nowcast_capas":
+        with pytest.raises(SystemExit):
+            v.main()   # dice que usó el 5b, pero el 5b es de otra imagen
+    final.setdefault("tipo_tiempo", {})["fuente_llegadas"] = "flujo_optico"
+    final_p.write_text(json.dumps(final))
+    v.main()

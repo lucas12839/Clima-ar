@@ -947,7 +947,12 @@ def append_historico(radar, sazb, actual, calidad):
 # MAIN
 # ============================================================
 
-ECMWF_RESPALDO_MAX_MIN = 180.0
+# 23/11/2026: 3 h -> 9 h. El pronóstico guardado cubre de 3 h antes a 12 h
+# después de bajarlo y se usa la hora que corresponde a "ahora": a las 9 h
+# todavía quedan 3 h de pronóstico por delante. Con 3 h, un corte de
+# Open-Meteo más largo dejaba sin publicar TODO el ciclo (también el radar).
+# Si se usa el respaldo, el control de salud lo avisa.
+ECMWF_RESPALDO_MAX_MIN = 540.0
 
 # El pronóstico ECMWF es horario: si el guardado tiene menos de esto, se
 # reutiliza sin consultar Open-Meteo (ciclos más rápidos y estables).

@@ -41,6 +41,7 @@ VERIF_NOWCAST = IA / "verificacion_nowcast.json"
 ALARMA = IA / "estaciones" / "alarma_llegada.json"
 VERIF_PUNTAJE = IA / "verificacion_puntaje.json"
 FACTOR = IA / "calibracion" / "factor_lluvia.json"
+FACTOR_SMN = IA / "calibracion" / "factor_lluvia_smn.json"
 DIR = IA / "informe"
 BASE_MENSUAL = DIR / "base_mensual.json"
 VERSION = "1.0.0"
@@ -146,6 +147,9 @@ def armar(mes: str, delta: dict, puntaje: dict, factor: dict, desde: str, ahora:
         "calibracion_lluvia": {k: factor.get(k) for k in ("factor_en_uso", "valido", "factor", "horas", "dias",
                                                           "estacion_mm", "radar_mm", "minimo_requerido",
                                                           "por_distancia")},
+        "calibracion_lluvia_smn": {k: leer(FACTOR_SMN, {}).get(k) for k in (
+            "valido", "factor", "factor_mediano", "ventanas_para_factor", "dias", "smn_mm", "radar_mm",
+            "minimo_requerido", "radar_vio_lluvia_cuando_llovio_pct", "radar_marco_lluvia_y_no_llovio")},
     }
 
 
@@ -207,6 +211,15 @@ def markdown(inf: dict) -> str:
           f"Horas con lluvia juntadas: {c.get('horas') or 0} de {req.get('horas', '?')}, "
           f"días: {len(c.get('dias') or [])} de {req.get('dias', '?')}, "
           f"lluvia medida: {_n(c.get('estacion_mm'), ' mm')} de {req.get('estacion_mm', '?')} mm.", ""]
+    smn = inf.get("calibracion_lluvia_smn") or {}
+    if smn.get("ventanas_para_factor") is not None:
+        rs = smn.get("minimo_requerido") or {}
+        l += [f"Con la lluvia oficial del SMN cada 6 h: {smn.get('ventanas_para_factor')} de "
+              f"{rs.get('ventanas', '?')} ventanas con lluvia, {len(smn.get('dias') or [])} de {rs.get('dias', '?')} "
+              f"días, {_n(smn.get('smn_mm'), ' mm')} de {rs.get('smn_mm', '?')} mm. Factor medido: "
+              f"{_n(smn.get('factor_mediano'))} ({'en uso' if smn.get('valido') else 'todavía no alcanza'}). "
+              f"El radar vio lluvia el {_n(smn.get('radar_vio_lluvia_cuando_llovio_pct'), ' %')} de las veces "
+              f"que llovió; marcó lluvia sin que lloviera {smn.get('radar_marco_lluvia_y_no_llovio') or 0} veces.", ""]
     bandas = c.get("por_distancia") or {}
     if bandas:
         l += ["| Distancia al radar | Horas | Estación | Radar sin corregir | Relación |", "|---|---|---|---|---|"]
