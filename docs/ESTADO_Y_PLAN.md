@@ -317,6 +317,10 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
     el satélite): probados con 26 días y 1.419 casos, **ninguno mejora** (el yunque se mueve distinto
     que la lluvia); quedan apagados. Trayectoria sin cambios: 4,5 / 9,5 / 14,7 km. Arreglado: una
     lectura errónea de una estación (bajada sin medianoche) sumaba lluvia falsa. Falta el punto 5.
+  - **Etapa A, punto 5 (punto 10, modo sin radar): HECHO el 23/11, `docs/VALIDACION_SIN_RADAR.md`.**
+    Con el radar cortado 40-90 min, la lluvia por localidad sale del radar viejo movido (acierto
+    0,41 contra 0,08 de antes); sin radar, "lluvia probable" pide tope <= -60 °C y un rayo cerca
+    (falsas alarmas de 88 % a 54 %). **Etapa A terminada.** Sigue la etapa B (punto 9).
   - **Etapa A — Compensar el atraso del radar** (solo datos medidos; cada mejora se mide con
     `herramientas/simular_huecos.py` antes de usarla; en paralelo hasta validarla):
     1. Corrector con estaciones: lluvia medida cada minuto por las 13 estaciones (agregar donde
