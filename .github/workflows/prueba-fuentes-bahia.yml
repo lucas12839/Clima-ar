@@ -9,23 +9,34 @@ jobs:
     steps:
       - name: Historial SIMPARH
         run: |
-          B=https://public-map-simparh.ada.gba.gov.ar
-          curl -sS -m 30 -A "Mozilla/5.0 ClimaAR/1.0" "$B/static/js/mapa_interactivo.js" -o a.js
-          sed -n '260,300p;530,560p' a.js
           python3 - <<'PY'
           import json, urllib.request, urllib.parse
           UA = {"User-Agent": "Mozilla/5.0 ClimaAR/1.0"}
           B = "https://public-map-simparh.ada.gba.gov.ar"
           def get(p):
               try:
-                  return urllib.request.urlopen(urllib.request.Request(B + p, headers=UA), timeout=40).read().decode("utf-8", "replace")
+                  return urllib.request.urlopen(urllib.request.Request(B + p, headers=UA), timeout=60).read().decode("utf-8", "replace")
               except Exception as e:
                   return f"ERROR {e}"
-          for est in ("CEREAL-29", "SNIH-220272"):
-              for q in ({"ema_id": est, "metrica": "precipitaciondiaria", "dias": 30},
-                        {"id": est, "metrica": "precipitaciondiaria", "desde": "2026-10-24", "hasta": "2026-11-23"},
-                        {"ema": est, "variable": "precipitacion", "fecha_desde": "2026-10-24", "fecha_hasta": "2026-11-23"}):
-                  p = "/api/get-chart-data?" + urllib.parse.urlencode(q)
-                  r = get(p)
-                  print(p, "->", len(r), r[:600])
+          def probar(est, metrica, nombre, ini, fin):
+              q = {"fecha_inicio": ini, "fecha_fin": fin, "ema_id": est, "sensor_info": f"0|{metrica}|{nombre}"}
+              r = get("/api/get-chart-data?" + urllib.parse.urlencode(q))
+              try:
+                  d = json.loads(r)
+                  lab = d[0]["labels"] if d else []
+                  ds = d[0]["datasets"] if d else []
+                  print(est, metrica, ini, fin, "->", len(lab), "puntos", lab[:3], lab[-3:], [x.get("label") for x in ds],
+                        [x.get("data")[:5] for x in ds][:1], "suma", round(sum(float(v or 0) for v in ds[0]["data"]), 1) if ds else None)
+              except Exception:
+                  print(est, metrica, ini, fin, "->", r[:300])
+          probar("CEREAL-29", "precipitaciondiaria", "Lluvia Acumulada (Hoy)", "2026-11-23", "2026-11-23")
+          probar("CEREAL-29", "precipitaciondiaria", "Lluvia Acumulada (Hoy)", "2026-11-13", "2026-11-13")
+          probar("CEREAL-24", "precipitaciondiaria", "Lluvia Acumulada (Hoy)", "2026-11-13", "2026-11-13")
+          probar("CEREAL-24", "precipitaciondiaria", "Lluvia Acumulada (Hoy)", "2026-10-24", "2026-11-23")
+          probar("CEREAL-29", "temperatura", "Temperatura del Aire", "2026-11-13", "2026-11-13")
+          for m in ("Lluvia Acumulada", "Velocidad del Viento", "Presión Atmosférica"):
+              probar("SNIH-220272", m, m, "2026-11-13", "2026-11-13")
+              probar("SNIH-220272", m, m, "2026-11-23", "2026-11-23")
+          r = get("/api/map-status/SNIH-220272"); print(r[:1500])
+          r = get("/api/map-status/CEREAL-29"); print(r[:600])
           PY
