@@ -7,12 +7,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Historial de estaciones BCP
+      - name: Mapa SIMPARH
         run: |
-          UA="ClimaAR/1.0 (proyecto local Bahía Blanca)"
-          for u in "https://info.bcp.org.ar/Estaciones/Mapa_NvoBCP.asp?Estacion=104" "https://info.bcp.org.ar/Estaciones/" "https://info.bcp.org.ar/" ; do
-            echo "=== $u"
-            curl -sS -L -m 30 -A "$UA" -o r.html -w "HTTP %{http_code} %{size_download}\n" "$u" || true
-            grep -oiE 'href="[^"]+"' r.html | sort -u | head -60
-            grep -oiE '[^<>]{0,80}(hist|descarg|export|csv|excel|serie|registro|datos diarios|horari)[^<>]{0,80}' r.html | sort -u | head -30
+          UA="Mozilla/5.0 ClimaAR/1.0"
+          B=https://public-map-simparh.ada.gba.gov.ar
+          curl -sS -L -m 30 -A "$UA" "$B/" -o i.html -w "HTTP %{http_code}\n"
+          cat i.html | head -c 3000; echo
+          for js in $(grep -oE '(src|href)="[^"]+\.js"' i.html | sed -E 's/.*="([^"]+)"/\1/'); do
+            case $js in http*) u=$js;; /*) u=$B$js;; *) u=$B/$js;; esac
+            echo "=== $u"; curl -sS -L -m 30 -A "$UA" "$u" -o a.js
+            grep -oE 'https?://[a-zA-Z0-9./_-]+' a.js | sort -u | head -40
+            grep -oE '"/?api[a-zA-Z0-9/_.?=-]*"|`[^`]*api[^`]*`' a.js | sort -u | head -40
           done
