@@ -53,6 +53,7 @@ def main(argv=None) -> int:
     dias = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))   # loc -> fen -> grado -> días
     frames_g = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
     detalle = defaultdict(list)
+    picos_dia = defaultdict(dict)   # loc -> día local -> dBZ pico máximo (para los cortes de granizo)
     for i, p in enumerate(frames):
         t = nf.timestamp_de_nombre(p)
         d = nf.cargar_dbz(p)
@@ -73,6 +74,7 @@ def main(argv=None) -> int:
         res = lr.analizar(t, c, flujo, 0.0, None, locs, historial)
         dia_local = (t - timedelta(hours=3)).strftime("%Y-%m-%d")
         for k, x in res.items():
+            picos_dia[k][dia_local] = max(picos_dia[k].get(dia_local, 0.0), float(x["dbz_pico"]))
             lleg = x.get("llegada") or {}
             ev = fen.evaluar(radar={
                 "disponible": True, "dbz_ciudad": x["dbz_p75"], "dbz_pico": x["dbz_pico"],
@@ -103,6 +105,7 @@ def main(argv=None) -> int:
                             for k, d in dias.items()},
         "frames_por_grado": {k: {fn: dict(v) for fn, v in d.items()} for k, d in frames_g.items()},
         "detalle_severo": detalle,
+        "pico_dbz_por_dia": picos_dia,
     }
     texto = json.dumps(salida, ensure_ascii=False, indent=1)
     if a.salida:
