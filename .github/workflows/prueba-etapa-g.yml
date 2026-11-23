@@ -1,0 +1,47 @@
+name: Prueba etapa G (temporal)
+on:
+  push:
+    branches: [prueba-etapa-g]
+jobs:
+  sondeo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Acceso a datos
+        run: |
+          pip install -q eccodes cfgrib xarray numpy requests 2>&1 | tail -1
+          python3 - <<'PY'
+          import requests, gzip, io, csv, json, time
+          S = requests.Session(); S.headers["User-Agent"] = "ClimaAR/1.0 (proyecto local, Bahía Blanca)"
+          # 1) MRMS en AWS (abierto)
+          u = "https://noaa-mrms-pds.s3.amazonaws.com/?list-type=2&prefix=CONUS/MergedReflectivityQCComposite_00.50/20230619/&max-keys=5"
+          r = S.get(u, timeout=60); print("MRMS lista", r.status_code, r.text[:600])
+          import re
+          claves = re.findall(r"<Key>([^<]+)</Key>", r.text)
+          if claves:
+              t0 = time.time(); f = S.get("https://noaa-mrms-pds.s3.amazonaws.com/" + claves[0], timeout=120)
+              print("MRMS archivo", claves[0], len(f.content), "bytes", round(time.time()-t0, 1), "s")
+              open("m.grib2.gz", "wb").write(f.content)
+              import xarray as xr
+              raw = gzip.decompress(f.content); open("m.grib2", "wb").write(raw)
+              ds = xr.open_dataset("m.grib2", engine="cfgrib")
+              print(ds)
+          # 2) Storm Events (NCEI, oficial)
+          r = S.get("https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/", timeout=60)
+          det = sorted(set(re.findall(r"StormEvents_details-ftp_v1.0_d2023_c\d+\.csv\.gz", r.text)))
+          print("StormEvents 2023:", det[-1:] if det else r.status_code)
+          if det:
+              g = S.get("https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/" + det[-1], timeout=120)
+              filas = list(csv.DictReader(io.StringIO(gzip.decompress(g.content).decode("latin-1"))))
+              print("filas", len(filas), "campos", list(filas[0].keys()))
+              h = [x for x in filas if x["EVENT_TYPE"] in ("Hail", "Thunderstorm Wind", "Tornado")]
+              print("severos", len(h)); print(h[0])
+          # 3) ERA5 por Open-Meteo (histórico)
+          q = ("https://archive-api.open-meteo.com/v1/archive?latitude=35.2&longitude=-97.4&start_date=2023-06-19&end_date=2023-06-19"
+               "&hourly=temperature_2m,dew_point_2m,surface_pressure,cape,wind_speed_10m,wind_direction_10m"
+               ",wind_speed_850hPa,wind_direction_850hPa,wind_speed_500hPa,wind_direction_500hPa&models=era5")
+          r = S.get(q, timeout=60); print("ERA5", r.status_code, r.text[:900])
+          PY
