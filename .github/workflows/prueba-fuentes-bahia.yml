@@ -7,23 +7,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Sondear EMCABB y SIGA
+      - name: Historial de estaciones BCP
         run: |
-          for u in https://gobiernoabierto.bahia.gob.ar/WS/3040 https://gobiernoabierto.bahia.gob.ar/WS/3041 \
-                   "https://datos.bahia.gob.ar/api/3/action/package_show?id=2403917b-99eb-4d2e-92c2-5ce5a5c6cfff" \
-                   https://siga.inta.gob.ar/ https://siga.inta.gob.ar/document/series/ ; do
+          UA="ClimaAR/1.0 (proyecto local Bahía Blanca)"
+          for u in "https://info.bcp.org.ar/Estaciones/Mapa_NvoBCP.asp?Estacion=104" "https://info.bcp.org.ar/Estaciones/" "https://info.bcp.org.ar/" ; do
             echo "=== $u"
-            curl -sS -L -m 30 -A "ClimaAR/1.0 (proyecto local Bahía Blanca)" -o r.txt -w "HTTP %{http_code} %{content_type} %{size_download}\n" "$u" || true
-            head -c 1500 r.txt | tr -d '\r'; echo
-            python3 - <<'PY' || true
-          import json
-          try:
-              d = json.load(open("r.txt"))
-          except Exception:
-              raise SystemExit
-          filas = d if isinstance(d, list) else next((v for v in d.values() if isinstance(v, list)), [])
-          print("filas:", len(filas))
-          for f in filas[-3:]:
-              print(f)
-          PY
+            curl -sS -L -m 30 -A "$UA" -o r.html -w "HTTP %{http_code} %{size_download}\n" "$u" || true
+            grep -oiE 'href="[^"]+"' r.html | sort -u | head -60
+            grep -oiE '[^<>]{0,80}(hist|descarg|export|csv|excel|serie|registro|datos diarios|horari)[^<>]{0,80}' r.html | sort -u | head -30
           done
