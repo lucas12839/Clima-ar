@@ -14,6 +14,5 @@ jobs:
         with:
           python-version: "3.12"
       - run: |
-          pip install -q "$(grep -i '^playwright==' requirements.txt)" requests
-          python -m playwright install --with-deps chromium > /dev/null
+          pip install -q -r requirements.txt
       - run: python herramientas/sondear_redes.py | gzip | base64 -w0 | sed 's/^/RESULTADO_GZ /'; echo

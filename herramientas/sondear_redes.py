@@ -1,59 +1,64 @@
 #!/usr/bin/env python3
-"""Sondeo: qué datos piden las páginas de SIMPARH (PBA) y Redes Climáticas La Pampa, y estado de estaciones BCP."""
-import json, re, sys, time
-from playwright.sync_api import sync_playwright
+import json, re, sys, socket
+from pathlib import Path
 import requests
+sys.path.insert(0, "scripts/estaciones")
+import colector_bcp as cb
 
-URLS = ["https://public-map-simparh.ada.gba.gov.ar/", "https://lapampa.redesclimaticas.com/"]
+out = {"bcp": {}, "lp": {}, "simparh": {}}
+for sid in range(1, 121):
+    try:
+        r = cb.collect(sid, f"ID{sid}")
+        t = requests.get(cb.BASE_URL.format(sid), timeout=15).text
+        plano = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(script|style).*?</\1>", " ", t)))
+        i = plano.find("Estaci")
+        r["texto"] = plano[:400]
+        out["bcp"][sid] = r
+    except Exception as e:
+        out["bcp"][sid] = {"error": str(e)[:100]}
 
-def sondear(url, page):
-    vistos = []
-    def resp(r):
+base = "https://lapampa.redesclimaticas.com"
+try:
+    out["lp"]["estaciones"] = requests.get(base + "/api/web/v1/site-map/stations", timeout=30).json()
+except Exception as e:
+    out["lp"]["error"] = str(e)
+# rutas de la API en los programas de la página
+rutas = set()
+try:
+    html = requests.get(base + "/", timeout=30).text
+    for js in set(re.findall(r'/assets/[A-Za-z0-9_.-]+\.js', html)):
+        t = requests.get(base + js, timeout=30).text
+        rutas.update(re.findall(r'["`\'](/api/[A-Za-z0-9_/${}.:-]+)', t))
+        for m in re.findall(r'import\(["`\']\./([A-Za-z0-9_.-]+\.js)', t):
+            try:
+                t2 = requests.get(base + "/assets/" + m, timeout=30).text
+                rutas.update(re.findall(r'["`\'](/api/[A-Za-z0-9_/${}.:-]+)', t2))
+            except Exception:
+                pass
+except Exception as e:
+    out["lp"]["error_js"] = str(e)
+out["lp"]["rutas"] = sorted(rutas)[:200]
+codigo = None
+try:
+    codigo = out["lp"]["estaciones"]["stations"][0]["code"]
+except Exception:
+    pass
+pruebas = {}
+for ruta in sorted(rutas):
+    if "station" in ruta.lower() and codigo:
+        u = base + re.sub(r"\$\{[^}]+\}|:[a-zA-Z_]+", str(codigo), ruta)
         try:
-            ct = r.headers.get("content-type", "")
-            if any(x in ct for x in ("json", "xml", "csv", "text/plain")) or re.search(r"api|json|estacion|station|dato|geo", r.url, re.I):
-                body = ""
-                try:
-                    body = r.text()[:600]
-                except Exception:
-                    pass
-                vistos.append({"url": r.url, "status": r.status, "tipo": ct, "muestra": body})
+            rr = requests.get(u, timeout=20)
+            pruebas[u] = [rr.status_code, rr.text[:400]]
         except Exception as e:
-            pass
-    page.on("response", resp)
-    try:
-        page.goto(url, wait_until="networkidle", timeout=90000)
-    except Exception as e:
-        print("GOTO", url, e)
-    time.sleep(8)
-    texto = page.inner_text("body")[:3000] if page.query_selector("body") else ""
-    links = page.eval_on_selector_all("a", "els => els.map(e => e.href)")[:200]
-    page.remove_listener("response", resp)
-    return {"url": url, "peticiones": vistos[:80], "texto": texto, "links": links}
+            pruebas[u] = [0, str(e)[:100]]
+out["lp"]["pruebas"] = pruebas
 
-out = {}
-with sync_playwright() as p:
-    b = p.chromium.launch()
-    pg = b.new_page()
-    for u in URLS:
-        out[u] = sondear(u, pg)
-    b.close()
-
-# BCP: las 11 que faltan (y su estado ahora)
-bcp = {}
-for n in range(1, 121):
+for host in ["public-map-simparh.ada.gba.gov.ar", "simparh.ada.gba.gov.ar", "ada.gba.gov.ar", "www.ada.gba.gov.ar"]:
     try:
-        t = requests.get(f"https://info.bcp.org.ar/Estaciones/Mapa_NvoBCP.asp?Estacion={n}", timeout=20).text
+        ip = socket.gethostbyname(host)
+        rr = requests.get("https://" + host + "/", timeout=20)
+        out["simparh"][host] = [ip, rr.status_code, rr.text[:500]]
     except Exception as e:
-        continue
-    nombre = re.search(r"Estaci[oó]n[^<]*?:?\s*</?[^>]*>\s*([^<]{3,40})<", t)
-    fecha = re.search(r"(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})", t)
-    lluvia = re.search(r"(Precipitaci[oó]n|Lluvia)[^<]*</td>\s*<td[^>]*>([^<]*)<", t, re.I | re.S)
-    titulo = re.search(r"<title>([^<]*)</title>", t, re.I)
-    bcp[n] = {"titulo": titulo.group(1).strip() if titulo else None,
-              "nombre": nombre.group(1).strip() if nombre else None,
-              "fecha": fecha.group(1) if fecha else None,
-              "lluvia": lluvia.group(2).strip() if lluvia else None,
-              "largo": len(t), "muestra": re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t))[:300]}
-out["bcp"] = bcp
-print("SONDEO_JSON " + json.dumps(out, ensure_ascii=False))
+        out["simparh"][host] = ["error", str(e)[:150]]
+print("SONDEO_JSON " + json.dumps(out, ensure_ascii=False, default=str))
