@@ -1,0 +1,59 @@
+name: Prueba calibración SMN (temporal)
+on:
+  push:
+    branches: [prueba-calibracion]
+    paths: [".github/workflows/prueba-calibracion.yml"]
+permissions:
+  contents: write
+jobs:
+  bajar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Historial oficial SMN (estaciones dentro de 240 km)
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request, urllib.parse, time, collections
+          U = "https://w2b.smn.gov.ar/oapi/collections/urn%3Awmo%3Amd%3Aar-smn%3Aslt0ci/items"
+          EST = ["0-20000-0-87750", "0-32-0-87683", "0-20000-0-87679", "0-20000-0-87637",
+                 "0-20000-0-87736", "0-20000-0-87688", "0-32-0-0087687AUTO"]
+          CLAVES = ("precip", "gust", "wind", "weather", "hail", "thunder")
+          salida = {}
+          for w in EST:
+              filas, offset = [], 0
+              nombres = collections.Counter()
+              while True:
+                  q = {"f": "json", "wigos_station_identifier": w,
+                       "datetime": "2026-10-23T00:00:00Z/2026-11-24T00:00:00Z", "limit": 5000, "offset": offset}
+                  for intento in range(4):
+                      try:
+                          d = json.loads(urllib.request.urlopen(urllib.request.Request(
+                              U + "?" + urllib.parse.urlencode(q), headers={"User-Agent": "ClimaAR/1.0"}), timeout=120).read())
+                          break
+                      except Exception as e:
+                          print(w, "reintento", intento, e); time.sleep(10)
+                  else:
+                      d = {"features": []}
+                  f = d.get("features", [])
+                  for x in f:
+                      p = x["properties"]; n = str(p.get("name"))
+                      nombres[n] += 1
+                      if any(k in n for k in CLAVES):
+                          filas.append([p.get("phenomenonTime") or p.get("resultTime"), n, p.get("value"), p.get("units"),
+                                        (p.get("metadata") or [{}])[0].get("value") if p.get("metadata") else None])
+                  print(w, "offset", offset, "features", len(f), "matched", d.get("numberMatched"))
+                  if len(f) < 5000:
+                      break
+                  offset += 5000
+              salida[w] = {"filas": filas, "variables": nombres.most_common()}
+              print(w, "filas útiles", len(filas))
+          json.dump(salida, open("smn_historial.json", "w"), separators=(",", ":"))
+          PY
+      - name: Guardar en la rama
+        run: |
+          git config user.name "climaar-bot"; git config user.email "bot@climaar.local"
+          mkdir -p resultados && mv smn_historial.json resultados/
+          git add resultados && git commit -m "datos SMN" && git push origin HEAD:prueba-calibracion
