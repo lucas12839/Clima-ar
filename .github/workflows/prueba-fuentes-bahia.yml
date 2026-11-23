@@ -7,35 +7,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Estaciones SIMPARH cerca de Bahía
+      - name: Historial SIMPARH
         run: |
+          B=https://public-map-simparh.ada.gba.gov.ar
+          curl -sS -m 30 -A "Mozilla/5.0 ClimaAR/1.0" "$B/static/js/mapa_interactivo.js" -o a.js
+          sed -n '260,300p;530,560p' a.js
           python3 - <<'PY'
-          import json, math, re, urllib.request, urllib.parse
+          import json, urllib.request, urllib.parse
           UA = {"User-Agent": "Mozilla/5.0 ClimaAR/1.0"}
           B = "https://public-map-simparh.ada.gba.gov.ar"
-          def get(u):
-              return urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=30).read().decode("utf-8", "replace")
-          h = get(B + "/")
-          emas = json.loads(re.search(r"window.MAP_DATA_EMAS = (\[.*?\]);", h, re.S).group(1))
-          print("total", len(emas)); print("campos", sorted(emas[0].keys()))
-          def km(a, b, c, d):
-              p1, p2 = math.radians(a), math.radians(c)
-              x = math.sin((p2-p1)/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(math.radians(d-b)/2)**2
-              return 2*6371*math.asin(math.sqrt(x))
-          cerca = []
-          for e in emas:
-              lat = e.get("lat") or e.get("latitud"); lon = e.get("lon") or e.get("lng") or e.get("longitud")
-              try: d = km(-38.7342, -62.1654, float(lat), float(lon))
-              except Exception: continue
-              if d <= 130: cerca.append((round(d,1), e))
-          cerca.sort(key=lambda x: x[0])
-          for d, e in cerca:
-              print(f"\n{d} km", json.dumps(e, ensure_ascii=False)[:700])
-          print("\n=== estado y datos de las cercanas")
-          for d, e in cerca[:25]:
+          def get(p):
               try:
-                  s = get(B + "/api/map-status/" + urllib.parse.quote(str(e["id"])))
-                  print(e["id"], d, "km:", s[:500])
-              except Exception as x:
-                  print(e["id"], "error", x)
+                  return urllib.request.urlopen(urllib.request.Request(B + p, headers=UA), timeout=40).read().decode("utf-8", "replace")
+              except Exception as e:
+                  return f"ERROR {e}"
+          for est in ("CEREAL-29", "SNIH-220272"):
+              for q in ({"ema_id": est, "metrica": "precipitaciondiaria", "dias": 30},
+                        {"id": est, "metrica": "precipitaciondiaria", "desde": "2026-10-24", "hasta": "2026-11-23"},
+                        {"ema": est, "variable": "precipitacion", "fecha_desde": "2026-10-24", "fecha_hasta": "2026-11-23"}):
+                  p = "/api/get-chart-data?" + urllib.parse.urlencode(q)
+                  r = get(p)
+                  print(p, "->", len(r), r[:600])
           PY
