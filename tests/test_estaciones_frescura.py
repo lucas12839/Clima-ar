@@ -39,10 +39,10 @@ class ObservationFreshnessTests(unittest.TestCase):
             {str(s["collector_id"]) for s in bcp_catalog},
             {str(k) for k in BCP_STATIONS},
         )
-        # 23/11/2026: las del SMN, Cabildo, San Eloy y Pasman quedaron desactivadas.
+        # 23/11/2026: las del SMN, Cabildo, San Eloy, Pasman y Pigüé quedaron desactivadas.
         self.assertEqual(smn_catalog, [])
         self.assertTrue({s["wigos_id"] for s in stations if s["network"] == "smn"} <= set(SMN_STATIONS))
-        self.assertEqual(len(bcp_catalog), 11)
+        self.assertEqual(len(bcp_catalog), 10)
 
 
 if __name__ == "__main__":
