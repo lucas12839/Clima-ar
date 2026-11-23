@@ -177,3 +177,16 @@ def test_verdad_usa_lo_observado_limpio_con_el_satelite():
     assert out["acumulado_fuerte"] == [0, 0, 0, 1]
     sin_obs = cl.verificar({"pendientes": list(pend)}, campos, {"a": zona}, t0 + timedelta(minutes=30))
     assert sin_obs["acumulado"]["celdas_probable"] == [0, 0, 1, 0]   # sin lo guardado, el PNG
+
+
+def test_motor_muestra_solo_la_tormenta_electrica_encima():
+    """Etapa E: de "justo sobre la localidad" se ve solo la tormenta eléctrica (rayos >= 0,7)."""
+    import motor_decision_climaar as md
+    celdas = {"bahia_blanca": {"probabilidad_solo_rayos": 0.82, "minutos_solo_rayos": 12},
+              "punta_alta": {"probabilidad_solo_rayos": 0.5, "minutos_solo_rayos": 5},
+              "sierra_de_la_ventana": {"probabilidad_solo_rayos": 0.95, "minutos_solo_rayos": 0}}
+    s = md.sobre_la_localidad("bahia_blanca", celdas, True)
+    assert s["minutos"] == 12 and s["que"] == "tormenta eléctrica"
+    assert md.sobre_la_localidad("punta_alta", celdas, True) is None          # poco probable
+    assert md.sobre_la_localidad("sierra_de_la_ventana", celdas, True) is None  # excluida
+    assert md.sobre_la_localidad("bahia_blanca", celdas, False) is None       # radar viejo

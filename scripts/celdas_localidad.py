@@ -292,6 +292,7 @@ def calcular(ahora: datetime | None = None) -> dict[str, Any]:
         pf = prob_fuerte[k]
         localidades[k] = {**r, "grado": grado(r["probabilidad"]),
                           "probabilidad_solo_rayos": prob_rayos[k]["probabilidad"],
+                          "minutos_solo_rayos": prob_rayos[k].get("minutos"),
                           "5b_la_trae_en_30min": reg["b5"],
                           "aviso_combinado": CRITERIOS["combinado"](reg),
                           "aviso_rayos": CRITERIOS["rayos"](reg),

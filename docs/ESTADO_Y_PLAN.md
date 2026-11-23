@@ -309,6 +309,12 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   más radares (vecinos de SINARAME = mismo atraso; INTA Anguil se rompe seguido; no hay otros que
   lleguen a Bahía), radar simulado por satélite (GREMLIN: es una estimación), enlaces de celular
   (datos privados), prueba del detector más rápido.
+- **ETAPAS D, E y F HECHAS (23/11/2026, tarde): `docs/SIMULACION_FINAL.md`.** Simulación final con
+  29 días: llegada a 10 km 72 % / 26 % (tormenta), 81 % / 11 % (lluvia). Pasa a verse la tormenta
+  eléctrica sobre la localidad (2-9 % de avisos de más). Arreglos: ecos de terreno de la noche fuera de
+  lo que se ve (canal 13 antes del análisis por localidad), validación en vivo de "sobre la localidad",
+  viento con cortes del SMN, granizo severo con confirmación, Pasman desactivada. Queda: etapa G
+  (Doppler sin gancho) y Render/Netlify; la parte de Lucas de la etapa C.
 - **ETAPAS B y C HECHAS (23/11/2026, tarde).** Etapa B: `docs/ETAPA_B.md` (#75): calibración de la
   lluvia con estación y radar en la misma hora (había un desfase), puntaje de gravedad contra lo
   medido (`verificar_puntaje.py`), informe mensual automático (`data/ia/informe/AAAA-MM.md`).
