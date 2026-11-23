@@ -80,6 +80,7 @@ def main(argv=None) -> int:
     ap.add_argument("--goes", required=True)
     ap.add_argument("--paso", type=int, default=2)
     ap.add_argument("--salida", default=None)
+    ap.add_argument("--dias", default=None, help="solo imágenes de partida de estos días, ej.: 20261113,20261121")
     ap.add_argument("--maximo", type=int, default=0, help="cortar después de N casos (prueba)")
     args = ap.parse_args(argv)
     t_ini = time.time()
@@ -87,6 +88,7 @@ def main(argv=None) -> int:
     cfg = {**ncap.CONFIG_DEFECTO, **json.loads((ROOT / "config" / "nowcast_capas.json").read_text(encoding="utf-8"))}
     frames = {nf.timestamp_de_nombre(p): p for p in nf.HISTORICO.glob("20*.png")}
     frames.pop(None, None)
+    dias = set(args.dias.split(",")) if args.dias else None
     shape = nf.cargar_dbz(next(iter(frames.values()))).shape
     h, w = shape
     clutter = nc.cargar_clutter_total(shape)
@@ -128,7 +130,7 @@ def main(argv=None) -> int:
     registros = []
     casos = 0
     for i, t0 in enumerate(sorted(frames)):
-        if i % args.paso:
+        if i % args.paso or (dias and t0.strftime("%Y%m%d") not in dias):
             continue
         act, prev, pprev = campo(t0), campo(t0 - timedelta(minutes=10)), campo(t0 - timedelta(minutes=20))
         if act is None or prev is None or int((act >= 20).sum()) < sh.MIN_PIX_ECO:

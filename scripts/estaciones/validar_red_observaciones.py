@@ -92,7 +92,8 @@ def main():
             "age_minutes": round(age, 2) if age is not None else None,
             "observation_time": observed.isoformat() if observed else None,
             "max_age_minutes": limite,
-            "sin_datos_mas_de_24h": frescura.sin_datos_hace_un_dia(age),
+            # Una estación desactivada a propósito no es una alerta.
+            "sin_datos_mas_de_24h": bool(station.get("active")) and frescura.sin_datos_hace_un_dia(age),
         })
 
     expected = int(catalog.get("station_count", len(results)))
@@ -116,7 +117,9 @@ def main():
         "valid_count": total_valid,
         "bcp": {"total": sum(x["network"] == "bcp" for x in results), "valid": valid_bcp},
         "smn": {"total": sum(x["network"] == "smn" for x in results), "valid": valid_smn},
-        "status": "operativa" if total_valid == expected else "parcial",
+        "activas": sum(1 for st in catalog.get("stations", []) if st.get("active") is True),
+        "status": "operativa" if total_valid == sum(1 for st in catalog.get("stations", [])
+                                                    if st.get("active") is True) else "parcial",
         "stations": results,
     }
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

@@ -23,7 +23,7 @@ STATIONS = {
     15: "CURA MALAL",
     17: "SAN ELOY",
     60: "ARROYO PANTANOSO",
-    83: "PASMAN",
+    # 83: "PASMAN" desactivada el 23/11/2026: sin datos desde fines de octubre.
     104: "BAHIA BLANCA CENTRO",
     # Estaciones nuevas en puntos estratégicos (búsqueda del 20/11/2026,
     # docs/ESTACIONES_NUEVAS.md): todas publican cada pocos minutos.

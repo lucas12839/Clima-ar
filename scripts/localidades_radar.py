@@ -284,6 +284,8 @@ def cargar_puntos_control(path: Path = CATALOGO_ESTACIONES) -> list[dict[str, An
     except Exception:
         pass
     for s in cat.get("stations") or []:
+        if s.get("active") is False:
+            continue
         lat, lon = s.get("latitude"), s.get("longitude")
         if lat is None or lon is None:
             continue

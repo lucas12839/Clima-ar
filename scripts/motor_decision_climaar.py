@@ -17,6 +17,15 @@ METEO = BASE / "data/ia/estado_meteorologico.json"
 OUT = BASE / "data/ia/resultado_final.json"
 FLUJO = BASE / "data/radar/nowcast_flujo.json"
 CAPAS = BASE / "data/radar/nowcast_capas.json"
+CELDAS = BASE / "data/ia/celdas_localidad.json"
+# Etapa E (23/11/2026): de "justo sobre la localidad" se muestra SOLO la tormenta
+# eléctrica (celdas con rayos, probabilidad >= 0,7). Simulación final, 29 días y 29.239
+# casos (docs/SIMULACION_FINAL.md): de cada 100 avisos, 2 a 9 sobraron (pasó una tormenta
+# fuerte o con rayos encima). Detecta 1 de cada 4 o 5: lo demás lo cubre la llegada a 10 km.
+# Sierra de la Ventana queda afuera (47 % de avisos de más: el radar la ve mal detrás de
+# las sierras).
+SOBRE_LOCALIDAD_RAYOS_MIN = 0.7
+SOBRE_LOCALIDAD_EXCLUIDAS = ("sierra_de_la_ventana",)
 FLUJO_DBZ_MIN = 40.0
 GOES = BASE / "data/ia/goes19_intelligence.json"
 SUPERFICIE = BASE / "data/ia/estaciones/senales_superficie.json"
@@ -449,6 +458,7 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
     sup_locs = (_superficie_fresca().get("localidades") or {})
     topes = topes_por_localidad()
     tabla = load(CALIBRACION_LLEGADAS) if CALIBRACION_LLEGADAS.exists() else {}
+    celdas = celdas_de(flujo)
     previo = load(OUT) if OUT.exists() else {}
     previas = (((previo.get("tipo_tiempo") or {}).get("localidades")) or {}) if isinstance(previo, dict) else {}
     salida = {}
@@ -501,8 +511,33 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
                                     "6h": d.get("lluvia_6h_mm")}
         if sup_locs.get(loc_id):
             ev["estaciones"] = sup_locs[loc_id].get("nombres")
+        ev["sobre_la_localidad"] = sobre_la_localidad(loc_id, celdas, radar_al_dia)
         salida[loc_id] = ev
     return salida
+
+
+def celdas_de(flujo):
+    """celdas_localidad.json de la misma imagen de radar (si no, nada)."""
+    c = load(CELDAS) if CELDAS.exists() else {}
+    if not isinstance(c, dict) or c.get("disponible") is not True:
+        return {}
+    if timestamp_key(c.get("radar_timestamp")) != timestamp_key((flujo or {}).get("radar_timestamp")):
+        return {}
+    return c.get("localidades") or {}
+
+
+def sobre_la_localidad(loc_id, celdas, radar_al_dia):
+    """Tormenta eléctrica que pasa SOBRE la localidad en los próximos 30 min (validada)."""
+    c = (celdas or {}).get(loc_id) or {}
+    p = finite(c.get("probabilidad_solo_rayos"))
+    if (not radar_al_dia or loc_id in SOBRE_LOCALIDAD_EXCLUIDAS or p is None
+            or p < SOBRE_LOCALIDAD_RAYOS_MIN):
+        return None
+    minutos = finite(c.get("minutos_solo_rayos"))
+    return {"que": "tormenta eléctrica", "probabilidad": round(p, 2),
+            "minutos": minutos, "texto": ("tormenta eléctrica encima" if minutos is not None and minutos <= 0
+                                          else "tormenta eléctrica sobre la localidad en los próximos 30 min"),
+            "validacion": "simulación final: de cada 100 avisos sobraron 2 a 9"}
 
 
 TENDENCIA_DBZ = 5.0

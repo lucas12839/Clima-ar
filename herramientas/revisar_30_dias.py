@@ -26,6 +26,7 @@ for _p in (ROOT, ROOT / "scripts"):
 
 import indices_fenomenos as fen  # noqa: E402
 import localidades_radar as lr  # noqa: E402
+import nowcast_capas_nucleo as nc  # noqa: E402
 import nowcast_flujo_optico as nf  # noqa: E402
 
 
@@ -34,14 +35,25 @@ def main(argv=None) -> int:
     ap.add_argument("--desde", default="20261001")
     ap.add_argument("--hasta", default="20991231")
     ap.add_argument("--salida", default=None)
+    ap.add_argument("--limpieza", choices=("fija", "completa", "satelite"), default="fija",
+                    help="completa = clutter fijo + intermitente suelto (como el 5b); "
+                         "satelite = completa + ecos sin nube encima (necesita --goes)")
+    ap.add_argument("--goes", default=None)
     a = ap.parse_args(argv)
     frames = [p for p in sorted(nf.HISTORICO.glob("20*.png")) if a.desde <= p.stem[:8] <= a.hasta]
     locs = lr.cargar_localidades()
+    goes = None
+    if a.limpieza == "satelite":
+        sys.path.insert(0, str(ROOT / "herramientas"))
+        import corrector_tiempo_real as ct
+        import simular_huecos as sh
+        goes = sh.cargar_goes(Path(a.goes))
     historial = Path(tempfile.mkdtemp()) / "historial.json"
     previo, clutter, prev_vel = None, None, {}
     dias = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))   # loc -> fen -> grado -> días
     frames_g = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
     detalle = defaultdict(list)
+    picos_dia = defaultdict(dict)   # loc -> día local -> dBZ pico máximo (para los cortes de granizo)
     for i, p in enumerate(frames):
         t = nf.timestamp_de_nombre(p)
         d = nf.cargar_dbz(p)
@@ -50,7 +62,11 @@ def main(argv=None) -> int:
         if clutter is None:
             clutter = nf.cargar_mascara_clutter(d.shape)
             km = nf.km_por_pixel(d.shape[1])
-        c = nf.campo_limpio(d, clutter)
+        c = nf.campo_limpio(d, clutter) if a.limpieza == "fija" else nc.campo_limpio(d, clutter)
+        if goes is not None:
+            sat = sh.satelite_cercano(goes, t, d.shape)
+            if sat is not None:
+                c = ct.quitar_ecos_sin_nube(c, sat)
         flujo = None
         if previo is not None and 5 <= (t - previo[0]).total_seconds() / 60 <= 30 and (c >= 35).sum() >= 30:
             f = nf.estimar_flujo(previo[1], c, (t - previo[0]).total_seconds() / 60, km)
@@ -58,6 +74,7 @@ def main(argv=None) -> int:
         res = lr.analizar(t, c, flujo, 0.0, None, locs, historial)
         dia_local = (t - timedelta(hours=3)).strftime("%Y-%m-%d")
         for k, x in res.items():
+            picos_dia[k][dia_local] = max(picos_dia[k].get(dia_local, 0.0), float(x["dbz_pico"]))
             lleg = x.get("llegada") or {}
             ev = fen.evaluar(radar={
                 "disponible": True, "dbz_ciudad": x["dbz_p75"], "dbz_pico": x["dbz_pico"],
@@ -88,6 +105,7 @@ def main(argv=None) -> int:
                             for k, d in dias.items()},
         "frames_por_grado": {k: {fn: dict(v) for fn, v in d.items()} for k, d in frames_g.items()},
         "detalle_severo": detalle,
+        "pico_dbz_por_dia": picos_dia,
     }
     texto = json.dumps(salida, ensure_ascii=False, indent=1)
     if a.salida:

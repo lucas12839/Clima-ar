@@ -296,6 +296,15 @@ def validar_celdas_localidad(radar_ts: datetime) -> None:
         m = l.get("minutos")
         if m is not None and not 0 <= m <= c.get("horizonte_min", 30):
             fail(f"celdas por localidad: minutos inválidos en {loc_id}: {m!r}")
+    # Etapa E: lo único que se ve (tormenta eléctrica encima) tiene que salir de esta imagen.
+    final = load(IA / "resultado_final.json") if (IA / "resultado_final.json").is_file() else {}
+    for loc_id, ev in (((final.get("tipo_tiempo") or {}).get("localidades")) or {}).items():
+        s = (ev or {}).get("sobre_la_localidad")
+        if s is None:
+            continue
+        pr = (c.get("localidades") or {}).get(loc_id, {}).get("probabilidad_solo_rayos")
+        if not isinstance(pr, (int, float)) or abs(pr - s.get("probabilidad", -1)) > 0.01 or pr < 0.7:
+            fail(f"tormenta eléctrica sobre {loc_id} no coincide con las celdas: {s!r}")
     print(f"Celdas por localidad: sincronizado ({len(c.get('localidades') or {})} localidades)")
 
 

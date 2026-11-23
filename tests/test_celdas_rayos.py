@@ -157,3 +157,36 @@ def test_idea2_registra_rayos_dentro_de_la_localidad():
     assert list(reg) == ["bahia"] and len(reg["bahia"]) == 2
     viejo = cl.registrar_rayos({"rayos_en_localidad": {"bahia": ["2026-11-20T15:00:00Z"]}}, {}, locs, ahora)
     assert viejo == {}                                # más de 3 h: se borra
+
+
+def test_verdad_usa_lo_observado_limpio_con_el_satelite():
+    """1.2: un eco de terreno de la noche (en el PNG, sin nube encima) no cuenta como tormenta
+    si al ser la imagen actual el satélite lo había sacado."""
+    import celdas_localidad as cl
+    t0 = datetime(2026, 11, 21, 3, 0, tzinfo=timezone.utc)
+    zona = np.zeros(SHAPE, dtype=bool)
+    zona[90:110, 90:110] = True
+    terreno = np.zeros(SHAPE, np.float32)
+    terreno[95:100, 95:100] = 50.0
+    campos = {t0 + timedelta(minutes=m): terreno for m in (0, 10, 20, 30)}
+    observado = {cl.iso(t): {"a": 0.0} for t in campos}            # el satélite lo sacó
+    pend = [{"ahora_utc": "2026-11-21T03:00:00Z", "localidades": {"a": {"p": 0.0, "pf": 0.0}}}]
+    previo = {"pendientes": list(pend), "observado": observado}
+    out = cl.verificar(previo, campos, {"a": zona}, t0 + timedelta(minutes=30))
+    assert out["acumulado"]["celdas_probable"] == [0, 0, 0, 1]
+    assert out["acumulado_fuerte"] == [0, 0, 0, 1]
+    sin_obs = cl.verificar({"pendientes": list(pend)}, campos, {"a": zona}, t0 + timedelta(minutes=30))
+    assert sin_obs["acumulado"]["celdas_probable"] == [0, 0, 1, 0]   # sin lo guardado, el PNG
+
+
+def test_motor_muestra_solo_la_tormenta_electrica_encima():
+    """Etapa E: de "justo sobre la localidad" se ve solo la tormenta eléctrica (rayos >= 0,7)."""
+    import motor_decision_climaar as md
+    celdas = {"bahia_blanca": {"probabilidad_solo_rayos": 0.82, "minutos_solo_rayos": 12},
+              "punta_alta": {"probabilidad_solo_rayos": 0.5, "minutos_solo_rayos": 5},
+              "sierra_de_la_ventana": {"probabilidad_solo_rayos": 0.95, "minutos_solo_rayos": 0}}
+    s = md.sobre_la_localidad("bahia_blanca", celdas, True)
+    assert s["minutos"] == 12 and s["que"] == "tormenta eléctrica"
+    assert md.sobre_la_localidad("punta_alta", celdas, True) is None          # poco probable
+    assert md.sobre_la_localidad("sierra_de_la_ventana", celdas, True) is None  # excluida
+    assert md.sobre_la_localidad("bahia_blanca", celdas, False) is None       # radar viejo

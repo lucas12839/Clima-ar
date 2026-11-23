@@ -43,10 +43,14 @@ LLUVIA_RADAR_6H_MM = 50.0
 LLUVIA_FUERTE_SOSTENIDA_MIN = 60.0
 LLUVIA_SIGUE_1H_MM = 5.0         # sigue lloviendo en serio
 
-VIENTO_MODERADO_KMH = 30.0
-VIENTO_FUERTE_KMH = 50.0
+# Etapa F (23/11/2026): cortes del viento llevados a los del SMN. Su aviso amarillo por
+# viento es de ráfagas de ~70 km/h o más, o viento medio de 40-60 km/h; con los cortes
+# anteriores (ráfaga 50 = "fuerte") ClimaAR mostraba viento fuerte en toda la región casi
+# todas las tardes ventosas de Bahía (20-22/11: ~1 de cada 3 imágenes).
+VIENTO_MODERADO_KMH = 40.0
+VIENTO_FUERTE_KMH = 70.0
 VIENTO_SEVERO_KMH = 90.0
-VIENTO_MEDIO_FUERTE_KMH = 40.0   # viento medio (no ráfaga) que ya es fuerte
+VIENTO_MEDIO_FUERTE_KMH = 45.0   # viento medio (no ráfaga) que ya es fuerte
 LINEA_RAPIDA_KMH = 60.0          # línea rápida: ráfagas fuertes posibles
 LINEA_SEVERA_KMH = 75.0          # 16/12/2023 (155 km/h de ráfaga): 75-84 km/h en dos frames
 LINEA_COHERENCIA = 0.85
@@ -413,6 +417,15 @@ def confirmar_granizo(ev: dict[str, Any], sat: dict[str, Any], ev_rayos: dict[st
     tope = numero((sat or {}).get("min_c_15km"))
     if tope is None:
         tope = numero((sat or {}).get("p10_c_30km"))
+    if ev["grado"] >= 4:
+        # Etapa F (23/11/2026): "severo" (granizo grande) necesita una prueba que no sea el
+        # radar: tope muy frío (<= -60 °C) o rayos frecuentes o en salto. El 13/11 Punta Alta
+        # tuvo 75 dBZ en el radar crudo y cayó granizo chico.
+        severo = ((tope is not None and tope <= TOPE_MUY_FRIO_C)
+                  or (ev_rayos or {}).get("grado", 0) >= 3)
+        if not severo:
+            ev = _evaluacion("granizo", 3, "radar", ev["razones"] + [
+                "granizo grande sin confirmar: falta un tope muy frío o muchos rayos"], False)
     enfr = numero((sat or {}).get("enfriamiento_c_10min"))
     nivel = (amb_sev or {}).get("nivel")
     if tope is None or nivel in (None, "sin_datos"):

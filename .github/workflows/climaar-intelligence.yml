@@ -189,6 +189,12 @@ jobs:
           python scripts/estaciones/senales_superficie.py \
             || echo "::warning::No se pudieron calcular las señales de superficie."
 
+      - name: Canal 13 de GOES-19 a la hora del radar (control de ecos sin nube)
+        run: |
+          # Etapa F: el análisis por localidad saca los ecos sin ninguna nube encima
+          # (terreno de noche). Falla segura: sin satélite sigue sin ese control.
+          timeout 90 python -m goes19.c13_radar || echo "AVISO: canal 13 no disponible en este ciclo"
+
       - name: Nowcast por flujo óptico (física; da el movimiento al adaptador)
         run: |
           set -euo pipefail
@@ -712,6 +718,12 @@ jobs:
           python scripts/nowcast_capas.py
           test -s data/radar/nowcast_capas.json
 
+      - name: Tormenta sobre cada localidad, celda por celda con rayos (la tormenta eléctrica encima se ve; el resto en paralelo)
+        run: |
+          set -euo pipefail
+          # Paso 2. Falla segura: el script nunca corta el ciclo. Se valida solo en vivo.
+          timeout 120 python scripts/celdas_localidad.py || echo "AVISO: celdas por localidad no disponibles en este ciclo"
+
       - name: Ejecutar Decision Engine
         run: |
           set -euo pipefail
@@ -749,12 +761,6 @@ jobs:
           # Punto 8 del plan. Falla segura: el script nunca corta el ciclo.
           # En los refrescos reutiliza lo ya leído (mismos archivos).
           timeout 180 python scripts/ambiente_satelite.py || echo "AVISO: ambiente del satélite no disponible en este ciclo"
-
-      - name: Tormenta sobre cada localidad, celda por celda con rayos (en paralelo, no cambia lo que se ve)
-        run: |
-          set -euo pipefail
-          # Paso 2. Falla segura: el script nunca corta el ciclo. Se valida solo en vivo.
-          timeout 120 python scripts/celdas_localidad.py || echo "AVISO: celdas por localidad no disponibles en este ciclo"
 
       - name: Alarma "ya llega" por estaciones aguas arriba (en paralelo, no cambia lo que se ve)
         run: |

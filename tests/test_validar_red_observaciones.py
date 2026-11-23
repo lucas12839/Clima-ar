@@ -56,8 +56,10 @@ class StationValidationTests(unittest.TestCase):
         self.write_inputs(catalog, bcp, smn)
         self.assertEqual(module.main(), 0)
         result = json.loads(self.output_path.read_text(encoding="utf-8"))
-        self.assertEqual((result["station_count"], result["valid_count"]), (19, 19))
-        self.assertEqual(result["bcp"], {"total": 14, "valid": 14})
+        # PASMAN está desactivada (23/11/2026): 19 en el catálogo, 18 activas.
+        self.assertEqual((result["station_count"], result["valid_count"]), (19, 18))
+        self.assertEqual(result["status"], "operativa")
+        self.assertEqual(result["bcp"], {"total": 14, "valid": 13})
         self.assertEqual(result["smn"], {"total": 5, "valid": 5})
 
     def test_descarta_vencida_futura_y_timestamp_ausente(self):

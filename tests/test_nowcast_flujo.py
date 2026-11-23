@@ -217,3 +217,30 @@ def test_control_de_velocidad_con_varias_imagenes():
     # Un cambio chico o sin pares previos no se toca.
     assert nf.controlar_velocidad(dict(flujo, velocidad_media_kmh=30.0), [22.8, 25.0])["control_velocidad"]["corregida"] is False
     assert nf.controlar_velocidad(dict(flujo), [])["velocidad_media_kmh"] == 58.3
+
+
+def test_localidades_sin_ecos_sin_nube(tmp_path):
+    """Etapa F: el análisis por localidad saca los ecos sin nube encima (canal 13 de la misma hora)."""
+    import numpy as np
+    from datetime import datetime, timezone
+    import nowcast_flujo_optico as nf
+    dbz = np.zeros((512, 512), np.float32)
+    dbz[200:210, 200:210] = 55.0
+    clutter = np.zeros((512, 512), bool)
+    t = datetime(2026, 11, 21, 3, 0, tzinfo=timezone.utc)
+    lat, lon = np.meshgrid(np.linspace(-41, -36.5, 120), np.linspace(-65, -59, 120), indexing="ij")
+    c13 = tmp_path / "c13.npz"
+    np.savez_compressed(c13, lat=lat.astype(np.float32), lon=lon.astype(np.float32),
+                        temp_c=np.full(lat.shape, 15.0, np.float32), hora=np.array("2026-11-21T02:58:00Z"))
+    limpio, info = nf.limpiar_para_localidades(dbz, clutter, t, c13)
+    assert info["satelite_usado"] and limpio.max() == 0.0           # cielo despejado: eco falso
+    np.savez_compressed(c13, lat=lat.astype(np.float32), lon=lon.astype(np.float32),
+                        temp_c=np.full(lat.shape, -45.0, np.float32), hora=np.array("2026-11-21T02:58:00Z"))
+    limpio, info = nf.limpiar_para_localidades(dbz, clutter, t, c13)
+    assert limpio.max() == 55.0                                     # nube fría encima: se queda
+    np.savez_compressed(c13, lat=lat.astype(np.float32), lon=lon.astype(np.float32),
+                        temp_c=np.full(lat.shape, 15.0, np.float32), hora=np.array("2026-11-21T02:20:00Z"))
+    limpio, info = nf.limpiar_para_localidades(dbz, clutter, t, c13)
+    assert not info["satelite_usado"] and limpio.max() == 55.0      # satélite de otra hora: no se usa
+    limpio, info = nf.limpiar_para_localidades(dbz, clutter, t, tmp_path / "no_existe.npz")
+    assert not info["satelite_usado"]
