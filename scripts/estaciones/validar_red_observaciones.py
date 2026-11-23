@@ -40,6 +40,8 @@ def parse_time(value):
 
 
 def load(path):
+    if not path.exists():   # el colector del SMN ya no corre (23/11/2026)
+        return {}
     with path.open("r", encoding="utf-8") as stream:
         return json.load(stream)
 
@@ -115,8 +117,9 @@ def main():
         "estaciones_sin_datos_24h": [x["name"] for x in results if x["sin_datos_mas_de_24h"]],
         "station_count": len(results),
         "valid_count": total_valid,
-        "bcp": {"total": sum(x["network"] == "bcp" for x in results), "valid": valid_bcp},
-        "smn": {"total": sum(x["network"] == "smn" for x in results), "valid": valid_smn},
+        # Totales de estaciones activas (las desactivadas a propósito no cuentan).
+        "bcp": {"total": sum(x["network"] == "bcp" and x["state"] != "inactiva" for x in results), "valid": valid_bcp},
+        "smn": {"total": sum(x["network"] == "smn" and x["state"] != "inactiva" for x in results), "valid": valid_smn},
         "activas": sum(1 for st in catalog.get("stations", []) if st.get("active") is True),
         "status": "operativa" if total_valid == sum(1 for st in catalog.get("stations", [])
                                                     if st.get("active") is True) else "parcial",

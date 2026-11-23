@@ -164,18 +164,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Capturar red de estaciones BCP y SMN
+      - name: Capturar red de estaciones BCP
         timeout-minutes: 6
         run: |
           set -euo pipefail
 
+          # 23/11/2026: las 5 del SMN quedaron desactivadas (llegan con horas o días de
+          # atraso); su colector ya no corre. Se vuelve a activar si el SMN publica a tiempo.
           python scripts/estaciones/colector_bcp.py
-          python scripts/estaciones/colector_smn_synop.py
 
           test -s data/ia/estaciones/observaciones/bcp_actual.json
-          test -s data/ia/estaciones/observaciones/smn_synop_actual.json
 
-      - name: Validar frescura y publicar estado de las 19 estaciones
+      - name: Validar frescura y publicar estado de las estaciones
         run: |
           set -euo pipefail
 

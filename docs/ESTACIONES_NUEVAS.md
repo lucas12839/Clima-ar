@@ -41,3 +41,9 @@ dudosa y no entra. La de Punta Alta queda fuera del resumen de Bahía (radio de 
 
 Al oeste y suroeste de Bahía (Médanos, Villarino, Río Colorado) no hay estaciones abiertas que
 publiquen seguido. La del SMN en Río Colorado es horaria (no sirve para "ya llega").
+
+## Depuración del 23/11/2026 (decisión de Lucas: solo estaciones que cumplen los requisitos)
+Desactivadas en `catalogo_estaciones.json` (con el motivo): Cabildo y San Eloy (BCP, llegan con
+2-3 h de atraso), Pasman (sin datos desde octubre) y las 5 del SMN (Bahía Blanca Aero, Pigüé
+Aero, Coronel Suárez, Río Colorado, Tres Arroyos: el SMN las publica con horas o días de
+atraso). El colector del SMN ya no corre. Quedan 11 BCP + 1 CWOP.
