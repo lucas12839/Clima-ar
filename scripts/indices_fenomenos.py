@@ -66,7 +66,15 @@ LLEGADA_MAX_MIN = 60.0
 
 # GOES-19 canal 13 (topes de nubes).
 TOPE_MUY_FRIO_C = -60.0          # tormenta muy profunda: granizo más probable
-TOPE_TORMENTA_C = -50.0          # nube de tormenta (sin radar: lluvia probable)
+TOPE_TORMENTA_C = -50.0          # nube de tormenta
+# Sin radar (punto 10, 21/11/2026, herramientas/simular_sin_radar.py, 26 días): "tope <= -50 °C"
+# solo acertaba la lluvia moderada 9 de cada 100 veces (88 % falsas). Tope <= -60 °C y al menos
+# un rayo a <= 15 km acierta 33 de cada 100 (54 % falsas).
+TOPE_LLUVIA_SIN_RADAR_C = -60.0
+RAYOS_LLUVIA_SIN_RADAR = 1
+# Radar viejo movido (40-90 min): sigue siendo lo mejor para "¿llueve?" (acierto 0,41 a 40 min
+# contra 0,08 de las reglas de satélite de antes). Más viejo no está probado.
+RADAR_MOVIDO_MAX_MIN = 90.0
 ENFRIAMIENTO_RAPIDO_C = 8.0      # °C cada 10 min: la tormenta crece rápido
 
 NOMBRES = {
@@ -347,14 +355,30 @@ def ajustar_por_ambiente(clave: str, ev: dict[str, Any], amb_sev: dict[str, Any]
     return ev
 
 
-def lluvia_por_satelite(sat: dict[str, Any]) -> dict[str, Any] | None:
-    """Sin radar: nube de tormenta sobre la zona = lluvia probable (no se mide)."""
+def lluvia_por_satelite(sat: dict[str, Any], rayos: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Sin radar: nube de tormenta muy fría encima Y con rayos cerca = lluvia probable (no se mide)."""
     tope = numero((sat or {}).get("min_c_15km"))
-    if tope is None or tope > TOPE_TORMENTA_C:
+    cerca = numero((rayos or {}).get("rayos_15km_10min")) or 0
+    if tope is None or tope > TOPE_LLUVIA_SIN_RADAR_C or cerca < RAYOS_LLUVIA_SIN_RADAR:
         return None
     return _evaluacion("lluvia", 2, "goes19", [
-        f"nube de tormenta sobre la zona (topes {tope:.0f} °C): lluvia probable, sin radar para medirla"],
-        False, {"estimada": True})
+        f"nube de tormenta encima (topes {tope:.0f} °C) con {cerca:.0f} rayos a menos de 15 km: "
+        "lluvia probable, sin radar para medirla"], False, {"estimada": True})
+
+
+def lluvia_por_radar_movido(movido: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Radar viejo (40-90 min) movido con el nowcast hasta ahora: lluvia estimada."""
+    if not isinstance(movido, dict):
+        return None
+    edad = numero(movido.get("edad_min"))
+    if edad is None or edad > RADAR_MOVIDO_MAX_MIN:
+        return None
+    ev = lluvia_por_radar(numero(movido.get("dbz_p75")), mm_h_area=numero(movido.get("mm_h_medio")))
+    if not ev["grado"]:
+        return None
+    ev = dict(ev, fuente="radar_movido", estimada=True)
+    ev["razones"] = [f"radar de hace {edad:.0f} min movido hasta ahora: " + ", ".join(ev["razones"])]
+    return ev
 
 
 def granizo_por_radar(dbz: float | None, amb: dict[str, Any]) -> dict[str, Any]:
@@ -541,7 +565,9 @@ def evaluar(
 
     radar: dbz_ciudad, dbz_30km, dbz_llegada, eta_llegada_min, velocidad_kmh,
            coherencia, minutos_lluvia_intensa, lluvia_3h_mm, lluvia_6h_mm,
-           disponible (bool). Por localidad además: mm_h_area (lluvia media
+           disponible (bool). Sin radar al día: movido = {dbz_p75, mm_h_medio,
+           edad_min} del radar viejo movido hasta ahora (<= 90 min).
+           Por localidad además: mm_h_area (lluvia media
            sobre la zona), dbz_pico (núcleo, para granizo), lluvia_1h_mm y
            velocidad_eco_kmh (del eco que llega).
     superficie: resumen de estaciones de Bahía Blanca (senales_superficie).
@@ -588,7 +614,9 @@ def evaluar(
                                  velocidad_previa=radar.get("velocidad_previa_kmh"),
                                  exigir_estable="velocidad_previa_kmh" in radar)
     else:
-        ahora["lluvia"] = lluvia_por_satelite(sat) or dict(nada["lluvia"])
+        opciones = [o for o in (lluvia_por_satelite(sat, rayos), lluvia_por_radar_movido(radar.get("movido")))
+                    if o is not None]
+        ahora["lluvia"] = _mejor(*opciones) if opciones else dict(nada["lluvia"])
         ahora["granizo"] = dict(nada["granizo"])
         ev_vr = None
     if est_lluvia is not None:

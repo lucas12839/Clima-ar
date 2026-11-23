@@ -160,10 +160,28 @@ class SateliteTest(unittest.TestCase):
         r = fen.evaluar(radar=radar(dbz_ciudad=30), satelite={"min_c_15km": -70})
         self.assertEqual(r["fenomenos"]["granizo"]["grado"], 0)
 
-    def test_sin_radar_nube_de_tormenta_es_lluvia_probable(self):
-        r = fen.evaluar(radar={"disponible": False}, satelite={"min_c_15km": -55})
+    def test_sin_radar_nube_de_tormenta_con_rayos_es_lluvia_probable(self):
+        # Punto 10 (simular_sin_radar.py): tope <= -60 °C y al menos un rayo a <= 15 km.
+        r = fen.evaluar(radar={"disponible": False}, satelite={"min_c_15km": -62},
+                        rayos={"rayos_15km_10min": 2})
         self.assertEqual(r["fenomenos"]["lluvia"]["grado"], 2)
         self.assertFalse(r["fenomenos"]["lluvia"]["confirmado"])
+
+    def test_sin_radar_tope_solo_no_alcanza(self):
+        # Antes: tope <= -50 °C = lluvia probable (88 % falsas alarmas en la simulación).
+        for sat, ray in (({"min_c_15km": -55}, {"rayos_15km_10min": 3}), ({"min_c_15km": -65}, {})):
+            r = fen.evaluar(radar={"disponible": False}, satelite=sat, rayos=ray)
+            self.assertEqual(r["fenomenos"]["lluvia"]["grado"], 0)
+
+    def test_sin_radar_usa_el_radar_viejo_movido(self):
+        mov = {"dbz_p75": 38, "mm_h_medio": 6.0, "edad_min": 55}
+        r = fen.evaluar(radar={"disponible": False, "movido": mov})
+        self.assertGreaterEqual(r["fenomenos"]["lluvia"]["grado"], 1)
+        self.assertEqual(r["fenomenos"]["lluvia"]["fuente"], "radar_movido")
+        self.assertFalse(r["fenomenos"]["lluvia"]["confirmado"])
+        # Más de 90 min: no está probado, no se usa.
+        viejo = fen.evaluar(radar={"disponible": False, "movido": {**mov, "edad_min": 95}})
+        self.assertEqual(viejo["fenomenos"]["lluvia"]["grado"], 0)
 
 
 class AmbienteTest(unittest.TestCase):

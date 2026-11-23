@@ -879,6 +879,14 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
         llegada = nc.escenarios_llegada(campo, flujo["u"], flujo["v"], zl, edad, edad + 60.0,
                                         UMBRAL_TORMENTA, flujo["tasa"])
 
+    # Lluvia por área del radar movido a ahora (como el radar al día): la usa el modo sin radar
+    # cuando el radar tiene 40-90 min (punto 10, herramientas/simular_sin_radar.py).
+    area_ahora = {}
+    if campos and edad is not None and float(edad) in campos:
+        try:
+            area_ahora = lr.observar(campos[float(edad)], localidades)
+        except Exception:
+            area_ahora = {}
     locs = {}
     for loc in localidades:
         k = loc["id"]
@@ -890,6 +898,9 @@ def ejecutar(ahora: datetime | None = None) -> dict[str, Any]:
             "movido_min": edad if flujo is not None else 0.0,
             "fuente": "radar SINARAME movido a la hora actual" if flujo is not None
             else "radar SINARAME sin mover (no hay movimiento calculable)"}
+        if item["radar_movido_a_ahora"] and k in area_ahora:
+            item["radar_movido_a_ahora"].update({"dbz_p75": area_ahora[k]["dbz_p75"],
+                                                 "mm_h_medio": area_ahora[k]["mm_h_medio"]})
         item["estado_ahora"] = estado_ahora(dbz_ahora, edad, rell)
         if picos_loc:
             item["pronostico_desde_ahora"] = {
