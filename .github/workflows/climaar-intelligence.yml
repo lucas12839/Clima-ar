@@ -879,10 +879,17 @@ jobs:
             exit 1
           fi
 
-          for intento in 1 2 3; do
+          # 5 intentos con espera creciente: el 23/11 un corte de red de GitHub
+          # de 2 min (git fetch sin reintento) tiró la IA de un frame entero.
+          for intento in 1 2 3 4 5; do
             echo "Intento de sincronización: $intento"
 
-            git fetch origin main
+            if ! git fetch origin main; then
+              echo "No se pudo bajar main (red)."
+              if [ "$intento" -eq 5 ]; then exit 1; fi
+              sleep $((intento * 10))
+              continue
+            fi
 
             if ! git rebase origin/main; then
               echo "Rebase falló."
@@ -890,7 +897,7 @@ jobs:
               git rebase --abort 2>/dev/null || true
               git reset --hard HEAD
 
-              if [ "$intento" -eq 3 ]; then
+              if [ "$intento" -eq 5 ]; then
                 git status --short
                 exit 1
               fi
@@ -904,7 +911,7 @@ jobs:
               git status --short
               git reset --hard HEAD
 
-              if [ "$intento" -eq 3 ]; then
+              if [ "$intento" -eq 5 ]; then
                 exit 1
               fi
 
@@ -919,7 +926,7 @@ jobs:
 
             echo "Push falló en intento $intento."
 
-            if [ "$intento" -eq 3 ]; then
+            if [ "$intento" -eq 5 ]; then
               git status --short
               exit 1
             fi

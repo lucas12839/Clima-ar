@@ -106,3 +106,31 @@ class RelojExternoTest(unittest.TestCase):
         self.assertEqual(r([]), set())                                         # todavía no se instaló
         self.assertEqual(r([{"created_at": hace(10 + 10 * i)} for i in range(20)]), set())
         self.assertEqual(r([{"created_at": hace(60 + 10 * i)} for i in range(20)]), {"reloj_externo"})
+
+
+class IAAtrasadaTest(unittest.TestCase):
+    """23/11/2026: 4 imágenes quedaron sin analizar por un error de la IA y nadie avisó."""
+
+    def r(self, ia=None, corridas=None):
+        d = SANO
+        return {p["clave"] for p in vg.revisar(AHORA, d["latido"], d["info"], d["radar_ts"], d["respaldo"],
+                                                d["cwop"], [], ia, corridas)}
+
+    def test_ia_al_dia(self):
+        self.assertEqual(self.r({"radar": SANO["radar_ts"], "utc": hace(2)}), set())
+
+    def test_radar_nuevo_todavia_analizandose_no_es_alarma(self):
+        self.assertEqual(self.r({"radar": hace(25), "utc": hace(6)}), set())
+
+    def test_radar_sin_analisis(self):
+        self.assertEqual(self.r({"radar": hace(25), "utc": hace(20)}), {"ia_atrasada"})
+
+    def test_ia_que_no_publica(self):
+        self.assertEqual(self.r({"radar": SANO["radar_ts"], "utc": hace(40)}), {"ia_atrasada"})
+
+    def test_ia_que_falla_seguido(self):
+        mal = [{"status": "completed", "conclusion": "failure"}] * 2
+        self.assertEqual(self.r({"radar": SANO["radar_ts"], "utc": hace(2)}, mal), {"ia_falla"})
+        bien = [{"status": "completed", "conclusion": "cancelled"}, {"status": "completed", "conclusion": "failure"},
+                {"status": "completed", "conclusion": "success"}]
+        self.assertEqual(self.r({"radar": SANO["radar_ts"], "utc": hace(2)}, bien), set())

@@ -40,7 +40,18 @@ resultado() {  # resultado detalle commit
 cd "$DEST" || { echo "No existe $DEST"; exit 1; }
 antes="$(como git rev-parse HEAD 2>/dev/null || echo ninguno)"
 
-if ! salida="$(como git fetch --quiet "$URL" main 2>&1)"; then
+# Último commit de main que dejó este mismo programa (para no necesitar la
+# historia completa: main suma ~600 guardados de datos por día).
+sincronizado="$(sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p' "$ESTADO" 2>/dev/null | head -1)"
+
+# Descarga corta (23/11/2026): antes bajaba toda la historia (cientos de MB)
+# cada 10 min. Solo hace falta la historia si no se sabe qué quedó la última vez.
+profundidad="--depth=1"
+if [ -z "$sincronizado" ] || [ "${antes:0:12}" != "$sincronizado" ]; then
+  profundidad=""
+fi
+# shellcheck disable=SC2086
+if ! salida="$(como git fetch --quiet $profundidad "$URL" main 2>&1)"; then
   resultado error "no se pudo bajar main: $salida" "$antes"
   exit 1
 fi
@@ -51,7 +62,8 @@ propios=""
 if [ -n "$(como git status --porcelain --untracked-files=no)" ]; then
   propios="archivos modificados"
 fi
-if [ "$antes" != "ninguno" ] && ! como git merge-base --is-ancestor "$antes" "$nuevo"; then
+if [ "$antes" != "ninguno" ] && [ "${antes:0:12}" != "$sincronizado" ] \
+    && ! como git merge-base --is-ancestor "$antes" "$nuevo"; then
   propios="${propios:+$propios y }commits que main no tiene"
 fi
 if [ -n "$propios" ]; then

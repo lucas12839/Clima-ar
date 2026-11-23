@@ -34,6 +34,12 @@ import nowcast_flujo_optico as nf  # noqa: E402
 VERSION = "trayectorias-capas-1.0"
 SALIDA = ROOT / "data" / "radar" / "trayectorias_capas.json"
 ESTADO = ROOT / "data" / "radar" / "seguimiento" / "estado.json"
+# Control en vivo del error de esta trayectoria (23/11/2026). Antes el control de
+# salud medía el predictor viejo, que ya no es el que se ve.
+VERIFICACION = ROOT / "data" / "ia" / "verificacion_trayectorias.json"
+KM_POR_PX = 240.0 / 255.5
+HORIZONTES_VERIFICADOS = (10, 20, 30)
+MAX_REGISTROS = 600
 HORIZONTES_MIN = (5, 10, 20, 30, 60)
 PASO_MIN = 2.5
 # Incertidumbre del lugar (km) según el plazo: mediana del error medida con
@@ -191,14 +197,59 @@ def tracks_actuales(estado: dict, radar_ts: str) -> list[dict]:
             if isinstance(t, dict) and t.get("activo") and t.get("presente_en_ultimo_frame")]
 
 
+def verificar(verif: dict, radar_dt: datetime, tracks: list[dict], salida: dict) -> dict:
+    """Compara lo pronosticado para esta imagen con dónde quedó cada tormenta.
+
+    Solo la misma tormenta (mismo número: los números nunca se reusan) y solo
+    imágenes nuevas (un refresco de la misma imagen no suma nada).
+    """
+    pendientes = [p for p in verif.get("pendientes") or [] if isinstance(p, dict)]
+    registros = [r for r in verif.get("registros") or [] if isinstance(r, dict)]
+    if verif.get("ultima_imagen") == iso(radar_dt):
+        return verif
+    posiciones = {str(t.get("track_id")): (float(t["x"]), float(t["y"])) for t in tracks
+                  if isinstance(t.get("x"), (int, float)) and isinstance(t.get("y"), (int, float))}
+    quedan = []
+    for p in pendientes:
+        objetivo = parse_utc(p.get("objetivo_utc"))
+        if objetivo is None or objetivo < radar_dt - timedelta(minutes=5):
+            continue  # la imagen de ese momento nunca llegó: se descarta
+        if objetivo > radar_dt + timedelta(minutes=5):
+            quedan.append(p)
+            continue
+        real = posiciones.get(str(p.get("track_id")))
+        if real is None:
+            continue  # la tormenta se deshizo: no hay con qué comparar
+        km = math.hypot(real[0] - p["x"], real[1] - p["y"]) * KM_POR_PX
+        registros.append({"track_id": str(p["track_id"]), "horizonte_minutos": p["minutos"],
+                          "objetivo_utc": p["objetivo_utc"], "error_km": round(km, 2)})
+    if salida.get("disponible"):
+        for tid, t in (salida.get("tracks") or {}).items():
+            for h in t.get("horizontes") or []:
+                if h.get("minutos") in HORIZONTES_VERIFICADOS:
+                    quedan.append({"track_id": str(tid), "minutos": h["minutos"], "objetivo_utc": h["timestamp_utc"],
+                                   "x": h["x"], "y": h["y"]})
+    registros = registros[-MAX_REGISTROS:]
+    resumen = {}
+    for m in HORIZONTES_VERIFICADOS:
+        errores = sorted(r["error_km"] for r in registros if r.get("horizonte_minutos") == m)
+        if errores:
+            resumen[str(m)] = {"mediana_km": round(float(np.median(errores)), 1), "muestras": len(errores)}
+    return {"version": VERSION, "ultima_imagen": iso(radar_dt), "resumen": resumen,
+            "pendientes": quedan[-300:], "registros": registros}
+
+
 def main() -> int:
+    tracks: list[dict] | None = None  # sin seguimiento válido no se verifica nada
+    radar_dt = None
     try:
         radar_ts = nf.TIMESTAMP_FILE.read_text(encoding="utf-8").strip()
         radar_dt = parse_utc(radar_ts)
         if radar_dt is None:
             raise RuntimeError("sin imagen de radar")
         estado = json.loads(ESTADO.read_text(encoding="utf-8"))
-        salida = calcular(radar_dt, tracks_actuales(estado, radar_ts))
+        tracks = tracks_actuales(estado, radar_ts)
+        salida = calcular(radar_dt, tracks)
     except Exception as exc:  # nunca corta el ciclo: sigue el predictor viejo
         salida = {"version": VERSION, "disponible": False, "motivo": f"{type(exc).__name__}: {exc}"[:200],
                   "generado_utc": iso(datetime.now(timezone.utc)), "tracks": {}}
@@ -206,6 +257,19 @@ def main() -> int:
     tmp = SALIDA.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(salida, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     tmp.replace(SALIDA)
+    if radar_dt is not None and tracks is not None:
+        try:  # el control nunca corta el ciclo
+            try:
+                previo = json.loads(VERIFICACION.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                previo = {}
+            verif = verificar(previo, radar_dt, tracks, salida)
+            if verif is not previo:
+                tmp = VERIFICACION.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(verif, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                tmp.replace(VERIFICACION)
+        except Exception as exc:
+            print(f"AVISO: control de trayectorias no disponible: {exc}")
     print(f"Trayectorias 5b: disponible={salida.get('disponible')} tormentas={len(salida.get('tracks') or {})} "
           f"{salida.get('motivo') or ''}")
     return 0

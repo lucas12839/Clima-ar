@@ -81,9 +81,12 @@ jobs:
     needs: escuchar
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    concurrency:
-      group: climaar-production-writes
-      cancel-in-progress: false
+    # Fuera de la fila de escritura del Radar y la IA (23/11/2026): esa fila admite
+    # 1 en curso + 1 en espera y el tercero que llega cancela al que espera.
+    # Este paso entraba cada 10 min y podía cancelar un Radar o una IA en espera
+    # (y él mismo quedó cancelado 4 veces el 23/11). Solo escribe su propio
+    # archivo (cwop_actual.json, que nadie más toca), así que alcanza con el
+    # rebase con reintentos de abajo.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -105,12 +108,17 @@ jobs:
             exit 0
           fi
           git commit -m "obs: actualizar estaciones CWOP"
-          for intento in 1 2 3; do
-            git fetch --depth=20 origin main
+          for intento in 1 2 3 4 5 6; do
+            if ! git fetch --depth=20 origin main; then
+              echo "No se pudo bajar main (red) en intento $intento."
+              if [ "$intento" -eq 6 ]; then exit 1; fi
+              sleep $((intento * 5))
+              continue
+            fi
             git rebase origin/main || {
               git rebase --abort || true
               echo "Rebase falló en intento $intento."
-              if [ "$intento" -eq 3 ]; then exit 1; fi
+              if [ "$intento" -eq 6 ]; then exit 1; fi
               sleep 3
               continue
             }
@@ -119,8 +127,8 @@ jobs:
               exit 0
             fi
             echo "Push falló en intento $intento."
-            if [ "$intento" -eq 3 ]; then exit 1; fi
-            sleep 3
+            if [ "$intento" -eq 6 ]; then exit 1; fi
+            sleep $((intento * 3))
           done
 
   siguiente-vuelta:

@@ -31,7 +31,7 @@ El instalador crea el usuario `climaar`, clona en `/opt/Clima-ar`, crea `.venv`,
 Playwright + Chromium, copia `deploy/climaar-detector.service` y lo habilita al arranque.
 
 Parámetros (en el `.service`): `CLIMAAR_DETECTOR_INTERVALO_SEG=30`, `CLIMAAR_REFRESCO_MIN=5`
-(refresco de la IA entre frames), `CLIMAAR_REDESPACHO_MIN=10`. Tras editarlos:
+(refresco de la IA entre frames), `CLIMAAR_REDESPACHO_MIN=6`. Tras editarlos:
 `sudo systemctl daemon-reload && sudo systemctl restart climaar-detector`.
 
 **Reinicio automático:** `Restart=always`, `RestartSec=15`, sin límite de reinicios, y

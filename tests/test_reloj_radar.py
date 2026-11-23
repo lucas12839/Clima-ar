@@ -204,6 +204,20 @@ class DetectorTest(_Base):
         d.tick()
         self.assertEqual(len(self.radar), 2)  # idempotente en el claim
 
+    def test_no_redespacha_con_un_radar_todavia_en_marcha(self):
+        frames = [iso(T0)]
+        d = self.armar(frames, {"v": None})
+        en_marcha = {"v": True}
+        d.radar_activo = lambda: en_marcha["v"]
+        d.tick()
+        self.avanzar(11)
+        self.assertEqual(d.tick().split("+")[0], "en_proceso")
+        self.assertEqual(len(self.radar), 1)  # sin duplicado
+        en_marcha["v"] = False  # el run murió sin procesar
+        self.avanzar(1)
+        self.assertEqual(d.tick(), "despachar")
+        self.assertEqual(len(self.radar), 2)
+
     def test_sinarame_caido_no_detiene_la_inteligencia(self):
         frames = [RuntimeError("SINARAME 503")]
         d = self.armar(frames, {"v": iso(T0)})

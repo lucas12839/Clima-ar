@@ -65,7 +65,9 @@ def _env_float(nombre, defecto):
 
 INTERVALO_SEG = _env_float("CLIMAAR_DETECTOR_INTERVALO_SEG", 30)
 REFRESCO_MIN = _env_float("CLIMAAR_REFRESCO_MIN", 5)
-REDESPACHO_MIN = _env_float("CLIMAAR_REDESPACHO_MIN", 10)
+# 23/11/2026: 10 -> 6 min. El Radar tarda ~1,5 min; si en 6 min el frame no
+# quedó procesado y no hay ningún Radar en marcha, se vuelve a pedir.
+REDESPACHO_MIN = _env_float("CLIMAAR_REDESPACHO_MIN", 6)
 ACTIVIDAD_MAX_MIN = _env_float("CLIMAAR_ACTIVIDAD_MAX_MIN", 60)
 
 
@@ -266,6 +268,7 @@ class Detector:
         despachar_refresco,
         hay_actividad,
         reloj=re_.ahora_utc,
+        radar_activo=None,
         estado_path=ESTADO_LOCAL,
         refresco_min=REFRESCO_MIN,
         redespacho_min=REDESPACHO_MIN,
@@ -275,6 +278,9 @@ class Detector:
         self.despachar_radar = despachar_radar
         self.despachar_refresco = despachar_refresco
         self.hay_actividad = hay_actividad
+        # Un redespacho con un Radar todavía en marcha o en espera solo
+        # duplicaría el run (y podría cancelar una IA en espera).
+        self.radar_activo = radar_activo or (lambda: False)
         self.reloj = reloj
         self.estado_path = Path(estado_path)
         self.refresco_min = refresco_min
@@ -332,6 +338,13 @@ class Detector:
                 self.redespacho_min,
             )
             accion = decision
+            es_redespacho = re_.parse_utc(est.get("dispatched_radar_timestamp")) == re_.parse_utc(nuevo)
+            if decision == "despachar" and es_redespacho:
+                try:
+                    if self.radar_activo():
+                        decision = accion = "en_proceso"
+                except Exception:
+                    pass  # sin respuesta de GitHub: se redespacha (es idempotente)
             if decision == "despachar":
                 try:
                     self.despachar_radar(nuevo)
@@ -458,6 +471,7 @@ def main(argv=None):
         despachar_radar=despachar_radar,
         despachar_refresco=despachar_refresco,
         hay_actividad=hay_actividad,
+        radar_activo=(lambda: gh.activos(WORKFLOW_RADAR, max_min=30) > 0) if not a.sin_despachar else None,
         redespacho_min=REDESPACHO_MIN,
     )
 
