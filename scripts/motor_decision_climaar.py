@@ -378,6 +378,30 @@ def rayos_para(rayos, lat, lon):
     return salida, propio
 
 
+def radar_movido(loc_id):
+    """Radar viejo movido hasta ahora por el nowcast (nowcast_capas.json), si tiene <= 90 min."""
+    capas = load(CAPAS) if CAPAS.exists() else {}
+    if not isinstance(capas, dict) or not capas.get("disponible"):
+        return None
+    try:
+        gen = datetime.fromisoformat(str(capas.get("generado_utc")).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if gen.tzinfo is None:
+        gen = gen.replace(tzinfo=timezone.utc)
+    desde_gen = (datetime.now(timezone.utc) - gen).total_seconds() / 60.0
+    edad = finite(capas.get("edad_radar_min"))
+    # La lluvia se movió hasta la hora en que se generó: más de 15 min después ya no vale.
+    if edad is None or not (-1.0 <= desde_gen <= 15.0):
+        return None
+    mov = (((capas.get("localidades") or {}).get(loc_id) or {}).get("radar_movido_a_ahora")) or {}
+    if "mm_h_medio" not in mov:
+        return None
+    # Edad calculada al usarla (no la guardada).
+    return {"dbz_p75": mov.get("dbz_p75"), "mm_h_medio": mov.get("mm_h_medio"),
+            "edad_min": round(edad + desde_gen, 1)}
+
+
 def topes_por_localidad():
     """Topes GOES-19 (canal 13) por localidad, si la imagen tiene <= 30 min."""
     goes = load(GOES) if GOES.exists() else {}
@@ -435,9 +459,11 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
         r_loc, propio = rayos_para(rayos, d.get("lat"), d.get("lon"))
         if loc_id in propio and isinstance(propio[loc_id], dict):
             r_loc.update(propio[loc_id])
+        radar_al_dia = bool(radar_ok and sincronizado and not d.get("sin_radar"))
         ev = fen.evaluar(
             radar={
-                "disponible": bool(radar_ok and sincronizado and not d.get("sin_radar")),
+                "disponible": radar_al_dia,
+                "movido": None if radar_al_dia else radar_movido(loc_id),
                 "dbz_ciudad": finite(d.get("dbz_p75")),
                 "dbz_pico": finite(d.get("dbz_pico")),
                 "mm_h_area": finite(d.get("mm_h_medio")),
