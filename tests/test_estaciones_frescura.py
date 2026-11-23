@@ -47,3 +47,27 @@ class ObservationFreshnessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_colector_bcp_en_paralelo_reintenta_y_mantiene_el_orden(tmp_path, monkeypatch):
+    import json as _json
+    import scripts.estaciones.colector_bcp as cb
+    llamadas = {}
+
+    def falso(sid, name):
+        llamadas[sid] = llamadas.get(sid, 0) + 1
+        if sid == 1 and llamadas[sid] == 1:
+            raise TimeoutError("corte de red")
+        if sid == 15:
+            raise TimeoutError("caída")
+        return {"ok": True, "station_id": sid, "nombre": name, "estado": "valida", "fresh": True}
+
+    monkeypatch.setattr(cb, "collect", falso)
+    monkeypatch.setattr(cb, "OUTPUT", tmp_path / "bcp.json")
+    monkeypatch.setattr(cb.time, "sleep", lambda s: None)
+    cb.main()
+    d = _json.loads((tmp_path / "bcp.json").read_text())
+    assert [s["station_id"] for s in d["stations"]] == list(cb.STATIONS)
+    assert llamadas[1] == 2 and d["stations"][0]["estado"] == "valida"   # se recuperó
+    caida = [s for s in d["stations"] if s["station_id"] == 15][0]
+    assert caida["estado"] == "error" and llamadas[15] == 2

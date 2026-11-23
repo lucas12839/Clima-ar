@@ -296,3 +296,31 @@ def test_restos_no_vuelven_a_guardarse():
     for wf in ("climaar-intelligence.yml", "probar-radar-smn.yml"):
         texto = (ROOT / ".github/workflows" / wf).read_text(encoding="utf-8")
         assert "rm -f data/radar/status.json data/radar/latest.png data/radar/radar_features_rma10.csv" in texto
+
+
+def test_salud_detecta_resultado_que_no_se_actualizo_y_guarda_desde_cuando(tmp_path, monkeypatch):
+    """Re-auditoría 23/11/2026: un paso en paralelo que falla deja su archivo viejo."""
+    import json as _json
+    import shutil as _sh
+    import salud_cadena as sc
+    base = tmp_path / "data"
+    _sh.copytree(sc.DATA, base, ignore=_sh.ignore_patterns("historico", "*.png", "historial"))
+    monkeypatch.setattr(sc, "DATA", base)
+    gen = _json.loads((base / "ia/salud_cadena.json").read_text())["generado_utc"]
+    ahora = datetime.fromisoformat(gen)  # el momento del ciclo guardado
+    r1 = sc.revisar(ahora=ahora, latido=None)
+    frame = r1["frame_revisado"]
+    assert r1["sin_actualizar_en_el_ciclo"] == [], r1["sin_actualizar_en_el_ciclo"]
+    p = base / "ia/celdas_localidad.json"
+    d = _json.loads(p.read_text())
+    d["radar_timestamp"] = "2026-01-01T00:00:00Z"
+    p.write_text(_json.dumps(d))
+    r2 = sc.revisar(ahora=ahora, latido=None, previo=r1)
+    assert "celdas_localidad.json" in r2["sin_actualizar_en_el_ciclo"]
+    clave = [k for k in r2["alertas_desde"] if "No se actualizaron" in k][0]
+    r3 = sc.revisar(ahora=ahora + timedelta(minutes=5), latido=None, previo=r2)
+    # un paso que no se volvió a correr (archivo sin regenerar) también se ve
+    r4 = sc.revisar(ahora=ahora + timedelta(minutes=30), latido=None, previo=r3)
+    assert "nowcast_capas.json" in r4["sin_actualizar_en_el_ciclo"]
+    assert r3["alertas_desde"][clave] == r2["alertas_desde"][clave]  # sigue desde la primera vez
+    assert frame

@@ -30,6 +30,21 @@ Revisión de punta a punta con las corridas reales de GitHub. Lo que se encontr�
   `/etc/systemd/system/climaar-detector.service` (o dejarlo: con 10 también funciona).
 - **Para decidir**: Pigüé llega tarde seguido (20-70 min) y queda afuera en casi la mitad de los ciclos.
 
+## Re-auditoría de la cadena (23/11/2026, 18:00 hora de Argentina)
+Con las 1000 corridas reales de GitHub desde el 22/11 y los avisos de las corridas "exitosas":
+- **Alertas que nadie veía**: el control de salud escribía alertas en `salud_cadena.json` (estaciones
+  sin datos: 147 ciclos; VPS sin latido: 36) y solo quedaban ahí. Ahora guarda desde cuándo sigue cada
+  una y la vigilancia abre el aviso al celular si sigue más de 20 min.
+- **El Radar se contaba a sí mismo como "frame esperando"** (la lista de GitHub tarda en actualizarse)
+  y no disparaba la IA: 1 vez en 60 (frame 15:50, 8,6 min tarde). Arreglado.
+- **Pasos "en paralelo" que fallan en silencio**: el control de salud revisa que los 10 resultados del
+  ciclo se hayan regenerado y sean de la misma imagen. Aplicado a 238 ciclos pasados: ninguno falló.
+- Estaciones BCP: todas a la vez y con un reintento (antes de a una: 26 s por ciclo).
+- Revisado y bien: flujo óptico "no disponible" = sin ecos o radar viejo (correcto); satélite
+  sincronizado con la imagen; una sola hora de radar en todos los archivos; un solo escritor por
+  archivo de estado; numeración y seguimiento continuos.
+- No depende de nosotros: SINARAME no publicó las imágenes de 11:30 y 16:40 (error 404).
+
 ## Decisiones de Lucas
 - Sin modelos entrenados, todo por reglas y física (ver `CLAUDE.md`).
 - **Sin alertas de colores ni avisos a corto plazo.** Los avisos oficiales son del SMN.

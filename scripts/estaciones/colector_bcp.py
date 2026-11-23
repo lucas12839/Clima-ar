@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import time
 import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -158,19 +159,29 @@ def collect(sid, name):
 def main():
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
-    stations = []
+    # Re-auditoría 23/11/2026: de a una tardaba ~26 s por ciclo y un solo corte
+    # de red dejaba esa estación afuera. Ahora todas a la vez y con un reintento.
+    from concurrent.futures import ThreadPoolExecutor
 
-    for sid, name in STATIONS.items():
-        try:
-            stations.append(collect(sid, name))
-        except Exception as e:
-            stations.append({
-                "ok": False,
-                "station_id": sid,
-                "nombre": name,
-                "estado": "error",
-                "error": str(e),
-            })
+    def una(item):
+        sid, name = item
+        ultimo = None
+        for intento in range(2):
+            try:
+                return collect(sid, name)
+            except Exception as e:  # noqa: PERF203
+                ultimo = e
+                time.sleep(2)
+        return {
+            "ok": False,
+            "station_id": sid,
+            "nombre": name,
+            "estado": "error",
+            "error": str(ultimo),
+        }
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        stations = list(pool.map(una, STATIONS.items()))  # mismo orden que STATIONS
 
     result = {
         "ok": True,
