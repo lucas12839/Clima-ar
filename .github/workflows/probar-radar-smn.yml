@@ -1171,9 +1171,11 @@ jobs:
           esperando=0
           for estado in queued pending waiting requested; do
             # Solo runs de la última hora: GitHub deja runs "fantasma" en
-            # queued que no se pueden cancelar (7/11/2026).
+            # queued que no se pueden cancelar (7/11/2026). Y nunca este mismo
+            # run: la lista de GitHub tarda en actualizarse y a veces lo sigue
+            # mostrando "en cola" (23/11 19:07: la IA del frame se salteó).
             n="$(gh api "repos/$GH_REPO/actions/workflows/probar-radar-smn.yml/runs?status=$estado&per_page=30" \
-              --jq '[.workflow_runs[] | select((now - (.created_at | fromdateiso8601)) < 3600)] | length' \
+              --jq '[.workflow_runs[] | select((now - (.created_at | fromdateiso8601)) < 3600 and .id != ($ENV.RADAR_RUN_ID | tonumber))] | length' \
               2>/dev/null || echo 0)"
             esperando=$((esperando + n))
           done

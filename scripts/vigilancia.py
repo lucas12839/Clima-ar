@@ -17,6 +17,8 @@ externo (docs/RELOJ_EXTERNO.md). Revisa:
 - edad del radar en main;
 - respaldo de GitHub: si sus últimas corridas fallan;
 - reloj encadenado de CWOP: si se cortó, lo vuelve a lanzar;
+- alertas del control de salud de la cadena que siguen más de 20 min (antes
+  quedaban escritas en salud_cadena.json y nadie las veía: re-auditoría 23/11);
 - la IA (Intelligence): que analice el último radar y que no falle seguido
   (23/11/2026: 4 imágenes quedaron sin analizar por un error y nadie avisó);
 - reloj externo (cron-job.org): si venía llamando y dejó de llamar.
@@ -52,6 +54,7 @@ EXTERNO_MIN_LLAMADAS_DIA = 10
 EXTERNO_MAX_MIN = 30.0
 IA_ATRASO_MAX_MIN = 15.0       # la IA tarda ~2 min después del radar; refresca cada 5
 IA_FALLAS = 2
+SALUD_PERSISTENTE_MIN = 20.0
 
 
 def parse(texto) -> datetime | None:
@@ -78,7 +81,8 @@ def hora_arg(t: datetime) -> str:
 # --------------------------------------------------------------------------
 def revisar(ahora: datetime, latido: str | None, info: dict | None, radar_ts: str | None,
             respaldo: list[dict], cwop: list[dict], externo: list[dict] | None = None,
-            ia: dict | None = None, ia_corridas: list[dict] | None = None) -> list[dict[str, str]]:
+            ia: dict | None = None, ia_corridas: list[dict] | None = None,
+            salud: dict | None = None) -> list[dict[str, str]]:
     """Problemas encontrados: [{"clave", "texto"}]. La clave sirve para saber si
     el problema es el mismo de antes (no se repite el aviso)."""
     problemas = []
@@ -165,6 +169,19 @@ def revisar(ahora: datetime, latido: str | None, info: dict | None, radar_ts: st
             problemas.append({"clave": "ia_atrasada", "texto":
                 f"La IA está atrasada: {detalle}. Ver las últimas corridas de "
                 "\"ClimaAR Intelligence Central\" en Actions."})
+    # Alertas del control de salud que siguen ------------------------------------
+    if isinstance(salud, dict):
+        desde = salud.get("alertas_desde") or {}
+        for texto in salud.get("alertas") or []:
+            clave, hace = None, None
+            for c, inicio in desde.items():
+                if _misma_alerta(c, texto):
+                    clave = c
+                    hace = minutos(parse(inicio), ahora)
+                    break
+            if clave is not None and hace is not None and hace >= SALUD_PERSISTENTE_MIN:
+                problemas.append({"clave": "salud_" + _corta(clave), "texto":
+                    f"Control de salud (hace {hace:.0f} min): {texto}"})
     corridas_ia = [r for r in (ia_corridas or []) if r.get("status") == "completed"
                    and r.get("conclusion") in ("success", "failure")][:IA_FALLAS]
     if len(corridas_ia) == IA_FALLAS and all(r.get("conclusion") == "failure" for r in corridas_ia):
@@ -172,6 +189,17 @@ def revisar(ahora: datetime, latido: str | None, info: dict | None, radar_ts: st
             f"Las últimas {IA_FALLAS} corridas de la IA (Intelligence) terminaron con error: "
             "las imágenes de radar quedan sin analizar."})
     return problemas
+
+
+def _misma_alerta(clave: str, texto: str) -> bool:
+    import re
+    return re.sub(r"[0-9]+(?:[.,][0-9]+)?", "N", texto)[:90] == clave
+
+
+def _corta(clave: str) -> str:
+    """Clave estable y corta (va en un comentario HTML del aviso)."""
+    import hashlib
+    return hashlib.sha1(clave.encode("utf-8")).hexdigest()[:10]
 
 
 def cuerpo(problemas: list[dict], ahora: datetime) -> str:
@@ -259,8 +287,12 @@ def main() -> int:
         except (OSError, ValueError, AttributeError):
             ia = {}
         ia_corridas = gh.corridas("climaar-intelligence.yml", 6)
+        try:
+            salud = json.loads((BASE / "data" / "ia" / "salud_cadena.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            salud = None
         problemas = revisar(ahora, os.environ.get("CLIMAAR_DETECTOR_LATIDO"), info, radar_ts, respaldo, cwop,
-                            externo, ia, ia_corridas)
+                            externo, ia, ia_corridas, salud)
         if any(p["clave"] == "reloj_cwop" for p in problemas):
             try:
                 gh.api("POST", "actions/workflows/climaar-cwop.yml/dispatches", {"ref": "main"})

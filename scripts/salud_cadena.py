@@ -64,6 +64,42 @@ def leer(path: Path) -> Any:
         return None
 
 
+# Resultados de cada ciclo y dónde dicen de qué imagen de radar son. Los pasos
+# "en paralelo" nunca cortan el ciclo: si uno falla, su archivo queda de una
+# imagen vieja y antes nadie se enteraba (re-auditoría 23/11/2026).
+# Atrasado = no se volvió a escribir en este ciclo (marca de generación vieja) o
+# dice ser de otra imagen. Sin hora de radar (p. ej. sin ecos) no es atraso.
+SINCRONIA_CICLO = (
+    ("ia/ambiente_satelite.json", ("frame_radar_utc",), "generado_utc"),
+    ("ia/celdas_localidad.json", ("radar_timestamp",), "generado_utc"),
+    ("ia/estaciones/alarma_llegada.json", ("movimiento", "radar_utc"), "generado_utc"),
+    ("ia/formacion_tormentas.json", ("frame_radar_utc",), "generado_utc"),
+    ("ia/indicios_severos.json", ("radar_timestamp",), "generado_utc"),
+    ("ia/puntaje_tormentas.json", ("frame_radar_utc",), "generado_utc"),
+    ("ia/goes19_intelligence.json", ("reference_frame", "frame_actual_utc"), "generated_at_utc"),
+    ("radar/nowcast_capas.json", ("radar_timestamp",), "generado_utc"),
+    ("radar/nowcast_flujo.json", ("radar_timestamp",), "generado_utc"),
+    ("radar/trayectorias_capas.json", ("radar_timestamp",), "generado_utc"),
+)
+GENERADO_MAX_MIN = 15.0  # el ciclo de la IA dura ~2 min
+# Una alerta que sigue igual este tiempo pasa a la vigilancia (aviso al celular).
+ALERTA_PERSISTENTE_MIN = 20.0
+
+
+def _clave_alerta(texto: str) -> str:
+    """Misma alerta aunque cambien los números (edades, minutos)."""
+    import re
+    return re.sub(r"[0-9]+(?:[.,][0-9]+)?", "N", texto)[:90]
+
+
+def _dato(d: Any, ruta: tuple[str, ...]) -> Any:
+    for k in ruta:
+        if not isinstance(d, dict):
+            return None
+        d = d.get(k)
+    return d
+
+
 def revisar(ahora: datetime | None = None, latido: str | None = None,
             previo: dict | None = None, info_detector: dict | None = None) -> dict[str, Any]:
     ahora = ahora or datetime.now(timezone.utc)
@@ -193,6 +229,23 @@ def revisar(ahora: datetime | None = None, latido: str | None = None,
         if amb.get("disponible") is False:
             alertas.append(f"El ambiente del satélite no se pudo leer: {amb.get('motivo')}.")
 
+    # Todos los resultados del ciclo son de la misma imagen de radar -------------
+    frame_dt = frescura.parse_utc(frame) if frame else None
+    if frame_dt is not None:
+        atrasados = []
+        for rel, ruta, campo_gen in SINCRONIA_CICLO:
+            contenido = leer(DATA / rel)
+            if not isinstance(contenido, dict):
+                continue  # todavía no existe (aparece con la primera tormenta)
+            ts = frescura.parse_utc(_dato(contenido, ruta))
+            gen = frescura.parse_utc(contenido.get(campo_gen))
+            viejo = gen is None or (ahora - gen).total_seconds() / 60.0 > GENERADO_MAX_MIN
+            if viejo or (ts is not None and ts != frame_dt):
+                atrasados.append(rel.split("/")[-1])
+        datos["sin_actualizar_en_el_ciclo"] = atrasados
+        if atrasados:
+            alertas.append("No se actualizaron con la imagen de radar del ciclo: " + ", ".join(atrasados) + ".")
+
     # Tamaño de lo que se guarda en cada ciclo -----------------------------------
     tamanos = {}
     for rel in ARCHIVOS_CICLO:
@@ -204,10 +257,18 @@ def revisar(ahora: datetime | None = None, latido: str | None = None,
     if grandes:
         alertas.append("Archivos de cada ciclo muy pesados: " + ", ".join(grandes) + ".")
 
+    # Desde cuándo sigue cada alerta (la vigilancia avisa las que persisten).
+    previas = (previo or {}).get("alertas_desde") or {}
+    desde = {}
+    for a in alertas:
+        clave = _clave_alerta(a)
+        desde[clave] = previas.get(clave) or ahora.isoformat()
+
     return {
         "version": VERSION,
         "en_paralelo": True,
         "generado_utc": ahora.isoformat(),
+        "alertas_desde": desde,
         "estado": "ok" if not alertas else "con_alertas",
         "alertas": alertas,
         **datos,

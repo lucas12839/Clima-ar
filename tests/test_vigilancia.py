@@ -134,3 +134,34 @@ class IAAtrasadaTest(unittest.TestCase):
         bien = [{"status": "completed", "conclusion": "cancelled"}, {"status": "completed", "conclusion": "failure"},
                 {"status": "completed", "conclusion": "success"}]
         self.assertEqual(self.r({"radar": SANO["radar_ts"], "utc": hace(2)}, bien), set())
+
+
+class SaludPersistenteTest(unittest.TestCase):
+    """Re-auditoría 23/11/2026: alertas de salud escritas durante horas y nadie las veía."""
+
+    def r(self, salud):
+        d = SANO
+        return [p for p in vg.revisar(AHORA, d["latido"], d["info"], d["radar_ts"], d["respaldo"],
+                                      d["cwop"], [], None, None, salud) if p["clave"].startswith("salud_")]
+
+    def test_alerta_nueva_todavia_no_avisa(self):
+        texto = "Ninguna estación BCP entra."
+        self.assertEqual(self.r({"alertas": [texto], "alertas_desde": {texto: hace(5)}}), [])
+
+    def test_alerta_que_sigue_avisa_con_clave_estable(self):
+        a1 = "No se actualizaron con la imagen de radar del ciclo: celdas_localidad.json."
+        import salud_cadena
+        c = salud_cadena._clave_alerta(a1)
+        p1 = self.r({"alertas": [a1], "alertas_desde": {c: hace(25)}})
+        self.assertEqual(len(p1), 1)
+        # mismo problema con otros números: misma clave (no se repite el aviso)
+        a2 = "La imagen de radar tiene más de 47 min."
+        a3 = "La imagen de radar tiene más de 52 min."
+        c2 = salud_cadena._clave_alerta(a2)
+        self.assertEqual(c2, salud_cadena._clave_alerta(a3))
+        k2 = self.r({"alertas": [a2], "alertas_desde": {c2: hace(30)}})[0]["clave"]
+        k3 = self.r({"alertas": [a3], "alertas_desde": {c2: hace(40)}})[0]["clave"]
+        self.assertEqual(k2, k3)
+
+    def test_sin_salud_no_falla(self):
+        self.assertEqual(self.r(None), [])
