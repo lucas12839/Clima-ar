@@ -236,6 +236,7 @@ def indicios(t: Trayectoria, ancho: int, km_px: float, viento_medio: tuple[float
     if mov is not None:
         este, norte = mov[0] * km_px * 60.0, -mov[1] * km_px * 60.0
         salida["velocidad_kmh"] = round(math.hypot(este, norte), 1)
+        salida["direccion_hacia_grados"] = round(math.degrees(math.atan2(este, norte)) % 360.0, 1)
         if viento_medio is not None and cizalladura is not None:
             d = desvio_kmh((este, norte), viento_medio, cizalladura, par["hemisferio"])
             if d is not None:
@@ -269,7 +270,8 @@ def ambiente(viento: dict[str, Any]) -> tuple[tuple[float, float] | None, tuple[
 
 
 # --------------------------------------------------------------------------
-# Producción (EN PARALELO: no cambia lo que se ve)
+# Producción: el eco en arco SE VE en el viento de cada localidad (decisión del 23/11/2026,
+# motor_decision_climaar.arco_para); el resto queda en paralelo.
 # --------------------------------------------------------------------------
 # Decidido con la simulación de EE. UU. (docs/ETAPA_G.md): solo el ECO EN ARCO aporta de
 # verdad. El desvío de supercelda y la duración quedan calculados en el módulo pero no se
@@ -297,8 +299,8 @@ def _produccion(ahora=None) -> dict[str, Any]:
     ahora = ahora or datetime.now(timezone.utc)
     ts = nf.TIMESTAMP_FILE.read_text(encoding="utf-8").strip() if nf.TIMESTAMP_FILE.exists() else None
     radar_dt = nf.parse_utc(ts) if ts else None
-    salida: dict[str, Any] = {"version": "indicios-severos-1.0", "en_paralelo": True,
-                              "modo": "en_paralelo_no_se_muestra", "generado_utc": nf.iso(ahora),
+    salida: dict[str, Any] = {"version": "indicios-severos-1.0", "en_paralelo": False,
+                              "modo": "se_muestra_eco_en_arco", "generado_utc": nf.iso(ahora),
                               "radar_timestamp": ts, "parametros": ARCO_PRODUCCION, "tormentas": []}
     if radar_dt is None:
         return {**salida, "disponible": False, "motivo": "SIN_RADAR_ACTUAL"}
@@ -337,7 +339,8 @@ def _produccion(ahora=None) -> dict[str, Any]:
         from rma10_features import pixel_to_latlon
         lat, lon = pixel_to_latlon(tr.ultima.x, tr.ultima.y, ancho, ancho)
         salida["tormentas"].append({k: r.get(k) for k in ("arco", "largo_km", "curvatura", "velocidad_kmh",
-                                                          "pico_dbz", "area_km2", "duracion_min")}
+                                                          "direccion_hacia_grados", "pico_dbz", "area_km2",
+                                                          "duracion_min")}
                                    | {"lat": round(lat, 4), "lon": round(lon, 4)})
     salida["disponible"] = True
     salida["arcos"] = sum(1 for x in salida["tormentas"] if x["arco"])

@@ -37,7 +37,7 @@ class EscalaTest(unittest.TestCase):
         self.assertEqual(r["minutos_hasta_llegada"], 20)
 
     def test_viento_e_inundacion_son_indicios_en_evaluacion(self):
-        r = base(dbz_ciudad=36, dbz_30km=50, velocidad_kmh=75, coherencia=0.95, lluvia_3h_mm=40)
+        r = base(dbz_ciudad=36, dbz_30km=50, lluvia_3h_mm=40, arco={"minutos": 0, "velocidad_kmh": 75})
         r = ct.mantener_amenazas(r, None, "2026-11-19T10:00:00+00:00", None)
         self.assertLess(r["nivel"], 8)
         self.assertEqual(r["indicios_en_evaluacion"], ["inundacion", "viento"])
@@ -45,6 +45,15 @@ class EscalaTest(unittest.TestCase):
     def test_linea_rapida_lejana_no_cuenta(self):
         r = base(dbz_ciudad=0, dbz_30km=10, dbz_region=55, velocidad_kmh=80, coherencia=0.95)
         self.assertNotIn("viento", r["amenazas"])
+
+    def test_linea_rapida_sin_arco_no_es_amenaza(self):
+        r = base(dbz_ciudad=36, dbz_30km=50, velocidad_kmh=80, coherencia=0.95)
+        self.assertNotIn("viento", r["amenazas"])
+
+    def test_arco_llegando_es_amenaza_de_viento(self):
+        r = base(dbz_ciudad=0, dbz_llegada=45, eta_llegada_min=25, arco={"minutos": 25, "velocidad_kmh": 80})
+        self.assertIn("viento", r["amenazas"])
+        self.assertIn("25 min", r["amenazas"]["viento"]["razon"])
 
     def test_amenaza_se_mantiene_40_min(self):
         r1 = ct.mantener_amenazas(base(dbz_ciudad=58), None, "2026-11-19T10:00:00+00:00", None)
