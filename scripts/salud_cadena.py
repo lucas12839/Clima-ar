@@ -229,6 +229,25 @@ def revisar(ahora: datetime | None = None, latido: str | None = None,
         if amb.get("disponible") is False:
             alertas.append(f"El ambiente del satélite no se pudo leer: {amb.get('motivo')}.")
 
+    # Pronóstico europeo (Open-Meteo): se baja cada 30 min; si no responde se usa
+    # el anterior hasta 9 h. Pasado eso se corta todo el ciclo: avisar antes.
+    amb = leer(DATA / "meteorologia/ambiente_futuro.json")
+    if isinstance(amb, dict):
+        edad_ecmwf = frescura.edad_min(amb.get("actualizado_utc"), ahora)
+        datos["ecmwf_edad_min"] = round(edad_ecmwf, 1) if edad_ecmwf is not None else None
+        if edad_ecmwf is None or edad_ecmwf > 90.0:
+            alertas.append(f"El pronóstico europeo (Open-Meteo) no se actualiza hace "
+                           f"{(edad_ecmwf or 0) / 60.0:.1f} h: se usa el anterior (sirve hasta 9 h).")
+
+    # Calibración de la lluvia con el SMN (corre 2 veces por día) ---------------
+    cal_smn = leer(DATA / "ia/calibracion/factor_lluvia_smn.json")
+    if isinstance(cal_smn, dict):
+        edad_cal = frescura.edad_min(cal_smn.get("actualizado_utc"), ahora)
+        datos["calibracion_smn_edad_h"] = round(edad_cal / 60.0, 1) if edad_cal is not None else None
+        if edad_cal is None or edad_cal > 3 * 24 * 60:
+            alertas.append("La calibración de la lluvia con el SMN no corre hace más de 3 días "
+                           "(climaar-calibracion.yml).")
+
     # Todos los resultados del ciclo son de la misma imagen de radar -------------
     frame_dt = frescura.parse_utc(frame) if frame else None
     if frame_dt is not None:

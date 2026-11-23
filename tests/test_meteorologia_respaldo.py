@@ -25,10 +25,17 @@ class RespaldoEcmwfTest(unittest.TestCase):
         self.assertAlmostEqual(info["edad_minutos"], 40, delta=1)
 
     def test_rechaza_pronostico_viejo(self):
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(mf, "AMBIENTE_FILE", self.escribir(d, 400)):
+        # 23/11/2026: se acepta hasta 9 h (quedan 3 h de pronóstico por delante).
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(mf, "AMBIENTE_FILE", self.escribir(d, 600)):
             puntos, info = mf.cargar_respaldo_ecmwf("timeout")
         self.assertIsNone(puntos)
         self.assertFalse(info["usado"])
+
+    def test_acepta_pronostico_de_hasta_9_horas(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(mf, "AMBIENTE_FILE", self.escribir(d, 400)):
+            puntos, info = mf.cargar_respaldo_ecmwf("timeout")
+        self.assertIsNotNone(puntos)
+        self.assertTrue(info["usado"])
 
     def test_sin_archivo(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(mf, "AMBIENTE_FILE", Path(d) / "no.json"):

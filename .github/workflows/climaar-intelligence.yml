@@ -540,7 +540,10 @@ jobs:
           # Desde el 20/11/2026 las proyecciones salen de acá (aciertan más que el
           # predictor viejo, herramientas/comparar_trayectorias.py). Falla segura:
           # sin este archivo, el paso siguiente usa el predictor viejo.
-          python scripts/trayectorias_capas.py
+          # Re-auditoría 23/11/2026: un fallo grave (memoria, cuelgue) también se
+          # ataja; el archivo queda de otra imagen y el paso siguiente lo descarta.
+          timeout 120 python scripts/trayectorias_capas.py \
+            || echo "::warning::Trayectorias del 5b no disponibles: sigue el predictor viejo."
 
       - name: Conectar evolución con trayectoria
         run: |
@@ -716,8 +719,10 @@ jobs:
           # Punto 5b. Corre antes de la decisión: sus llegadas a la zona de cada
           # localidad (hasta 10 km) son las que se ven desde el 20/11/2026.
           # Falla segura: sin él, la decisión usa el flujo óptico.
-          python scripts/nowcast_capas.py
-          test -s data/radar/nowcast_capas.json
+          # Re-auditoría 23/11/2026: un fallo grave (memoria, cuelgue) también se
+          # ataja; la decisión descarta un archivo de otra imagen y usa el flujo óptico.
+          timeout 240 python scripts/nowcast_capas.py \
+            || echo "::warning::Nowcast en capas 5b no disponible: las llegadas salen del flujo óptico."
 
       - name: Tormenta sobre cada localidad, celda por celda con rayos (la tormenta eléctrica encima se ve; el resto en paralelo)
         run: |
@@ -745,14 +750,14 @@ jobs:
           set -euo pipefail
 
           # Punto 4 del plan. Falla segura: el script nunca corta el ciclo.
-          python scripts/puntaje_gravedad.py
+          timeout 120 python scripts/puntaje_gravedad.py || echo "::warning::Puntaje de gravedad no disponible en este ciclo."
 
       - name: Tormentas en formación antes del radar (en paralelo, no cambia lo que se ve)
         run: |
           set -euo pipefail
 
           # Punto 5 del plan. Falla segura: el script nunca corta el ciclo.
-          python scripts/aviso_formacion.py
+          timeout 120 python scripts/aviso_formacion.py || echo "::warning::Tormentas en formación no disponibles en este ciclo."
 
       - name: Modelos por localidad, WRF del SMN y ensambles (en paralelo, no cambia lo que se ve)
         run: |

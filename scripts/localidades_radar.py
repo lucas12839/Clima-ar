@@ -33,6 +33,7 @@ HISTORIAL_PUNTOS = ROOT / "data" / "radar" / "historial_puntos_control.json"
 CATALOGO_ESTACIONES = ROOT / "data" / "ia" / "estaciones" / "catalogo_estaciones.json"
 CALIBRACION_INICIAL = ROOT / "config" / "calibracion_lluvia.json"
 CALIBRACION_AUTO = ROOT / "data" / "ia" / "calibracion" / "factor_lluvia.json"
+CALIBRACION_SMN = ROOT / "data" / "ia" / "calibracion" / "factor_lluvia_smn.json"
 RADIO_PUNTO_KM = 3.0
 RADAR_CENTRO = (-38.7342, -62.1654)
 ALCANCE_KM = 240.0
@@ -74,12 +75,16 @@ def factor_lluvia() -> dict[str, Any]:
     except Exception:
         base = {"factor": 1.0, "minimo": 0.25, "maximo": 2.0}
     salida = {"factor": float(base.get("factor", 1.0)), "fuente": "inicial"}
-    try:
-        auto = json.loads(CALIBRACION_AUTO.read_text(encoding="utf-8"))
-        if auto.get("valido") and auto.get("factor") is not None:
-            salida = {"factor": float(auto["factor"]), "fuente": "estaciones"}
-    except Exception:
-        pass
+    # Orden (23/11/2026): estaciones en vivo (hora por hora, más preciso) ->
+    # lluvia oficial del SMN cada 6 h (calibracion_smn.py) -> inicial.
+    for path, fuente in ((CALIBRACION_AUTO, "estaciones"), (CALIBRACION_SMN, "smn")):
+        try:
+            auto = json.loads(path.read_text(encoding="utf-8"))
+            if auto.get("valido") and auto.get("factor") is not None:
+                salida = {"factor": float(auto["factor"]), "fuente": fuente}
+                break
+        except Exception:
+            continue
     salida["factor"] = min(max(salida["factor"], float(base.get("minimo", 0.25))), float(base.get("maximo", 2.0)))
     return salida
 
