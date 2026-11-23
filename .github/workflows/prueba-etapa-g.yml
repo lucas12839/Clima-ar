@@ -49,5 +49,5 @@ jobs:
       - name: Correr el caso
         run: |
           C=$(python -c 'import json,sys;print(json.dumps(json.load(open("casos.json"))[${{ matrix.i }}]))')
-          python herramientas/simular_indicios_eeuu.py caso "$C" --salida r.json
+          python herramientas/simular_indicios_eeuu.py caso "$C" --salida r.json --envolvente 40
           echo "RESULTADO_G ${{ matrix.i }} $(gzip -c r.json | base64 -w0)"

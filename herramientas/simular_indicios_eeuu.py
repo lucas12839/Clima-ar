@@ -300,6 +300,7 @@ def main(argv=None) -> int:
     b = sub.add_parser("caso")
     b.add_argument("caso")
     b.add_argument("--salida", required=True)
+    b.add_argument("--envolvente", type=float, default=None, help="umbral de la envolvente (dBZ)")
     args = ap.parse_args(argv)
     if args.cmd == "casos":
         casos = elegir_casos([int(x) for x in args.anios.split(",")], args.cantidad)
@@ -309,7 +310,7 @@ def main(argv=None) -> int:
             print(c)
         return 0
     caso = json.loads(args.caso)
-    res = correr_caso(caso)
+    res = correr_caso(caso, {"umbral_envolvente_dbz": args.envolvente} if args.envolvente else None)
     Path(args.salida).write_text(json.dumps(res, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(caso["dia"], caso["centro"], len(res["registros"]), "registros")
     return 0
