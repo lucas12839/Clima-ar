@@ -9,6 +9,8 @@ vuelvan a quedar escondidas:
 - reloj CWOP: si su último dato es viejo, la cadena encadenada se cortó;
 - latido del detector del VPS: si está apagado, se está funcionando con el
   respaldo de GitHub;
+- clave de GitHub del VPS por vencer y actualización automática del VPS
+  (etapa C; el aviso al celular lo da scripts/vigilancia.py);
 - informe del aeropuerto (SAZB) y edad del radar;
 - numeración de tormentas: nunca debe volver atrás;
 - predicción por tormenta: un error típico enorme a 10 min indica que se
@@ -61,7 +63,7 @@ def leer(path: Path) -> Any:
 
 
 def revisar(ahora: datetime | None = None, latido: str | None = None,
-            previo: dict | None = None) -> dict[str, Any]:
+            previo: dict | None = None, info_detector: dict | None = None) -> dict[str, Any]:
     ahora = ahora or datetime.now(timezone.utc)
     alertas: list[str] = []
     datos: dict[str, Any] = {}
@@ -97,6 +99,15 @@ def revisar(ahora: datetime | None = None, latido: str | None = None,
     datos["latido_detector_edad_min"] = round(edad_latido, 1) if edad_latido is not None else None
     if latido is not None and (edad_latido is None or edad_latido > LIMITE_LATIDO_MIN):
         alertas.append("El detector del VPS no da latido: se está funcionando con el respaldo de GitHub.")
+
+    # Clave y actualización del VPS (etapa C, 23/11/2026) ------------------------
+    if isinstance(info_detector, dict):
+        import vigilancia
+        datos["detector"] = {k: info_detector.get(k) for k in ("utc", "commit", "clave_vence", "actualizacion")}
+        for p in vigilancia.revisar(ahora, latido or (ahora.isoformat()), info_detector, ahora.isoformat(), [], [
+                {"created_at": ahora.isoformat(), "status": "in_progress"}]):
+            if p["clave"].startswith(("clave_", "actualizacion_")):
+                alertas.append(p["texto"])
 
     # SAZB y radar ---------------------------------------------------------
     sazb = leer(DATA / "sazb/status.json") or {}
@@ -188,7 +199,11 @@ def main() -> int:
     try:
         latido = os.environ.get("CLIMAAR_DETECTOR_LATIDO")
         latido = latido.strip() if latido and latido.strip() else None
-        salida = revisar(latido=latido, previo=leer(SALIDA))
+        try:
+            info = json.loads(os.environ.get("CLIMAAR_DETECTOR_INFO") or "null")
+        except ValueError:
+            info = None
+        salida = revisar(latido=latido, previo=leer(SALIDA), info_detector=info)
         SALIDA.parent.mkdir(parents=True, exist_ok=True)
         tmp = SALIDA.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(salida, ensure_ascii=False, indent=2), encoding="utf-8")

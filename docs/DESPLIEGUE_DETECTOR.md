@@ -69,10 +69,12 @@ Parámetros (en el `.service`): `CLIMAAR_DETECTOR_INTERVALO_SEG=30`, `CLIMAAR_RE
   retrasos propios de `schedule`; durante la recuperación el intervalo vuelve a ser 30 s.
 
 ## Actualizar el código del servicio
+Desde el 23/11/2026 se actualiza solo cada 10 min (`deploy/actualizar_vps.sh` y
+`climaar-actualizar.timer`, ver `docs/ETAPA_C.md`). Instalación, una sola vez:
 ```bash
-sudo -u climaar git -C /opt/Clima-ar pull --ff-only
-sudo systemctl restart climaar-detector
+sudo bash /opt/Clima-ar/deploy/instalar_actualizacion.sh
 ```
+A mano, si hiciera falta: `sudo bash /opt/Clima-ar/deploy/actualizar_vps.sh`.
 
 ## Seguridad
 `/etc/climaar-detector.env` solo legible por root (modo 600). Rotar el PAT periódicamente; el
@@ -80,6 +82,7 @@ servicio corre como usuario sin shell con `NoNewPrivileges`.
 
 ## Limitaciones
 - El PAT vence: si lo hace, el latido y los despachos fallan (queda en `journalctl`) y
-  el watchdog toma el relevo en Actions. Renovar el token y reiniciar.
+  el watchdog toma el relevo en Actions. La vigilancia avisa 14 días antes (`scripts/vigilancia.py`).
+  Renovar el token en `/etc/climaar-detector.env` y `sudo systemctl restart climaar-detector`.
 - Si la máquina pierde red, no hay detección; vuelve sola al reconectar. El watchdog cubre el hueco.
 - No se verificó contra SINARAME real desde el entorno de desarrollo (sin red).
