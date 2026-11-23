@@ -309,6 +309,39 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   más radares (vecinos de SINARAME = mismo atraso; INTA Anguil se rompe seguido; no hay otros que
   lleguen a Bahía), radar simulado por satélite (GREMLIN: es una estimación), enlaces de celular
   (datos privados), prueba del detector más rápido.
+- **PARA EL CHAT NUEVO (23/11/2026, 12:10 hora de Argentina) — pedido de Lucas: "valida y termina
+  la etapa B (punto 9) y la etapa C (punto 11); controlá que esté todo bien, corregí los errores que
+  vayan surgiendo y validá todo".** Permiso permanente para abrir y unir los pull requests a main.
+  Respuestas breves y en español, sin términos en inglés, horarios en hora de Argentina.
+  - **Etapa B, punto 9: calibración y medición continua.**
+    1. Lluvia: radar contra pluviómetros (estaciones BCP, CWOP; `calidad_y_calibracion.py`,
+       `historial_superficie.json`). Corregir cuánta lluvia marca el radar solo si los datos alcanzan
+       (el historial de estaciones empieza el 6/11 y casi no tiene lluvia): dejarlo armado para que
+       se recalcule solo a medida que llueve, con un mínimo de casos antes de cambiar nada.
+    2. Puntaje de gravedad (en paralelo, #46/#47): compararlo con lo medido después (ráfagas y
+       lluvia de las estaciones, rayos), para ajustar los cortes más adelante.
+    3. Informe mensual de aciertos automático: nowcast (`verificacion_nowcast.json`, también los
+       métodos de la etapa A en paralelo: `estaciones`), llegadas por localidad, modo sin radar,
+       alarma "ya llega".
+  - **Etapa C, punto 11: vigilancia.**
+    1. Que el VPS se actualice solo desde main (hoy hay que hacer `git pull` a mano; el VPS usa
+       `/opt/Clima-ar/.venv-ia`) y reinicie el detector sin perder imágenes.
+    2. Control de cada fuente (`salud_cadena.py`): sumar avisos claros de lo que pasó el 23/11.
+    3. Reloj externo de respaldo, afuera de GitHub (Lucas tiene que crear una clave).
+  - **Lo que pasó el 23/11 (arreglado):** de 5:10 a 11:20 no entró radar. (a) La clave de GitHub del
+    VPS venció: error 401, sin latido. Lucas creó `climaar-detector-2026-11` (vence el 21/02/2027) y
+    la puso en `/etc/climaar-detector.env`. (b) El respaldo de GitHub (`climaar-detector-sinarame.yml`)
+    no instalaba numpy y fallaba en cada consulta (#73). La etapa C tiene que avisar estas dos cosas
+    a tiempo: clave por vencer o rechazada, y respaldo que falla.
+  - **Claves por vencer:** "ClimaAR VPS Sync" y "ClimaAR VPS Sync 2026" vencen el 6 y el 7/12/2026
+    (recordatorio en el celular de Lucas el 4/12 a las 10:00). Ver qué usa cada una en el VPS.
+  - **Después (Lucas: "de esas estaciones nos encargamos después"):** estaciones nuevas. Faltan 11 BCP
+    dentro de 240 km (Saavedra, Faro, 17 de Agosto, El Zorro, San Miguel Arcángel, Carhué, Claromecó,
+    Guaminí, Cristiano Muerto, San Cayetano, Daireaux): no sirven para la alarma (sin viento o con
+    viento dudoso), sí para calibrar la lluvia. Redes Climáticas La Pampa: la lista de estaciones es
+    pública (`/api/web/v1/site-map/stations`), los datos piden usuario. SIMPARH (Provincia de Buenos
+    Aires, public-map-simparh.ada.gba.gov.ar): desde GitHub no se encuentra la dirección.
+  - Rama de prueba para borrar: `prueba-etapa-a`.
 - **PLAN DE TRABAJO (21/11/2026, 00:30 hora de Argentina) — en este orden, esperar el "arrancá" de
   Lucas en cada etapa:**
   - **Etapa A, puntos 1 a 4: HECHOS y medidos el 21/11 (madrugada), `docs/VALIDACION_ETAPA_A.md`.**
