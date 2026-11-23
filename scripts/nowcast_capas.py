@@ -417,18 +417,22 @@ def verificar(verif: dict, radar_dt: datetime, obs_loc: dict, obs_reg: dict) -> 
                 else:
                     continue
                 pl, pr = datos.get("loc", {}), datos.get("reg", [])
-                clave = f"{metodo}|{bucket(p.get('plazo_min'))}"
-                acc = tot.setdefault(clave, {"20": [0, 0, 0, 0], "35": [0, 0, 0, 0], "error_abs": 0.0, "n": 0})
+                claves = [f"{metodo}|{bucket(p.get('plazo_min'))}"]
+                # Modo sin radar (punto 10): pronósticos emitidos con el radar de 40 min o más.
+                if metodo in ("hoy", "capas") and (p.get("edad_radar_min") or 0) >= SIN_RADAR_MIN:
+                    claves.append(f"{metodo}|sin_radar_40min")
                 pares = [(pl.get(k), obs_loc.get(k)) for k in obs_loc] + list(zip(pr, [obs_reg[k] for k in sorted(obs_reg)]))
-                for a, b in pares:
-                    if a is None or b is None:
-                        continue
-                    for u in ("20", "35"):
-                        x, y = a >= float(u), b >= float(u)
-                        acc[u][0 if x and y else 1 if x else 2 if y else 3] += 1
-                    if a >= 20 or b >= 20:
-                        acc["error_abs"] = round(acc["error_abs"] + abs(a - b), 1)
-                        acc["n"] += 1
+                for clave in claves:
+                    acc = tot.setdefault(clave, {"20": [0, 0, 0, 0], "35": [0, 0, 0, 0], "error_abs": 0.0, "n": 0})
+                    for a, b in pares:
+                        if a is None or b is None:
+                            continue
+                        for u in ("20", "35"):
+                            x, y = a >= float(u), b >= float(u)
+                            acc[u][0 if x and y else 1 if x else 2 if y else 3] += 1
+                        if a >= 20 or b >= 20:
+                            acc["error_abs"] = round(acc["error_abs"] + abs(a - b), 1)
+                            acc["n"] += 1
                 if metodo in ("hoy", "capas"):
                     res[metodo] = {k: [pl.get(k), round(obs_loc[k], 1)] for k in obs_loc}
             hechos.append(res)
@@ -437,6 +441,9 @@ def verificar(verif: dict, radar_dt: datetime, obs_loc: dict, obs_reg: dict) -> 
     verif["pendientes"] = pendientes
     verif["ultimas"] = (hechos + (verif.get("ultimas") or []))[:40]
     return hechos
+
+
+SIN_RADAR_MIN = 40.0
 
 
 def bucket(plazo: Any) -> str:
