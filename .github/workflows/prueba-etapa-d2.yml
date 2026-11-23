@@ -1,0 +1,30 @@
+name: Prueba etapa D2 (temporal)
+on:
+  push:
+    branches: [prueba-etapa-d2]
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        limpieza: [fija, completa, satelite]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+      - run: pip install -q -r requirements.txt
+      - name: Historial de GOES-19
+        run: |
+          git fetch -q --depth 1 origin datos-goes-historial
+          mkdir -p /tmp/goes && git archive FETCH_HEAD | tar -x -C /tmp/goes
+      - name: Índices por fenómeno con todo el radar guardado
+        run: |
+          python herramientas/revisar_30_dias.py --desde 20261024 --limpieza ${{ matrix.limpieza }} --goes /tmp/goes --salida r.json | tail -8
+          echo "RESULTADO_REV ${{ matrix.limpieza }} $(gzip -c r.json | base64 -w0)"
