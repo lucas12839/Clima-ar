@@ -1,0 +1,90 @@
+name: Prueba etapa D (temporal)
+on:
+  push:
+    branches: [prueba-etapa-d]
+permissions:
+  contents: write
+jobs:
+  goes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        dia: [20261121, 20261122, 20261123]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+      - run: pip install -q -r requirements.txt
+      - run: python herramientas/historial_goes.py ${{ matrix.dia }} /tmp/goes
+      - uses: actions/upload-artifact@v4
+        with:
+          name: goes_${{ matrix.dia }}
+          path: /tmp/goes/goes_${{ matrix.dia }}.npz
+          retention-days: 3
+
+  guardar-goes:
+    needs: goes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/nuevos
+          merge-multiple: true
+      - name: Sumar al historial de GOES-19 (rama datos-goes-historial)
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 --branch datos-goes-historial "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" h
+          cp /tmp/nuevos/*.npz h/
+          cd h
+          git config user.name climaar-bot; git config user.email bot@climaar.local
+          git add -A && git commit -q -m "Historial GOES-19 del 21 al 23/11" && git push -q origin HEAD:datos-goes-historial
+
+  simular:
+    needs: goes
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        dia: [20261024, 20261026, 20261027, 20261028, 20261029, 20261030, 20261031, 20261101, 20261102,
+              20261103, 20261104, 20261105, 20261106, 20261107, 20261108, 20261109, 20261110, 20261111,
+              20261112, 20261113, 20261114, 20261116, 20261117, 20261118, 20261119, 20261120, 20261121,
+              20261122, 20261123]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+      - run: pip install -q -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/goes
+          merge-multiple: true
+      - name: Historial de GOES-19 (el día y sus vecinos)
+        run: |
+          git fetch -q --depth 1 origin datos-goes-historial
+          d=${{ matrix.dia }}
+          for x in $(date -d "$d -1 day" +%Y%m%d) $d $(date -d "$d +1 day" +%Y%m%d); do
+            [ -f /tmp/goes/goes_$x.npz ] || git show FETCH_HEAD:goes_$x.npz > /tmp/goes/goes_$x.npz 2>/dev/null || rm -f /tmp/goes/goes_$x.npz
+          done
+          ls -la /tmp/goes
+      - name: Llegadas por localidad (5b, envolvente)
+        run: |
+          python herramientas/simular_envolvente.py --goes /tmp/goes --dias ${{ matrix.dia }} --paso 1 --salida env.json | tail -3
+          echo "RESULTADO_ENV ${{ matrix.dia }} $(gzip -c env.json | base64 -w0)"
+      - name: Tormenta sobre la localidad exacta (fuertes o con rayos)
+        run: |
+          python herramientas/simular_aviso_fuerte.py --goes /tmp/goes --dias ${{ matrix.dia }} --paso 1 --salida af.json | tail -2
+          echo "RESULTADO_AF ${{ matrix.dia }} $(gzip -c af.registros.json | base64 -w0)"
