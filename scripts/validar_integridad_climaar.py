@@ -275,6 +275,23 @@ def validar_trayectorias_capas(radar_ts: datetime) -> None:
           f"(5b disponible={bool(t.get('disponible'))}, {len(t.get('tracks') or {})} tormentas)")
 
 
+def validar_indicios_severos(radar_ts: datetime) -> None:
+    """Etapa G (en paralelo): de esta imagen de radar y sin cambiar lo que se ve."""
+    path = IA / "indicios_severos.json"
+    if not path.is_file() or path.stat().st_size == 0:
+        print("Indicios de tormenta severa: sin archivo (permitido)")
+        return
+    c = load(path)
+    if c.get("en_paralelo") is not True or c.get("modo") != "en_paralelo_no_se_muestra":
+        fail("indicios de tormenta severa: todavía deben correr en paralelo")
+    if not c.get("disponible"):
+        print(f"Indicios de tormenta severa: no disponible ({c.get('motivo')}) (permitido)")
+        return
+    if parse_utc(c.get("radar_timestamp"), "indicios.radar_timestamp") != radar_ts:
+        fail(f"indicios de tormenta severa desincronizados: {c.get('radar_timestamp')!r}")
+    print(f"Indicios de tormenta severa: sincronizado ({c.get('arcos', 0)} ecos en arco)")
+
+
 def validar_celdas_localidad(radar_ts: datetime) -> None:
     """Paso 2 (en paralelo): de esta imagen de radar y con probabilidades válidas."""
     path = IA / "celdas_localidad.json"
@@ -433,6 +450,7 @@ def main() -> None:
     validar_ambiente_satelite(radar_ts)
     validar_trayectorias_capas(radar_ts)
     validar_celdas_localidad(radar_ts)
+    validar_indicios_severos(radar_ts)
 
     candidate = tracking.get("track_principal_candidato_id")
     if candidate is None:

@@ -68,6 +68,8 @@ def test_dato_de_mas_de_15_min_no_se_usa(tmp_path, monkeypatch):
 
 def test_sin_movimiento_solo_llegada_local(tmp_path, monkeypatch):
     monkeypatch.setattr(al, "SALIDA", tmp_path / "a.json")
+    # Sin movimiento de verdad: no leer el nowcast guardado en el repositorio (cambia con los datos).
+    monkeypatch.setattr(al, "movimiento", lambda ahora: None)
     r = al.calcular(AHORA, {"BAHIA BLANCA CENTRO": serie()}, None, SI, campos_verificacion={})
     assert r["localidades"]["bahia_blanca"]["estado"] == "llego"
     assert r["localidades"]["punta_alta"]["estado"] is None

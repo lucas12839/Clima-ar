@@ -309,6 +309,10 @@ Lo de abajo queda como detalle de los puntos 9 a 11 de ese plan (el viejo "D. M�
   más radares (vecinos de SINARAME = mismo atraso; INTA Anguil se rompe seguido; no hay otros que
   lleguen a Bahía), radar simulado por satélite (GREMLIN: es una estimación), enlaces de celular
   (datos privados), prueba del detector más rápido.
+- **ETAPA G HECHA EN PARALELO (23/11/2026, tarde): `docs/ETAPA_G.md`.** Medida con 46 jornadas severas
+  verificadas de EE. UU. (radar MRMS + base oficial NCEI). Entra solo el eco en arco: 6 de cada 10
+  dieron ráfagas severas en la hora siguiente (base 1 de 10). Desvío de supercelda y duración no
+  entran. La velocidad sola ("línea rápida", hoy en lo que se ve) acierta 15 %: decidir con Lucas.
 - **PENDIENTES QUE DECIDE LUCAS (23/11/2026, 14:30):**
   - Calibrar la lluvia con el historial oficial del SMN Bahía Blanca Aero (a 2 km del radar, zona sin
     ecos fijos). Probado: el servicio WIS2 del SMN (`w2b.smn.gov.ar`, mismo que usaba el colector) da
