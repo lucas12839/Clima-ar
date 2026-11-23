@@ -1,0 +1,29 @@
+name: Prueba fuentes Bahía (temporal)
+on:
+  push:
+    branches: [prueba-fuentes-bahia]
+jobs:
+  sondeo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Sondear EMCABB y SIGA
+        run: |
+          for u in https://gobiernoabierto.bahia.gob.ar/WS/3040 https://gobiernoabierto.bahia.gob.ar/WS/3041 \
+                   "https://datos.bahia.gob.ar/api/3/action/package_show?id=2403917b-99eb-4d2e-92c2-5ce5a5c6cfff" \
+                   https://siga.inta.gob.ar/ https://siga.inta.gob.ar/document/series/ ; do
+            echo "=== $u"
+            curl -sS -L -m 30 -A "ClimaAR/1.0 (proyecto local Bahía Blanca)" -o r.txt -w "HTTP %{http_code} %{content_type} %{size_download}\n" "$u" || true
+            head -c 1500 r.txt | tr -d '\r'; echo
+            python3 - <<'PY' || true
+          import json
+          try:
+              d = json.load(open("r.txt"))
+          except Exception:
+              raise SystemExit
+          filas = d if isinstance(d, list) else next((v for v in d.values() if isinstance(v, list)), [])
+          print("filas:", len(filas))
+          for f in filas[-3:]:
+              print(f)
+          PY
+          done
