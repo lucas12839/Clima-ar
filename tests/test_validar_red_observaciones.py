@@ -56,10 +56,10 @@ class StationValidationTests(unittest.TestCase):
         self.write_inputs(catalog, bcp, smn)
         self.assertEqual(module.main(), 0)
         result = json.loads(self.output_path.read_text(encoding="utf-8"))
-        # 23/11/2026: 19 en el catálogo, 11 activas (BCP); SMN, Cabildo, San Eloy y Pasman desactivadas.
-        self.assertEqual((result["station_count"], result["valid_count"]), (19, 11))
+        # 23/11/2026: 19 en el catálogo, 10 activas (BCP); SMN, Cabildo, San Eloy, Pasman y Pigüé desactivadas.
+        self.assertEqual((result["station_count"], result["valid_count"]), (19, 10))
         self.assertEqual(result["status"], "operativa")
-        self.assertEqual(result["bcp"], {"total": 11, "valid": 11})
+        self.assertEqual(result["bcp"], {"total": 10, "valid": 10})
         self.assertEqual(result["smn"], {"total": 0, "valid": 0})
 
     def test_descarta_vencida_futura_y_timestamp_ausente(self):

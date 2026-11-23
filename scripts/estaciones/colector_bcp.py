@@ -19,7 +19,7 @@ STATIONS = {
     1: "GRUMBEIN",
     # 2: "CABILDO" y 17: "SAN ELOY" desactivadas el 23/11/2026: llegan con horas de atraso.
     81: "PUAN",
-    11: "PIGUE",
+    # 11: "PIGUE" desactivada el 23/11/2026: llega 20-70 min tarde en casi la mitad de los ciclos.
     15: "CURA MALAL",
     60: "ARROYO PANTANOSO",
     # 83: "PASMAN" desactivada el 23/11/2026: sin datos desde fines de octubre.
