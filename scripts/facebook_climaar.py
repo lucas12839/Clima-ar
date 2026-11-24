@@ -575,7 +575,14 @@ def publicar(texto: str, png: bytes, tipo: str, ahora: datetime) -> str:
         raise RuntimeError(f"la imagen no se ve desde afuera ({imagen}): {type(exc).__name__}") from None
     if not ok:
         raise RuntimeError(f"la imagen no se ve desde afuera ({imagen}): respuesta {v.status_code}")
-    r = requests.post(webhook, json={"mensaje": texto, "imagen_url": imagen, "tipo": tipo}, timeout=60)
+    # Mismo formato que la prueba que Make publicó bien (formulario con los
+    # campos mensaje, imagen_url y tipo, más la imagen como archivo "imagen").
+    r = requests.post(
+        webhook,
+        data={"mensaje": texto, "imagen_url": imagen, "tipo": tipo},
+        files={"imagen": (imagen.rsplit("/", 1)[-1], png, "image/png")},
+        timeout=60,
+    )
     if r.status_code >= 300:
         # Nunca se escribe la dirección del webhook en el registro.
         raise RuntimeError(f"Make respondió {r.status_code}: {r.text[:200]}")
