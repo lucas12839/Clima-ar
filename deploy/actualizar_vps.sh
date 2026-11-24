@@ -128,6 +128,26 @@ if printf '%s\n' "$cambiados" | grep -qx -e scripts/detector_sinarame.py -e scri
   fi
 fi
 
+# Servidor de la app (si está instalado): se reinicia si cambió su código o
+# sus programas. Tarda unos segundos; Netlify reintenta solo.
+if systemctl list-unit-files climaar-api.service >/dev/null 2>&1 \
+    && systemctl is-enabled --quiet climaar-api 2>/dev/null; then
+  if printf '%s\n' "$cambiados" | grep -qx -e requirements.txt -e TODO; then
+    if ! salida="$(como "$PY" -m pip install --quiet -r requirements.txt 2>&1)"; then
+      resultado error "no se pudieron instalar los programas del servidor: $salida" "${nuevo:0:12}"
+      exit 1
+    fi
+  fi
+  if printf '%s\n' "$cambiados" | grep -q -e '\.py$' -e '^requirements.txt$' -e '^config/' -e '^TODO$'; then
+    if systemctl restart climaar-api; then
+      detalle="$detalle; servidor de la app reiniciado"
+    else
+      resultado error "no se pudo reiniciar el servidor de la app" "${nuevo:0:12}"
+      exit 1
+    fi
+  fi
+fi
+
 if printf '%s\n' "$cambiados" | grep -qx deploy/climaar-detector.service; then
   # El servicio instalado puede tener ajustes propios (.venv-ia): no se pisa solo.
   detalle="$detalle; AVISO: cambió deploy/climaar-detector.service, revisarlo a mano"
