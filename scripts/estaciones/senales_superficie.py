@@ -242,17 +242,26 @@ def resumen_estacion(nombre: str, serie: list[dict], ahora: datetime, coords) ->
     }
 
 
+def _es_cwop(e: dict) -> bool:
+    return "(CWOP)" in str(e.get("nombre") or "").upper()
+
+
 def resumir(estaciones: list[dict]) -> dict[str, Any]:
-    def maximo(campo):
-        vals = [e[campo] for e in estaciones if e.get(campo) is not None]
+    def maximo(campo, sin_cwop=False):
+        vals = [e[campo] for e in estaciones
+                if e.get(campo) is not None and not (sin_cwop and _es_cwop(e))]
         return max(vals) if vals else None
 
     return {
         "estaciones": len(estaciones),
         "lluvia_1h_mm": maximo("lluvia_1h_mm"),
         "lluvia_3h_mm": maximo("lluvia_3h_mm"),
-        "viento_max_kmh": maximo("viento_kmh"),
-        "rafaga_max_kmh": maximo("rafaga_kmh"),
+        # 24/11/2026: el viento de las estaciones de aficionados (CWOP) no
+        # entra al índice: Bahía Noroeste midió 3 km/h con 33 en el Centro
+        # (reparada). Con lo medido mandando sobre el modelo, una estación
+        # reparada bajaría el nivel de viento por error.
+        "viento_max_kmh": maximo("viento_kmh", sin_cwop=True),
+        "rafaga_max_kmh": maximo("rafaga_kmh", sin_cwop=True),
         "frente_de_rafagas": any(e["frente_de_rafagas"] for e in estaciones),
         "con_frente_de_rafagas": [e["nombre"] for e in estaciones if e["frente_de_rafagas"]],
     }

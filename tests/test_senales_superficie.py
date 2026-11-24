@@ -70,3 +70,15 @@ class ClasificacionConEstacionesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_viento_cwop_no_entra_al_resumen():
+    est = [{"nombre": "BAHIA BLANCA CENTRO", "viento_kmh": 33.0, "rafaga_kmh": None, "lluvia_1h_mm": 0,
+            "lluvia_3h_mm": 0, "frente_de_rafagas": False},
+           {"nombre": "BAHIA BLANCA NOROESTE (CWOP)", "viento_kmh": 3.2, "rafaga_kmh": 3.2, "lluvia_1h_mm": 0.4,
+            "lluvia_3h_mm": 0.4, "frente_de_rafagas": False}]
+    r = ss.resumir(est)
+    assert (r["viento_max_kmh"], r["rafaga_max_kmh"]) == (33.0, None)
+    assert r["lluvia_1h_mm"] == 0.4                     # la lluvia de la CWOP sí cuenta
+    solo = ss.resumir(est[1:])
+    assert (solo["viento_max_kmh"], solo["rafaga_max_kmh"]) == (None, None)
