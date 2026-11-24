@@ -61,8 +61,9 @@ PESOS = {
 }
 # Cuánto puede superar el potencial al aporte del radar.
 TOPE_SOBRE_RADAR = {"granizo": 0.20, "rafagas": 0.30, "lluvia": 0.25}
-# Grados (misma escala que indices_fenomenos: 2 posible, 3 probable, 4 severo).
-CORTES = ((0.70, 4), (0.55, 3), (0.35, 2))
+# Grados (misma escala de 1 a 4 que indices_fenomenos: 1 posible, 2 probable,
+# 3 fuerte, 4 severo; el 4 solo si otra fuente lo confirma).
+CORTES = ((0.70, 4), (0.55, 2), (0.35, 1))
 CONFIRMACION = 0.5
 
 

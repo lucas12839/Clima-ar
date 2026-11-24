@@ -142,7 +142,7 @@ def validar_puntaje(radar_ts: datetime, nc: dict) -> None:
             fail(f"puntaje de gravedad de una tormenta que el radar no tiene: {t.get('track_id')}")
         for fen in ("granizo", "rafagas", "lluvia_intensa"):
             g = (t.get(fen) or {}).get("grado")
-            if g not in (0, 2, 3, 4):
+            if g not in (0, 1, 2, 3, 4):
                 fail(f"puntaje {fen} de la tormenta {t.get('track_id')} con grado inválido: {g}")
     print(f"Puntaje de gravedad: sincronizado ({p.get('estado')}, {len(p.get('tormentas') or [])} tormentas)")
 

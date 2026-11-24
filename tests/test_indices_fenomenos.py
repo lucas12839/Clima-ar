@@ -40,8 +40,11 @@ class CombinacionesTest(unittest.TestCase):
         self.assertEqual(r["fenomenos"]["viento"]["fuente"], "modelo")
 
     def test_tormenta_electrica_sin_lluvia_ni_viento(self):
-        r = fen.evaluar(radar=radar(), rayos={"tasa_30km_por_min": 0.5, "tasa_30km_previa_por_min": 0.4})
+        r = fen.evaluar(radar=radar(), rayos={"tasa_30km_por_min": 0.3, "tasa_30km_previa_por_min": 0.2})
         self.assertEqual(r["resumen"], "Rayos aislados, sin lluvia")
+        r = fen.evaluar(radar=radar(), rayos={"tasa_30km_por_min": 1.0, "tasa_30km_previa_por_min": 0.8})
+        self.assertEqual(r["fenomenos"]["electrica"]["grado"], 2)
+        self.assertEqual(r["resumen"], "Rayos seguidos, sin lluvia")
         self.assertEqual(r["fenomenos"]["viento"]["grado"], 0)
 
     def test_lluvia_sin_rayos(self):
@@ -101,11 +104,19 @@ class SeveroTest(unittest.TestCase):
         self.assertEqual(r["calificacion"]["etiqueta"], "Severa (lluvia)")
 
     def test_granizo_por_intensidad(self):
-        for dbz, cat in ((48, "sin señal"), (52, "posible"), (57, "probable"), (62, "probable")):
+        for dbz, cat in ((48, "sin señal"), (52, "posible"), (57, "probable"), (62, "fuerte")):
             self.assertEqual(fen.evaluar(radar=radar(dbz_ciudad=dbz))["fenomenos"]["granizo"]["categoria"], cat, dbz)
-        # Severo solo con una prueba aparte del radar (etapa F): tope muy frío o muchos rayos.
-        r = fen.evaluar(radar=radar(dbz_ciudad=62), rayos={"tasa_30km_por_min": 4.0, "tasa_30km_previa_por_min": 3.5})
+        # Severo (>= 2 cm) necesita las dos pruebas aparte del radar: tope muy frío Y muchos rayos.
+        rayos = {"tasa_30km_por_min": 4.0, "tasa_30km_previa_por_min": 3.5}
+        r = fen.evaluar(radar=radar(dbz_ciudad=62), rayos=rayos)
+        self.assertEqual(r["fenomenos"]["granizo"]["categoria"], "fuerte")
+        r = fen.evaluar(radar=radar(dbz_ciudad=62), satelite={"min_c_15km": -65.0})
+        self.assertEqual(r["fenomenos"]["granizo"]["grado"], 3)
+        r = fen.evaluar(radar=radar(dbz_ciudad=62), rayos=rayos, satelite={"min_c_15km": -65.0})
         self.assertEqual(r["fenomenos"]["granizo"]["categoria"], "posible severo")
+        # 57 dBZ subido a "fuerte" por el satélite no llega a severo: falta el núcleo de 60.
+        r = fen.evaluar(radar=radar(dbz_ciudad=57), rayos=rayos, satelite={"min_c_15km": -65.0})
+        self.assertLess(r["fenomenos"]["granizo"]["grado"], 4)
 
     def test_isoterma_alta_baja_el_granizo(self):
         r = fen.evaluar(radar=radar(dbz_ciudad=57), ambiente={"freezing_level_height": 4800})
@@ -131,13 +142,25 @@ class LlegadaTest(unittest.TestCase):
         self.assertIsNone(r["al_llegar"])
 
 
+class EscalaVientoTest(unittest.TestCase):
+    """Escala de Lucas (23/11/2026): 30 / 50 / 70 / 90 km/h de ráfaga."""
+
+    def test_cortes(self):
+        for kmh, grado in ((29, 0), (30, 1), (49, 1), (50, 2), (69, 2), (70, 3), (89, 3), (90, 4)):
+            self.assertEqual(fen.grado_viento_kmh(kmh), grado, kmh)
+
+    def test_sostenido_45_es_fuerte(self):
+        r = fen.evaluar(radar=radar(), superficie={"rafaga_max_kmh": 50, "viento_max_kmh": 46})
+        self.assertEqual(r["fenomenos"]["viento"]["grado"], 3)
+
+
 class SinRadarTest(unittest.TestCase):
     def test_sin_radar_usa_estaciones_y_rayos(self):
         r = fen.evaluar(radar={"disponible": False}, superficie={"lluvia_1h_mm": 8, "rafaga_max_kmh": 72},
                         rayos={"flashes": 3, "distancia_km": 12})
         self.assertEqual(r["fenomenos"]["lluvia"]["grado"], 2)
         self.assertEqual(r["fenomenos"]["viento"]["grado"], 3)
-        self.assertEqual(r["fenomenos"]["electrica"]["grado"], 1)
+        self.assertEqual(r["fenomenos"]["electrica"]["grado"], 2)
         self.assertFalse(r["radar_disponible"])
 
 
@@ -267,7 +290,7 @@ class GranizoConfirmacionTests(unittest.TestCase):
                                                  "distancia_km": 26.0},
                         ambiente={"cape": 0.0}, satelite={"min_c_15km": -37.0})
         g = r["al_llegar"]["granizo"]
-        self.assertEqual(g["grado"], 2)
+        self.assertEqual(g["grado"], 1)
         self.assertTrue(any("solo lo indica el radar" in x for x in g["razones"]))
 
     def test_con_confirmacion_se_mantiene(self):
@@ -276,8 +299,8 @@ class GranizoConfirmacionTests(unittest.TestCase):
                        {"ambiente": {"cape": 1200.0}, "satelite": {"min_c_15km": -37.0}},
                        {"ambiente": {"cape": 0.0}, "satelite": {"min_c_15km": -55.0}}):
             r = fen.evaluar(radar=self.RADAR, **kwargs)
-            self.assertEqual(r["al_llegar"]["granizo"]["grado"], 3, kwargs)
+            self.assertEqual(r["al_llegar"]["granizo"]["grado"], 2, kwargs)
 
     def test_sin_datos_no_se_baja(self):
         r = fen.evaluar(radar=self.RADAR)
-        self.assertEqual(r["al_llegar"]["granizo"]["grado"], 3)
+        self.assertEqual(r["al_llegar"]["granizo"]["grado"], 2)

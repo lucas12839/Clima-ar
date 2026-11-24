@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """Índices por fenómeno para Bahía Blanca (reglas físicas, sin entrenamiento).
 
-Cada fenómeno se evalúa por separado y puede estar o no estar:
+Cada fenómeno se evalúa por separado y puede estar o no estar. Escala de 1 a 4,
+igual para todos (decisión de Lucas, 23/11/2026): 1 débil (se nota, sin impacto),
+2 moderado (molestias), 3 fuerte (precaución, daños menores), 4 severo (peligroso).
+El 0 no es un nivel: quiere decir que el fenómeno no está.
 
-  lluvia     0 sin lluvia · 1 débil (llovizna) · 2 moderada · 3 fuerte · 4 severa
-             (severa = lluvia fuerte que dura o acumula: riesgo de anegamientos)
-  viento     0 sin viento destacable · 2 moderado · 3 fuerte · 4 severo
-  granizo    0 sin señal · 2 posible · 3 probable · 4 severo
-  electrica  0 sin rayos · 1 aislada · 3 frecuente · 4 severa
+  lluvia     1 débil (< 3 mm/h) · 2 moderada (3-12) · 3 fuerte (12-50) · 4 severa
+             (>= 50 mm/h, o 30 mm en 1 h, o 50 mm en 3 h: riesgo de anegamientos)
+  viento     ráfaga 1 débil 30-49 · 2 moderado 50-69 · 3 fuerte 70-89 · 4 severo >= 90 km/h
+             (sostenido >= 45 km/h: fuerte). 3 = alerta amarilla del SMN; 4 = estándar
+             internacional de tormenta severa.
+  granizo    1 posible (>= 50 dBZ) · 2 probable (>= 55, el blanco) · 3 fuerte (>= 60 con
+             tope frío o rayos) · 4 severo (>= 60, tope muy frío Y muchos rayos: >= 2 cm)
+  electrica  1 aislada · 2 moderada (0,5-2 rayos/min) · 3 frecuente (>= 2/min) · 4 severa
+             (aumento brusco de rayos)
 
-El grado (0-4) es común a todos para poder compararlos: la calificación
-general es el grado más alto y dice de qué fenómeno se trata. El resumen
+La calificación general es el nivel más alto y dice de qué fenómeno se trata. El resumen
 informa la combinación real ("Viento fuerte, sin lluvia").
 
 Cada fenómeno se informa "ahora" (sobre la ciudad) y "al llegar" (lo que
@@ -23,6 +29,7 @@ No es un sistema de avisos: los avisos oficiales son del SMN.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 import ambiente_severo
@@ -47,7 +54,8 @@ LLUVIA_SIGUE_1H_MM = 5.0         # sigue lloviendo en serio
 # viento es de ráfagas de ~70 km/h o más, o viento medio de 40-60 km/h; con los cortes
 # anteriores (ráfaga 50 = "fuerte") ClimaAR mostraba viento fuerte en toda la región casi
 # todas las tardes ventosas de Bahía (20-22/11: ~1 de cada 3 imágenes).
-VIENTO_MODERADO_KMH = 40.0
+VIENTO_DEBIL_KMH = 30.0          # escala de Lucas (23/11/2026): 30 / 50 / 70 / 90
+VIENTO_MODERADO_KMH = 50.0
 VIENTO_FUERTE_KMH = 70.0
 VIENTO_SEVERO_KMH = 90.0
 VIENTO_MEDIO_FUERTE_KMH = 45.0   # viento medio (no ráfaga) que ya es fuerte
@@ -59,7 +67,8 @@ GRANIZO_SEVERO_DBZ = 60.0
 ISOTERMA_CERO_ALTA_M = 4500.0    # granizo chico se derrite antes de llegar
 
 RAYOS_CERCA_KM = 30.0
-RAYOS_FRECUENTES_MIN = 2.0       # rayos por minuto a <= 30 km
+RAYOS_MODERADOS_MIN = 0.5        # rayos por minuto a <= 30 km
+RAYOS_FRECUENTES_MIN = 2.0
 RAYOS_SALTO_FACTOR = 3.0         # aumento brusco frente a los 10 min previos
 RAYOS_SALTO_MIN = 1.0            # ...con al menos 1 rayo por minuto
 
@@ -87,9 +96,9 @@ NOMBRES = {
 
 CATEGORIAS = {
     "lluvia": {0: "sin lluvia", 1: "débil", 2: "moderada", 3: "fuerte", 4: "severa"},
-    "viento": {0: "sin viento destacable", 2: "moderado", 3: "fuerte", 4: "severo"},
-    "granizo": {0: "sin señal", 2: "posible", 3: "probable", 4: "severo"},
-    "electrica": {0: "sin rayos", 1: "aislada", 3: "frecuente", 4: "severa"},
+    "viento": {0: "sin viento destacable", 1: "débil", 2: "moderado", 3: "fuerte", 4: "severo"},
+    "granizo": {0: "sin señal", 1: "posible", 2: "probable", 3: "fuerte", 4: "severo"},
+    "electrica": {0: "sin rayos", 1: "aislada", 2: "moderada", 3: "frecuente", 4: "severa"},
 }
 
 GENERAL = {0: "Sin fenómenos", 1: "Débil", 2: "Moderada", 3: "Fuerte", 4: "Severa"}
@@ -215,8 +224,10 @@ def lluvia_por_estaciones(sup: dict[str, Any]) -> dict[str, Any] | None:
 # Viento
 # --------------------------------------------------------------------------
 def grado_viento_kmh(kmh: float | None) -> int:
-    if kmh is None or kmh < VIENTO_MODERADO_KMH:
+    if kmh is None or kmh < VIENTO_DEBIL_KMH:
         return 0
+    if kmh < VIENTO_MODERADO_KMH:
+        return 1
     if kmh < VIENTO_FUERTE_KMH:
         return 2
     if kmh < VIENTO_SEVERO_KMH:
@@ -294,7 +305,7 @@ def viento_por_arco(arco: dict[str, Any] | None) -> dict[str, Any] | None:
 def ajustar_por_satelite(ev: dict[str, Any], sat: dict[str, Any]) -> dict[str, Any]:
     """Topes muy fríos o enfriándose rápido sobre una tormenta con núcleo
     >= 50 dBZ suben un grado el granizo (nunca lo crean solos)."""
-    if not sat or ev["grado"] < 2:
+    if not sat or ev["grado"] < 1:
         return ev
     tope = numero(sat.get("min_c_15km"))
     enfr = numero(sat.get("enfriamiento_c_10min"))
@@ -303,9 +314,10 @@ def ajustar_por_satelite(ev: dict[str, Any], sat: dict[str, Any]) -> dict[str, A
         razones.append(f"topes de nube muy fríos ({tope:.0f} °C, GOES-19)")
     if enfr is not None and enfr >= ENFRIAMIENTO_RAPIDO_C:
         razones.append(f"topes enfriándose {enfr:.0f} °C en 10 min: la tormenta crece rápido")
-    if not razones or ev["grado"] >= 4:
+    # Solo sube hasta "fuerte": "severo" lo decide confirmar_granizo con todas las señales.
+    if not razones or ev["grado"] >= 3:
         return dict(ev, razones=ev["razones"] + razones) if razones else ev
-    nuevo = _evaluacion("granizo", min(4, ev["grado"] + 1), ev["fuente"] + "+goes19",
+    nuevo = _evaluacion("granizo", min(3, ev["grado"] + 1), ev["fuente"] + "+goes19",
                         ev["razones"] + razones, False)
     return nuevo
 
@@ -314,7 +326,7 @@ def ajustar_por_ambiente(clave: str, ev: dict[str, Any], amb_sev: dict[str, Any]
                          dbz_tormenta: float | None) -> dict[str, Any]:
     """El ambiente no crea fenómenos: dice qué puede dar una tormenta que ya está.
     - viento: tormenta >= 45 dBZ en ambiente favorable -> ráfagas fuertes posibles;
-    - granizo: núcleo >= 50 dBZ con CAPE >= 1000 y cizalladura -> un grado más."""
+    - granizo: núcleo >= 50 dBZ con CAPE >= 1000 y cizalladura -> un grado más (hasta 3)."""
     if not amb_sev or not (amb_sev.get("favorable_severas") or amb_sev.get("favorable_rafagas_descendentes")):
         return ev
     dbz = numero(dbz_tormenta) or 0.0
@@ -322,7 +334,7 @@ def ajustar_por_ambiente(clave: str, ev: dict[str, Any], amb_sev: dict[str, Any]
         return _evaluacion("viento", 3, "radar+ambiente", ev["razones"] + [
             f"tormenta de {dbz:.0f} dBZ en un ambiente favorable a ráfagas fuertes"] + amb_sev["razones"][:1],
             False)
-    if (clave == "granizo" and 2 <= ev["grado"] < 4 and amb_sev.get("favorable_severas")
+    if (clave == "granizo" and 1 <= ev["grado"] < 3 and amb_sev.get("favorable_severas")
             and (numero(amb_sev.get("cape")) or 0) >= ambiente_severo.CAPE_ALTO):
         return _evaluacion("granizo", ev["grado"] + 1, ev["fuente"] + "+ambiente",
                            ev["razones"] + amb_sev["razones"][:1], False)
@@ -358,16 +370,16 @@ def lluvia_por_radar_movido(movido: dict[str, Any] | None) -> dict[str, Any] | N
 def granizo_por_radar(dbz: float | None, amb: dict[str, Any]) -> dict[str, Any]:
     dbz = numero(dbz) or 0.0
     if dbz >= GRANIZO_SEVERO_DBZ:
-        grado = 4
+        grado = 3   # el 4 (>= 2 cm) necesita tope muy frío y muchos rayos (confirmar_granizo)
     elif dbz >= GRANIZO_PROBABLE_DBZ:
-        grado = 3
-    elif dbz >= GRANIZO_POSIBLE_DBZ:
         grado = 2
+    elif dbz >= GRANIZO_POSIBLE_DBZ:
+        grado = 1
     else:
         grado = 0
     razones = [f"núcleo de {dbz:.0f} dBZ"] if grado else []
     iso0 = numero(amb.get("freezing_level_height"))
-    if grado and iso0 is not None and iso0 >= ISOTERMA_CERO_ALTA_M and grado < 4:
+    if grado and iso0 is not None and iso0 >= ISOTERMA_CERO_ALTA_M:
         grado -= 1
         razones.append(f"la isoterma de 0 °C está alta ({iso0:.0f} m): el granizo chico se derrite")
     return _evaluacion("granizo", grado, "radar", razones, False)
@@ -375,33 +387,36 @@ def granizo_por_radar(dbz: float | None, amb: dict[str, Any]) -> dict[str, Any]:
 
 def confirmar_granizo(ev: dict[str, Any], sat: dict[str, Any], ev_rayos: dict[str, Any],
                       amb_sev: dict[str, Any]) -> dict[str, Any]:
-    """Granizo "probable" o más solo con el radar necesita otra señal.
+    """Granizo "probable" o más solo con el radar necesita otra señal, y "severo"
+    (>= 2 cm) necesita todas.
 
-    Si el satélite y el ambiente están disponibles y ninguna fuente lo
-    confirma (topes muy fríos o enfriándose rápido, rayos frecuentes o salto,
-    ambiente con energía para tormentas), se baja un grado. Nunca se saca el
-    aviso, y si falta un dato no se baja (falla segura). Caso 19/11 23:20:
-    56 dBZ con CAPE 0, tope -37 °C y casi sin rayos mostró "granizo probable"."""
-    if ev["grado"] < 3 or ev["fuente"] != "radar":
-        return ev   # ya lo confirmó el satélite o el ambiente
+    - Severo (4): núcleo >= 60 dBZ con tope muy frío (<= -60 °C) Y rayos frecuentes o en
+      salto. El 13/11 Punta Alta tuvo 75 dBZ en el radar crudo y cayó granizo chico: el
+      radar solo no alcanza para decir granizo grande.
+    - Si el satélite y el ambiente están disponibles y ninguna fuente confirma un
+      "probable" o "fuerte" (topes fríos o enfriándose rápido, rayos frecuentes o salto,
+      ambiente con energía para tormentas), se baja un grado. Nunca se saca el aviso, y si
+      falta un dato no se baja (falla segura). Caso 19/11 23:20: 56 dBZ con CAPE 0, tope
+      -37 °C y casi sin rayos mostró "granizo probable"."""
     tope = numero((sat or {}).get("min_c_15km"))
     if tope is None:
         tope = numero((sat or {}).get("p10_c_30km"))
-    if ev["grado"] >= 4:
-        # Etapa F (23/11/2026): "severo" (granizo grande) necesita una prueba que no sea el
-        # radar: tope muy frío (<= -60 °C) o rayos frecuentes o en salto. El 13/11 Punta Alta
-        # tuvo 75 dBZ en el radar crudo y cayó granizo chico.
-        severo = ((tope is not None and tope <= TOPE_MUY_FRIO_C)
-                  or (ev_rayos or {}).get("grado", 0) >= 3)
-        if not severo:
-            ev = _evaluacion("granizo", 3, "radar", ev["razones"] + [
-                "granizo grande sin confirmar: falta un tope muy frío o muchos rayos"], False)
+    muchos_rayos = (ev_rayos or {}).get("grado", 0) >= 3
+    # El dBZ del núcleo es la primera razón que deja granizo_por_radar.
+    m = re.match(r"núcleo de (\d+) dBZ", ev["razones"][0]) if ev["razones"] else None
+    nucleo_severo = m is not None and float(m.group(1)) >= GRANIZO_SEVERO_DBZ
+    if (ev["grado"] >= 3 and nucleo_severo
+            and tope is not None and tope <= TOPE_MUY_FRIO_C and muchos_rayos):
+        return _evaluacion("granizo", 4, ev["fuente"] + "+goes19", ev["razones"] + [
+            f"tope muy frío ({tope:.0f} °C) y rayos frecuentes: granizo grande posible"], False)
+    if ev["grado"] < 2 or ev["fuente"] != "radar":
+        return ev   # ya lo confirmó el satélite o el ambiente
     enfr = numero((sat or {}).get("enfriamiento_c_10min"))
     nivel = (amb_sev or {}).get("nivel")
     if tope is None or nivel in (None, "sin_datos"):
         return ev
     confirma = (tope <= TOPE_TORMENTA_C or (enfr is not None and enfr >= ENFRIAMIENTO_RAPIDO_C)
-                or (ev_rayos or {}).get("grado", 0) >= 3
+                or muchos_rayos
                 or nivel in ("favorable_tormentas", "favorable_severas"))
     if confirma:
         return ev
@@ -427,6 +442,8 @@ def electrica(rayos: dict[str, Any]) -> dict[str, Any]:
             grado = 0
         elif flashes >= 10:
             grado = 3
+        elif flashes >= 3:
+            grado = 2
         else:
             grado = 1
         if grado:
@@ -435,8 +452,10 @@ def electrica(rayos: dict[str, Any]) -> dict[str, Any]:
 
     if tasa <= 0:
         grado = 0
-    elif tasa < RAYOS_FRECUENTES_MIN:
+    elif tasa < RAYOS_MODERADOS_MIN:
         grado = 1
+    elif tasa < RAYOS_FRECUENTES_MIN:
+        grado = 2
     else:
         grado = 3
     if grado:
@@ -493,7 +512,7 @@ def frase_fenomeno(clave: str, ev: dict[str, Any]) -> str:
             "granizo severo" if cat == "severo" else f"granizo {cat}")
     if clave == "electrica":
         cat = ev["categoria"]
-        return {"aislada": "rayos aislados", "frecuente": "rayos frecuentes",
+        return {"aislada": "rayos aislados", "moderada": "rayos seguidos", "frecuente": "rayos frecuentes",
                 "severa": "actividad eléctrica severa"}.get(cat, f"tormenta eléctrica {cat}")
     return clave
 
