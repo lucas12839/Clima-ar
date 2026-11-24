@@ -10,7 +10,7 @@ Leer junto con `CLAUDE.md` (reglas fijas del repo).
 - El VPS no se actualiza solo desde GitHub: si hay que tocarlo, darle el comando a Lucas.
 
 ## Recolección de radares de otras zonas (23/11/2026, 23:30, idea de Lucas) — `scripts/recoleccion_radares.py`
-- Para calibrar con muchas tormentas reales: Córdoba (RMA1) y Resistencia (RMA4), las dos verificadas el 23/11 (publican cada 10 min, se bajan directo sin navegador). Misiones (RMA5) quedó tercera.
+- Para calibrar con muchas tormentas reales: Córdoba (RMA1) y Resistencia (RMA4), las dos verificadas el 23/11 (publican cada 10 min, se bajan directo sin navegador). Misiones (RMA5) quedó tercera. 23/11, 23:45: se sumó Tostado, Santa Fe (RMA21), pedido de Lucas; en ese momento no publicaba (posible falla del radar): empieza a guardar solo cuando vuelva.
 - Sirve para: seguimiento, divisiones/uniones, trayectorias, falsas alarmas, señales de severa y pronóstico entre frames. **No** sirve para pasar colores a mm o km/h (eso necesita estaciones).
 - Proceso aparte del detector (`climaar-recoleccion.timer`, cada 5 min, prioridad baja), solo biblioteca estándar, guarda crudo en `/var/lib/climaar-recoleccion/RMAx/AAAAMMDD/`. Topes: se frena con menos de 3 GB libres o al llegar a 3 GB (~25 KB por imagen, ~7 MB por día con los dos radares).
 - Pendiente: con 1-2 días de frames, armar la máscara de ecos fijos y cartografía de cada radar; después analizar (2-3 semanas de tormentas).
