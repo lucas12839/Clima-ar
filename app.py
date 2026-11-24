@@ -2575,55 +2575,155 @@ def _num(value: Any, digits: int = 1) -> float | None:
     return round(v, digits) if math.isfinite(v) else None
 
 
+OBS_DIR = IA_DIR / "estaciones" / "observaciones"
+# Estaciones de Bahía Blanca para "El tiempo ahora", en orden de preferencia
+# (24/11/2026). Centro: en la ciudad, mide cada minuto. Noroeste (CWOP): la
+# única que mide ráfagas, humedad y lluvia de la última hora, cada ~10 min.
+# Grünbein: respaldo del viento.
+_ESTACIONES_BAHIA = (
+    ("bcp", "104", "Bahía Blanca Centro"),
+    ("cwop", "LU4DRH-11", "Bahía Blanca Noroeste"),
+    ("bcp", "1", "Grünbein"),
+)
+_RUMBOS_TEXTO = {
+    "norte": 0, "nornoreste": 22.5, "noreste": 45, "estenoreste": 67.5, "este": 90,
+    "estesudeste": 112.5, "sudeste": 135, "sudsudeste": 157.5, "sur": 180,
+    "sudsudoeste": 202.5, "sudoeste": 225, "oestesudoeste": 247.5, "oeste": 270,
+    "oestenoroeste": 292.5, "noroeste": 315, "nornoroeste": 337.5,
+}
+
+
+def _rumbo_grados(valor: Any) -> float | None:
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    texto = str(valor or "").strip().lower().replace(" ", "").replace("-", "")
+    return _RUMBOS_TEXTO.get(texto)
+
+
+def _mediciones_bahia() -> list[dict[str, Any]]:
+    """Mediciones de las estaciones de Bahía, con la edad calculada ahora.
+
+    Solo entran las que están dentro del límite de su red (frescura.py)."""
+    from scripts.estaciones.frescura import edad_min, es_fresca
+
+    archivos = {"bcp": read_json(OBS_DIR / "bcp_actual.json") or {},
+                "cwop": read_json(OBS_DIR / "cwop_actual.json") or {}}
+    salida = []
+    for red, ident, nombre in _ESTACIONES_BAHIA:
+        for est in archivos[red].get("stations") or []:
+            if not isinstance(est, dict):
+                continue
+            clave = str(est.get("station_id") if red == "bcp" else est.get("indicativo"))
+            if clave != ident:
+                continue
+            hora = est.get("observation_time")
+            if not es_fresca(hora, red):
+                continue
+            v = est.get("variables") if isinstance(est.get("variables"), dict) else {}
+            salida.append({
+                "nombre": nombre,
+                "edad": edad_min(hora),
+                "temperatura": _num(v.get("temperatura_c"), 1),
+                "viento": _num(v.get("viento_kmh"), 0),
+                "viento_dir": _rumbo_grados(v.get("direccion_viento_grados", v.get("direccion_viento"))),
+                "rafaga": _num(v.get("rafaga_15min_kmh"), 0),
+                "humedad": _num(v.get("humedad_relativa_pct"), 0),
+                "lluvia_1h": _num(v.get("lluvia_1h_mm"), 1),
+            })
+    return salida
+
+
 def _tiempo_actual() -> dict[str, Any]:
-    """Open-Meteo si responde; si no, lo último que guardó Intelligence."""
+    """El tiempo ahora en Bahía Blanca: lo medido primero, el modelo de relleno.
 
-    meteo = get_openmeteo_data()
+    24/11/2026: antes se mostraba el modelo (Open-Meteo) aunque las
+    estaciones estuvieran al día, y aparecían ráfagas de 47 km/h con viento
+    medido de 13 km/h. Ahora cada dato sale de la primera estación de Bahía
+    que lo midió hace poco (Centro, Noroeste, Grünbein; el aeropuerto para la
+    presión) y el modelo solo completa lo que ninguna mide. Si hay viento
+    medido pero ninguna estación midió ráfagas, no se muestra la ráfaga del
+    modelo (no se mezcla lo medido con lo estimado)."""
 
-    if meteo:
-        return {**meteo, "disponible": True}
+    from scripts.estaciones.frescura import edad_min, es_fresca
 
+    modelo = get_openmeteo_data() or {}
     estado = read_json(METEO_FILE) or {}
-    amb = estado.get("ambiente_actual")
-
-    if not isinstance(amb, dict):
-        return {"disponible": False}
+    amb = estado.get("ambiente_actual") if isinstance(estado.get("ambiente_actual"), dict) else {}
+    if not modelo and amb:
+        modelo = {
+            "temperatura": amb.get("temperature_2m"), "punto_rocio": amb.get("dew_point_2m"),
+            "presion": amb.get("pressure_msl"), "viento_vel": amb.get("wind_speed_10m"),
+            "viento_dir": amb.get("wind_direction_10m"), "rafagas": amb.get("wind_gusts_10m"),
+            "humedad": amb.get("relative_humidity_2m"), "nubosidad": amb.get("cloud_cover"),
+            "precipitacion": amb.get("precipitation"),
+        }
 
     obs = estado.get("observacion_sazb")
     obs = obs if isinstance(obs, dict) and obs.get("disponible") else {}
-    # Edad calculada ahora (no la guardada): el aeropuerto informa cada hora.
-    hora_obs = parse_iso(obs.get("obsTime_utc"))
-    if hora_obs is None or (
-        datetime.now(timezone.utc) - hora_obs
-    ).total_seconds() > 90 * 60:
+    if not es_fresca(obs.get("obsTime_utc"), "sazb"):
         obs = {}
-    viento_kt = _num(obs.get("viento_kt"), 1)
+    medidas = _mediciones_bahia()
+    if obs:
+        kt = _num(obs.get("viento_kt"), 1)
+        medidas.append({
+            "nombre": "Aeropuerto", "edad": edad_min(obs.get("obsTime_utc")),
+            "temperatura": _num(obs.get("temperatura_c"), 1),
+            "viento": round(kt * 1.852) if kt is not None else None,
+            "viento_dir": _num(obs.get("direccion_viento"), 0),
+            "presion": _num(obs.get("presion_hpa"), 0),
+        })
 
-    return {
-        "disponible": True,
-        "temperatura": obs.get("temperatura_c", amb.get("temperature_2m")),
-        "punto_rocio": obs.get("punto_rocio_c", amb.get("dew_point_2m")),
-        "presion": obs.get("presion_hpa", amb.get("pressure_msl")),
-        # Viento medido en el aeropuerto si está al día; si no, el modelo.
-        "viento_vel": (
-            round(viento_kt * 1.852, 0) if viento_kt is not None
-            else amb.get("wind_speed_10m")
-        ),
-        "viento_dir": (
-            obs.get("direccion_viento") if viento_kt is not None
-            else amb.get("wind_direction_10m")
-        ),
-        "rafagas": amb.get("wind_gusts_10m"),
-        "humedad": amb.get("relative_humidity_2m"),
-        "nubosidad": amb.get("cloud_cover"),
-        "precipitacion": amb.get("precipitation"),
-        "sensacion_termica": None,
-        "codigo_tiempo": None,
-        "fuente": (
-            "aeropuerto (viento, temperatura y presión) y modelo europeo (ráfagas y resto)"
-            if obs else "modelo europeo"
-        ),
-    }
+    if not medidas and not modelo:
+        return {"disponible": False}
+
+    fuentes: dict[str, str] = {}
+
+    def medido(campo: str, clave: str):
+        for m in medidas:
+            if m.get(clave) is not None:
+                fuentes[campo] = f"{m['nombre']} (hace {round(m['edad'] or 0)} min)"
+                return m
+        return None
+
+    salida: dict[str, Any] = {"disponible": True}
+    m = medido("temperatura", "temperatura")
+    salida["temperatura"] = m["temperatura"] if m else modelo.get("temperatura")
+    # Viento y ráfaga de la MISMA estación (si no, la ráfaga de una puede
+    # quedar por debajo del viento de otra). Primero la que mide los dos.
+    par = next((x for x in medidas if x.get("viento") is not None and x.get("rafaga") is not None), None)
+    m = par or medido("viento", "viento")
+    if m:
+        etiqueta = f"{m['nombre']} (hace {round(m['edad'] or 0)} min)"
+        fuentes["viento"] = etiqueta
+        salida["viento_vel"] = m["viento"]
+        salida["viento_dir"] = m.get("viento_dir")
+        salida["rafagas"] = m.get("rafaga")
+        if m.get("rafaga") is not None:
+            fuentes["rafagas"] = etiqueta
+    else:
+        salida["viento_vel"] = modelo.get("viento_vel")
+        salida["viento_dir"] = modelo.get("viento_dir")
+        salida["rafagas"] = modelo.get("rafagas")
+    m = medido("humedad", "humedad")
+    salida["humedad"] = m["humedad"] if m else modelo.get("humedad")
+    m = medido("presion", "presion")
+    salida["presion"] = m["presion"] if m else modelo.get("presion")
+    m = medido("precipitacion", "lluvia_1h")
+    salida["precipitacion"] = m["lluvia_1h"] if m else modelo.get("precipitacion")
+
+    # La sensación térmica del modelo solo si la temperatura también es del modelo.
+    salida["sensacion_termica"] = None if "temperatura" in fuentes else modelo.get("sensacion_termica")
+    salida["punto_rocio"] = modelo.get("punto_rocio")
+    salida["nubosidad"] = modelo.get("nubosidad")
+    salida["codigo_tiempo"] = modelo.get("codigo_tiempo")
+    salida["fuentes"] = fuentes
+    medidos = sorted(set(fuentes.values()))
+    salida["fuente"] = (
+        ("medido: " + ", ".join(medidos) if medidos else "")
+        + ("; " if medidos and modelo else "")
+        + ("cielo y lo que falta: modelo europeo" if modelo else "")
+    )
+    return salida
 
 
 def _fenomeno_corto(item: Any) -> dict[str, Any]:

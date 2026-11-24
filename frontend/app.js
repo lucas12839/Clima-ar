@@ -114,6 +114,8 @@ function llenarSelector() {
   sel.value = estado.localidad;
 }
 
+const f0 = t => Boolean(t.fuentes && t.fuentes.precipitacion);
+
 function pintarTiempo() {
   const t = (estado.resumen && estado.resumen.tiempo_actual) || {};
   const [texto, tipo] = cielo(t.codigo_tiempo, t.nubosidad, t.precipitacion);
@@ -125,11 +127,16 @@ function pintarTiempo() {
   const dir = punto(t.viento_dir);
   $("viento").textContent = num(t.viento_vel) === null ? "—" : fmt(t.viento_vel) + " km/h" + (dir ? " " + dir : "");
   $("viento").title = dir ? "Viene del " + NOMBRE_PUNTO[dir] : "";
-  $("rafagas").textContent = num(t.rafagas) === null ? "—" : fmt(t.rafagas) + " km/h";
+  // Sin ráfaga medida no se muestra la del modelo (no se mezcla con el viento medido).
+  $("rafagas").textContent = num(t.rafagas) === null ? (t.fuentes && t.fuentes.viento ? "sin medición" : "—") : fmt(t.rafagas) + " km/h";
   $("humedad").textContent = num(t.humedad) === null ? "—" : fmt(t.humedad) + " %";
   $("presion").textContent = num(t.presion) === null ? "—" : fmt(t.presion) + " hPa";
-  $("lluviaAhora").textContent = num(t.precipitacion) === null ? "—" : fmt(t.precipitacion, 1) + " mm";
-  $("fuenteTiempo").textContent = t.fuente ? "Datos de Bahía Blanca · fuente: " + t.fuente : "";
+  $("lluviaAhora").textContent = num(t.precipitacion) === null ? "—" : fmt(t.precipitacion, 1) + " mm" + (f0(t) ? " (última hora)" : "");
+  // De dónde sale cada dato: estación (con su edad) o modelo.
+  const f = t.fuentes || {};
+  const partes = [["temperatura", "Temperatura"], ["viento", "Viento"], ["rafagas", "Ráfagas"], ["humedad", "Humedad"], ["presion", "Presión"], ["precipitacion", "Lluvia"]]
+    .map(([k, nombre]) => `${nombre}: ${f[k] || "modelo europeo"}`);
+  $("fuenteTiempo").textContent = t.disponible ? "De dónde sale cada dato · " + partes.join(" · ") : "";
 }
 
 const ICONO_FEN = {
