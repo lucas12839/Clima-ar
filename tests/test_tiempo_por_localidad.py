@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 os.environ.setdefault("CLIMAAR_REMOTE_DATA_ENABLED", "0")
 import app  # noqa: E402
 
+ORIGINAL_VIENTO_ZONA = app._viento_zona
+ORIGINAL_TRABADOS = app._vientos_trabados
 LOCS = {l["id"]: l for l in json.load(open(app.LOCALIDADES_FILE, encoding="utf-8"))["localidades"]}
 
 
@@ -33,6 +35,8 @@ def preparar(tmp_path, monkeypatch, bcp=(), cwop=(), sazb=None):
     temps = {"bahia_blanca": 20, "ingeniero_white": 19, "general_cerri": 21, "punta_alta": 18,
              "tornquist": 25, "medanos": 24, "sierra_de_la_ventana": 22}
     monkeypatch.setattr(app, "get_openmeteo_locales", lambda: {k: modelo(v) for k, v in temps.items()})
+    monkeypatch.setattr(app, "_viento_zona", lambda ident: None)
+    monkeypatch.setattr(app, "_vientos_trabados", lambda: set())
 
 
 PUNTA_ALTA = {"station_id": 76, "nombre": "PUNTA ALTA", "observation_time": None,
@@ -156,3 +160,27 @@ def test_anemometro_trabado_no_se_muestra(tmp_path, monkeypatch):
     t = app._tiempo_actual(LOCS["punta_alta"])
     assert t["temperatura"] == 17.4                        # la temperatura sí
     assert (t["viento_vel"], t["rafagas"]) == (20, 40)     # el viento, del modelo
+
+
+def test_sin_viento_propio_usa_el_de_la_tarjeta(tmp_path, monkeypatch):
+    """Punta Alta con el anemómetro trabado: arriba el mismo viento que la tarjeta."""
+    import json as js
+    bcp = [dict(PUNTA_ALTA, observation_time=hace(4), variables=dict(PUNTA_ALTA["variables"], viento_kmh=0.0)),
+           {"station_id": 1, "nombre": "GRUMBEIN", "observation_time": hace(5),
+            "variables": {"viento_kmh": 13.0, "direccion_viento": "Este", "rafaga_15min_kmh": 22.0}}]
+    preparar(tmp_path, monkeypatch, bcp=bcp)
+    import shutil
+    ia = tmp_path / "ia"
+    (ia / "estaciones").mkdir(parents=True)
+    shutil.copy(app.IA_DIR / "estaciones" / "catalogo_estaciones.json", ia / "estaciones")
+    (ia / "estaciones" / "senales_superficie.json").write_text(js.dumps({
+        "generado_utc": hace(3), "viento_trabado": ["PUNTA ALTA"],
+        "localidades": {"punta_alta": {"viento_max_kmh": 13.0, "rafaga_max_kmh": 22.0,
+                                       "nombres": ["GRUMBEIN", "PUNTA ALTA"]}}}))
+    monkeypatch.setattr(app, "IA_DIR", ia)
+    monkeypatch.setattr(app, "_viento_zona", ORIGINAL_VIENTO_ZONA)
+    monkeypatch.setattr(app, "_vientos_trabados", ORIGINAL_TRABADOS)
+    t = app._tiempo_actual(LOCS["punta_alta"])
+    assert t["temperatura"] == 17.4
+    assert (t["viento_vel"], t["rafagas"], t["viento_dir"]) == (13, 22, 90)
+    assert "Grünbein (zona de 15 km)" in t["fuentes"]["viento"]
