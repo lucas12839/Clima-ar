@@ -132,15 +132,16 @@ def test_publicar_manda_texto_e_imagen_a_make(tmp_path, monkeypatch):
         status_code = 200
         text = "Accepted"
 
-    def post(url, json, timeout):
-        enviado.update(url=url, json=json)
+    def post(url, data, files, timeout):
+        enviado.update(url=url, data=data, files=files)
         return Resp()
 
     monkeypatch.setattr(requests, "post", post)
     url = fb.publicar("hola", b"PNG", "tormenta", AHORA)
     assert url == f"{fb.URL_PUBLICA}/publicaciones/20261113-153600-tormenta.png"
     assert (tmp_path / "publico" / "20261113-153600-tormenta.png").read_bytes() == b"PNG"
-    assert enviado["json"] == {"mensaje": "hola", "imagen_url": url, "tipo": "tormenta"}
+    assert enviado["data"] == {"mensaje": "hola", "imagen_url": url, "tipo": "tormenta"}
+    assert enviado["files"]["imagen"] == ("20261113-153600-tormenta.png", b"PNG", "image/png")
 
 
 def test_ciclo_apagado_no_publica_pero_registra(tmp_path, monkeypatch):
