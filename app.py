@@ -2754,6 +2754,38 @@ def _rumbo_grados(valor: Any) -> float | None:
     return _RUMBOS_TEXTO.get(texto)
 
 
+def _viento_zona(ident: str) -> dict[str, Any] | None:
+    """El viento que usa la tarjeta de la localidad (máximo de las estaciones
+    a 15 km o menos), con la dirección de la estación que lo midió."""
+    from scripts.estaciones.frescura import edad_min
+
+    sen = read_json(IA_DIR / "estaciones" / "senales_superficie.json") or {}
+    zona = (sen.get("localidades") or {}).get(ident) or {}
+    vmax = _num(zona.get("viento_max_kmh"), 0)
+    if vmax is None:
+        return None
+    edad = edad_min(sen.get("generado_utc"))
+    if edad is None or edad > 30:
+        return None
+    raf = _num(zona.get("rafaga_max_kmh"), 0)
+    nombres = [str(n) for n in zona.get("nombres") or []]
+    direccion, quien = None, None
+    for est in (read_json(OBS_DIR / "bcp_actual.json") or {}).get("stations") or []:
+        if isinstance(est, dict) and est.get("nombre") in nombres:
+            v = est.get("variables") or {}
+            if _num(v.get("viento_kmh"), 0) == vmax:
+                direccion = _rumbo_grados(v.get("direccion_viento_grados", v.get("direccion_viento")))
+                quien = str(est["nombre"]).title().replace("Grumbein", "Grünbein").replace("Bahia", "Bahía")
+                break
+    return {
+        "nombre": f"{quien or 'estaciones'} (zona de 15 km)",
+        "edad": edad,
+        "viento": vmax,
+        "viento_dir": direccion,
+        "rafaga": raf if raf is not None and raf >= vmax else None,
+    }
+
+
 def _vientos_trabados() -> set[str]:
     """Estaciones con el anemómetro trabado en 0 (senales_superficie.py)."""
     s = read_json(IA_DIR / "estaciones" / "senales_superficie.json") or {}
@@ -2909,6 +2941,14 @@ def _tiempo_actual(localidad: dict[str, Any] | None = None) -> dict[str, Any]:
         medidas = _mediciones_bahia()
     else:
         medidas = _mediciones_cerca(float(localidad["lat"]), float(localidad["lon"]))
+        # 24/11/2026: si ninguna estación propia da el viento, se usa el
+        # mismo que la tarjeta de la localidad (estaciones a 15 km o menos,
+        # senales_superficie.json). Antes arriba salía el modelo y abajo las
+        # estaciones: dos números distintos para el mismo lugar.
+        if not any(m.get("viento") is not None for m in medidas):
+            vz = _viento_zona(localidad["id"])
+            if vz:
+                medidas.append(vz)
         if _dist_km(float(localidad["lat"]), float(localidad["lon"]), *AEROPUERTO_SAZB) > AEROPUERTO_MAX_KM:
             obs = {}
     if obs:

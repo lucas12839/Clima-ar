@@ -116,19 +116,14 @@ def collect(sid, name):
     now = datetime.now(timezone.utc)
     age = (now - obs_time).total_seconds() / 60
 
-    rafaga_ts = find_timestamp(
-        text,
-        r"M[aá]xima R[aá]faga.*?15 min|M&aacute;xima R&aacute;faga.*?15 min"
-    )
+    # "Máxima Ráfaga últ. 15 min" es de los 15 min anteriores al último dato
+    # recibido: esa fila no tiene hora propia. 24/11/2026: antes se exigía una
+    # hora y la búsqueda encontraba otra fecha de la página (o ninguna), así
+    # que la ráfaga de TODAS las estaciones BCP se descartaba siempre (Bahía
+    # Centro marcaba 33 km/h y ClimaAR no tenía ninguna ráfaga medida).
     rafaga_val = number(find_value(text, r"M[aá]xima R[aá]faga.*?15 min|M&aacute;xima R&aacute;faga.*?15 min"))
-    rafaga_dt = parse_dt(rafaga_ts) if rafaga_ts else None
-    if (
-        rafaga_dt is None
-        or not 0 <= (now - rafaga_dt).total_seconds() <= MAX_AGE * 60
-        or rafaga_dt > obs_time
-    ):
+    if rafaga_val is not None and not 0 <= rafaga_val <= 250:
         rafaga_val = None
-        rafaga_ts = None
     variables = {
         "temperatura_c": number(find_value(text, r"Última Temperatura|&Uacute;ltima Temperatura")),
         "precipitacion_dia_mm": number(find_value(text, r"Precipitaciones del d")),
@@ -152,7 +147,8 @@ def collect(sid, name):
         ),
         "variables": variables,
         "timestamps": {
-            "rafaga_15min": rafaga_ts,
+            # Sin hora propia: los 15 min anteriores al último dato.
+            "rafaga_15min": obs_time.isoformat() if rafaga_val is not None else None,
         },
     }
 
