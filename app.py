@@ -159,6 +159,10 @@ app = FastAPI(
         "para radar operativo."
     ),
     version=VERSION,
+    # Sin páginas automáticas que listan todo el servidor (24/11/2026).
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 
@@ -170,7 +174,8 @@ app.add_middleware(
         if CORS_WILDCARD
         else True
     ),
-    allow_methods=["*"],
+    # Solo lectura: la app no recibe datos de nadie.
+    allow_methods=["GET", "HEAD", "OPTIONS"],
     allow_headers=["*"],
 )
 

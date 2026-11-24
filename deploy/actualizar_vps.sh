@@ -138,6 +138,24 @@ if systemctl list-unit-files climaar-api.service >/dev/null 2>&1 \
       exit 1
     fi
   fi
+  # Caddy (la puerta de entrada de la página): si cambió deploy/Caddyfile se
+  # vuelve a armar con la misma dirección que ya tiene, se prueba y recién
+  # ahí se aplica. Si la prueba falla, queda el que estaba.
+  if printf '%s\n' "$cambiados" | grep -qx -e deploy/Caddyfile -e TODO \
+      && [ -f /etc/caddy/Caddyfile ] && systemctl is-active --quiet caddy 2>/dev/null; then
+    direcciones="$(awk '/^[^#[:space:]].* \{$/ {sub(/ \{$/, ""); print; exit}' /etc/caddy/Caddyfile)"
+    if [ -n "$direcciones" ]; then
+      sed "s/^DOMINIO {/$direcciones {/" "$DEST/deploy/Caddyfile" > /etc/caddy/Caddyfile.nuevo
+      if caddy validate --config /etc/caddy/Caddyfile.nuevo --adapter caddyfile >/dev/null 2>&1; then
+        mv /etc/caddy/Caddyfile.nuevo /etc/caddy/Caddyfile
+        systemctl reload caddy && detalle="$detalle; página actualizada (Caddy)"
+      else
+        rm -f /etc/caddy/Caddyfile.nuevo
+        detalle="$detalle; Caddyfile nuevo con error, quedó el anterior"
+      fi
+    fi
+  fi
+
   # El servicio del servidor es solo nuestro (no tiene ajustes del VPS): si
   # cambió, se instala. Solo con Caddy andando (Caddy es la puerta de entrada).
   api_servicio=no

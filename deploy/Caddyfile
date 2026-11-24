@@ -1,12 +1,41 @@
 # Página y datos de ClimaAR desde el VPS (24/11/2026, reemplaza a Netlify y Render).
 # Lo instala deploy/instalar_web.sh, que cambia DOMINIO por la dirección elegida.
 # Caddy saca y renueva solo el certificado de seguridad (https).
+# La actualización automática del VPS lo vuelve a instalar si cambia.
 DOMINIO {
 	encode gzip
 
-	# Datos: el servidor de la app (climaar-api) en el puerto 8000.
+	# Protección (24/11/2026): solo https, sin meter la página dentro de
+	# otras páginas, sin adivinar tipos de archivo, sin dar datos del
+	# servidor, y la página solo carga lo que necesita.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), camera=(), microphone=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://*.basemaps.cartocdn.com https://unpkg.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'"
+		-Server
+		-Via
+	}
+
+	# Solo se puede leer: nada de enviar ni borrar.
+	@noLectura not method GET HEAD
+	handle @noLectura {
+		respond 405
+	}
+
+	# Lo interno no se ve desde afuera (rutas y versiones del servidor).
+	@interno path /api/debug /api/docs /api/docs/* /api/redoc /api/openapi.json
+	handle @interno {
+		respond 404
+	}
+
+	# Datos: el servidor de la app (climaar-api), solo dentro del VPS.
 	handle_path /api/* {
-		reverse_proxy 127.0.0.1:8000
+		reverse_proxy 127.0.0.1:8000 {
+			header_down -Server
+		}
 	}
 
 	# Página: los archivos de frontend/ de la copia del repo (se actualiza
