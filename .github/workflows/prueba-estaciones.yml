@@ -1,0 +1,27 @@
+name: Prueba estaciones (temporal)
+on:
+  push:
+    branches: [prueba-estaciones-oeste]
+permissions:
+  contents: write
+jobs:
+  escanear:
+    if: github.ref == 'refs/heads/prueba-estaciones-oeste'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests==2.32.3
+      - run: python prueba/escanear_bcp.py
+      - run: |
+          for u in "https://info.bcp.org.ar/Estaciones/" "https://info.bcp.org.ar/Estaciones/Mapa_NvoBCP.asp" "https://info.bcp.org.ar/Estaciones/MapaBCP.asp"; do
+            n=$(echo "$u" | tr -c 'a-zA-Z0-9' '_'); curl -sL -m 30 "$u" -o "prueba/$n.html" || true; done
+      - run: |
+          mv escaneo_bcp.json muestra_bcp_1.html prueba/ 2>/dev/null || true
+          git config user.name "github-actions[bot]"; git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add prueba && git commit -m "resultado escaneo" && git push
