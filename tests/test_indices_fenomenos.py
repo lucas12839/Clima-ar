@@ -310,10 +310,10 @@ class TestMedidoMandaSobreModelo(unittest.TestCase):
     """24/11/2026: con estaciones al día, el viento de ahora es el medido."""
 
     def test_rafaga_medida_baja_gana_al_modelo(self):
-        r = fen.evaluar(radar=radar(), superficie={"rafaga_max_kmh": 19, "viento_max_kmh": 21},
+        r = fen.evaluar(radar=radar(), superficie={"rafaga_max_kmh": 24, "viento_max_kmh": 15},
                         ambiente={"wind_gusts_10m": 38, "wind_speed_10m": 20})
         v = r["fenomenos"]["viento"]
-        self.assertEqual((v["grado"], v["fuente"], v.get("rafaga_kmh")), (0, "estaciones", 19))
+        self.assertEqual((v["grado"], v["fuente"], v.get("rafaga_kmh")), (0, "estaciones", 24))
         self.assertTrue(any("38 km/h, todavía no medidas" in x for x in v["razones"]))
 
     def test_sin_estaciones_queda_el_modelo(self):
@@ -324,3 +324,11 @@ class TestMedidoMandaSobreModelo(unittest.TestCase):
         r = fen.evaluar(radar=radar(), superficie={"rafaga_max_kmh": 75},
                         ambiente={"wind_gusts_10m": 38})
         self.assertEqual(r["fenomenos"]["viento"]["grado"], 3)
+
+
+    def test_rafaga_menor_que_el_viento_no_cuenta(self):
+        # Caso real 24/11/2026: ráfaga 3,2 (Noroeste) y viento 33 (Centro).
+        r = fen.evaluar(radar=radar(), superficie={"rafaga_max_kmh": 3.2, "viento_max_kmh": 33})
+        v = r["fenomenos"]["viento"]
+        self.assertIsNone(v.get("rafaga_kmh"))
+        self.assertEqual((v["grado"], v.get("viento_kmh")), (1, 33))

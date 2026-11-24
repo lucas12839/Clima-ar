@@ -240,8 +240,13 @@ def viento_por_estaciones(sup: dict[str, Any]) -> dict[str, Any] | None:
     medio = numero(sup.get("viento_max_kmh"))
     if rafaga is None and medio is None and not sup.get("frente_de_rafagas"):
         return None
-    grado = grado_viento_kmh(rafaga)
     razones = []
+    # 24/11/2026: una ráfaga nunca es menor que el viento medio. Si lo es, la
+    # midió otra estación (en Bahía solo la Noroeste mide ráfagas y estaba
+    # reparada: 3 km/h con 33 km/h en el Centro). No se usa.
+    if rafaga is not None and medio is not None and rafaga < medio:
+        rafaga = None
+    grado = grado_viento_kmh(rafaga)
     if rafaga is not None and grado:
         razones.append(f"ráfaga de {rafaga:.0f} km/h medida en Bahía Blanca")
     if medio is not None:

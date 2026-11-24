@@ -2754,6 +2754,16 @@ def _rumbo_grados(valor: Any) -> float | None:
     return _RUMBOS_TEXTO.get(texto)
 
 
+def _sin_viento_cwop(v: dict[str, Any]) -> dict[str, Any]:
+    """Las estaciones de aficionados (CWOP) no dan el viento en la página.
+
+    24/11/2026: Bahía Noroeste midió 3 km/h con 33 km/h en el Centro (viento
+    del este): está reparada. No se sabe cómo está instalada ninguna estación
+    CWOP, y el viento es lo que más depende de eso. La temperatura, la humedad
+    y la lluvia sí se usan."""
+    return {k: x for k, x in v.items() if not k.startswith(("viento", "rafaga", "direccion_viento"))}
+
+
 def _mediciones_bahia() -> list[dict[str, Any]]:
     """Mediciones de las estaciones de Bahía, con la edad calculada ahora.
 
@@ -2774,6 +2784,7 @@ def _mediciones_bahia() -> list[dict[str, Any]]:
             if not es_fresca(hora, red):
                 continue
             v = est.get("variables") if isinstance(est.get("variables"), dict) else {}
+            v = _sin_viento_cwop(v) if red == "cwop" else v
             salida.append({
                 "nombre": nombre,
                 "edad": edad_min(hora),
@@ -2830,6 +2841,7 @@ def _mediciones_cerca(lat: float, lon: float) -> list[dict[str, Any]]:
             if dist > ESTACION_LOCAL_MAX_KM or not es_fresca(hora, red):
                 continue
             v = est.get("variables") if isinstance(est.get("variables"), dict) else {}
+            v = _sin_viento_cwop(v) if red == "cwop" else v
             nombre = str(est.get("nombre") or est.get("indicativo") or "Estación")
             nombre = nombre.replace(" (CWOP)", "").title().replace("Grumbein", "Grünbein").replace("Bahia", "Bahía")
             salida.append({
@@ -2915,16 +2927,19 @@ def _tiempo_actual(localidad: dict[str, Any] | None = None) -> dict[str, Any]:
     m = medido("temperatura", "temperatura")
     salida["temperatura"] = m["temperatura"] if m else modelo.get("temperatura")
     # Viento y ráfaga de la MISMA estación (si no, la ráfaga de una puede
-    # quedar por debajo del viento de otra). Primero la que mide los dos.
-    par = next((x for x in medidas if x.get("viento") is not None and x.get("rafaga") is not None), None)
-    m = par or medido("viento", "viento")
+    # quedar por debajo del viento de otra). 24/11/2026: manda el orden de
+    # las estaciones (Centro primero), no "la que mide los dos": la Noroeste
+    # es la única con ráfagas y estaba reparada (3 km/h con 33 en el Centro).
+    m = medido("viento", "viento")
     if m:
         etiqueta = f"{m['nombre']} (hace {round(m['edad'] or 0)} min)"
         fuentes["viento"] = etiqueta
         salida["viento_vel"] = m["viento"]
         salida["viento_dir"] = m.get("viento_dir")
-        salida["rafagas"] = m.get("rafaga")
-        if m.get("rafaga") is not None:
+        raf = m.get("rafaga")
+        # Una ráfaga menor que el viento medio no es una medición válida.
+        salida["rafagas"] = raf if raf is not None and (m["viento"] is None or raf >= m["viento"]) else None
+        if salida["rafagas"] is not None:
             fuentes["rafagas"] = etiqueta
     else:
         salida["viento_vel"] = modelo.get("viento_vel")

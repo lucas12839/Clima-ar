@@ -39,11 +39,32 @@ def test_medido_gana_al_modelo(tmp_path, monkeypatch):
              cwop=[dict(NOROESTE, observation_time=hace(3))])
     t = app._tiempo_actual()
     assert t["temperatura"] == 22.5                       # Centro
-    assert (t["viento_vel"], t["rafagas"]) == (14, 21)    # misma estación (Noroeste)
+    # 24/11/2026: el viento sale del Centro (primero en el orden); la ráfaga de
+    # la Noroeste no se mezcla con el viento de otra estación.
+    assert (t["viento_vel"], t["rafagas"]) == (23, None)
+    assert "Centro" in t["fuentes"]["viento"] and "rafagas" not in t["fuentes"]
     assert t["humedad"] == 19
     assert t["presion"] == 1010                           # sin aeropuerto: modelo
     assert t["sensacion_termica"] is None                 # la del modelo no va con temperatura medida
-    assert "Noroeste" in t["fuentes"]["rafagas"] and "presion" not in t["fuentes"]
+    assert "presion" not in t["fuentes"]
+
+
+def test_rafaga_menor_que_el_viento_no_se_muestra(tmp_path, monkeypatch):
+    centro = dict(CENTRO, observation_time=hace(3),
+                  variables=dict(CENTRO["variables"], viento_kmh=20.0, rafaga_15min_kmh=12.0))
+    preparar(tmp_path, monkeypatch, bcp=[centro])
+    t = app._tiempo_actual()
+    assert (t["viento_vel"], t["rafagas"]) == (20, None)
+
+
+def test_viento_de_estaciones_cwop_no_se_usa(tmp_path, monkeypatch):
+    # Caso real 24/11/2026: Noroeste 3,2 km/h con 33 km/h en el Centro (reparada).
+    nor = dict(NOROESTE, observation_time=hace(3),
+               variables=dict(NOROESTE["variables"], viento_kmh=3.2, rafaga_15min_kmh=3.2))
+    preparar(tmp_path, monkeypatch, cwop=[nor])
+    t = app._tiempo_actual()
+    assert (t["viento_vel"], t["rafagas"]) == (30, 47)          # modelo
+    assert t["temperatura"] == 23.9 and "Noroeste" in t["fuentes"]["temperatura"]
 
 
 def test_viento_medido_sin_rafaga_no_muestra_la_del_modelo(tmp_path, monkeypatch):
