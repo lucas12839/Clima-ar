@@ -41,36 +41,67 @@ def test_radar_viejo_no_publica():
     assert not toca and "viejo" in motivo
 
 
-def test_moderada_maximo_tres_por_dia_y_90_min():
+def test_va_informando_sin_llenar_la_pagina():
     r = resumen(loc("punta_alta", 2), loc("medanos", 2))
     sit = fb.situacion(r)
+    firma = sit["firma"]
     assert fb.toca_tormenta({}, sit, r, AHORA)[0]
-    # 60 min después de la última: no.
-    e = {"publicaciones": [pub(60, {"punta_alta": [2, False]})]}
-    assert fb.toca_tormenta(e, sit, r, AHORA)[0] is False
-    # 3 en el día: no, aunque cambie.
-    e = {"publicaciones": [pub(300, {}), pub(200, {}), pub(100, {})]}
-    assert fb.toca_tormenta(e, sit, r, AHORA)[0] is False
+    assert fb.toca_tormenta({"publicaciones": [pub(20, {})]}, sit, r, AHORA)[0] is False
+    assert fb.toca_tormenta({"publicaciones": [pub(35, {})]}, sit, r, AHORA) == (True, "cambió la situación")
+    assert fb.toca_tormenta({"publicaciones": [pub(60, firma)]}, sit, r, AHORA) == (False, "sin cambios")
+    assert fb.toca_tormenta({"publicaciones": [pub(95, firma)]}, sit, r, AHORA)[0] is True
+    e = {"publicaciones": [pub(40 + i * 31, {}) for i in range(12)][::-1]}
+    assert "máximo 12" in fb.toca_tormenta(e, sit, r, AHORA)[1]
 
 
-def test_moderada_sin_cambios_no_repite():
-    r = resumen(loc("punta_alta", 2))
+def test_severa_sin_tope_diario():
+    r = resumen(loc("punta_alta", 4, minutos=10))
     sit = fb.situacion(r)
-    e = {"publicaciones": [pub(120, {"punta_alta": [2, False]})]}
-    assert fb.toca_tormenta(e, sit, r, AHORA) == (False, "sin cambios")
-    # Si sigue 3 h después, otra advertencia (2-3 por día con tormenta).
-    e = {"publicaciones": [pub(185, {"punta_alta": [2, False]})]}
-    assert fb.toca_tormenta(e, sit, r, AHORA) == (True, "la tormenta sigue")
+    e = {"publicaciones": [pub(40 + i * 31, {}) for i in range(12)][::-1]}
+    assert fb.toca_tormenta(e, sit, r, AHORA)[0] is True
+
+
+def test_fin_una_sola_vez_cuando_se_van():
+    r = resumen(loc("punta_alta", 1))
+    assert fb.situacion(r) is None
+    assert not fb.toca_fin({}, None, r, AHORA)
+    assert not fb.toca_fin({"publicaciones": [pub(20, {})]}, None, r, AHORA)
+    assert fb.toca_fin({"publicaciones": [pub(40, {})]}, None, r, AHORA)
+    fin = dict(pub(10, {}), tipo="fin")
+    assert not fb.toca_fin({"publicaciones": [pub(60, {}), fin]}, None, r, AHORA)
+    assert not fb.toca_fin({"publicaciones": [pub(400, {})]}, None, r, AHORA)
+    viejo = resumen(loc("punta_alta", 1), edad=35)
+    assert not fb.toca_fin({"publicaciones": [pub(40, {})]}, None, viejo, AHORA)
+    r2 = resumen(loc("medanos", 2))
+    assert fb.toca_tormenta({"publicaciones": [dict(pub(40, {}), tipo="fin")]}, fb.situacion(r2), r2, AHORA)[0]
 
 
 def test_fuerte_cada_30_min_si_cambia_y_cada_hora_igual():
     r = resumen(loc("punta_alta", 3, minutos=25))
     sit = fb.situacion(r)
     firma = sit["firma"]
-    assert fb.toca_tormenta({"publicaciones": [pub(20, {})]}, sit, r, AHORA)[0] is False     # menos de 30 min
-    assert fb.toca_tormenta({"publicaciones": [pub(35, {})]}, sit, r, AHORA)[0] is True      # cambió
+    assert fb.toca_tormenta({"publicaciones": [pub(20, {})]}, sit, r, AHORA)[0] is False
+    assert fb.toca_tormenta({"publicaciones": [pub(35, {})]}, sit, r, AHORA)[0] is True
     assert fb.toca_tormenta({"publicaciones": [pub(35, firma, 3)]}, sit, r, AHORA)[0] is False
-    assert fb.toca_tormenta({"publicaciones": [pub(65, firma, 3)]}, sit, r, AHORA)[0] is True  # actualización
+    assert fb.toca_tormenta({"publicaciones": [pub(65, firma, 3)]}, sit, r, AHORA)[0] is True
+
+
+def test_noche_una_vez_desde_las_2030_con_pronostico_de_manana():
+    antes = datetime(2026, 11, 24, 23, 20, tzinfo=timezone.utc)
+    hora = datetime(2026, 11, 24, 23, 35, tzinfo=timezone.utc)
+    tarde = datetime(2026, 11, 25, 2, 5, tzinfo=timezone.utc)
+    assert not fb.toca_noche({}, antes)
+    assert fb.toca_noche({}, hora)
+    assert not fb.toca_noche({"noche_fecha": "2026-11-24"}, hora)
+    assert not fb.toca_noche({}, tarde)
+    pron = {"dias": [{"fecha": "2026-11-25", "maxima": 30, "minima": 16, "prob_lluvia": 60, "lluvia_mm": 8,
+                      "viento": 20, "rafagas": 45, "viento_direccion": 0, "codigo_tiempo": 95}]}
+    t = fb.texto_noche(resumen(loc("bahia_blanca", 1)), pron, hora)
+    assert t.startswith("Buenas noches, Bahía Blanca. Así viene mañana, miércoles 25 de noviembre:")
+    assert "Máxima 30°" in t and fb.URL_PUBLICA in t and "alerta" not in t.lower()
+    from PIL import Image
+    png = fb.imagen_manana(resumen(loc("bahia_blanca", 1)), pron, hora, noche=True)
+    assert Image.open(io.BytesIO(png)).size == (1080, 1080)
 
 
 def test_cambio_detecta_subida_y_llegada():
@@ -118,6 +149,9 @@ def test_imagenes_se_arman():
     png = fb.imagen_tormenta(fb.situacion(r), r, radar.getvalue(), AHORA)
     assert Image.open(io.BytesIO(png)).size == (1080, 1350)
     png = fb.imagen_manana(r, {"hoy": {"maxima": 27, "minima": 14}}, AHORA)
+    png2 = fb.imagen_tormenta({"nivel": 0, "localidades": [], "firma": {}}, r, radar.getvalue(), AHORA, fin=True)
+    assert Image.open(io.BytesIO(png2)).size == (1080, 1350)
+    assert "Se alejaron" in fb.texto_fin(r, AHORA) and "alerta" not in fb.texto_fin(r, AHORA).lower()
     assert Image.open(io.BytesIO(png)).size == (1080, 1080)
 
 

@@ -5,15 +5,16 @@ Corre en el VPS cada 5 minutos (deploy/climaar-facebook.timer). Lee los datos
 del servidor de la app que corre en el mismo VPS (http://127.0.0.1:8000) y:
 
 1. Todas las mañanas (desde las 7:30, hora de Argentina) publica cómo viene
-   el día, con una imagen.
-2. Con tormentas publica una "ADVERTENCIA" con la imagen del radar
-   (nunca la palabra "alerta"):
-   - nivel 2 (moderado): hasta 3 por día, con 90 min entre una y otra:
-     cuando algo cambia, o cada 3 h si la tormenta sigue;
-   - nivel 3 o 4 (fuerte o severo): como máximo una cada 30 min cuando algo
-     cambia, y una actualización cada hora aunque no cambie nada;
-   - "algo cambió": localidad nueva, nivel más alto o tormenta que ahora va
-     hacia una localidad.
+   el día, y todas las noches (desde las 20:30) cómo viene mañana, con imagen.
+2. Con tormentas en las localidades o acercándose, publica una "ADVERTENCIA"
+   con la imagen del radar (nunca la palabra "alerta") y va informando con
+   cada actualización del radar, sin llenar la página (24/11/2026):
+   - si algo cambió (localidad nueva, nivel más alto o tormenta que ahora va
+     hacia una localidad): una nueva, con 30 min como mínimo entre una y otra;
+   - si sigue igual: una actualización cada 60 min (fuerte o severa) o cada
+     90 min (moderada);
+   - como máximo 12 por día (las de nivel 4, posiblemente severa, no tienen tope);
+   - cuando se van, una última: "se alejaron las tormentas".
    Nunca con un radar de más de 20 min (no se informa con datos viejos).
 
 Cada texto lleva el enlace a la página oficial de ClimaAR (sin enlace al SMN).
@@ -55,19 +56,23 @@ ESTADO = Path(os.environ.get("CLIMAAR_FB_ESTADO", "/var/lib/climaar-facebook/est
 
 HORA_MANANA = (7, 30)
 HORA_MANANA_LIMITE = 11            # pasadas las 11 ya no se publica la de la mañana
+HORA_NOCHE = (20, 30)
+HORA_NOCHE_LIMITE = 23
 RADAR_MAX_EDAD_MIN = 20
 NIVEL_MINIMO = 2
-MAX_DIA_MODERADO = 3
-ESPERA_MODERADO_MIN = 90
-ESPERA_FUERTE_MIN = 30
-REPETIR_FUERTE_MIN = 60
-REPETIR_MODERADO_MIN = 180          # tormenta moderada que sigue: otra advertencia a las 3 h
+MAX_DIA = 12                       # advertencias por día (nivel 4 sin tope)
+ESPERA_MIN = 30                    # mínimo entre dos advertencias
+REPETIR_FUERTE_MIN = 60            # sigue igual: actualización (fuerte o severa)
+REPETIR_MODERADO_MIN = 90          # sigue igual: actualización (moderada)
+FIN_DENTRO_DE_H = 6                # "se alejaron" solo si hubo advertencia en las últimas 6 h
 # Sin enlace a las alertas del SMN (decisión de Lucas, 24/11/2026: el SMN
 # declara alerta para una zona entera y ClimaAR analiza cada localidad).
 # Cada publicación lleva el enlace a la página de ClimaAR.
 PIE_ENLACE = "Página oficial de ClimaAR: " + URL_PUBLICA
 PIE = "Información de ClimaAR por localidad. No reemplaza los avisos oficiales."
 TIPO_ADV = "advertencia"
+TIPO_FIN = "fin"
+TIPOS_TORMENTA = (TIPO_ADV, "tormenta", TIPO_FIN)
 
 
 def sin_alerta(texto: str) -> str:
@@ -184,11 +189,50 @@ def guardar_estado(e: dict, ahora: datetime | None = None) -> None:
 # ----------------------------------------------------------------------------
 # Mañana
 # ----------------------------------------------------------------------------
-def toca_manana(estado: dict, ahora: datetime) -> bool:
+def _toca_franja(estado: dict, ahora: datetime, desde: tuple, hasta: int, clave: str) -> bool:
     local = ahora_ar(ahora)
-    if (local.hour, local.minute) < HORA_MANANA or local.hour >= HORA_MANANA_LIMITE:
+    if (local.hour, local.minute) < desde or local.hour >= hasta:
         return False
-    return estado.get("manana_fecha") != local.date().isoformat()
+    return estado.get(clave) != local.date().isoformat()
+
+
+def toca_manana(estado: dict, ahora: datetime) -> bool:
+    return _toca_franja(estado, ahora, HORA_MANANA, HORA_MANANA_LIMITE, "manana_fecha")
+
+
+def toca_noche(estado: dict, ahora: datetime) -> bool:
+    return _toca_franja(estado, ahora, HORA_NOCHE, HORA_NOCHE_LIMITE, "noche_fecha")
+
+
+def manana_de(pron: dict, ahora: datetime) -> dict | None:
+    """El pronóstico de mañana (el día siguiente al de hoy en Argentina)."""
+    fecha = (ahora_ar(ahora).date() + timedelta(days=1)).isoformat()
+    return next((d for d in (pron or {}).get("dias") or [] if d.get("fecha") == fecha), None)
+
+
+def _lineas_dia(dia: dict) -> list[str]:
+    lineas = []
+    c = cielo(dia.get("codigo_tiempo"))
+    lineas.append(f"🌡️ Máxima {fmt(dia.get('maxima'))}° y mínima {fmt(dia.get('minima'))}°.")
+    if c:
+        lineas.append(f"☁️ Cielo: {c}.")
+    prob = num(dia.get("prob_lluvia"))
+    mm = num(dia.get("lluvia_mm"))
+    if prob is not None:
+        lineas.append(f"☔ Probabilidad de lluvia: {fmt(prob)} %"
+                      + (f" (unos {fmt(mm, 1)} mm)" if mm and mm >= 0.5 else "") + ".")
+    dirv = punto(dia.get("viento_direccion"))
+    lineas.append(f"💨 Viento del {NOMBRE_PUNTO.get(dirv, '—')} hasta {fmt(dia.get('viento'))} km/h,"
+                  f" ráfagas de {fmt(dia.get('rafagas'))} km/h.")
+    return lineas
+
+
+def _activos(resumen: dict) -> list[str]:
+    activos = [l for l in (resumen or {}).get("localidades") or [] if (num(l.get("nivel")) or 0) >= NIVEL_MINIMO]
+    if not activos:
+        return []
+    return ["", "Ahora hay actividad en: " + ", ".join(
+        f"{l['nombre']} (nivel {int(num(l['nivel']))})" for l in activos) + "."]
 
 
 def texto_manana(resumen: dict, pron: dict, ahora: datetime) -> str:
@@ -196,29 +240,28 @@ def texto_manana(resumen: dict, pron: dict, ahora: datetime) -> str:
     t = (resumen or {}).get("tiempo_actual") or {}
     lineas = [f"Buen día, Bahía Blanca. Así viene el {fecha_txt(ahora)}:", ""]
     if hoy:
-        c = cielo(hoy.get("codigo_tiempo"))
-        lineas.append(f"🌡️ Máxima {fmt(hoy.get('maxima'))}° y mínima {fmt(hoy.get('minima'))}°.")
-        if c:
-            lineas.append(f"☁️ Cielo: {c}.")
-        prob = num(hoy.get("prob_lluvia"))
-        mm = num(hoy.get("lluvia_mm"))
-        if prob is not None:
-            lineas.append(f"☔ Probabilidad de lluvia: {fmt(prob)} %"
-                          + (f" (unos {fmt(mm, 1)} mm)" if mm and mm >= 0.5 else "") + ".")
-        dirv = punto(hoy.get("viento_direccion"))
-        lineas.append(f"💨 Viento del {NOMBRE_PUNTO.get(dirv, '—')} hasta {fmt(hoy.get('viento'))} km/h,"
-                      f" ráfagas de {fmt(hoy.get('rafagas'))} km/h.")
+        lineas += _lineas_dia(hoy)
     if num(t.get("temperatura")) is not None and t.get("disponible"):
         lineas.append(f"Ahora: {fmt(t.get('temperatura'))}°.")
     amb = (resumen or {}).get("ambiente")
     if amb:
         lineas.append(f"⛈️ {amb}.")
-    activos = [l for l in (resumen or {}).get("localidades") or [] if (num(l.get("nivel")) or 0) >= NIVEL_MINIMO]
-    if activos:
-        lineas.append("")
-        lineas.append("Ahora hay actividad en: " + ", ".join(
-            f"{l['nombre']} (nivel {int(num(l['nivel']))})" for l in activos) + ".")
+    lineas += _activos(resumen)
     lineas += ["", "Radar en vivo y detalle por localidad en la página.", PIE_ENLACE, "", PIE,
+               "#BahíaBlanca #PuntaAlta #Clima"]
+    return "\n".join(lineas)
+
+
+def texto_noche(resumen: dict, pron: dict, ahora: datetime) -> str:
+    dia = manana_de(pron, ahora) or {}
+    t = (resumen or {}).get("tiempo_actual") or {}
+    lineas = [f"Buenas noches, Bahía Blanca. Así viene mañana, {fecha_txt(ahora + timedelta(days=1))}:", ""]
+    if dia:
+        lineas += _lineas_dia(dia)
+    if num(t.get("temperatura")) is not None and t.get("disponible"):
+        lineas.append(f"Ahora: {fmt(t.get('temperatura'))}°.")
+    lineas += _activos(resumen)
+    lineas += ["", "Si se forman tormentas, vamos informando acá y en la página.", PIE_ENLACE, "", PIE,
                "#BahíaBlanca #PuntaAlta #Clima"]
     return "\n".join(lineas)
 
@@ -262,35 +305,62 @@ def cambio(firma_nueva: dict, firma_vieja: dict | None) -> bool:
     return False
 
 
+def _pubs_tormenta(estado: dict) -> list[dict]:
+    return [p for p in estado.get("publicaciones", []) if p.get("tipo") in TIPOS_TORMENTA]
+
+
+def _minutos_desde(p: dict | None, ahora: datetime) -> float | None:
+    return (ahora - datetime.fromisoformat(p["utc"])).total_seconds() / 60.0 if p else None
+
+
 def toca_tormenta(estado: dict, sit: dict | None, resumen: dict, ahora: datetime) -> tuple[bool, str]:
     if not sit:
         return False, "sin tormentas de nivel 2 o más"
     edad = num((resumen or {}).get("frame_edad_minutos"))
     if edad is None or edad > RADAR_MAX_EDAD_MIN:
         return False, f"radar viejo ({fmt(edad)} min): no se informa con datos viejos"
-    pubs = [p for p in estado.get("publicaciones", []) if p.get("tipo") in (TIPO_ADV, "tormenta")]
-    hoy = ahora_ar(ahora).date().isoformat()
+    pubs = _pubs_tormenta(estado)
     ultima = pubs[-1] if pubs else None
-    minutos = ((ahora - datetime.fromisoformat(ultima["utc"])).total_seconds() / 60.0) if ultima else None
-    fuerte = sit["nivel"] >= 3
-    if fuerte:
-        if minutos is not None and minutos < ESPERA_FUERTE_MIN:
-            return False, f"última hace {fmt(minutos)} min (mínimo {ESPERA_FUERTE_MIN})"
-        if cambio(sit["firma"], ultima and ultima.get("firma")):
-            return True, "cambió la situación"
-        if minutos is None or minutos >= REPETIR_FUERTE_MIN:
-            return True, "actualización de tormenta fuerte"
-        return False, "sin cambios"
-    del_dia = [p for p in pubs if ahora_ar(datetime.fromisoformat(p["utc"])).date().isoformat() == hoy]
-    if len(del_dia) >= MAX_DIA_MODERADO:
-        return False, f"ya hubo {len(del_dia)} informes hoy"
-    if minutos is not None and minutos < ESPERA_MODERADO_MIN:
-        return False, f"última hace {fmt(minutos)} min (mínimo {ESPERA_MODERADO_MIN})"
-    if cambio(sit["firma"], ultima and ultima.get("firma")):
+    minutos = _minutos_desde(ultima, ahora)
+    if minutos is not None and minutos < ESPERA_MIN:
+        return False, f"última hace {fmt(minutos)} min (mínimo {ESPERA_MIN})"
+    hoy = ahora_ar(ahora).date().isoformat()
+    del_dia = [p for p in pubs if p.get("tipo") != TIPO_FIN
+               and ahora_ar(datetime.fromisoformat(p["utc"])).date().isoformat() == hoy]
+    if len(del_dia) >= MAX_DIA and sit["nivel"] < 4:
+        return False, f"ya hubo {len(del_dia)} advertencias hoy (máximo {MAX_DIA})"
+    previa = ultima.get("firma") if ultima and ultima.get("tipo") != TIPO_FIN else None
+    if cambio(sit["firma"], previa):
         return True, "cambió la situación"
-    if minutos is not None and minutos >= REPETIR_MODERADO_MIN:
-        return True, "la tormenta sigue"
+    repetir = REPETIR_FUERTE_MIN if sit["nivel"] >= 3 else REPETIR_MODERADO_MIN
+    if minutos is None or minutos >= repetir:
+        return True, "actualización: la tormenta sigue"
     return False, "sin cambios"
+
+
+def toca_fin(estado: dict, sit: dict | None, resumen: dict, ahora: datetime) -> bool:
+    """Una última publicación cuando ya no hay tormentas (con radar al día)."""
+    if sit:
+        return False
+    edad = num((resumen or {}).get("frame_edad_minutos"))
+    if edad is None or edad > RADAR_MAX_EDAD_MIN:
+        return False
+    pubs = _pubs_tormenta(estado)
+    if not pubs or pubs[-1].get("tipo") == TIPO_FIN:
+        return False
+    minutos = _minutos_desde(pubs[-1], ahora)
+    return ESPERA_MIN <= minutos <= FIN_DENTRO_DE_H * 60
+
+
+def texto_fin(resumen: dict, ahora: datetime) -> str:
+    frame = resumen.get("frame_actual_utc")
+    hora_radar = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
+    lineas = ["✅ Se alejaron las tormentas", "",
+              "Por ahora no hay tormentas sobre las localidades ni acercándose."]
+    if hora_radar:
+        lineas.append(f"Radar de las {hora_radar}.")
+    lineas += ["Si vuelven a formarse, vamos informando.", PIE_ENLACE, "", PIE, "#BahíaBlanca"]
+    return "\n".join(lineas)
 
 
 def _que(n: int) -> str:
@@ -359,13 +429,17 @@ def pie_imagen(d, alto=1080):
     d.text((60, alto - 70), URL_PUBLICA.replace("https://", ""), font=fuente(26, True), fill=ACENTO)
 
 
-def imagen_manana(resumen: dict, pron: dict, ahora: datetime) -> bytes:
+def imagen_manana(resumen: dict, pron: dict, ahora: datetime, noche: bool = False) -> bytes:
     from PIL import Image, ImageDraw
 
     im = Image.new("RGB", (1080, 1080), FONDO)
     d = ImageDraw.Draw(im)
-    cabecera(d, "Cómo viene el día", f"Bahía Blanca · {fecha_txt(ahora)}")
-    hoy = (pron or {}).get("hoy") or {}
+    if noche:
+        cabecera(d, "Cómo viene mañana", f"Bahía Blanca · {fecha_txt(ahora + timedelta(days=1))}")
+        hoy = manana_de(pron, ahora) or {}
+    else:
+        cabecera(d, "Cómo viene el día", f"Bahía Blanca · {fecha_txt(ahora)}")
+        hoy = (pron or {}).get("hoy") or {}
     d.rounded_rectangle((60, 250, 1020, 640), 28, fill=TARJETA)
     d.text((100, 280), f"{fmt(hoy.get('maxima'))}°", font=fuente(150, True), fill=TEXTO)
     d.text((100, 460), f"mínima {fmt(hoy.get('minima'))}°", font=fuente(40), fill=SUAVE)
@@ -426,14 +500,15 @@ def _proyector(bounds, lado):
     return p
 
 
-def imagen_tormenta(sit: dict, resumen: dict, radar_png: bytes | None, ahora: datetime) -> bytes:
+def imagen_tormenta(sit: dict, resumen: dict, radar_png: bytes | None, ahora: datetime,
+                    fin: bool = False) -> bytes:
     from PIL import Image, ImageDraw
 
     im = Image.new("RGB", (1080, 1350), FONDO)   # vertical 4:5, la que mejor se ve en Facebook
     d = ImageDraw.Draw(im)
     n = sit["nivel"]
-    titulo = "ADVERTENCIA"
-    que = _que(n).replace(" en la zona", "")
+    titulo = "SE ALEJARON LAS TORMENTAS" if fin else "ADVERTENCIA"
+    que = "Sin tormentas en las localidades" if fin else _que(n).replace(" en la zona", "")
     frame = resumen.get("frame_actual_utc")
     hora = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
     local = ahora_ar(ahora)
@@ -633,6 +708,16 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
         else:
             hechos.append("mañana: sin pronóstico todavía, se reintenta")
 
+    # 1b) Noche: cómo viene mañana
+    if forzar == "noche" or (forzar is None and toca_noche(estado, ahora)):
+        pron = pedir_json("/pronostico")
+        if manana_de(pron, ahora) or forzar:
+            emitir("noche", texto_noche(resumen, pron, ahora), imagen_manana(resumen, pron, ahora, noche=True), {})
+            if not probar:
+                estado["noche_fecha"] = ahora_ar(ahora).date().isoformat()
+        else:
+            hechos.append("noche: sin pronóstico todavía, se reintenta")
+
     # 2) Tormentas
     sit = situacion(resumen)
     forzar_adv = forzar in (TIPO_ADV, "tormenta")
@@ -646,6 +731,14 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
                {"firma": sit["firma"], "nivel": sit["nivel"], "motivo": motivo})
     elif forzar_adv:
         hechos.append(f"{TIPO_ADV}: no se puede forzar, no hay tormentas de nivel 2 o más")
+    elif forzar is None and toca_fin(estado, sit, resumen, ahora):
+        try:
+            radar = pedir_bytes("/radar/mapa")
+        except Exception:
+            radar = None
+        vacia = {"nivel": 0, "localidades": [], "firma": {}}
+        emitir(TIPO_FIN, texto_fin(resumen, ahora), imagen_tormenta(vacia, resumen, radar, ahora, fin=True),
+               {"firma": {}, "nivel": 0, "motivo": "se alejaron"})
     else:
         hechos.append(f"{TIPO_ADV}: no ({motivo})")
 
@@ -660,7 +753,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Publicaciones de ClimaAR en Facebook")
     ap.add_argument("--probar", action="store_true", help="arma texto e imagen sin publicar ni guardar estado")
     ap.add_argument("--salida", type=Path, help="carpeta donde dejar lo armado (con --probar)")
-    ap.add_argument("--forzar", choices=["manana", TIPO_ADV, "tormenta"], help="publicar ya, sin esperar la hora")
+    ap.add_argument("--forzar", choices=["manana", "noche", TIPO_ADV, "tormenta"], help="publicar ya, sin esperar la hora")
     a = ap.parse_args(argv)
     try:
         for h in ciclo(probar=a.probar, salida=a.salida, forzar=a.forzar):
