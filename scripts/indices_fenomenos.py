@@ -628,11 +628,13 @@ def evaluar(
             max(numero(radar.get("dbz_pico")) or 0, numero(radar.get("dbz_ciudad")) or 0))
     # Una ráfaga medida baja manda sobre el pronóstico: si la estación mide
     # poco viento y no hay firma de radar, no se informa el del modelo.
+    # 24/11/2026: antes solo se agregaba una nota y quedaba el número del
+    # modelo (ráfagas de 38 km/h en las 7 localidades con 19 medidos).
     if (est_viento is not None and est_viento["grado"] < ahora["viento"]["grado"]
             and ahora["viento"]["fuente"] == "modelo"):
-        ahora["viento"] = dict(ahora["viento"], fuente="modelo",
-                               razones=ahora["viento"]["razones"]
-                               + ["las estaciones todavía no lo miden"])
+        pron = numero((mod_viento or {}).get("rafaga_kmh"))
+        ahora["viento"] = dict(est_viento, razones=list(est_viento["razones"]) + (
+            [f"el modelo europeo pronostica ráfagas de {pron:.0f} km/h, todavía no medidas"] if pron else []))
     ahora["electrica"] = ev_rayos
 
     # ---------------- Al llegar (<= 60 min) ----------------

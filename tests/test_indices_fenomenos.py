@@ -304,3 +304,23 @@ class GranizoConfirmacionTests(unittest.TestCase):
     def test_sin_datos_no_se_baja(self):
         r = fen.evaluar(radar=self.RADAR)
         self.assertEqual(r["al_llegar"]["granizo"]["grado"], 2)
+
+
+class TestMedidoMandaSobreModelo(unittest.TestCase):
+    """24/11/2026: con estaciones al día, el viento de ahora es el medido."""
+
+    def test_rafaga_medida_baja_gana_al_modelo(self):
+        r = fen.evaluar(radar=radar(), superficie={"rafaga_max_kmh": 19, "viento_max_kmh": 21},
+                        ambiente={"wind_gusts_10m": 38, "wind_speed_10m": 20})
+        v = r["fenomenos"]["viento"]
+        self.assertEqual((v["grado"], v["fuente"], v.get("rafaga_kmh")), (0, "estaciones", 19))
+        self.assertTrue(any("38 km/h, todavía no medidas" in x for x in v["razones"]))
+
+    def test_sin_estaciones_queda_el_modelo(self):
+        r = fen.evaluar(radar=radar(), ambiente={"wind_gusts_10m": 38, "wind_speed_10m": 20})
+        self.assertEqual((r["fenomenos"]["viento"]["grado"], r["fenomenos"]["viento"]["fuente"]), (1, "modelo"))
+
+    def test_medido_alto_sigue_ganando(self):
+        r = fen.evaluar(radar=radar(), superficie={"rafaga_max_kmh": 75},
+                        ambiente={"wind_gusts_10m": 38})
+        self.assertEqual(r["fenomenos"]["viento"]["grado"], 3)

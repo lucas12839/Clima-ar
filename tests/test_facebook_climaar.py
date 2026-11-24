@@ -212,3 +212,34 @@ def test_ciclo_apagado_no_publica_pero_registra(tmp_path, monkeypatch):
     assert hechos == ["advertencia: armado sin publicar"]
     # Ya registrada: en el ciclo siguiente no se repite.
     assert fb.ciclo(ahora=AHORA + timedelta(minutes=5))[-1].startswith("advertencia: no")
+
+
+def test_espera_si_el_servidor_se_esta_reiniciando(monkeypatch):
+    import requests
+    import time
+
+    llamadas = []
+
+    class Resp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"ok": True}
+
+    def get(url, timeout, **kw):
+        llamadas.append(url)
+        if len(llamadas) < 3:
+            raise requests.ConnectionError("reiniciando")
+        return Resp()
+
+    monkeypatch.setattr(requests, "get", get)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    assert fb.pedir_json("/resumen") == {"ok": True}
+    assert len(llamadas) == 3
+    llamadas.clear()
+    monkeypatch.setattr(requests, "get", lambda url, timeout, **kw: (_ for _ in ()).throw(requests.ConnectionError()))
+    with pytest.raises(requests.ConnectionError):
+        fb.pedir_json("/resumen")
