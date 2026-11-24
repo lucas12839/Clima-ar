@@ -46,6 +46,9 @@ TEMPORAL_MAX_FRAMES = 3
 TEMPORAL_MAX_GAP_MINUTOS = 60.0
 TEMPORAL_DELTA_INTENSIDAD = 2
 TEMPORAL_NUEVO_ECO_MIN_FRAMES = 2
+# Píxeles (~0,9 km² cada uno) de la misma área de lluvia que tienen que
+# estar afuera de la máscara de falsos ecos para aceptar cambio adentro.
+APOYO_MIN_PIXELES_FUERA = 15
 
 
 def cargar_imagen(path):
@@ -335,7 +338,26 @@ def _mascara_temporal_dinamica(actual, mascara, ruta_actual=None):
     )
 
     evidencia = mascara & (nuevo_eco | cambio_intensidad | intensificacion)
+    # El falso eco de las sierras parpadea de una imagen a otra y eso se
+    # confundía con "cambio" (24/11/2026: en 474 imágenes sin lluvia
+    # aparecieron 158 tormentas sobre la máscara). Una tormenta real sobre
+    # las sierras es parte de un área de lluvia que también sigue afuera
+    # de la máscara; el falso eco, no. Solo cuenta el cambio con ese apoyo.
+    evidencia &= _apoyo_fuera_de_mascara(actual, mascara)
     return evidencia, len(previas)
+
+
+def _apoyo_fuera_de_mascara(actual, mascara):
+    eco = ndimage.binary_closing(actual >= INTENSIDAD_MINIMA, iterations=1)
+    etiquetas, cantidad = ndimage.label(eco)
+    if cantidad == 0:
+        return np.zeros(actual.shape, dtype=bool)
+    fuera = np.bincount(
+        etiquetas[eco & ~mascara].ravel(), minlength=cantidad + 1
+    )
+    validas = fuera >= APOYO_MIN_PIXELES_FUERA
+    validas[0] = False
+    return validas[etiquetas]
 
 
 def aplicar_mascara_estatica(

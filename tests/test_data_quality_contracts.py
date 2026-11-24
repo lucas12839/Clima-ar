@@ -568,6 +568,33 @@ class TemporalInterpolationTests(unittest.TestCase):
 
 class StaticEchoMaskTests(unittest.TestCase):
     def test_intensifying_echo_is_preserved_inside_static_mask(self):
+        # Tormenta real que entra a la zona de falsos ecos: el área de lluvia
+        # sigue afuera de la máscara, así que el cambio adentro se acepta.
+        static_mask = np.zeros((10, 30), dtype=bool)
+        static_mask[:, :10] = True
+        previous = np.zeros((10, 30), dtype=np.uint8)
+        previous[3:6, 0:10] = 1
+        current = previous.copy()
+        current[3:6, 5:30] = 3
+        current[4, 2] = 3
+
+        with (
+            patch.object(procesador_radar, "cargar_mascara", return_value=static_mask),
+            patch.object(procesador_radar, "cargar_info_mascara", return_value={}),
+            patch.object(
+                procesador_radar,
+                "_cargar_intensidades_previas",
+                return_value=[previous],
+            ),
+        ):
+            result, _, _ = procesador_radar.aplicar_mascara_estatica(current)
+
+        self.assertEqual(result[4, 7], 3)
+        self.assertEqual(result[4, 20], 3)
+
+    def test_flickering_clutter_without_rain_outside_is_removed(self):
+        # Falso eco de las sierras que "parpadea": cambia, pero no hay lluvia
+        # afuera de la máscara. No es una tormenta (revisión 24/11/2026).
         static_mask = np.ones((3, 3), dtype=bool)
         previous = np.ones((3, 3), dtype=np.uint8)
         current = previous.copy()
@@ -584,10 +611,8 @@ class StaticEchoMaskTests(unittest.TestCase):
         ):
             result, removed, _ = procesador_radar.aplicar_mascara_estatica(current)
 
-        self.assertEqual(removed, 8)
-        self.assertEqual(result[0, 0], 0)
-        self.assertEqual(result[1, 1], 3)
-
+        self.assertEqual(removed, 9)
+        self.assertEqual(result[1, 1], 0)
 
 if __name__ == "__main__":
     unittest.main()
