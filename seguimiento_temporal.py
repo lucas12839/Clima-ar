@@ -1761,6 +1761,181 @@ def salida_sin_nucleos(
 
 
 
+# ============================================================
+# DIVISIÓN Y UNIÓN: MOVIMIENTO Y TAMAÑO DEL SISTEMA COMPLETO
+# ============================================================
+# Cuando una tormenta se divide o dos se unen, el centro de cada pedazo salta
+# aunque el sistema no se haya movido así, y el tamaño de cada pedazo cambia
+# aunque el sistema no haya crecido ni se haya debilitado. Se corrige
+# conservando el "centro de masa" (centro ponderado por superficie) del
+# sistema completo: el pasado de cada pedazo se corre al lugar que le toca
+# dentro del sistema, y su tamaño pasado se reparte en proporción. Así la
+# velocidad, el rumbo y el cambio de tamaño de cada pedazo son los del sistema.
+# Solo se aplica si las superficies cierran (los pedazos suman lo que había) y
+# si el centro conjunto explica mejor el movimiento que el pedazo solo.
+MIN_CIERRE_SUPERFICIE = 0.6
+MAX_CIERRE_SUPERFICIE = 1.5
+# Qué parte de cada pedazo tiene que caer dentro de lo que había antes
+# (llevado con su velocidad): un pedazo de afuera es una tormenta nueva.
+MIN_CONTENIDO = 0.5
+
+
+def _contenido(pieza, contenedor):
+    """Parte del rectángulo de la pieza que cae dentro del contenedor (0-1)."""
+    ax1, ay1, ax2, ay2 = bbox(pieza)
+    bx1, by1, bx2, by2 = bbox(contenedor)
+    inter = max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(0.0, min(ay2, by2) - max(ay1, by1))
+    area = max(1e-9, (ax2 - ax1) * (ay2 - ay1))
+    return inter / area
+
+
+def _llevado(track, intervalo):
+    """Rectángulo del track llevado con su velocidad al momento actual."""
+    x, y = posicion_predicha(track, intervalo)
+    return {"x": x, "y": y, "ancho": numero(track.get("ancho", 1), 1),
+            "alto": numero(track.get("alto", 1), 1)}
+
+
+def _cierra(area_nueva, area_previa):
+    return MIN_CIERRE_SUPERFICIE * area_previa <= area_nueva <= MAX_CIERRE_SUPERFICIE * area_previa
+
+
+def _centro_ponderado(partes):
+    total = sum(max(0.0, area) for _x, _y, area in partes)
+    if total <= 0:
+        return None
+    return (
+        sum(x * max(0.0, area) for x, _y, area in partes) / total,
+        sum(y * max(0.0, area) for _x, y, area in partes) / total,
+        total,
+    )
+
+
+def _reanclar(track, dx, dy, factor):
+    """Corre el pasado del track (dx, dy) y escala su superficie pasada."""
+    track["x"] = numero(track.get("x")) + dx
+    track["y"] = numero(track.get("y")) + dy
+    track["pixeles"] = numero(track.get("pixeles"), 1) * factor
+    historial = track.get("historial")
+    if isinstance(historial, list):
+        nuevo = []
+        for punto in historial:
+            if not isinstance(punto, dict):
+                continue
+            punto = dict(punto)
+            if punto.get("x") is not None and punto.get("y") is not None:
+                punto["x"] = numero(punto["x"]) + dx
+                punto["y"] = numero(punto["y"]) + dy
+            if punto.get("pixeles") is not None:
+                punto["pixeles"] = numero(punto["pixeles"]) * factor
+            nuevo.append(punto)
+        track["historial"] = nuevo
+
+
+def ajustar_union(principal, fusionados, nucleo, intervalo):
+    """Une el pasado de los tracks fusionados al del principal.
+
+    Devuelve True si se aplicó. El principal pasa a representar al sistema
+    unido: su posición pasada es el centro ponderado de todos y su superficie
+    pasada la suma de todas.
+    """
+    t_principal = parse_iso(principal.get("ultimo_frame"))
+    partes = [(numero(principal.get("x")), numero(principal.get("y")),
+               numero(principal.get("pixeles")))]
+    for track in fusionados:
+        x, y = numero(track.get("x")), numero(track.get("y"))
+        t_track = parse_iso(track.get("ultimo_frame"))
+        if t_principal is not None and t_track is not None and t_track != t_principal:
+            # Lo que se vio antes se lleva al mismo momento con su propia velocidad.
+            x, y = posicion_predicha(track, (t_principal - t_track).total_seconds() / 60.0)
+        partes.append((x, y, numero(track.get("pixeles"))))
+    conjunto = _centro_ponderado(partes)
+    if conjunto is None or partes[0][2] <= 0:
+        return False
+    cx, cy, area_previa = conjunto
+    if not _cierra(numero(nucleo.get("pixeles")), area_previa):
+        return False  # lo que quedó no se parece a la suma: no es una unión limpia
+    # Cada tormenta que se une tiene que caer sobre el núcleo nuevo.
+    for track in [principal, *fusionados]:
+        t_track = parse_iso(track.get("ultimo_frame"))
+        lapso = intervalo + (
+            (t_principal - t_track).total_seconds() / 60.0
+            if t_principal is not None and t_track is not None else 0.0)
+        if _contenido(_llevado(track, lapso), nucleo) < MIN_CONTENIDO:
+            return False
+    # El centro conjunto (movido con la velocidad del principal) tiene que
+    # explicar mejor dónde quedó el núcleo que el principal solo.
+    vx = numero(principal.get("velocidad_x_pixeles_min", 0))
+    vy = numero(principal.get("velocidad_y_pixeles_min", 0))
+    px, py = partes[0][0] + vx * intervalo, partes[0][1] + vy * intervalo
+    if math.hypot(nucleo["x"] - (cx + vx * intervalo), nucleo["y"] - (cy + vy * intervalo)) \
+            > math.hypot(nucleo["x"] - px, nucleo["y"] - py):
+        return False
+    _reanclar(principal, cx - partes[0][0], cy - partes[0][1], area_previa / partes[0][2])
+    return True
+
+
+def ajustar_division(padre, nucleo_padre, nucleo_hijo, intervalo):
+    """Prepara al padre para una división.
+
+    Devuelve (dx_hijo, dy_hijo, factor_hijo, pasado_original) para armar al
+    hijo, o None si la división no es limpia. El padre se corre para que su
+    pasado represente su parte del sistema.
+    """
+    area_a = numero(nucleo_padre.get("pixeles"))
+    area_b = numero(nucleo_hijo.get("pixeles"))
+    area_previa = numero(padre.get("pixeles"))
+    conjunto = _centro_ponderado([
+        (nucleo_padre["x"], nucleo_padre["y"], area_a),
+        (nucleo_hijo["x"], nucleo_hijo["y"], area_b),
+    ])
+    if conjunto is None or area_previa <= 0:
+        return None
+    cx, cy, area_nueva = conjunto
+    if not _cierra(area_nueva, area_previa):
+        return None  # los pedazos no suman lo que había: no es una división limpia
+    antes = _llevado(padre, intervalo)
+    if min(_contenido(nucleo_padre, antes), _contenido(nucleo_hijo, antes)) < MIN_CONTENIDO:
+        return None  # un pedazo cae afuera de la tormenta de antes: es otra tormenta
+    px, py = posicion_predicha(padre, intervalo)
+    if math.hypot(cx - px, cy - py) > math.hypot(nucleo_padre["x"] - px, nucleo_padre["y"] - py):
+        return None  # el pedazo grande solo explica mejor el movimiento
+    pasado = {
+        "x": numero(padre.get("x")),
+        "y": numero(padre.get("y")),
+        "pixeles": area_previa,
+        "historial": [dict(p) for p in padre.get("historial") or [] if isinstance(p, dict)],
+    }
+    _reanclar(padre, nucleo_padre["x"] - cx, nucleo_padre["y"] - cy, area_a / area_nueva)
+    return (nucleo_hijo["x"] - cx, nucleo_hijo["y"] - cy, area_b / area_nueva, pasado)
+
+
+def heredar_division(hijo, padre, ajuste):
+    """El hijo hereda el pasado del sistema (en su lugar) y el movimiento del padre."""
+    dx, dy, factor, pasado = ajuste
+    previo = {
+        "x": pasado["x"],
+        "y": pasado["y"],
+        "pixeles": pasado["pixeles"],
+        "historial": pasado["historial"],
+    }
+    _reanclar(previo, dx, dy, factor)
+    actual = hijo["historial"][-1]
+    hijo["historial"] = (previo["historial"] + [actual])[-MAX_HISTORIAL:]
+    for campo in (
+        "dx_pixeles", "dy_pixeles", "desplazamiento_pixeles",
+        "velocidad_pixeles_min", "velocidad_x_pixeles_min", "velocidad_y_pixeles_min",
+        "rumbo_grados", "direccion",
+        "aceleracion_pixeles_min2", "aceleracion_x_pixeles_min2", "aceleracion_y_pixeles_min2",
+        "tendencia_aceleracion", "cambio_rumbo_grados", "cambio_rumbo_signado_grados",
+        "cambio_rumbo_significativo", "tipo_cambio_rumbo", "rumbo_comparable",
+        "calidad_movimiento", "cambio_area_porcentaje", "tendencia_area",
+        "tendencia_velocidad", "confianza_movimiento",
+    ):
+        if campo in padre:
+            hijo[campo] = padre[campo]
+
+
 def analizar_split_merge(
     candidatos,
     asociaciones,
@@ -2488,6 +2663,47 @@ def procesar_frame_secuencia(
         track["evento_ultimo"] = "MERGE"
         asignados_tracks.add(tid)
 
+    # El principal de cada unión pasa a representar al sistema unido.
+    por_id_previos = {
+        track["track_id"]: track
+        for track, _intervalo_track in activos_previos
+    }
+    asociacion_por_track = {
+        asociacion["track"]["track_id"]: asociacion
+        for asociacion in asociaciones
+    }
+    fusionados_por_principal = {}
+    for evento in eventos_merge:
+        fusionados_por_principal.setdefault(
+            evento["track_principal"], []
+        ).append(por_id_previos.get(evento["track_fusionado"]))
+    for tid_principal, fusionados in fusionados_por_principal.items():
+        asociacion = asociacion_por_track.get(tid_principal)
+        fusionados = [track for track in fusionados if track is not None]
+        if asociacion is None or not fusionados:
+            continue
+        ajustar_union(
+            asociacion["track"],
+            fusionados,
+            nucleos[asociacion["indice"]],
+            asociacion.get("intervalo_track", intervalo),
+        )
+
+    # Las divisiones se preparan antes de actualizar al padre.
+    ajustes_division = {}
+    for evento in eventos_split:
+        asociacion = asociacion_por_track.get(evento["track_padre"])
+        if asociacion is None or evento["indice_nucleo_hijo"] in asignados_nucleos:
+            continue
+        ajuste = ajustar_division(
+            asociacion["track"],
+            nucleos[asociacion["indice"]],
+            nucleos[evento["indice_nucleo_hijo"]],
+            asociacion.get("intervalo_track", intervalo),
+        )
+        if ajuste is not None:
+            ajustes_division[evento["indice_nucleo_hijo"]] = ajuste
+
     salida_nucleos = []
     creciendo = 0
     debilitandose = 0
@@ -2581,6 +2797,8 @@ def procesar_frame_secuencia(
         hijo["parent_track_id"] = padre["track_id"]
         hijo["origen_evento"] = "SPLIT"
         hijo["evento_ultimo"] = "SPLIT"
+        if indice_hijo in ajustes_division:
+            heredar_division(hijo, padre, ajustes_division[indice_hijo])
 
         estado["tracks"].append(hijo)
         asignados_nucleos.add(indice_hijo)
