@@ -543,7 +543,15 @@ def publicar(texto: str, png: bytes, tipo: str, ahora: datetime) -> str:
     if not webhook.startswith("https://"):
         raise RuntimeError("falta MAKE_WEBHOOK_URL en /etc/climaar-facebook.env")
     imagen = guardar_imagen_publica(png, tipo, ahora)
-    r = requests.post(webhook, json={"mensaje": texto, "imagen_url": imagen, "tipo": tipo}, timeout=60)
+    # La imagen va también como archivo ("imagen": nombre y datos), que es lo
+    # que pide el módulo de Make "Create a Post with Photos"; la dirección
+    # queda de respaldo.
+    r = requests.post(
+        webhook,
+        data={"mensaje": texto, "imagen_url": imagen, "tipo": tipo},
+        files={"imagen": (imagen.rsplit("/", 1)[-1], png, "image/png")},
+        timeout=60,
+    )
     if r.status_code >= 300:
         # Nunca se escribe la dirección del webhook en el registro.
         raise RuntimeError(f"Make respondió {r.status_code}: {r.text[:200]}")
