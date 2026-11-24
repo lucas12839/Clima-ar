@@ -153,7 +153,7 @@ function pintarTiempo() {
   // De dónde sale cada dato: estación (con su edad) o modelo.
   const f = t.fuentes || {};
   const partes = [["temperatura", "Temperatura"], ["viento", "Viento"], ["rafagas", "Ráfagas"], ["humedad", "Humedad"], ["presion", "Presión"], ["precipitacion", "Lluvia"]]
-    .map(([k, nombre]) => `${nombre}: ${f[k] || (k === "rafagas" && f.viento ? "sin medición" : "modelo europeo")}`);
+    .map(([k, nombre]) => `${nombre}: ${f[k] || (k === "rafagas" && f.viento ? "sin medición" : (t.fuente_modelo || "modelo europeo"))}`);
   $("fuenteTiempo").textContent = t.disponible ? "De dónde sale cada dato · " + partes.join(" · ") : "";
 }
 
