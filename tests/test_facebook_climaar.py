@@ -25,7 +25,7 @@ def resumen(*locs, edad=6):
 
 
 def pub(minutos_antes, firma, nivel=2):
-    return {"tipo": "tormenta", "utc": (AHORA - timedelta(minutes=minutos_antes)).isoformat(), "firma": firma,
+    return {"tipo": "advertencia", "utc": (AHORA - timedelta(minutes=minutos_antes)).isoformat(), "firma": firma,
             "nivel": nivel}
 
 
@@ -58,6 +58,9 @@ def test_moderada_sin_cambios_no_repite():
     sit = fb.situacion(r)
     e = {"publicaciones": [pub(120, {"punta_alta": [2, False]})]}
     assert fb.toca_tormenta(e, sit, r, AHORA) == (False, "sin cambios")
+    # Si sigue 3 h después, otra advertencia (2-3 por día con tormenta).
+    e = {"publicaciones": [pub(185, {"punta_alta": [2, False]})]}
+    assert fb.toca_tormenta(e, sit, r, AHORA) == (True, "la tormenta sigue")
 
 
 def test_fuerte_cada_30_min_si_cambia_y_cada_hora_igual():
@@ -96,8 +99,11 @@ def test_textos_con_enlace_propio_y_sin_smn():
     for texto in (t, m):
         assert fb.URL_PUBLICA in texto
         assert "smn" not in texto.lower()
-        assert "No es una alerta oficial" in texto
+        assert "alerta" not in texto.lower()
+        assert "No reemplaza los avisos oficiales" in texto
     assert t.startswith("⚠️ ADVERTENCIA")
+    r2 = resumen(loc("medanos", 2, nombre="Médanos"))
+    assert fb.texto_tormenta(fb.situacion(r2), r2, AHORA).startswith("⚠️ ADVERTENCIA · Tormentas moderadas")
     assert "posible severo" in t and "Llega en ~25 min (cerca de las 16:01)" in t
     assert "Máxima 27°" in m and "80 %" in m
 
@@ -115,33 +121,49 @@ def test_imagenes_se_arman():
     assert Image.open(io.BytesIO(png)).size == (1080, 1080)
 
 
+def test_nunca_dice_alerta():
+    assert fb.sin_alerta("Alerta amarilla y ALERTAS; alerta.") == "Advertencia amarilla y ADVERTENCIAS; advertencia."
+    assert fb.sin_alerta("alertado") == "alertado"
+
+
 def test_sin_webhook_no_publica(monkeypatch):
     monkeypatch.delenv("MAKE_WEBHOOK_URL", raising=False)
     with pytest.raises(RuntimeError, match="falta MAKE_WEBHOOK_URL"):
         fb.publicar("hola", b"png", "manana", AHORA)
 
 
-def test_publicar_manda_texto_e_imagen_a_make(tmp_path, monkeypatch):
+def test_publicar_manda_los_tres_campos_a_make(tmp_path, monkeypatch):
     import requests
 
     monkeypatch.setenv("MAKE_WEBHOOK_URL", "https://hook.make.com/secreto")
     monkeypatch.setattr(fb, "PUBLICO", tmp_path / "publico")
+    png = b"\x89PNG\r\n\x1a\nDATOS"
     enviado = {}
 
     class Resp:
-        status_code = 200
-        text = "Accepted"
+        def __init__(self, code=200, content=b""):
+            self.status_code, self.content, self.text = code, content, "Accepted"
 
-    def post(url, data, files, timeout):
-        enviado.update(url=url, data=data, files=files)
+    def get(url, timeout):
+        enviado["revisada"] = url
+        return Resp(200, (tmp_path / "publico" / url.rsplit("/", 1)[-1]).read_bytes())
+
+    def post(url, json, timeout):
+        enviado.update(url=url, json=json)
         return Resp()
 
+    monkeypatch.setattr(requests, "get", get)
     monkeypatch.setattr(requests, "post", post)
-    url = fb.publicar("hola", b"PNG", "tormenta", AHORA)
-    assert url == f"{fb.URL_PUBLICA}/publicaciones/20261113-153600-tormenta.png"
-    assert (tmp_path / "publico" / "20261113-153600-tormenta.png").read_bytes() == b"PNG"
-    assert enviado["data"] == {"mensaje": "hola", "imagen_url": url, "tipo": "tormenta"}
-    assert enviado["files"]["imagen"] == ("20261113-153600-tormenta.png", b"PNG", "image/png")
+    url = fb.publicar("hola", png, "advertencia", AHORA)
+    assert url == "https://climaar-bahiablanca.duckdns.org/publicaciones/20261113-153600-advertencia.png"
+    assert enviado["revisada"] == url
+    assert enviado["json"] == {"mensaje": "hola", "imagen_url": url, "tipo": "advertencia"}
+
+    # Imagen que no se ve desde afuera: no se le avisa a Make.
+    monkeypatch.setattr(requests, "get", lambda url, timeout: Resp(404))
+    monkeypatch.setattr(requests, "post", lambda *a, **k: pytest.fail("no tenía que avisar a Make"))
+    with pytest.raises(RuntimeError, match="no se ve desde afuera"):
+        fb.publicar("hola", png, "manana", AHORA)
 
 
 def test_ciclo_apagado_no_publica_pero_registra(tmp_path, monkeypatch):
@@ -152,6 +174,6 @@ def test_ciclo_apagado_no_publica_pero_registra(tmp_path, monkeypatch):
     monkeypatch.setattr(fb, "pedir_bytes", lambda ruta, timeout=30: None)
     monkeypatch.setattr(fb, "publicar", lambda *a: pytest.fail("no tenía que publicar"))
     hechos = fb.ciclo(ahora=AHORA)
-    assert hechos == ["tormenta: armado sin publicar"]
+    assert hechos == ["advertencia: armado sin publicar"]
     # Ya registrada: en el ciclo siguiente no se repite.
-    assert fb.ciclo(ahora=AHORA + timedelta(minutes=5))[-1].startswith("tormenta: no")
+    assert fb.ciclo(ahora=AHORA + timedelta(minutes=5))[-1].startswith("advertencia: no")

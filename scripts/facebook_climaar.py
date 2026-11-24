@@ -6,15 +6,19 @@ del servidor de la app que corre en el mismo VPS (http://127.0.0.1:8000) y:
 
 1. Todas las mañanas (desde las 7:30, hora de Argentina) publica cómo viene
    el día, con una imagen.
-2. Con tormentas publica un informe con la imagen del radar:
-   - nivel 2 (moderado): hasta 3 por día, con 90 min entre una y otra;
-   - nivel 3 o 4 (fuerte o severo): "ADVERTENCIA", como máximo una cada
-     30 min, y una actualización cada hora aunque no cambie nada;
-   - solo si algo cambió: localidad nueva, nivel más alto o tormenta que
-     ahora va hacia una localidad.
+2. Con tormentas publica una "ADVERTENCIA" con la imagen del radar
+   (nunca la palabra "alerta"):
+   - nivel 2 (moderado): hasta 3 por día, con 90 min entre una y otra:
+     cuando algo cambia, o cada 3 h si la tormenta sigue;
+   - nivel 3 o 4 (fuerte o severo): como máximo una cada 30 min cuando algo
+     cambia, y una actualización cada hora aunque no cambie nada;
+   - "algo cambió": localidad nueva, nivel más alto o tormenta que ahora va
+     hacia una localidad.
    Nunca con un radar de más de 20 min (no se informa con datos viejos).
 
 Cada texto lleva el enlace a la página oficial de ClimaAR (sin enlace al SMN).
+A Make se le mandan tres campos: mensaje, imagen_url y tipo ("manana" o
+"advertencia").
 
 Publica a través de Make.com (servicio que ya tiene permiso de Meta para
 publicar en páginas): ClimaAR le manda el texto y la dirección de la imagen,
@@ -29,6 +33,7 @@ Estado: /var/lib/climaar-facebook/estado.json (qué y cuándo se publicó).
 Uso a mano:
   python scripts/facebook_climaar.py --probar --salida /tmp/fb   # arma texto e imagen, no publica
   python scripts/facebook_climaar.py --forzar manana             # publica la de la mañana ya
+  python scripts/facebook_climaar.py --forzar advertencia        # publica la advertencia ya (si hay tormenta)
 """
 from __future__ import annotations
 
@@ -37,6 +42,7 @@ import io
 import json
 import math
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -55,11 +61,24 @@ MAX_DIA_MODERADO = 3
 ESPERA_MODERADO_MIN = 90
 ESPERA_FUERTE_MIN = 30
 REPETIR_FUERTE_MIN = 60
+REPETIR_MODERADO_MIN = 180          # tormenta moderada que sigue: otra advertencia a las 3 h
 # Sin enlace a las alertas del SMN (decisión de Lucas, 24/11/2026: el SMN
 # declara alerta para una zona entera y ClimaAR analiza cada localidad).
 # Cada publicación lleva el enlace a la página de ClimaAR.
 PIE_ENLACE = "Página oficial de ClimaAR: " + URL_PUBLICA
-PIE = "Información de ClimaAR por localidad. No es una alerta oficial."
+PIE = "Información de ClimaAR por localidad. No reemplaza los avisos oficiales."
+TIPO_ADV = "advertencia"
+
+
+def sin_alerta(texto: str) -> str:
+    """Decisión de Lucas: nunca la palabra "alerta" (se usa "advertencia")."""
+    def cambiar(m):
+        w = m.group(0)
+        nuevo = "advertencia" + ("s" if w.lower().endswith("s") else "")
+        if w.isupper():
+            return nuevo.upper()
+        return nuevo.capitalize() if w[0].isupper() else nuevo
+    return re.sub(r"\balertas?\b", cambiar, texto, flags=re.IGNORECASE)
 
 NIVEL_TXT = {1: "débil", 2: "moderado", 3: "fuerte", 4: "severo"}
 PUNTOS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"]
@@ -249,7 +268,7 @@ def toca_tormenta(estado: dict, sit: dict | None, resumen: dict, ahora: datetime
     edad = num((resumen or {}).get("frame_edad_minutos"))
     if edad is None or edad > RADAR_MAX_EDAD_MIN:
         return False, f"radar viejo ({fmt(edad)} min): no se informa con datos viejos"
-    pubs = [p for p in estado.get("publicaciones", []) if p.get("tipo") == "tormenta"]
+    pubs = [p for p in estado.get("publicaciones", []) if p.get("tipo") in (TIPO_ADV, "tormenta")]
     hoy = ahora_ar(ahora).date().isoformat()
     ultima = pubs[-1] if pubs else None
     minutos = ((ahora - datetime.fromisoformat(ultima["utc"])).total_seconds() / 60.0) if ultima else None
@@ -269,17 +288,21 @@ def toca_tormenta(estado: dict, sit: dict | None, resumen: dict, ahora: datetime
         return False, f"última hace {fmt(minutos)} min (mínimo {ESPERA_MODERADO_MIN})"
     if cambio(sit["firma"], ultima and ultima.get("firma")):
         return True, "cambió la situación"
+    if minutos is not None and minutos >= REPETIR_MODERADO_MIN:
+        return True, "la tormenta sigue"
     return False, "sin cambios"
+
+
+def _que(n: int) -> str:
+    return {2: "Tormentas moderadas en la zona", 3: "Tormenta fuerte en la zona"}.get(
+        n, "Tormenta posiblemente severa en la zona")
 
 
 def texto_tormenta(sit: dict, resumen: dict, ahora: datetime) -> str:
     n = sit["nivel"]
     frame = resumen.get("frame_actual_utc")
     hora_radar = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
-    if n >= 3:
-        titulo = f"⚠️ ADVERTENCIA · Tormenta {'fuerte' if n == 3 else 'posiblemente severa'} en la zona"
-    else:
-        titulo = "⛈️ INFORME · Tormentas en la zona"
+    titulo = f"⚠️ ADVERTENCIA · {_que(n)}"
     lineas = [titulo, ""]
     for l in sit["localidades"][:5]:
         nivel = f"nivel {l['nivel']} ({'posible ' if l['posible'] and l['nivel'] == 4 else ''}{NIVEL_TXT[l['nivel']]})"
@@ -403,8 +426,8 @@ def imagen_tormenta(sit: dict, resumen: dict, radar_png: bytes | None, ahora: da
     im = Image.new("RGB", (1080, 1350), FONDO)   # vertical 4:5, la que mejor se ve en Facebook
     d = ImageDraw.Draw(im)
     n = sit["nivel"]
-    titulo = "ADVERTENCIA" if n >= 3 else "INFORME"
-    que = ("Tormenta fuerte" if n == 3 else "Tormenta posiblemente severa") if n >= 3 else "Tormentas en la zona"
+    titulo = "ADVERTENCIA"
+    que = _que(n).replace(" en la zona", "")
     frame = resumen.get("frame_actual_utc")
     hora = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
     local = ahora_ar(ahora)
@@ -412,7 +435,7 @@ def imagen_tormenta(sit: dict, resumen: dict, radar_png: bytes | None, ahora: da
     cabecera(d, titulo, sub)
 
     # El mapa se dibuja aparte (así nada se sale del cuadro) y se pega.
-    lado, x0, y0 = 960, 60, 250
+    lado, x0, y0 = 880, 100, 250   # deja lugar para 2 localidades y la dirección
     vista = _vista(sit, resumen)
     p = _proyector(vista, lado)
     mapa = Image.new("RGB", (lado, lado), (11, 21, 36))
@@ -534,24 +557,25 @@ def time_now() -> float:
 def publicar(texto: str, png: bytes, tipo: str, ahora: datetime) -> str:
     """Publica en la página de Facebook a través de Make (24/11/2026).
 
-    Make ya tiene permiso de Meta para publicar en páginas: ClimaAR le manda el
-    texto y la dirección de la imagen a su "webhook" (dirección privada que da
-    Make) y Make lo publica. Sin app propia ni verificación de empresa."""
+    Make ya tiene permiso de Meta para publicar en páginas: ClimaAR le manda
+    al "webhook" (dirección privada que da Make) los tres campos que usa el
+    escenario: mensaje, imagen_url y tipo. Make baja la imagen de imagen_url."""
     import requests
 
     webhook = os.environ.get("MAKE_WEBHOOK_URL", "").strip()
     if not webhook.startswith("https://"):
         raise RuntimeError("falta MAKE_WEBHOOK_URL en /etc/climaar-facebook.env")
     imagen = guardar_imagen_publica(png, tipo, ahora)
-    # La imagen va también como archivo ("imagen": nombre y datos), que es lo
-    # que pide el módulo de Make "Create a Post with Photos"; la dirección
-    # queda de respaldo.
-    r = requests.post(
-        webhook,
-        data={"mensaje": texto, "imagen_url": imagen, "tipo": tipo},
-        files={"imagen": (imagen.rsplit("/", 1)[-1], png, "image/png")},
-        timeout=60,
-    )
+    # Antes de avisarle a Make se controla que la imagen se vea desde afuera
+    # (si no, Make fallaría y la publicación se perdería sin aviso).
+    try:
+        v = requests.get(imagen, timeout=20)
+        ok = v.status_code == 200 and v.content[:8] == b"\x89PNG\r\n\x1a\n"
+    except requests.RequestException as exc:
+        raise RuntimeError(f"la imagen no se ve desde afuera ({imagen}): {type(exc).__name__}") from None
+    if not ok:
+        raise RuntimeError(f"la imagen no se ve desde afuera ({imagen}): respuesta {v.status_code}")
+    r = requests.post(webhook, json={"mensaje": texto, "imagen_url": imagen, "tipo": tipo}, timeout=60)
     if r.status_code >= 300:
         # Nunca se escribe la dirección del webhook en el registro.
         raise RuntimeError(f"Make respondió {r.status_code}: {r.text[:200]}")
@@ -570,6 +594,7 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
     resumen = pedir_json("/resumen")
 
     def emitir(tipo: str, texto: str, png: bytes, extra: dict) -> None:
+        texto = sin_alerta(texto)
         if probar or not activo:
             if salida:
                 salida.mkdir(parents=True, exist_ok=True)
@@ -597,16 +622,19 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
 
     # 2) Tormentas
     sit = situacion(resumen)
-    toca, motivo = (True, "forzada") if (forzar == "tormenta" and sit) else toca_tormenta(estado, sit, resumen, ahora)
+    forzar_adv = forzar in (TIPO_ADV, "tormenta")
+    toca, motivo = (True, "forzada") if (forzar_adv and sit) else toca_tormenta(estado, sit, resumen, ahora)
     if toca:
         try:
             radar = pedir_bytes("/radar/mapa")
         except Exception:
             radar = None
-        emitir("tormenta", texto_tormenta(sit, resumen, ahora), imagen_tormenta(sit, resumen, radar, ahora),
+        emitir(TIPO_ADV, texto_tormenta(sit, resumen, ahora), imagen_tormenta(sit, resumen, radar, ahora),
                {"firma": sit["firma"], "nivel": sit["nivel"], "motivo": motivo})
+    elif forzar_adv:
+        hechos.append(f"{TIPO_ADV}: no se puede forzar, no hay tormentas de nivel 2 o más")
     else:
-        hechos.append(f"tormenta: no ({motivo})")
+        hechos.append(f"{TIPO_ADV}: no ({motivo})")
 
     if not probar:
         estado["ultimo_ciclo_utc"] = ahora.isoformat()
@@ -619,7 +647,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Publicaciones de ClimaAR en Facebook")
     ap.add_argument("--probar", action="store_true", help="arma texto e imagen sin publicar ni guardar estado")
     ap.add_argument("--salida", type=Path, help="carpeta donde dejar lo armado (con --probar)")
-    ap.add_argument("--forzar", choices=["manana", "tormenta"], help="publicar ya, sin esperar la hora")
+    ap.add_argument("--forzar", choices=["manana", TIPO_ADV, "tormenta"], help="publicar ya, sin esperar la hora")
     a = ap.parse_args(argv)
     try:
         for h in ciclo(probar=a.probar, salida=a.salida, forzar=a.forzar):
