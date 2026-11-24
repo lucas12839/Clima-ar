@@ -3,7 +3,9 @@
    mientras la página está a la vista. El pronóstico se pide cada 30 min.
    Vista Meteorólogos: se piden los datos completos solo al abrirla. */
 {
-const API = (window.CLIMAAR_CONFIG && CLIMAAR_CONFIG.API_BASE_URL) || "";
+// config.js declara CLIMAAR_CONFIG con "const", que no queda en window:
+// hay que preguntarlo directo (24/11/2026: la app pedía /resumen sin /api).
+const API = (typeof CLIMAAR_CONFIG !== "undefined" && CLIMAAR_CONFIG.API_BASE_URL) || "/api";
 const MIN_RESUMEN = 60 * 1000;
 const MIN_PRONOSTICO = 30 * 60 * 1000;
 const MIN_METEO = 2 * 60 * 1000;
