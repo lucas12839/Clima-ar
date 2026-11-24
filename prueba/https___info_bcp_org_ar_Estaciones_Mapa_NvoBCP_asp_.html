@@ -1,0 +1,77 @@
+
+<!-- XML_lib.asp    esta incluido en libPronosticos.asp -->
+<!-- XMLDom_lib.asp esta incluido en libPronosticos.asp -->
+
+
+
+<!-- 
+Ejemplos:
+            https://developers.google.com/maps/documentation/javascript/examples/?hl=es 
+            
+            Ej. para agregar un botón:
+            Custom controls
+            https://developers.google.com/maps/documentation/javascript/examples/control-custom?hl=es
+-->
+
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=yes"> 
+    <!-- CON viewport y width=device-width FCNA 
+            - ok en el celu si tener que usar link rel ... media="screen and (max-device-width: 1024px) ...
+            - => que puedo usar               link rel ... media="screen and (min-width: 1024px) ... para q fcne el resize en la pc
+    -->
+    <meta charset="utf-8">
+    <title>Estaciones Meteorologicas Bolsa de Cereales de Bahia Blanca</title>
+
+    <!--     max-width me sirve para probar en la PC, pero p/q FUNCIONE EN UN CELU, hay que usar viewport con width=device-width -->
+    <!-- con max-width, el ancho que toma es el del frame actual, no el de la ventana del navegador -->
+    <!-- con max-device-width, toma el ancho de la pantalla del dispositivo, ed. no voy a ver cambios en una PC -->
+    <!-- en estas hojas de estilo defino la clase .bigbutton q uso para los dos botones y el listbox de este frame -->
+
+    <!--link rel="stylesheet" type="text/css" media="screen and (max-device-width: 1024px)" href="style-movil.css"-->
+    <!--link rel="stylesheet" type="text/css" media="screen and (min-device-width: 1024px)" href="style-pc.css"-->
+       <link rel="stylesheet" type="text/css" media="screen and (max-width: 1024px)" href="style-movil.css">
+       <link rel="stylesheet" type="text/css" media="screen and (min-width: 1024px)" href="style-pc.css">
+
+    <!-- max-device-width -->    
+    
+    <!-- ******************** PPIO USAR UNA IMAGEN DE FONDO ******************** -->
+    <style>
+    body, html {
+        height: 100%;         
+        margin: 0; 
+    }
+
+    .bg {
+        /* The image used */
+        background-image: url("https://meteobahia.com.ar/~meteobahia/imagenes/fondo/1n.jpg"); /* url("http://meteobahia.com.ar/~meteobahia/imagenes/fondo/17c.jpg"); */
+          
+        /* Full height */
+        /* height: 170%;  */ /* ampliar en altura pq sino no cubre la tabla de datos de la estacion */ /* parece que no hace falta, tal vez agregue cover despues */
+
+        /* Center and scale the image nicely */
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover; 
+    }
+    </style>
+    <!-- ******************** FIN USAR UNA IMAGEN DE FONDO ******************** -->     
+    
+    
+  </head>
+  <body>
+ 
+  <div class="bg"> <!-- ******************** PPIO USAR UNA IMAGEN DE FONDO ******************** -->
+
+<!--style>
+.bigbutton { height : 22px; } 
+</style-->
+
+<br><center><table align=center><tr><td><div style='float:left;'></div>&nbsp;<div style='float:right;'><form action='MapaRiesgoIncendioZonaBCP_NvoBCP.asp'           target='_blank' method='post'><input type='submit' value='&nbsp;Riesgo de Incendio&nbsp;' class='bigbutton'></form></div></td></tr></table><br><form action='' method='get'><select name='Estacion' class='bigbutton'><option value='1'>Estaci&oacute;n 1 - Grumbein (B.Bca.)</option><option value='2'>Estaci&oacute;n 2 - Cabildo (B.Bca.) (Pluvi&oacute;metro en reparaci&oacute;n)</option><option value='3'>Estaci&oacute;n 3 - La Vit&iacute;cola (B.Bca.)</option><option value='84'>Estaci&oacute;n 4 - Bajo Hondo (Cnel.Rosales)</option><option value='6'>Estaci&oacute;n 6 - Frapal (Cnel.Pringles)</option><option value='7'>Estaci&oacute;n 7 - Monte Hermoso (Cnel.Dorrego)</option><option value='23'>Estaci&oacute;n 8 - Faro (Cnel.Dorrego)</option><option value='90'>Estaci&oacute;n 9 - Funke (Tornquist)</option><option value='10'>Estaci&oacute;n 10 - Saavedra (Saavedra)</option><option value='14'>Estaci&oacute;n 11 - 17 de Agosto (Puan)</option><option value='81'>Estaci&oacute;n 12 - Puan (Puan)</option><option value='11'>Estaci&oacute;n 13 - Pig&uuml;&eacute; (Saavedra)</option><option value='15'>Estaci&oacute;n 14 - Cura Malal (Cnel.Su&aacute;rez)</option><option value='17'>Estaci&oacute;n 15 - San Eloy (Cnel.Su&aacute;rez)</option><option value='85'>Estaci&oacute;n 16 - Cnel.Pringles (Cnel.Pringles)</option><option value='19'>Estaci&oacute;n 17 - El Zorro (Cnel. Dorrego)</option><option value='109'>Estaci&oacute;n 18 - Carhu&eacute; (Adolfo Alsina)</option><option value='114'>Estaci&oacute;n 19 - Cnel.Falc&oacute;n (Cnel.Pringles)</option><option value='91'>Estaci&oacute;n 20 - Guamin&iacute; (Guamin&iacute;)</option><option value='88'>Estaci&oacute;n 21 - S.Miguel Arc&aacute;ngel (Adolfo Alsina)</option><option value='59'>Estaci&oacute;n 22 - Villa Ventana (Tornquist)</option><option value='60'>Estaci&oacute;n 23 - Arroyo Pantanoso (Cnel.Su&aacute;rez)</option><option value='76'>Estaci&oacute;n 24 - Punta Alta (Cnel.Rosales)</option><option value='115'>Estaci&oacute;n 25 - Ing.White (B.Bca.)</option><option value='79'>Estaci&oacute;n 27 - Cumbre Cord&oacute;n Ventana (Tornquist)</option><option value='83'>Estaci&oacute;n 28 - Pasman (Coronel Su&aacute;rez)</option><option value='104'>Estaci&oacute;n 29 - Bah&iacute;a Blanca - Centro (B.Bca.)</option><option value='95'>Estaci&oacute;n 30 - Macach&iacute;n (Atreuco)</option><option value='96'>Estaci&oacute;n 31 - Anchorena (Atreuco)</option><option value='97'>Estaci&oacute;n 32 - Sierras Grandes (Tornquist)</option><option value='100'>Estaci&oacute;n 33 - Claromec&oacute; (Tres Arroyos)</option><option value='101'>Estaci&oacute;n 34 - Gonzales Chaves (A.G.Chaves)</option><option value='102'>Estaci&oacute;n 35 - San Cayetano (San Cayetano)</option><option value='112'>Estaci&oacute;n 36 - Cristiano Muerto (San Cayetano)</option><option value='105'>Estaci&oacute;n 37 - Salliquel&oacute; (Salliquel&oacute;)</option><option value='106'>Estaci&oacute;n 38 - Per&uacute; (Guatrach&eacute;)</option><option value='107'>Estaci&oacute;n 39 - Daireaux (Daireaux)</option><option value='108'>Estaci&oacute;n 40 - L&iacute;bano (Gral.La Madrid)</option></select><br><br><center><input type='submit' name = 'bPronosticos' class='bigbutton'   value='&nbsp;&nbsp;Pron&oacute;sticos&nbsp;&nbsp;&nbsp;'></center></form><br></center><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br>  
+    
+    
+  </div> <!-- ******************** FIN USAR UNA IMAGEN DE FONDO ******************** -->      
+  </body>
+</html>
