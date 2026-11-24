@@ -2631,6 +2631,15 @@ def _fenomeno_corto(item: Any) -> dict[str, Any]:
             _num(item.get("minutos_desde_deteccion"), 0)
             if item.get("mantenido") else None
         ),
+        # Los números que acompañan al nivel (24/11/2026).
+        "mm_h": _num(item.get("mm_h"), 1),
+        "mm_1h": _num(item.get("mm_1h"), 1),
+        "mm_3h": _num(item.get("mm_3h"), 1),
+        "rafaga_kmh": _num(item.get("rafaga_kmh"), 0),
+        "viento_kmh": _num(item.get("viento_kmh"), 0),
+        "tasa_por_min": _num(item.get("tasa_por_min"), 1),
+        "razon": (item.get("razones") or [None])[0],
+        "cuando": item.get("cuando"),
     }
 
 
@@ -2674,6 +2683,20 @@ def _localidades_resumen() -> list[dict[str, Any]]:
             ),
             "llegada": llegada if isinstance(llegada, dict) else None,
             "sobre_la_localidad": datos.get("sobre_la_localidad"),
+            # Lluvia que ya cayó según el radar (mm en 1, 3 y 6 h).
+            "acumulado_radar_mm": (
+                datos.get("acumulado_radar_mm")
+                if isinstance(datos.get("acumulado_radar_mm"), dict) else None
+            ),
+            # Lo que trae la tormenta que llega, fenómeno por fenómeno.
+            "al_llegar": (
+                {
+                    k: _fenomeno_corto(v)
+                    for k, v in datos["al_llegar"].items()
+                    if k in ("lluvia", "viento", "granizo", "electrica")
+                }
+                if isinstance(datos.get("al_llegar"), dict) else None
+            ),
             "fenomenos": {
                 k: _fenomeno_corto(fen.get(k))
                 for k in ("lluvia", "viento", "granizo", "electrica")

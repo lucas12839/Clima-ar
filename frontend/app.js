@@ -153,7 +153,8 @@ function pintarTormenta() {
   const n = num(loc.nivel) || 0;
   nivel.dataset.n = String(n);
   $("foco").dataset.n = String(n);
-  nivel.textContent = NIVEL_TXT[n] || "Nivel " + n;
+  // Un 4 sin confirmar por una estación es "posible severo".
+  nivel.textContent = n === 4 && /^posible/i.test(loc.etiqueta || "") ? "Nivel 4 · Posible severo" : (NIVEL_TXT[n] || "Nivel " + n);
   // El título va con el nivel (incluye lo de los últimos minutos); si ahora
   // es distinto, se aclara abajo para que no parezca una contradicción.
   const titulo = loc.resumen || loc.resumen_ahora || (n ? loc.etiqueta : "Sin lluvia ni tormentas");
@@ -183,13 +184,53 @@ function pintarTormenta() {
     if (g > 0 && !f.confirmado && !/^posible/i.test(cat)) cat = "posible · " + cat;
     if (num(f.minutos_desde_deteccion) > 0) cat += ` · hace ${fmt(f.minutos_desde_deteccion)} min`;
     if (f.en_calibracion) cat += " · en calibración";
+    const [dato, detalles] = cifrasFenomeno(k, f, loc);
     return `<li data-g="${g}"><svg class="fen-icono" viewBox="0 0 24 24" aria-hidden="true">${ICONO_FEN[k]}</svg>
       <span class="nombre">${esc(nombre)}</span>
+      ${dato ? `<span class="fen-dato">${esc(dato)}</span>` : ""}
       <span class="barra" role="img" aria-label="${esc(nombre)} nivel ${g} de 4">${barras}</span>
-      <span class="cat">${esc(cat)}</span></li>`;
+      <span class="cat">${esc(cat)}</span>
+      ${detalles.length ? `<span class="fen-det">${detalles.map(esc).join("<br>")}</span>` : ""}</li>`;
   }).join("");
 
   $("celdaCercana").textContent = textoCelda(loc);
+}
+
+const FUENTE_TXT = { radar: "radar", estaciones: "estaciones", modelo: "modelo europeo", goes19: "satélite", radar_movido: "radar estimado" };
+const fuenteTxt = f => String(f || "").split("+").map(x => FUENTE_TXT[x] || x).filter(Boolean).join(" + ");
+
+/* Números que acompañan a cada nivel: [dato grande, renglones de detalle].
+   Todo sale de lo que midió o calculó la estructura; si no hay número, no se inventa. */
+function cifrasFenomeno(k, f, loc) {
+  const det = [];
+  const llega = (loc.al_llegar && loc.al_llegar[k]) || null;
+  const minLlega = num(loc.minutos_hasta_llegada);
+  let dato = null;
+  if (k === "lluvia") {
+    if (num(f.mm_h) !== null && num(f.grado) > 0) dato = `${fmt(f.mm_h, 1)} mm/h`;
+    else if (num(f.mm_1h) !== null) dato = `${fmt(f.mm_1h, 1)} mm en 1 h`;
+    const ac = loc.acumulado_radar_mm || {};
+    if (num(f.mm_3h) !== null) det.push(`Medido: ${fmt(f.mm_1h, 1)} mm en 1 h · ${fmt(f.mm_3h, 1)} mm en 3 h`);
+    else if (num(ac["1h"]) >= 0.5 || num(ac["3h"]) >= 0.5) det.push(`Ya llovió: ${fmt(ac["1h"], 1)} mm en 1 h · ${fmt(ac["3h"], 1)} mm en 3 h (radar)`);
+    if (llega && num(llega.mm_h) > 0 && minLlega !== null && f.cuando !== "al_llegar") det.push(`Puede llover al llegar: ~${fmt(llega.mm_h, 0)} mm/h`);
+    const hoy = estado.pronostico && estado.pronostico.dias && estado.pronostico.dias[0];
+    if (hoy && num(hoy.prob_lluvia) !== null) det.push(`Hoy en la zona: ${fmt(hoy.prob_lluvia)} % de probabilidad` + (num(hoy.lluvia_mm) > 0 ? ` · ${fmt(hoy.lluvia_mm, 1)} mm (pronóstico)` : ""));
+  } else if (k === "viento") {
+    if (num(f.rafaga_kmh) !== null) dato = `ráfagas ${fmt(f.rafaga_kmh)} km/h`;
+    if (num(f.viento_kmh) !== null) det.push(`Viento medio: ${fmt(f.viento_kmh)} km/h`);
+    if (llega && num(llega.rafaga_kmh) > num(f.rafaga_kmh || 0) && minLlega !== null) det.push(`Al llegar: ráfagas de ~${fmt(llega.rafaga_kmh)} km/h`);
+  } else if (k === "granizo") {
+    const m = /(\d+)\s*dBZ/.exec(f.razon || "");
+    if (m && num(f.grado) > 0) det.push(`Señal del radar: ${m[1]} dBZ (el granizo es posible desde 50)`);
+    if (llega && num(llega.grado) > num(f.grado || 0) && minLlega !== null) det.push(`Al llegar: granizo ${llega.categoria}`);
+  } else if (k === "electrica") {
+    if (num(f.tasa_por_min) > 0) dato = `${fmt(f.tasa_por_min, 1)} rayos/min`;
+    if (num(f.grado) > 0) det.push("A menos de 30 km de la localidad");
+  }
+  // El nivel puede venir de la tormenta que llega: que se note.
+  if (dato && f.cuando === "al_llegar") dato = dato.replace(/(\d[\d.,]*)/, "~$1") + " al llegar";
+  if (num(f.grado) > 0 && f.fuente) det.push(`Fuente: ${fuenteTxt(f.fuente)}`);
+  return [dato, det];
 }
 
 /* Lo que ClimaAR está vigilando en este momento (todo con la edad calculada ahora). */
@@ -715,7 +756,7 @@ async function actualizarGeneral() {
 }
 async function actualizarPronostico() {
   try { estado.pronostico = await pedir("/pronostico"); } catch (e) { estado.pronostico = null; }
-  pintarDias();
+  pintarDias(); pintarTormenta();
 }
 
 function programar() {
