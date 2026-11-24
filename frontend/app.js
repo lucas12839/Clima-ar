@@ -374,7 +374,7 @@ function isoDeClave(t) {
 
 /* ---------- Satélite GOES-19 (vista Meteorólogos) ---------- */
 
-const sat = { m: null, nubes: null, rayos: null, radar: null, mostrada: null };
+const sat = { m: null, nubes: null, rayos: null, radar: null, mostrada: null, datosRayos: [] };
 
 function iniciarSatelite() {
   if (sat.m || !window.L) return;
@@ -389,13 +389,23 @@ function ponerNubes(ruta, clave) {
   else sat.nubes = L.imageOverlay(url, cuadroRadar(), { opacity: .95 }).addTo(sat.m);
 }
 
-// Rayos de los ~14 min que terminan en la imagen de radar: más nuevo, más vivo.
+// Rayos de los ~14 min que terminan en la imagen de radar, como en Windy:
+// un rayito chico por cada rayo (la cantidad se ve sola por cuántos hay
+// juntos); los de los últimos 5 min destellan y los de los últimos 2 min
+// tienen además un brillo blanco.
+const RAYO_SVG = '<svg viewBox="0 0 16 22" aria-hidden="true"><path d="M10 0 2 12h5l-2 10 9-13H9l3-9z"/></svg>';
+
 function pintarRayos(r) {
+  if (r) sat.datosRayos = (r.posiciones || []).filter(p => Array.isArray(p) && num(p[0]) !== null);
   sat.rayos.clearLayers();
-  (r.posiciones || []).forEach(p => {
-    if (!Array.isArray(p) || num(p[0]) === null) return;
+  // Los más viejos primero, así los nuevos quedan arriba.
+  [...(sat.datosRayos || [])].sort((a, b) => (num(b[2]) || 0) - (num(a[2]) || 0)).forEach(p => {
     const min = num(p[2]) || 0;
-    L.circleMarker([p[0], p[1]], { pane: "encima", radius: 2.5, weight: 1, color: "#fff27a", fillColor: "#ffe44d", fillOpacity: min <= 5 ? 1 : .45, opacity: min <= 5 ? 1 : .5, interactive: false }).addTo(sat.rayos);
+    const clase = min <= 2 ? "rayo nuevo brillo" : min <= 5 ? "rayo nuevo" : "rayo";
+    L.marker([p[0], p[1]], {
+      pane: "encima", interactive: false, keyboard: false,
+      icon: L.divIcon({ className: "icono-rayo", html: `<span class="${clase}" style="animation-delay:-${(Math.random() * 1.6).toFixed(2)}s">${RAYO_SVG}</span>`, iconSize: [10, 14], iconAnchor: [5, 7] })
+    }).addTo(sat.rayos);
   });
 }
 
