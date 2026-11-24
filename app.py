@@ -124,10 +124,12 @@ _REMOTE_LOCK = threading.RLock()
 
 _REMOTE_LAST_SYNC: dict[str, float] = {}
 
+# -inf: la primera consulta siempre va a GitHub (con 0.0, en un equipo recién
+# prendido el reloj puede valer menos de 5 min y la lista quedaba vacía).
 _REMOTE_HISTORY_CACHE: tuple[
     float,
     list[str],
-] = (0.0, [])
+] = (float("-inf"), [])
 
 
 def _cors_origins() -> list[str]:
@@ -301,15 +303,16 @@ def remote_history_names() -> list[str]:
         ):
             return list(cached_names)
 
+        # Árbol de la carpeta (sin tope práctico). La lista de "contents"
+        # corta en 1000 archivos y devolvía solo los MÁS VIEJOS: la
+        # animación quedaba vacía (24/11/2026).
         url = (
             f"{GITHUB_API_BASE}/repos/"
             f"{quote(GITHUB_REPO, safe='/')}"
-            "/contents/data/radar/historico"
+            f"/git/trees/{quote(GITHUB_REF, safe='')}:data/radar/historico"
         )
 
-        params = {
-            "ref": GITHUB_REF,
-        }
+        params: dict[str, str] = {}
 
         headers = {
             "User-Agent": "ClimaAR/8.1",
@@ -330,6 +333,13 @@ def remote_history_names() -> list[str]:
 
             if response.status_code == 200:
                 payload = response.json()
+
+                if isinstance(payload, dict):
+                    payload = [
+                        {"name": item.get("path")}
+                        for item in payload.get("tree") or []
+                        if isinstance(item, dict)
+                    ]
 
                 if isinstance(
                     payload,
@@ -376,7 +386,29 @@ def remote_history_names() -> list[str]:
             names,
         )
 
-        return list(names)
+    _limpiar_cache_historico()
+
+    return list(names)
+
+
+# En un servidor que no se reinicia (VPS), las imágenes viejas del radar que
+# se bajaron para la animación no deben acumularse en el disco.
+CACHE_HISTORICO_HORAS = 6.0
+
+
+def _limpiar_cache_historico() -> None:
+    if not REMOTE_DATA_ENABLED:
+        return
+    limite = time.time() - CACHE_HISTORICO_HORAS * 3600.0
+    try:
+        for archivo in HISTORY_DIR.glob("*.png"):
+            try:
+                if archivo.stat().st_mtime < limite:
+                    archivo.unlink()
+            except OSError:
+                continue
+    except OSError:
+        return
 
 
 # ============================================================
