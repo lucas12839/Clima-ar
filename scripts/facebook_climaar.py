@@ -370,7 +370,13 @@ def imagen_manana(resumen: dict, pron: dict, ahora: datetime) -> bytes:
     d.text((100, 280), f"{fmt(hoy.get('maxima'))}°", font=fuente(150, True), fill=TEXTO)
     d.text((100, 460), f"mínima {fmt(hoy.get('minima'))}°", font=fuente(40), fill=SUAVE)
     c = cielo(hoy.get("codigo_tiempo"))
-    d.text((100, 530), c.capitalize() if c else "", font=fuente(44, True), fill=ACENTO)
+    # El cielo no puede pisar la columna de la derecha (lluvia, viento, ráfagas):
+    # se achica la letra hasta que entre en 430 px.
+    if c:
+        tam = 44
+        while tam > 24 and d.textlength(c.capitalize(), font=fuente(tam, True)) > 430:
+            tam -= 2
+        d.text((100, 530), c.capitalize(), font=fuente(tam, True), fill=ACENTO)
     x = 560
     filas = [
         ("Lluvia", f"{fmt(hoy.get('prob_lluvia'))} %" + (f" · {fmt(hoy.get('lluvia_mm'), 1)} mm"
