@@ -153,7 +153,7 @@ function pintarTiempo() {
   // De dónde sale cada dato: estación (con su edad) o modelo.
   const f = t.fuentes || {};
   const partes = [["temperatura", "Temperatura"], ["viento", "Viento"], ["rafagas", "Ráfagas"], ["humedad", "Humedad"], ["presion", "Presión"], ["precipitacion", "Lluvia"]]
-    .map(([k, nombre]) => `${nombre}: ${f[k] || "modelo europeo"}`);
+    .map(([k, nombre]) => `${nombre}: ${f[k] || (k === "rafagas" && f.viento ? "sin medición" : "modelo europeo")}`);
   $("fuenteTiempo").textContent = t.disponible ? "De dónde sale cada dato · " + partes.join(" · ") : "";
 }
 
@@ -288,6 +288,9 @@ function pintarVivo() {
     aviso.classList.remove("oculto");
   } else aviso.classList.add("oculto");
 
+  const pr = r.precision;
+  $("precisionTray").textContent = pr && num(pr.mediana_km) !== null
+    ? ` Error típico de posición a ${pr.minutos} minutos: ${fmt(pr.mediana_km, 1)} km (medido en las últimas ${fmt(pr.muestras)} comparaciones).` : "";
   const [t, donde] = tiempoLocal();
   const dir = punto(t.viento_dir);
   $("ahoraCorto").textContent = t.disponible && num(t.temperatura) !== null
@@ -334,10 +337,78 @@ function pintarListaTormentas() {
       ? `va hacia el ${NOMBRE_PUNTO[t.direccion] || t.direccion}` + (t.movimiento_dudoso ? " (velocidad incierta)" : ` a ${fmt(t.velocidad_kmh)} km/h`)
       : "casi quieta";
     const tend = TENDENCIA_TXT[t.tendencia_area];
+    const hist = historiaTexto(t, p, loc ? loc.nombre : "el radar");
     return `<li data-n="${n}"><span class="num">N.º ${esc(t.id)}</span>
       <div><b>${esc(INTENSIDAD_TXT[t.nivel_intensidad] || "Eco de lluvia")}</b>${num(t.tamano_km2) ? ` · ${esc(fmt(t.tamano_km2))} km²` : ""}${tend ? ` · ${esc(tend)}` : ""}
-      <br><span class="suave">a ${esc(fmt(d))} km al ${esc(donde)} de ${esc(loc ? loc.nombre : "el radar")} · ${esc(mov)}</span></div></li>`;
+      <br><span class="suave">a ${esc(fmt(d))} km al ${esc(donde)} de ${esc(loc ? loc.nombre : "el radar")} · ${esc(mov)}</span>
+      ${hist.length ? `<details class="historia"><summary>Su historia</summary>${hist.map(x => `<p>${esc(x)}</p>`).join("")}<button class="boton chico" data-ver="${esc(t.id)}">Ver en el mapa</button></details>` : ""}</div></li>`;
   }).join("");
+  $("listaTormentas").querySelectorAll("[data-ver]").forEach(b => b.addEventListener("click", () => {
+    const t = ts.find(x => String(x.id) === b.dataset.ver);
+    if (!t || !mapa.m) return;
+    $("mapa").scrollIntoView({ behavior: "smooth", block: "center" });
+    mapa.m.setView([t.lat, t.lon], Math.max(mapa.m.getZoom(), 8));
+    fichaTormenta(t);
+  }));
+}
+
+/* Historia de una tormenta con lo que guardó el seguimiento (24/11/2026,
+   sugerencia de Alex): desde cuándo se la sigue, de dónde vino, cuántos km
+   recorrió, su máximo y cuánto ganó o perdió. Nada se calcula acá: sale todo
+   de la estructura. */
+const NIVEL_ECO = ["", "lluvia débil", "lluvia moderada", "tormenta fuerte", "tormenta muy fuerte"];
+const ecoTxt = i => NIVEL_ECO[nivelIntensidad({ intensidad: i })] || "eco de lluvia";
+function duracionTxt(min) {
+  min = Math.round(num(min) || 0);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60), m = min % 60;
+  return `${h} h${m ? " " + m + " min" : ""}`;
+}
+function historiaTexto(t, p, nombre) {
+  const h = t.historia;
+  if (!h || !num(h.minutos)) return [];
+  const lineas = [`ClimaAR la sigue hace ${duracionTxt(h.minutos)} (desde las ${horaLocal(h.desde_utc)}).`];
+  if (h.inicio) {
+    const d0 = distKm(p, h.inicio);
+    const donde = NOMBRE_PUNTO[punto(rumbo(p, h.inicio))] || "";
+    lineas.push(`Apareció a ${fmt(d0)} km al ${donde} de ${nombre} y recorrió ${fmt(h.recorrido_km)} km.`);
+  }
+  const ahora = num(t.intensidad), max = num(h.intensidad_max), ini = num(h.intensidad_inicio);
+  if (max !== null) {
+    lineas.push(`Su máximo: ${ecoTxt(max)}${h.intensidad_max_utc ? ", a las " + horaLocal(h.intensidad_max_utc) : ""}.`);
+    if (ahora !== null) {
+      const nAhora = nivelIntensidad({ intensidad: ahora }), nMax = nivelIntensidad({ intensidad: max });
+      const nIni = ini !== null ? nivelIntensidad({ intensidad: ini }) : nAhora;
+      lineas.push(nAhora < nMax ? `Ahora: ${ecoTxt(ahora)}. Perdió fuerza desde su máximo.`
+        : nAhora > nIni ? `Ahora: ${ecoTxt(ahora)}. Se fortaleció desde que apareció (${ecoTxt(ini)}).`
+        : `Ahora: ${ecoTxt(ahora)}, igual que en su máximo.`);
+    }
+  }
+  if (num(h.tamano_max_km2) > (num(t.tamano_km2) || 0) * 1.1 && num(t.tamano_km2)) lineas.push(`Tamaño: ${fmt(t.tamano_km2)} km² (el mayor que tuvo: ${fmt(h.tamano_max_km2)} km²).`);
+  return lineas;
+}
+
+/* Ficha de una tormenta en el mapa: aparece al tocar el eco y se va al
+   cerrarla (en el mapa no queda ningún círculo ni línea fija). */
+function fichaTormenta(t) {
+  const loc = localidadActual();
+  const p = loc ? [loc.lat, loc.lon] : RADAR_CENTRO;
+  const mov = t.direccion && num(t.velocidad_kmh) > 2
+    ? `Va hacia el ${NOMBRE_PUNTO[t.direccion] || t.direccion}` + (t.movimiento_dudoso ? " (velocidad incierta)" : ` a ${fmt(t.velocidad_kmh)} km/h`) : "Casi quieta";
+  // En el mapa, la ficha corta (la historia completa está en la lista).
+  const h = historiaTexto(t, p, loc ? loc.nombre : "el radar").filter(x => /^(ClimaAR la sigue|Su máximo|Ahora)/.test(x));
+  const lineas = [mov + ".", ...h];
+  L.popup({ className: "ficha", maxWidth: 230, autoPanPadding: [10, 10] })
+    .setLatLng([t.lat, t.lon])
+    .setContent(`<b>N.º ${esc(t.id)} · ${esc(INTENSIDAD_TXT[t.nivel_intensidad] || "Eco de lluvia")}</b>` +
+      (num(t.tamano_km2) ? ` · ${esc(fmt(t.tamano_km2))} km²` : "") + lineas.map(x => `<br>${esc(x)}`).join(""))
+    .openOn(mapa.m);
+}
+
+function tormentaCercana(latlng, maxKm) {
+  const ts = (estado.resumen && estado.resumen.tormentas) || [];
+  const c = ts.map(t => ({ t, d: distKm([latlng.lat, latlng.lng], [t.lat, t.lon]) })).sort((a, b) => a.d - b.d)[0];
+  return c && c.d <= maxKm ? c.t : null;
 }
 
 function distKm(a, b) {
@@ -416,6 +487,12 @@ function iniciarMapa() {
   if (mapa.m || !window.L) return;
   mapa.m = crearMapaBase("mapa", "Radar: SINARAME RMA10");
   mapa.capas = L.layerGroup().addTo(mapa.m);
+  // Tocar un eco muestra la ficha de esa tormenta (la más cercana a 25 km).
+  mapa.m.on("click", e => {
+    if (animRadar && animRadar.activa()) return;
+    const t = tormentaCercana(e.latlng, 25);
+    if (t) fichaTormenta(t);
+  });
 }
 
 function cuadroRadar() {

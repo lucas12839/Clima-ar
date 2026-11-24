@@ -3089,9 +3089,10 @@ def _tormentas_mapa() -> list[dict[str, Any]]:
         if not pos:
             continue
 
-        historial = [
+        historial_completo = [
             h for h in (t.get("historial") or []) if isinstance(h, dict)
-        ][-_MAX_RECORRIDO:]
+        ]
+        historial = historial_completo[-_MAX_RECORRIDO:]
         recorrido = _recorrido_continuo(historial)
 
         vel = _num(t.get("velocidad_pixeles_min"), 4)
@@ -3126,6 +3127,7 @@ def _tormentas_mapa() -> list[dict[str, Any]]:
                 (t.get("pixeles") or 0) * kmpx * kmpx, 0
             ),
             "recorrido": recorrido,
+            "historia": _historia_celda(historial_completo),
             "pronostico": futuro,
             "pronostico_fuente": fuente_futuro,
         })
@@ -3246,6 +3248,50 @@ def _recorrido_continuo(historial: list[dict[str, Any]]) -> list[list[float]]:
     return salida
 
 
+def _historia_celda(historial: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Historia de una tormenta con lo que guardó el seguimiento (24/11/2026,
+    sugerencia de Alex): desde cuándo se la sigue, desde dónde vino, cuántos
+    km recorrió y su máximo. Solo la parte continua (la misma regla que el
+    recorrido): si heredó el número de otra celda, no se mezcla su pasado."""
+    puntos = []
+    for h in historial:
+        ll = _pixel_a_latlon(h.get("x"), h.get("y"))
+        ts = parse_iso(h.get("timestamp"))
+        if ll and ts:
+            puntos.append({"ts": ts, "ll": ll, "int": _num(h.get("intensidad"), 1),
+                           "px": _num(h.get("pixeles"), 1)})
+    if len(puntos) < 2:
+        return None
+    tramo = [puntos[-1]]
+    for prev in reversed(puntos[:-1]):
+        sig = tramo[-1]
+        minutos = max((sig["ts"] - prev["ts"]).total_seconds() / 60.0, 1.0)
+        dist = math.hypot((prev["ll"][0] - sig["ll"][0]) * _KM_LAT, (prev["ll"][1] - sig["ll"][1]) * _KM_LON)
+        if dist > _VEL_MAX_KMH * minutos / 60.0 + 5.0:
+            break
+        tramo.append(prev)
+    tramo.reverse()
+    if len(tramo) < 2:
+        return None
+    km = sum(math.hypot((a["ll"][0] - b["ll"][0]) * _KM_LAT, (a["ll"][1] - b["ll"][1]) * _KM_LON)
+             for a, b in zip(tramo, tramo[1:]))
+    con_int = [p for p in tramo if p["int"] is not None]
+    maximo = max(con_int, key=lambda p: p["int"]) if con_int else None
+    kmpx = _km_por_pixel()
+    areas = [p["px"] for p in tramo if p["px"] is not None]
+    return {
+        "desde_utc": tramo[0]["ts"].isoformat(),
+        "minutos": round((tramo[-1]["ts"] - tramo[0]["ts"]).total_seconds() / 60.0),
+        "inicio": [round(tramo[0]["ll"][0], 4), round(tramo[0]["ll"][1], 4)],
+        "recorrido_km": round(km),
+        "intensidad_inicio": tramo[0]["int"],
+        "intensidad_max": maximo["int"] if maximo else None,
+        "intensidad_max_utc": maximo["ts"].isoformat() if maximo else None,
+        "tamano_max_km2": round(max(areas) * kmpx * kmpx) if areas else None,
+        "imagenes": len(tramo),
+    }
+
+
 def _extrapolar(t: dict[str, Any]) -> list[dict[str, Any]]:
     try:
         vx = float(t.get("velocidad_x_pixeles_min"))
@@ -3299,8 +3345,21 @@ def resumen() -> dict[str, Any]:
             "imagen": "/radar/mapa",
         },
         "rayos": _rayos_recientes(),
+        "precision": _precision_trayectoria(),
         **radar_metadata(),
     }
+
+
+def _precision_trayectoria() -> dict[str, Any] | None:
+    """Error real del seguimiento (mediana, en km) medido por la cadena en cada
+    ciclo (salud_cadena.json). 24/11/2026: la página decía un número fijo
+    (4,5 km) que ya no era el actual."""
+    salud = read_json(IA_DIR / "salud_cadena.json") or {}
+    err = (salud.get("trayectoria_5b_error_km") or {}).get("10") or {}
+    km, n = _num(err.get("mediana_km"), 1), _num(err.get("muestras"), 0)
+    if km is None or not n:
+        return None
+    return {"minutos": 10, "mediana_km": km, "muestras": int(n)}
 
 
 def _rayos_recientes() -> dict[str, Any]:

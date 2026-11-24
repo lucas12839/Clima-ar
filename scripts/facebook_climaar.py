@@ -98,20 +98,34 @@ MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto
 # ----------------------------------------------------------------------------
 # Datos
 # ----------------------------------------------------------------------------
-def pedir_json(ruta: str, timeout: float = 30.0):
+ESPERAS_SERVIDOR = (15, 30)        # el servidor se reinicia al actualizarse: se espera y reintenta
+
+
+def _pedir(ruta: str, timeout: float, **kw):
+    import time
+
     import requests
 
-    r = requests.get(API + ruta, timeout=timeout, headers={"Accept": "application/json"})
-    r.raise_for_status()
-    return r.json()
+    for espera in (*ESPERAS_SERVIDOR, None):
+        try:
+            r = requests.get(API + ruta, timeout=timeout, **kw)
+            if r.status_code < 500:
+                r.raise_for_status()
+                return r
+            if espera is None:
+                r.raise_for_status()
+        except requests.ConnectionError:
+            if espera is None:
+                raise
+        time.sleep(espera)
+
+
+def pedir_json(ruta: str, timeout: float = 30.0):
+    return _pedir(ruta, timeout, headers={"Accept": "application/json"}).json()
 
 
 def pedir_bytes(ruta: str, timeout: float = 30.0) -> bytes:
-    import requests
-
-    r = requests.get(API + ruta, timeout=timeout)
-    r.raise_for_status()
-    return r.content
+    return _pedir(ruta, timeout).content
 
 
 def num(v):
