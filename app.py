@@ -2550,21 +2550,38 @@ def _tiempo_actual() -> dict[str, Any]:
 
     obs = estado.get("observacion_sazb")
     obs = obs if isinstance(obs, dict) and obs.get("disponible") else {}
+    # Edad calculada ahora (no la guardada): el aeropuerto informa cada hora.
+    hora_obs = parse_iso(obs.get("obsTime_utc"))
+    if hora_obs is None or (
+        datetime.now(timezone.utc) - hora_obs
+    ).total_seconds() > 90 * 60:
+        obs = {}
+    viento_kt = _num(obs.get("viento_kt"), 1)
 
     return {
         "disponible": True,
         "temperatura": obs.get("temperatura_c", amb.get("temperature_2m")),
         "punto_rocio": obs.get("punto_rocio_c", amb.get("dew_point_2m")),
         "presion": obs.get("presion_hpa", amb.get("pressure_msl")),
-        "viento_vel": amb.get("wind_speed_10m"),
-        "viento_dir": amb.get("wind_direction_10m"),
+        # Viento medido en el aeropuerto si está al día; si no, el modelo.
+        "viento_vel": (
+            round(viento_kt * 1.852, 0) if viento_kt is not None
+            else amb.get("wind_speed_10m")
+        ),
+        "viento_dir": (
+            obs.get("direccion_viento") if viento_kt is not None
+            else amb.get("wind_direction_10m")
+        ),
         "rafagas": amb.get("wind_gusts_10m"),
         "humedad": amb.get("relative_humidity_2m"),
         "nubosidad": amb.get("cloud_cover"),
         "precipitacion": amb.get("precipitation"),
         "sensacion_termica": None,
         "codigo_tiempo": None,
-        "fuente": "respaldo (modelo europeo y aeropuerto)",
+        "fuente": (
+            "aeropuerto (viento, temperatura y presión) y modelo europeo (ráfagas y resto)"
+            if obs else "modelo europeo"
+        ),
     }
 
 
