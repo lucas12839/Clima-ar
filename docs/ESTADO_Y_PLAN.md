@@ -9,6 +9,13 @@ Leer junto con `CLAUDE.md` (reglas fijas del repo).
 - Claude genera, arregla, prueba y sube los cambios (rama + pull request + merge).
 - El VPS no se actualiza solo desde GitHub: si hay que tocarlo, darle el comando a Lucas.
 
+## Recolección de radares de otras zonas (23/11/2026, 23:30, idea de Lucas) — `scripts/recoleccion_radares.py`
+- Para calibrar con muchas tormentas reales: Córdoba (RMA1) y Resistencia (RMA4), las dos verificadas el 23/11 (publican cada 10 min, se bajan directo sin navegador). Misiones (RMA5) quedó tercera.
+- Sirve para: seguimiento, divisiones/uniones, trayectorias, falsas alarmas, señales de severa y pronóstico entre frames. **No** sirve para pasar colores a mm o km/h (eso necesita estaciones).
+- Proceso aparte del detector (`climaar-recoleccion.timer`, cada 5 min, prioridad baja), solo biblioteca estándar, guarda crudo en `/var/lib/climaar-recoleccion/RMAx/AAAAMMDD/`. Topes: se frena con menos de 3 GB libres o al llegar a 3 GB (~25 KB por imagen, ~7 MB por día con los dos radares).
+- Pendiente: con 1-2 días de frames, armar la máscara de ecos fijos y cartografía de cada radar; después analizar (2-3 semanas de tormentas).
+- 23/11: se liberó el disco del VPS (de 987 MB a 13 GB libres): se borraron copias viejas en /tmp, la caché de pip y `.venv` (solo la usaba el entrenamiento de DGMR, descartado). Los servicios usan `.venv-ia`.
+
 ## Escala de 1 a 4 (23/11/2026, 22:30, decisión de Lucas) — `scripts/indices_fenomenos.py`
 - Mismo significado en todos los fenómenos: 1 débil, 2 moderado, 3 fuerte, 4 severo (sin
   confirmación de estación: "posible severo"). El 0 no es nivel: el fenómeno no está.

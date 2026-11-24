@@ -1,0 +1,12 @@
+# Cada 5 min, y 4 min después de prender el VPS.
+[Unit]
+Description=ClimaAR - recolectar radares de otras zonas cada 5 min
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+Persistent=true
+
+[Install]
+WantedBy=timers.target
