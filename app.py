@@ -2754,6 +2754,12 @@ def _rumbo_grados(valor: Any) -> float | None:
     return _RUMBOS_TEXTO.get(texto)
 
 
+def _vientos_trabados() -> set[str]:
+    """Estaciones con el anemómetro trabado en 0 (senales_superficie.py)."""
+    s = read_json(IA_DIR / "estaciones" / "senales_superficie.json") or {}
+    return {str(n).upper() for n in s.get("viento_trabado") or []}
+
+
 def _sin_viento_cwop(v: dict[str, Any]) -> dict[str, Any]:
     """Las estaciones de aficionados (CWOP) no dan el viento en la página.
 
@@ -2772,6 +2778,7 @@ def _mediciones_bahia() -> list[dict[str, Any]]:
 
     archivos = {"bcp": read_json(OBS_DIR / "bcp_actual.json") or {},
                 "cwop": read_json(OBS_DIR / "cwop_actual.json") or {}}
+    trabados = _vientos_trabados()
     salida = []
     for red, ident, nombre in _ESTACIONES_BAHIA:
         for est in archivos[red].get("stations") or []:
@@ -2784,7 +2791,8 @@ def _mediciones_bahia() -> list[dict[str, Any]]:
             if not es_fresca(hora, red):
                 continue
             v = est.get("variables") if isinstance(est.get("variables"), dict) else {}
-            v = _sin_viento_cwop(v) if red == "cwop" else v
+            if red == "cwop" or str(est.get("nombre") or "").upper() in trabados:
+                v = _sin_viento_cwop(v)
             salida.append({
                 "nombre": nombre,
                 "edad": edad_min(hora),
@@ -2824,6 +2832,7 @@ def _mediciones_cerca(lat: float, lon: float) -> list[dict[str, Any]]:
         la, lo = _num(st.get("latitude"), 6), _num(st.get("longitude"), 6)
         if la is not None and lo is not None:
             pos[(st.get("network"), str(st.get("collector_id")))] = (la, lo)
+    trabados = _vientos_trabados()
     salida = []
     for red in ("bcp", "cwop"):
         for est in (read_json(OBS_DIR / f"{red}_actual.json") or {}).get("stations") or []:
@@ -2841,7 +2850,8 @@ def _mediciones_cerca(lat: float, lon: float) -> list[dict[str, Any]]:
             if dist > ESTACION_LOCAL_MAX_KM or not es_fresca(hora, red):
                 continue
             v = est.get("variables") if isinstance(est.get("variables"), dict) else {}
-            v = _sin_viento_cwop(v) if red == "cwop" else v
+            if red == "cwop" or str(est.get("nombre") or "").upper() in trabados:
+                v = _sin_viento_cwop(v)
             nombre = str(est.get("nombre") or est.get("indicativo") or "Estación")
             nombre = nombre.replace(" (CWOP)", "").title().replace("Grumbein", "Grünbein").replace("Bahia", "Bahía")
             salida.append({

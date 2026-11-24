@@ -146,3 +146,13 @@ def test_modelo_caido_no_se_reintenta_en_cada_pedido(monkeypatch):
     for c in app._LOCALES_CACHE.values():
         c.update(ts=0.0, data=None, fallo=0.0)
     app._CURRENT_CACHE["fallo"] = 0.0
+
+
+def test_anemometro_trabado_no_se_muestra(tmp_path, monkeypatch):
+    preparar(tmp_path, monkeypatch, bcp=[dict(PUNTA_ALTA, observation_time=hace(4),
+                                              variables=dict(PUNTA_ALTA["variables"], viento_kmh=0.0,
+                                                             rafaga_15min_kmh=None))])
+    monkeypatch.setattr(app, "_vientos_trabados", lambda: {"PUNTA ALTA"})
+    t = app._tiempo_actual(LOCS["punta_alta"])
+    assert t["temperatura"] == 17.4                        # la temperatura sí
+    assert (t["viento_vel"], t["rafagas"]) == (20, 40)     # el viento, del modelo
