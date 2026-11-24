@@ -189,12 +189,9 @@ const mapa = { m: null, radar: null, capas: null };
 
 // Bahía Blanca, White y Cerri están pegadas: sus nombres se muestran
 // solo cuando están elegidas (si no, al tocar el círculo).
+const OFFSET = { right: [4, 0], left: [-4, 0], top: [0, -4], bottom: [0, 4] };
 const CERCANAS = new Set(["bahia_blanca", "ingeniero_white", "general_cerri"]);
-const LADO = { general_cerri: "left", ingeniero_white: "bottom", punta_alta: "right", medanos: "left", tornquist: "left", sierra_de_la_ventana: "right" };
-
-function colorNivel(n) {
-  return ["#33465f", "#9fd8f0", "#6fa4f2", "#6a63e6", "#b03bd4"][Math.max(0, Math.min(4, num(n) || 0))];
-}
+const LADO = { bahia_blanca: "top", general_cerri: "left", ingeniero_white: "bottom", punta_alta: "right", medanos: "left", tornquist: "left", sierra_de_la_ventana: "right" };
 
 const RADAR_CENTRO = [-38.7342, -62.1654];
 const RADAR_KM = 240;
@@ -203,7 +200,7 @@ function iniciarMapa() {
   if (mapa.m || !window.L) return;
   mapa.m = L.map("mapa", { zoomControl: true, attributionControl: true, zoomSnap: 0.25, minZoom: 6, maxZoom: 12 });
   mapa.m.fitBounds(cuadroRadar(), { padding: [0, 0] });
-  mapa.m.attributionControl.addAttribution("Cartografía: Natural Earth · Radar: SINARAME RMA10");
+  mapa.m.attributionControl.addAttribution("Cartografía: Natural Earth, IGN · Radar: SINARAME RMA10");
   // Capas: tierra abajo, el radar en el medio, y rutas, límites, ríos y
   // nombres arriba (finos) para ubicar la lluvia sin taparla.
   [["tierra", 200], ["encima", 450]].forEach(([n, z]) => {
@@ -217,7 +214,12 @@ function iniciarMapa() {
   cargarCartografia();
   anillos();
   // De lejos se ocultan los nombres chicos y los minutos de la trayectoria.
-  const zoomClase = () => mapa.m.getContainer().classList.toggle("lejos", mapa.m.getZoom() < 8.25);
+  const zoomInicial = mapa.m.getZoom();
+  const zoomClase = () => {
+    const z = mapa.m.getZoom(), c = mapa.m.getContainer().classList;
+    c.toggle("lejos", z < zoomInicial + 0.75);
+    c.toggle("medio", z < zoomInicial + 1.75);   // White y Cerri, pegadas a Bahía
+  };
   mapa.m.on("zoomend", zoomClase); zoomClase();
   mapa.capas = L.layerGroup().addTo(mapa.m);
 }
@@ -243,19 +245,25 @@ const ESTILO_CARTO = {
   lagos: { pane: "tierra", stroke: false, fillColor: "#0b1524", fillOpacity: 1 },
   rios: { pane: "encima", color: "#3f7fbf", weight: 1.2, opacity: .7 },
   provincias: { pane: "encima", color: "#c9d6ea", weight: 1.2, opacity: .55, dashArray: "6 4" },
-  rutas: { pane: "encima", color: "#e2b86b", weight: 1, opacity: .45 }
+  rutas: { pane: "encima", color: "#e2b86b", weight: 1, opacity: .45 },
+  partidos: { pane: "encima", color: "#8fa6c8", weight: .8, opacity: .5 }
 };
 
 async function cargarCartografia() {
   try {
     const r = await fetch("cartografia.json");
     const g = await r.json();
-    const ya = new Set(((estado.resumen && estado.resumen.localidades) || []).map(l => l.nombre));
-    ["Bahía Blanca", "Punta Alta", "Tornquist", "Médanos", "Ingeniero White", "General Daniel Cerri", "Sierra de la Ventana"].forEach(n => ya.add(n));
+    // Las localidades de ClimaAR se dibujan aparte (con su nombre).
+    const ya = new Set(["Bahía Blanca", "Punta Alta", "Tornquist", "Médanos", "Ingeniero White", "General Daniel Cerri", "Sierra de la Ventana"]);
     L.geoJSON(g, {
       filter: f => f.properties.capa !== "ciudades" || !ya.has(f.properties.nombre),
+      onEachFeature: (f, capa) => {
+        if (f.properties.capa === "nombre_partido" && !ya.has(f.properties.nombre)) capa.bindTooltip(f.properties.nombre, { permanent: true, direction: "center", className: "etiqueta-partido" });
+      },
       style: f => ESTILO_CARTO[f.properties.capa] || {},
-      pointToLayer: (f, ll) => L.circleMarker(ll, { pane: "encima", radius: 2.5, color: "#c9d6ea", weight: 1, fillOpacity: 1, interactive: false })
+      pointToLayer: (f, ll) => f.properties.capa === "nombre_partido"
+        ? L.circleMarker(ll, { pane: "encima", radius: 0, opacity: 0, fillOpacity: 0, interactive: false })
+        : L.circleMarker(ll, { pane: "encima", radius: 2.5, color: "#c9d6ea", weight: 1, fillOpacity: 1, interactive: false })
         .bindTooltip(f.properties.nombre, { permanent: true, direction: "right", className: "etiqueta-ciudad" + ((f.properties.rango ?? 9) > 8 ? " menor" : ""), offset: [3, 0] }),
       interactive: false
     }).addTo(mapa.m);
@@ -290,28 +298,15 @@ function pintarMapa() {
   }
   mapa.capas.clearLayers();
 
+  // Solo el nombre de cada localidad, sin círculos ni trazos: la lluvia
+  // se ve sola en el radar.
   (r.localidades || []).forEach(l => {
     if (num(l.lat) === null) return;
     const sel = l.id === estado.localidad;
-    L.circle([l.lat, l.lon], { radius: (num(l.radio_km) || 4) * 1000, color: sel ? "#fff" : colorNivel(l.nivel), weight: sel ? 3 : 2, fillOpacity: .08 })
-      .bindTooltip(l.nombre, { permanent: sel || !CERCANAS.has(l.id), direction: LADO[l.id] || "top", className: "etiqueta-loc" + (sel ? " elegida" : "") })
+    L.circleMarker([l.lat, l.lon], { pane: "encima", radius: sel ? 4 : 3, color: "#fff", weight: 1, fillColor: sel ? "#5fd0e0" : "#fff", fillOpacity: 1 })
+      .bindTooltip(l.nombre, { permanent: true, direction: LADO[l.id] || "right", className: "etiqueta-ciudad localidad" + (sel ? " elegida" : "") + (CERCANAS.has(l.id) && !sel ? " menor" : ""), offset: OFFSET[LADO[l.id] || "right"] })
       .on("click", () => elegirLocalidad(l.id))
       .addTo(mapa.capas);
-  });
-
-  (r.tormentas || []).forEach(t => {
-    const camino = (t.recorrido || []).filter(p => Array.isArray(p));
-    if (camino.length > 1) L.polyline(camino, { color: "#ffffff", weight: 3, opacity: .9 }).addTo(mapa.capas);
-    const fut = (t.pronostico || []).filter(p => num(p.lat) !== null);
-    if (fut.length) {
-      L.polyline([[t.lat, t.lon], ...fut.map(p => [p.lat, p.lon])], { color: "#5fd0e0", weight: 3, dashArray: "6 6" }).addTo(mapa.capas);
-      fut.forEach(p => L.circleMarker([p.lat, p.lon], { radius: 3, color: "#5fd0e0", fillOpacity: 1 })
-        .bindTooltip(fmt(p.minutos) + "′", { permanent: true, direction: "right", className: "etiqueta-min" }).addTo(mapa.capas));
-    }
-    const info = `Intensidad ${esc(fmt(t.intensidad))}/6` +
-      (t.direccion ? `<br>Va hacia el ${esc(NOMBRE_PUNTO[t.direccion] || t.direccion)} a ${esc(fmt(t.velocidad_kmh))} km/h` : "") +
-      (num(t.tamano_km2) ? `<br>Tamaño ~${esc(fmt(t.tamano_km2))} km²` : "");
-    L.circleMarker([t.lat, t.lon], { radius: 5, color: "#fff", weight: 1.5, fillColor: "#ff6b5e", fillOpacity: 1 }).bindPopup(info).addTo(mapa.capas);
   });
 
   const edad = num(r.frame_edad_minutos);
