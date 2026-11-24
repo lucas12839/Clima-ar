@@ -57,6 +57,6 @@ fi
 
 systemctl enable --now climaar-facebook.timer >/dev/null
 echo
-echo "Listo. Publica la de la mañana desde las 7:30 y las de tormentas cuando corresponda."
+echo "Listo. Publica la de la mañana desde las 7:30 y las advertencias de tormenta cuando corresponda."
 echo "Ver qué hizo:  journalctl -u climaar-facebook -n 20 --no-pager"
 echo "Apagar:        sudo systemctl disable --now climaar-facebook.timer"
