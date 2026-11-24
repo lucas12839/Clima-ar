@@ -2625,6 +2625,12 @@ def _fenomeno_corto(item: Any) -> dict[str, Any]:
         "confirmado": bool(item.get("confirmado")),
         "en_calibracion": bool(item.get("en_calibracion")),
         "fuente": item.get("fuente"),
+        # El nivel se mantiene un rato después de la última detección: la
+        # portada dice "hace X min" para que no choque con lo de ahora.
+        "minutos_desde_deteccion": (
+            _num(item.get("minutos_desde_deteccion"), 0)
+            if item.get("mantenido") else None
+        ),
     }
 
 
@@ -2660,6 +2666,8 @@ def _localidades_resumen() -> list[dict[str, Any]]:
             "nivel": calif.get("grado"),
             "etiqueta": calif.get("etiqueta"),
             "resumen_ahora": datos.get("resumen_ahora"),
+            # Lo que da el nivel (incluye lo detectado en los últimos minutos).
+            "resumen": datos.get("resumen"),
             "resumen_al_llegar": datos.get("resumen_al_llegar"),
             "minutos_hasta_llegada": _num(
                 datos.get("minutos_hasta_llegada"), 0
@@ -2929,7 +2937,36 @@ def resumen() -> dict[str, Any]:
             "alcance_km": _RADAR_RADIUS_KM,
             "imagen": "/radar/mapa",
         },
+        "rayos": _rayos_recientes(),
         **radar_metadata(),
+    }
+
+
+def _rayos_recientes() -> dict[str, Any]:
+    """Rayos del satélite (GLM) en los últimos 10 y 60 min, para la portada.
+
+    La edad se calcula ahora, al usar el dato (no se confía en una marca
+    guardada antes)."""
+    datos = read_json(RAYOS_MAPA_FILE) or {}
+    lista = datos.get("rayos") if isinstance(datos, dict) else None
+    ahora = datetime.now(timezone.utc).timestamp()
+    seg = []
+    for r in lista or []:
+        if isinstance(r, (list, tuple)) and len(r) >= 3:
+            t = _num(r[2], 0)
+            if t is not None and t <= ahora + 60:
+                seg.append(ahora - t)
+    actualizado = parse_iso(datos.get("actualizado_utc")) if isinstance(datos, dict) else None
+    edad = (
+        round((datetime.now(timezone.utc) - actualizado).total_seconds() / 60.0, 1)
+        if actualizado else None
+    )
+    return {
+        "ultimos_10_min": sum(1 for x in seg if x <= 600),
+        "ultima_hora": sum(1 for x in seg if x <= 3600),
+        "edad_datos_minutos": edad,
+        # Más de 40 min sin datos nuevos: no se puede decir "sin rayos".
+        "disponible": edad is not None and -5 <= edad <= 40,
     }
 
 
@@ -2940,7 +2977,9 @@ def resumen() -> dict[str, Any]:
 # Intelligence. Se lee del satélite solo cuando alguien lo pide y se guarda
 # un rato: no se agrega nada al repositorio ni a la estructura.
 
-RAYOS_MAPA_FILE = DATA_BASE_DIR / "goes19" / "rayos_mapa.json"
+# 24/11/2026: faltaba "data/": en el VPS se pedía goes19/rayos_mapa.json a
+# GitHub (no existe) y el mapa del satélite quedaba siempre sin rayos.
+RAYOS_MAPA_FILE = DATA_BASE_DIR / "data" / "goes19" / "rayos_mapa.json"
 SATELITE_IMAGENES = 6            # última hora (una imagen cada 10 min)
 _SAT_LISTA: dict[str, Any] = {"ts": 0.0, "lista": []}
 _SAT_LISTA_SEG = 120.0
