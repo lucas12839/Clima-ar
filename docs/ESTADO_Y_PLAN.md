@@ -26,7 +26,13 @@ Leer junto con `CLAUDE.md` (reglas fijas del repo).
   chromium` como `climaar`). Ahora: el actualizador baja el navegador cuando cambia Playwright; si el
   detector falla ~10 min seguidos deja de dar latido (toma el respaldo de GitHub) y publica el error, y
   la vigilancia avisa a los 5 min con la causa y el comando.
-- **Sigue: 4 estaciones al oeste y suroeste.**
+- **4 Estaciones al oeste/suroeste: cerrado sin cambios (decisión de Lucas).** Relevado el 23/11: red
+  BCP completa (ids 1-130, ninguna activa al O/SO; Teniente Origone y Perú muertas), CWOP (nada),
+  Netatmo (una sola, en Bahía y desactualizada), SMN Río Colorado (horaria, ya descartada). Lucas no
+  tiene a quién pedirle que active CWOP en su estación. Fuera de 240 km no sirven (sin control con
+  radar, sin tormenta asociada, horas de anticipación). No quiere aviso automático de estaciones nuevas.
+  La zona O/SO queda con radar, satélite y modelo europeo. No volver a buscar lo mismo.
+- **Sigue: interfaz (Render/Netlify), cuando Lucas diga.** Rama para borrar a mano: `prueba-estaciones-oeste`.
 
 ## Reparación de la sincronización de la cadena (23/11/2026, 17:00 hora de Argentina)
 Revisión de punta a punta con las corridas reales de GitHub. Lo que se encontró y se arregló:
