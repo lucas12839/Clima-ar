@@ -3360,7 +3360,11 @@ def procesar():
         and (
             radar_dt - estado_previo_dt
         ).total_seconds() / 60.0 <= MAX_INTERVALO
-        and estado_previo.get("tracks")
+        # 24/11/2026: también con el cielo limpio (sin tormentas). Antes, sin
+        # tracks, se reconstruía desde cero en cada imagen: no cambiaba los
+        # números (no había tormentas) pero repetía el historial entero cada
+        # 10 min y el control de salud avisaba "reconstruido 10 veces".
+        and isinstance(estado_previo.get("tracks"), list)
     ):
 
         nucleos = nucleos_desde_imagen(
