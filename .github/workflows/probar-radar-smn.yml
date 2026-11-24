@@ -263,6 +263,14 @@ jobs:
       # PROCESAMIENTO RADAR
       # ============================================================
 
+      - name: Canal 13 de GOES-19 a la hora del radar (falsos ecos de las sierras)
+        if: steps.reclamar.outputs.procesar == 'true'
+        run: |
+          # Revisión 24/11/2026: el procesador usa el satélite para no tomar
+          # como tormenta el falso eco de las sierras (cielo despejado encima).
+          # Lectura parcial (~1 s). Falla segura: sin satélite usa la regla estricta.
+          timeout 45 python -m goes19.c13_radar || echo "AVISO: canal 13 no disponible en este ciclo"
+
       - name: Procesar frames intermedios recuperados (trayectoria continua)
         if: steps.reclamar.outputs.procesar == 'true'
         run: |

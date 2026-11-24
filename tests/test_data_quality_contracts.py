@@ -614,5 +614,30 @@ class StaticEchoMaskTests(unittest.TestCase):
         self.assertEqual(removed, 9)
         self.assertEqual(result[1, 1], 0)
 
+    def _evidencia_con_satelite(self, tope_c):
+        # Falso eco sobre la máscara + lluvia moderada (nivel 2) afuera.
+        static_mask = np.zeros((10, 30), dtype=bool)
+        static_mask[:, :10] = True
+        previous = np.zeros((10, 30), dtype=np.uint8)
+        current = previous.copy()
+        current[3:6, 2:9] = 4
+        current[3:6, 9:30] = 2
+        frio = None if tope_c is None else np.full((10, 30), tope_c, np.float32)
+        with (
+            patch.object(procesador_radar, "_cargar_intensidades_previas", return_value=[previous]),
+            patch.object(procesador_radar, "_tope_mas_frio_cerca", return_value=frio),
+        ):
+            evidencia, _ = procesador_radar._mascara_temporal_dinamica(current, static_mask)
+        return evidencia
+
+    def test_clear_sky_over_mask_is_false_echo(self):
+        self.assertFalse(self._evidencia_con_satelite(10.0).any())
+
+    def test_cloud_over_mask_with_moderate_rain_outside_is_real(self):
+        self.assertTrue(self._evidencia_con_satelite(-30.0)[4, 5])
+
+    def test_without_satellite_moderate_rain_is_not_enough(self):
+        self.assertFalse(self._evidencia_con_satelite(None).any())
+
 if __name__ == "__main__":
     unittest.main()

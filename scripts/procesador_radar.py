@@ -1,5 +1,6 @@
 import json
 import math
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -46,9 +47,15 @@ TEMPORAL_MAX_FRAMES = 3
 TEMPORAL_MAX_GAP_MINUTOS = 60.0
 TEMPORAL_DELTA_INTENSIDAD = 2
 TEMPORAL_NUEVO_ECO_MIN_FRAMES = 2
-# Píxeles (~0,9 km² cada uno) de la misma área de lluvia que tienen que
-# estar afuera de la máscara de falsos ecos para aceptar cambio adentro.
+# Falsos ecos (revisión 24/11/2026). Píxeles (~0,9 km² c/u) de la misma
+# área de lluvia que tienen que estar afuera de la máscara para aceptar un
+# cambio adentro; nivel de esa lluvia cuando el satélite ve nube encima.
 APOYO_MIN_PIXELES_FUERA = 15
+APOYO_NIVEL_CON_NUBE = 2
+SATELITE_TOPE_NUBE_C = -5.0      # igual que corrector_tiempo_real.quitar_ecos_sin_nube
+SATELITE_RADIO_KM = 9.0
+SATELITE_MAX_DIF_MIN = 12.0
+C13_RADAR = Path(tempfile.gettempdir()) / "climaar_c13_radar.npz"
 
 
 def cargar_imagen(path):
@@ -339,16 +346,17 @@ def _mascara_temporal_dinamica(actual, mascara, ruta_actual=None):
 
     evidencia = mascara & (nuevo_eco | cambio_intensidad | intensificacion)
     # El falso eco de las sierras parpadea de una imagen a otra y eso se
-    # confundía con "cambio" (24/11/2026: en 474 imágenes sin lluvia
-    # aparecieron 158 tormentas sobre la máscara). Una tormenta real sobre
-    # las sierras es parte de un área de lluvia que también sigue afuera
-    # de la máscara; el falso eco, no. Solo cuenta el cambio con ese apoyo.
-    evidencia &= _apoyo_fuera_de_mascara(actual, mascara)
+    # confundía con "cambio" (revisión 24/11/2026: en 474 imágenes sin
+    # lluvia aparecieron 197 tormentas, 181 sobre la máscara). Solo cuenta
+    # el cambio que tiene apoyo: ver _apoyo_tormenta_real.
+    evidencia &= _apoyo_tormenta_real(actual, mascara, ruta_actual)
     return evidencia, len(previas)
 
 
-def _apoyo_fuera_de_mascara(actual, mascara):
-    eco = ndimage.binary_closing(actual >= INTENSIDAD_MINIMA, iterations=1)
+def _apoyo_fuera_de_mascara(actual, mascara, nivel=None):
+    """Áreas de eco (>= nivel) que siguen afuera de la máscara de falsos ecos."""
+    nivel = INTENSIDAD_MINIMA if nivel is None else nivel
+    eco = ndimage.binary_closing(actual >= nivel, iterations=1)
     etiquetas, cantidad = ndimage.label(eco)
     if cantidad == 0:
         return np.zeros(actual.shape, dtype=bool)
@@ -358,6 +366,57 @@ def _apoyo_fuera_de_mascara(actual, mascara):
     validas = fuera >= APOYO_MIN_PIXELES_FUERA
     validas[0] = False
     return validas[etiquetas]
+
+
+def _tope_mas_frio_cerca(shape, ruta_actual=None):
+    """Temperatura del tope de nube más frío a ~9 km de cada píxel (°C).
+
+    Lee el canal 13 de GOES-19 que deja goes19/c13_radar.py, solo si es de la
+    misma hora que la imagen de radar (±12 min). Si no hay, devuelve None.
+    """
+    try:
+        if not C13_RADAR.exists():
+            return None
+        referencia = (
+            _timestamp_de_path(ruta_actual) if ruta_actual else _timestamp_actual()
+        )
+        if referencia is None:
+            return None
+        z = np.load(C13_RADAR)
+        hora = _parse_timestamp_text(str(z["hora"]))
+        if hora is None:
+            return None
+        if abs((hora - referencia).total_seconds()) / 60.0 > SATELITE_MAX_DIF_MIN:
+            return None
+        import corrector_tiempo_real as ct
+
+        sat = ct.grilla_satelite(z["lat"], z["lon"], z["temp_c"], shape)
+        if np.isfinite(sat).mean() <= 0.5:
+            return None
+        return ct.mas_frio_cerca(sat, SATELITE_RADIO_KM)
+    except Exception as exc:
+        print(f"AVISO: satélite no disponible para la máscara: {type(exc).__name__}")
+        return None
+
+
+def _apoyo_tormenta_real(actual, mascara, ruta_actual=None):
+    """Dónde se acepta como real un cambio dentro de la máscara de falsos ecos.
+
+    - Con satélite de la misma hora:
+        * cielo despejado encima (tope > -5 °C a 9 km): falso eco, aunque
+          cambie de forma o se mueva (propagación anómala, terreno);
+        * nube encima: real si la lluvia sigue afuera de la máscara
+          (desde lluvia moderada, nivel 2).
+    - Sin satélite: real solo si la lluvia fuerte (nivel 3) sigue afuera.
+    """
+    estricto = _apoyo_fuera_de_mascara(actual, mascara, INTENSIDAD_MINIMA)
+    frio = _tope_mas_frio_cerca(actual.shape, ruta_actual)
+    if frio is None:
+        return estricto
+    hay_dato = np.isfinite(frio)
+    nube = hay_dato & (frio <= SATELITE_TOPE_NUBE_C)
+    amplio = _apoyo_fuera_de_mascara(actual, mascara, APOYO_NIVEL_CON_NUBE)
+    return (nube & amplio) | (~hay_dato & estricto)
 
 
 def aplicar_mascara_estatica(
