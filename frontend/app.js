@@ -72,10 +72,22 @@ function cielo(codigo, nubes, lluvia) {
   return ["Nublado", "nublado"];
 }
 
-function icono(tipo) {
+function esDeNoche() {
+  const h = Number(new Date().toLocaleString("en-US", { hour: "numeric", hour12: false, timeZone: "America/Argentina/Buenos_Aires" }));
+  return h >= 21 || h < 7;
+}
+
+function icono(tipo, dia) {
   const sol = '<circle cx="24" cy="24" r="9" fill="#ffd45e"/><g stroke="#ffd45e" stroke-width="3" stroke-linecap="round"><path d="M24 5v5M24 38v5M5 24h5M38 24h5M10.5 10.5l3.5 3.5M34 34l3.5 3.5M10.5 37.5l3.5-3.5M34 14l3.5-3.5"/></g>';
   const nube = (x, c) => `<path transform="translate(${x} 0)" d="M15 38h20a8 8 0 0 0 0-16 11 11 0 0 0-21 3 6.5 6.5 0 0 0 1 13z" fill="${c}"/>`;
+  const luna = '<path d="M30 8a15 15 0 1 0 10 26A13 13 0 0 1 30 8z" fill="#e6ecf7"/>';
+  if (!dia && esDeNoche()) {
+    if (tipo === "sol") tipo = "luna";
+    else if (tipo === "parcial") tipo = "luna_parcial";
+  }
   const s = {
+    luna: luna,
+    luna_parcial: '<g transform="translate(-6 -6) scale(.8)">' + luna + "</g>" + nube(4, "#dfe7f3"),
     sol: sol,
     parcial: '<g transform="translate(-6 -6) scale(.8)">' + sol + "</g>" + nube(4, "#dfe7f3"),
     nublado: nube(-6, "#8fa2bd") + nube(2, "#dfe7f3"),
@@ -108,6 +120,7 @@ function pintarTiempo() {
   $("cielo").textContent = t.disponible ? texto : "Sin datos del tiempo en este momento";
   $("cieloIcono").innerHTML = icono(tipo);
   $("sensacion").textContent = num(t.sensacion_termica) === null ? "—" : fmt(t.sensacion_termica) + " °C";
+  $("sensacion").parentElement.classList.toggle("oculto", num(t.sensacion_termica) === null);
   const dir = punto(t.viento_dir);
   $("viento").textContent = num(t.viento_vel) === null ? "—" : fmt(t.viento_vel) + " km/h" + (dir ? " " + dir : "");
   $("viento").title = dir ? "Viene del " + NOMBRE_PUNTO[dir] : "";
@@ -350,7 +363,7 @@ function pintarDias() {
     const nombre = isNaN(fecha) ? d.fecha : fecha.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", timeZone: "America/Argentina/Buenos_Aires" });
     const [texto, tipo] = cielo(d.codigo_tiempo, null, null);
     const dir = punto(d.viento_direccion);
-    return `<div class="dia"><div class="fecha">${esc(nombre)}</div>${icono(tipo)}
+    return `<div class="dia"><div class="fecha">${esc(nombre)}</div>${icono(tipo, true)}
       <div class="temps">${esc(fmt(d.maxima))}° <span>${esc(fmt(d.minima))}°</span></div>
       <div class="mas">${esc(texto)}</div>
       <div class="mas">Lluvia ${esc(fmt(d.prob_lluvia))} %${num(d.lluvia_mm) > 0 ? " · " + esc(fmt(d.lluvia_mm, 1)) + " mm" : ""}</div>
