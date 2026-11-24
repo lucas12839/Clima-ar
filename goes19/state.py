@@ -641,6 +641,42 @@ C13_AHORA = Path(tempfile.gettempdir()) / "climaar_c13_ahora.npz"
 C13_RADAR = Path(tempfile.gettempdir()) / "climaar_c13_radar.npz"
 
 
+RAYOS_MAPA_FILE = BASE_DIR / "data" / "goes19" / "rayos_mapa.json"
+RAYOS_MAPA_MINUTOS = 70          # la animación del satélite cubre 1 hora
+RAYOS_MAPA_MAX = 4000
+
+
+def guardar_rayos_mapa(nuevos: list, ahora: datetime | None = None, destino: Path | None = None) -> None:
+    """Rayos de la última hora con su hora, para el mapa de la app (vista
+    Meteorólogos). Solo lo escribe este programa; nadie de la estructura lo lee.
+    Formato compacto: [lat, lon, segundos UTC]."""
+    destino = destino or RAYOS_MAPA_FILE
+    ahora = ahora or datetime.now(timezone.utc)
+    limite = int(ahora.timestamp()) - RAYOS_MAPA_MINUTOS * 60
+    try:
+        viejos = json.loads(destino.read_text(encoding="utf-8")).get("rayos") or []
+    except Exception:
+        viejos = []
+    unicos = {}
+    for la, lo, t in list(viejos) + [list(n) for n in nuevos]:
+        try:
+            la, lo, t = round(float(la), 3), round(float(lo), 3), int(t)
+        except (TypeError, ValueError):
+            continue
+        if t >= limite:
+            unicos[(la, lo, t)] = [la, lo, t]
+    rayos = sorted(unicos.values(), key=lambda r: r[2])[-RAYOS_MAPA_MAX:]
+    try:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(json.dumps({
+            "actualizado_utc": por_tormenta.iso(ahora),
+            "minutos": RAYOS_MAPA_MINUTOS,
+            "rayos": rayos,
+        }, separators=(",", ":")), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def guardar_c13_ahora(dominio: dict, hora: datetime | None, destino: Path | None = None) -> None:
     """Deja la imagen más reciente del canal 13 (solo la zona) para el corrector del
     nowcast en capas, que corre más tarde en el MISMO ciclo. No se guarda en git."""
@@ -782,6 +818,7 @@ def build_state(reference_time: datetime | None = None) -> dict:
                 centro=(RADAR_LAT, RADAR_LON), radio_km=RADIO_TORMENTAS_KM,
                 frame_radar=reference_time,
             )
+            guardar_rayos_mapa(state["glm"]["ventana"].pop("_posiciones_mapa", None) or [])
             if rayos_radar is not None:
                 state["glm"]["rayos_frame_radar"] = {
                     "fin_utc": por_tormenta.iso(reference_time),

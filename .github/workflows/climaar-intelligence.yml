@@ -863,12 +863,20 @@ jobs:
             historial_goes="data/goes19/historial"
           fi
 
+          # Rayos de la última hora para el mapa de la app (aparece con la
+          # primera lectura del GLM).
+          rayos_mapa=""
+          if [ -f data/goes19/rayos_mapa.json ]; then
+            rayos_mapa="data/goes19/rayos_mapa.json"
+          fi
+
           git add -A \
             data/radar \
             data/ia \
             data/meteorologia \
             data/sazb \
             data/goes19/goes19_state.json \
+            $rayos_mapa \
             $historial_goes
 
           if git diff --cached --quiet; then
