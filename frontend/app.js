@@ -199,7 +199,19 @@ function colorNivel(n) {
 function iniciarMapa() {
   if (mapa.m || !window.L) return;
   mapa.m = L.map("mapa", { zoomControl: true, attributionControl: true }).setView([-38.55, -62.25], 8);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 12, attribution: "© OpenStreetMap" }).addTo(mapa.m);
+  // Fondo oscuro con rutas, costa y ríos; los nombres van en una capa
+  // aparte, por encima del radar, para que la lluvia no los tape.
+  const atrib = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>';
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", { maxZoom: 13, subdomains: "abcd", attribution: atrib }).addTo(mapa.m);
+  mapa.m.createPane("nombres");
+  mapa.m.getPane("nombres").style.zIndex = 450;
+  mapa.m.getPane("nombres").style.pointerEvents = "none";
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", { maxZoom: 13, subdomains: "abcd", pane: "nombres" }).addTo(mapa.m);
+  // Anillos de distancia desde Bahía Blanca.
+  [50, 100].forEach(km => {
+    L.circle([-38.7196, -62.2724], { radius: km * 1000, color: "#9fb1cc", weight: 1, opacity: .45, fill: false, dashArray: "2 6", interactive: false }).addTo(mapa.m);
+    L.marker([-38.7196 + km / 110.574, -62.2724], { interactive: false, icon: L.divIcon({ className: "anillo-km", html: km + " km", iconSize: [44, 14] }) }).addTo(mapa.m);
+  });
   mapa.capas = L.layerGroup().addTo(mapa.m);
 }
 
@@ -219,7 +231,7 @@ function ponerImagenRadar(ruta, clave) {
   if (!mapa.m) return;
   const url = urlImagen(ruta, clave);
   if (mapa.radar) mapa.radar.setUrl(url);
-  else mapa.radar = L.imageOverlay(url, limitesRadar(), { opacity: .72 }).addTo(mapa.m);
+  else mapa.radar = L.imageOverlay(url, limitesRadar(), { opacity: .9 }).addTo(mapa.m);
 }
 
 function pintarMapa() {
@@ -228,7 +240,7 @@ function pintarMapa() {
   const r = estado.resumen || {};
   const frame = r.frame_actual_utc || "";
   if (frame !== estado.frameMostrado && !estado.animando) {
-    ponerImagenRadar((r.radar && r.radar.imagen) || "/radar/imagen", frame);
+    ponerImagenRadar((r.radar && r.radar.imagen) || "/radar/mapa", frame);
     estado.frameMostrado = frame;
   }
   mapa.capas.clearLayers();
@@ -267,7 +279,8 @@ async function animar() {
   btn.textContent = "Cargando…";
   try {
     const s = await pedir("/secuencia");
-    const frames = (s.frames || []).filter(f => f.imagen);
+    // Misma imagen limpia que el mapa, no la cruda del radar.
+    const frames = (s.frames || []).filter(f => f.timestamp).map(f => ({ timestamp: f.timestamp, imagen: "/radar/mapa/" + f.timestamp }));
     if (!frames.length) throw new Error("sin frames");
     frames.forEach(f => { const i = new Image(); i.src = urlImagen(f.imagen, f.timestamp); });
     let i = 0;

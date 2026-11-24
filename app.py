@@ -13,7 +13,7 @@ from urllib.parse import quote
 import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 try:
     from PIL import Image
@@ -2714,6 +2714,79 @@ def _tormentas_mapa() -> list[dict[str, Any]]:
     return salida
 
 
+# ============================================================
+# RADAR LIMPIO PARA EL MAPA (solo para mirar)
+# ============================================================
+# La estructura sigue usando el PNG crudo. Esto arma una versión
+# limpia y suave para la gente, una sola vez por imagen.
+
+CLUTTER_PNG = BASE_DIR / "config" / "clutter_rma10.png"
+_MAPA_CACHE: dict[str, tuple[float, bytes]] = {}
+_MAPA_LOCK = threading.Lock()
+_MAPA_MAX = 20
+
+
+def _imagen_mapa(path: Path) -> bytes | None:
+    import radar_visual
+
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+
+    clave = str(path)
+    with _MAPA_LOCK:
+        guardada = _MAPA_CACHE.get(clave)
+        if guardada and guardada[0] == mtime:
+            return guardada[1]
+
+    try:
+        datos = radar_visual.imagen_mapa(path, CLUTTER_PNG)
+    except Exception:
+        datos = None
+
+    if datos is not None:
+        with _MAPA_LOCK:
+            _MAPA_CACHE[clave] = (mtime, datos)
+            while len(_MAPA_CACHE) > _MAPA_MAX:
+                _MAPA_CACHE.pop(next(iter(_MAPA_CACHE)))
+    return datos
+
+
+def _respuesta_mapa(path: Path, segundos: int):
+    valid, reason = png_is_valid(path)
+    if not valid:
+        return JSONResponse(
+            status_code=404,
+            content={"ok": False, "error": "imagen_no_disponible", "motivo": reason},
+        )
+    datos = _imagen_mapa(path)
+    if datos is None:
+        # Paleta desconocida: se manda la imagen original antes que nada.
+        return FileResponse(path, media_type="image/png")
+    return Response(
+        content=datos,
+        media_type="image/png",
+        headers={"Cache-Control": f"public, max-age={segundos}"},
+    )
+
+
+@app.get("/radar/mapa")
+def radar_mapa():
+    return _respuesta_mapa(ACTUAL_IMAGE, 60)
+
+
+@app.get("/radar/mapa/{timestamp}")
+def radar_mapa_historico(timestamp: str):
+    if len(timestamp) != 14 or not timestamp.isdigit():
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "timestamp_invalido"},
+        )
+    # Una imagen vieja no cambia: el navegador la puede guardar un día.
+    return _respuesta_mapa(HISTORY_DIR / f"{timestamp}.png", 86400)
+
+
 # Salto máximo creíble entre dos puntos del recorrido: 120 km/h
 # (tope físico del proyecto) más 5 km de margen por el tamaño de la celda.
 _VEL_MAX_KMH = 120.0
@@ -2803,7 +2876,7 @@ def resumen() -> dict[str, Any]:
             "bounds": geo.get("bounds"),
             "centro": [_RADAR_LAT, _RADAR_LON],
             "alcance_km": _RADAR_RADIUS_KM,
-            "imagen": "/radar/imagen",
+            "imagen": "/radar/mapa",
         },
         **radar_metadata(),
     }
