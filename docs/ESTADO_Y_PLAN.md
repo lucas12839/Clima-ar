@@ -9,6 +9,16 @@ Leer junto con `CLAUDE.md` (reglas fijas del repo).
 - Claude genera, arregla, prueba y sube los cambios (rama + pull request + merge).
 - El VPS no se actualiza solo desde GitHub: si hay que tocarlo, darle el comando a Lucas.
 
+## Escala de 1 a 4 (23/11/2026, 22:30, decisión de Lucas) — `scripts/indices_fenomenos.py`
+- Mismo significado en todos los fenómenos: 1 débil, 2 moderado, 3 fuerte, 4 severo (sin
+  confirmación de estación: "posible severo"). El 0 no es nivel: el fenómeno no está.
+- Viento (ráfaga, cortes de Lucas): 30-49 / 50-69 / 70-89 / >= 90 km/h; sostenido >= 45 = fuerte.
+- Granizo: 1 posible >= 50 dBZ, 2 probable >= 55 (el blanco), 3 fuerte >= 60, 4 severo solo con
+  núcleo >= 60 + tope <= -60 °C + rayos frecuentes (antes bastaba una de las dos).
+- Eléctrica: se agrega 2 moderada (0,5-2 rayos/min). Lluvia sin cambios.
+- Puntaje de gravedad alineado (1 posible, 2 probable, 4 solo confirmado). Cortes nuevos = punto
+  de partida, a calibrar con casos reales.
+
 ## Pasos del 23/11/2026, noche (orden de Lucas: 1 reloj externo, 2 servidor, 3 seguimiento, 4 estaciones O/SO, interfaz al final)
 - **1 Reloj externo: hecho.** cron-job.org "ClimaAR vigilante" cada 10 min, clave `climaar-reloj-externo`
   (solo Actions, vence 21/02/2027, igual que la del detector). Prueba 204 y corrida en GitHub a las 20:37.
