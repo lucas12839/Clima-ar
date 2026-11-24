@@ -1,2 +1,11 @@
 [build]
   ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- frontend/"
+
+# La app le pide los datos al servidor de ClimaAR en el VPS (24/11/2026,
+# reemplaza a Render). Netlify pasa los pedidos por detrás: la página sigue
+# en la misma dirección y no hace falta dominio ni certificado en el VPS.
+[[redirects]]
+  from = "/api/*"
+  to = "http://104.237.9.251:8000/:splat"
+  status = 200
+  force = true
