@@ -1,6 +1,7 @@
 # Servidor de la app de ClimaAR en el VPS (reemplaza a Render, 24/11/2026).
-# Instalador: deploy/instalar_api.sh. Netlify le pasa los pedidos de la app
-# (frontend/_redirects), así que no hace falta dominio ni certificado.
+# Instalador: deploy/instalar_api.sh. Caddy (deploy/instalar_web.sh) le pasa
+# los pedidos de la página con https. Escucha solo dentro del VPS (127.0.0.1):
+# desde afuera se entra únicamente por Caddy (24/11/2026).
 [Unit]
 Description=ClimaAR - servidor de la app (API)
 After=network-online.target
@@ -14,7 +15,7 @@ WorkingDirectory=/opt/Clima-ar
 Environment=PYTHONUNBUFFERED=1
 # Lee los datos de main en GitHub (caché de 1 min), igual que Render.
 Environment=CLIMAAR_REMOTE_DATA_ENABLED=1
-ExecStart=/opt/Clima-ar/.venv-ia/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1 --no-access-log
+ExecStart=/opt/Clima-ar/.venv-ia/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log
 Restart=always
 RestartSec=10
 # Tope de memoria: nunca le puede quitar memoria al detector.

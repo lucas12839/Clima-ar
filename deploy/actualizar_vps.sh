@@ -129,7 +129,7 @@ if printf '%s\n' "$cambiados" | grep -qx -e scripts/detector_sinarame.py -e scri
 fi
 
 # Servidor de la app (si está instalado): se reinicia si cambió su código o
-# sus programas. Tarda unos segundos; Netlify reintenta solo.
+# sus programas. Tarda unos segundos.
 if systemctl list-unit-files climaar-api.service >/dev/null 2>&1 \
     && systemctl is-enabled --quiet climaar-api 2>/dev/null; then
   if printf '%s\n' "$cambiados" | grep -qx -e requirements.txt -e TODO; then
@@ -138,7 +138,17 @@ if systemctl list-unit-files climaar-api.service >/dev/null 2>&1 \
       exit 1
     fi
   fi
-  if printf '%s\n' "$cambiados" | grep -q -e '\.py$' -e '^requirements.txt$' -e '^config/' -e '^TODO$'; then
+  # El servicio del servidor es solo nuestro (no tiene ajustes del VPS): si
+  # cambió, se instala. Solo con Caddy andando (Caddy es la puerta de entrada).
+  api_servicio=no
+  if printf '%s\n' "$cambiados" | grep -qx -e deploy/climaar-api.service -e TODO \
+      && systemctl is-active --quiet caddy 2>/dev/null \
+      && ! cmp -s "$DEST/deploy/climaar-api.service" /etc/systemd/system/climaar-api.service; then
+    install -m 644 "$DEST/deploy/climaar-api.service" /etc/systemd/system/climaar-api.service
+    systemctl daemon-reload
+    api_servicio=si
+  fi
+  if [ "$api_servicio" = si ] || printf '%s\n' "$cambiados" | grep -q -e '\.py$' -e '^requirements.txt$' -e '^config/' -e '^TODO$'; then
     if systemctl restart climaar-api; then
       detalle="$detalle; servidor de la app reiniciado"
     else

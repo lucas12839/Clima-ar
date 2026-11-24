@@ -21,7 +21,8 @@ externo (docs/RELOJ_EXTERNO.md). Revisa:
   quedaban escritas en salud_cadena.json y nadie las veía: re-auditoría 23/11);
 - la IA (Intelligence): que analice el último radar y que no falle seguido
   (23/11/2026: 4 imágenes quedaron sin analizar por un error y nadie avisó);
-- reloj externo (cron-job.org): si venía llamando y dejó de llamar.
+- reloj externo (cron-job.org): si venía llamando y dejó de llamar;
+- la app pública (página y datos desde el VPS): que responda (24/11/2026).
 
 Avisa abriendo un "issue" de GitHub (le llega a Lucas como notificación al
 celular y por correo), agrega un comentario si cambian los problemas y lo
@@ -55,6 +56,10 @@ EXTERNO_MAX_MIN = 30.0
 IA_ATRASO_MAX_MIN = 15.0       # la IA tarda ~2 min después del radar; refresca cada 5
 IA_FALLAS = 2
 SALUD_PERSISTENTE_MIN = 20.0
+# Dirección pública de la app (variable de repo CLIMAAR_APP_URL si se cambia
+# por un nombre propio; la sslip.io sigue andando igual).
+APP_URL = "https://104-237-9-251.sslip.io"
+APP_INTENTOS = 3
 
 
 def parse(texto) -> datetime | None:
@@ -82,7 +87,7 @@ def hora_arg(t: datetime) -> str:
 def revisar(ahora: datetime, latido: str | None, info: dict | None, radar_ts: str | None,
             respaldo: list[dict], cwop: list[dict], externo: list[dict] | None = None,
             ia: dict | None = None, ia_corridas: list[dict] | None = None,
-            salud: dict | None = None) -> list[dict[str, str]]:
+            salud: dict | None = None, app: dict | None = None) -> list[dict[str, str]]:
     """Problemas encontrados: [{"clave", "texto"}]. La clave sirve para saber si
     el problema es el mismo de antes (no se repite el aviso)."""
     problemas = []
@@ -194,6 +199,12 @@ def revisar(ahora: datetime, latido: str | None, info: dict | None, radar_ts: st
             if clave is not None and hace is not None and hace >= SALUD_PERSISTENTE_MIN:
                 problemas.append({"clave": "salud_" + _corta(clave), "texto":
                     f"Control de salud (hace {hace:.0f} min): {texto}"})
+    # App pública ----------------------------------------------------------------
+    # app = {"url", "ok", "detalle"}: resultado de probar /api/health (varios intentos).
+    if isinstance(app, dict) and app.get("ok") is False:
+        problemas.append({"clave": "app_publica", "texto":
+            f"La app pública ({app.get('url')}) no responde: {app.get('detalle') or 'sin detalle'}. "
+            "Ver por SSH: `systemctl status climaar-api caddy` y `journalctl -u climaar-api -n 30`."})
     corridas_ia = [r for r in (ia_corridas or []) if r.get("status") == "completed"
                    and r.get("conclusion") in ("success", "failure")][:IA_FALLAS]
     if len(corridas_ia) == IA_FALLAS and all(r.get("conclusion") == "failure" for r in corridas_ia):
@@ -274,6 +285,29 @@ def avisar(gh: GitHub, problemas: list[dict], ahora: datetime) -> str:
     return "sin_cambios"
 
 
+def probar_app(url: str, intentos: int = APP_INTENTOS, espera: float = 5.0, abrir=None) -> dict:
+    """Prueba /api/health de la app pública. Un solo fallo no alcanza: varios intentos."""
+    import time
+
+    abrir = abrir or urllib.request.urlopen
+    detalle = None
+    for i in range(intentos):
+        try:
+            req = urllib.request.Request(url.rstrip("/") + "/api/health",
+                                         headers={"User-Agent": "ClimaAR-vigilancia"})
+            with abrir(req, timeout=15) as resp:
+                if 200 <= getattr(resp, "status", 200) < 300:
+                    return {"url": url, "ok": True, "detalle": None}
+                detalle = f"respondió {getattr(resp, 'status', '?')}"
+        except urllib.error.HTTPError as exc:
+            detalle = f"respondió {exc.code}"
+        except Exception as exc:
+            detalle = f"{type(exc).__name__}: {str(exc)[:120]}"
+        if i + 1 < intentos:
+            time.sleep(espera)
+    return {"url": url, "ok": False, "detalle": detalle}
+
+
 def main() -> int:
     try:
         ahora = datetime.now(timezone.utc)
@@ -303,8 +337,9 @@ def main() -> int:
             salud = json.loads((BASE / "data" / "ia" / "salud_cadena.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             salud = None
+        app = probar_app(os.environ.get("CLIMAAR_APP_URL") or APP_URL)
         problemas = revisar(ahora, os.environ.get("CLIMAAR_DETECTOR_LATIDO"), info, radar_ts, respaldo, cwop,
-                            externo, ia, ia_corridas, salud)
+                            externo, ia, ia_corridas, salud, app)
         if any(p["clave"] == "reloj_cwop" for p in problemas):
             try:
                 gh.api("POST", "actions/workflows/climaar-cwop.yml/dispatches", {"ref": "main"})

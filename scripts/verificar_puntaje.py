@@ -91,9 +91,18 @@ def dist_km(lat1, lon1, lat2, lon2) -> float:
 
 
 def leer_jsonl(path: Path) -> list[dict]:
+    """Líneas JSON de un archivo (también si ya se comprimió: .jsonl.gz)."""
     salida = []
     try:
-        for linea in path.read_text(encoding="utf-8").splitlines():
+        texto = ""
+        gz = path.with_name(path.name + ".gz")
+        if gz.exists():
+            import gzip
+            with gzip.open(gz, "rt", encoding="utf-8") as f:
+                texto = f.read()
+        if path.exists():
+            texto += "\n" + path.read_text(encoding="utf-8")
+        for linea in texto.splitlines():
             try:
                 salida.append(json.loads(linea))
             except ValueError:

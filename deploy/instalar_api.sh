@@ -23,10 +23,8 @@ mkdir -p /etc/systemd/journald.conf.d
 printf '[Journal]\nSystemMaxUse=200M\n' > /etc/systemd/journald.conf.d/climaar.conf
 systemctl restart systemd-journald
 
-# Puerto 8000 abierto (solo si el cortafuegos está activo).
-if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-  ufw allow 8000/tcp >/dev/null && echo "Puerto 8000 abierto en el cortafuegos."
-fi
+# El servidor escucha solo dentro del VPS: desde afuera se entra por Caddy
+# (deploy/instalar_web.sh). El puerto 8000 no se abre.
 
 install -m 644 "$DEST/deploy/climaar-api.service" /etc/systemd/system/climaar-api.service
 systemctl daemon-reload

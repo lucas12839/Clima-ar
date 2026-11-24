@@ -38,7 +38,7 @@ Entre frames, la IA sigue corriendo con el último radar válido y marca cuánto
 | `scripts/clasificacion_tiempo.py` | Tipo de tiempo: llovizna → tormenta potencialmente severa, con granizo / viento / inundación (sin colores de alerta) |
 | `scripts/validar_integridad_climaar.py` | Verifica que todo el ciclo esté sincronizado |
 | `app.py` | API (FastAPI) |
-| `frontend/` | Web (Netlify) |
+| `frontend/` | Web (servida desde el VPS con Caddy, `deploy/instalar_web.sh`) |
 | `deploy/`, `docs/` | Servicio del detector y documentación |
 
 ## Workflows

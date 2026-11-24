@@ -1728,6 +1728,14 @@ def append_history(result):
 
         writer.writerow(row)
 
+    # Solo los últimos 30 días (antes crecía sin fin).
+    try:
+        from recorte_historial import recortar_csv
+    except ImportError:
+        from scripts.recorte_historial import recortar_csv
+    recortar_csv(HISTORY_FILE)
+
+
 
 def main():
 

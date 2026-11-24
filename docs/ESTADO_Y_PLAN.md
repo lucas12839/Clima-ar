@@ -1,4 +1,4 @@
-# ClimaAR — estado y plan (actualizado 20/11/2026, tarde, hora de Argentina)
+# ClimaAR — estado y plan (actualizado 24/11/2026, madrugada, hora de Argentina)
 
 Leer junto con `CLAUDE.md` (reglas fijas del repo).
 
@@ -7,7 +7,35 @@ Leer junto con `CLAUDE.md` (reglas fijas del repo).
 - Respuestas breves: qué se hizo, qué falta, qué decidir.
 - Horarios siempre en **hora de Argentina (UTC−3)**.
 - Claude genera, arregla, prueba y sube los cambios (rama + pull request + merge).
-- El VPS no se actualiza solo desde GitHub: si hay que tocarlo, darle el comando a Lucas.
+- El VPS se actualiza solo desde main cada 10 min (código); servicios nuevos o cambios de sistema: darle el comando a Lucas.
+
+## Seguimiento sin velocidades imposibles e inspección general (24/11/2026, madrugada)
+- **Velocidad de cada tormenta con flujo óptico** (`seguimiento_temporal.py`, `elegir_velocidad`).
+  El centro de la tormenta se corre cuando cambia de forma; la velocidad ahora sale del flujo óptico
+  del par de imágenes (el mismo del nowcast), suavizada con la anterior (40 % nueva, 60 % anterior).
+  Si el centro implica más de 120 km/h el tramo queda `movimiento_dudoso` (en la app: "velocidad
+  incierta"). Margen de asociación sin superposición 12 → 6 px. Medido con 10 días guardados
+  (`herramientas/medir_velocidades.py`): tramos > 80 km/h 21,8 % → 1,5 %; > 100 km/h 14,3 % → 0,3 %;
+  máximo 403 → 120 km/h; error de posición a 10/20/30 min 7,5/14,5/20,8 → 4,5/8,5/12,6 km.
+  La predicción de evolución (lo que dibuja la app) usa esa velocidad (70 %): 6,3/12,3/17,4 →
+  4,9/9,6/14,2 km. 13/11 por la cadena completa: lo que se ve en cada localidad igual, 0 fallas.
+- **Página solo por Caddy**: el servidor de la app escucha en 127.0.0.1 (antes el puerto 8000
+  quedaba abierto para Netlify). El VPS lo aplica solo al actualizarse. Sin `netlify.toml`.
+- **Nombre propio**: `sudo bash /opt/Clima-ar/deploy/instalar_web.sh climaar-bahiablanca.duckdns.org`
+  (antes crear el subdominio en duckdns.org con la IP 104.237.9.251). La dirección sslip.io sigue
+  andando. Después, en GitHub, variable de repo `CLIMAAR_APP_URL` con la dirección nueva (opcional).
+- **La vigilancia prueba la app pública** (`/api/health`, 3 intentos) y avisa si no responde.
+- **Una actualización automática del VPS que falla se avisa enseguida** (antes, hasta 6 h).
+- **Registros que crecían sin fin** (historial_meteorologico.csv, historial_inteligencia_tormenta.csv,
+  sazb/ingesta_log.jsonl): se conservan 30 días. **Casos de GOES-19**: los días cerrados se
+  comprimen (.jsonl.gz); 400 días sin comprimir eran ~300 MB en el repositorio.
+- **Máscaras de ecos fijos de Córdoba, Resistencia y Tostado**: el recolector las arma solo una vez por
+  día cuando hay 1 día de imágenes (`scripts/mascaras_recoleccion.py`, en la carpeta de cada radar).
+- Acciones de GitHub actualizadas (checkout v5, setup-python v6, artefactos v6/v7): las viejas usaban
+  Node 20, que GitHub da de baja.
+- **Para Lucas**: borrar el servicio de Render y dar de baja Netlify (desde sus páginas); crear el
+  subdominio en DuckDNS y correr el instalador con el nombre. Tostado: no se pudo ver desde acá si
+  volvió a publicar (`cat /var/lib/climaar-recoleccion/estado.json` en el VPS).
 
 ## Recolección de radares de otras zonas (23/11/2026, 23:30, idea de Lucas) — `scripts/recoleccion_radares.py`
 - Para calibrar con muchas tormentas reales: Córdoba (RMA1) y Resistencia (RMA4), las dos verificadas el 23/11 (publican cada 10 min, se bajan directo sin navegador). Misiones (RMA5) quedó tercera. 23/11, 23:45: se sumó Tostado, Santa Fe (RMA21), pedido de Lucas; en ese momento no publicaba (posible falla del radar): empieza a guardar solo cuando vuelva.
@@ -98,8 +126,7 @@ Con las 1000 corridas reales de GitHub desde el 22/11 y los avisos de las corrid
 - **No existe la categoría "destructivo".** Lo máximo es "Severa".
 - Escala por fenómeno, **cinco niveles, sin "muy fuerte"**: de fuerte se pasa a severo.
   Los cortes se revisan más adelante.
-- Render (API) y Netlify (pantalla) están desactualizados a propósito: Lucas los
-  actualiza al final, cuando la estructura esté sólida.
+- Render y Netlify ya no se usan (24/11/2026): página y datos salen del VPS (Caddy + climaar-api).
 - El Doppler viene después.
 
 ## Terminado y verificado

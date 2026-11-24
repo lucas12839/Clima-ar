@@ -82,6 +82,8 @@ def entorno(tmp_path, monkeypatch):
     monkeypatch.setattr(gv, "ventana_y_rayos_radar", ventana)
     monkeypatch.setattr(st, "OUTPUT_FILE", tmp_path / "goes19_state.json")
     monkeypatch.setattr(st, "RADAR_NOWCAST_FILE", tmp_path / "radar_nowcast.json")
+    # 24/11/2026: sin esto la prueba escribía data/goes19/rayos_mapa.json del repo.
+    monkeypatch.setattr(st, "RAYOS_MAPA_FILE", tmp_path / "rayos_mapa.json")
     (tmp_path / "meteo.json").write_text(json.dumps({"ambiente_futuro": {"puntos": [
         {"punto": "BB_CENTRO", "latitud": -38.72, "longitud": -62.27,
          "datos": [{"tiempo_utc": "2026-11-19T23:00", "freezing_level_height": 2858.0}]}]}}), encoding="utf-8")

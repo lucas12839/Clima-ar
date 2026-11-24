@@ -377,6 +377,18 @@ class Detector:
         return accion
 
 
+def actualizacion_con_error(raiz=None):
+    """Hora de la última actualización automática fallida, o None."""
+    raiz = Path(raiz) if raiz else Path(__file__).resolve().parents[1]
+    try:
+        act = json.loads((raiz / ACTUALIZACION_LOCAL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(act, dict) and act.get("resultado") == "error":
+        return act.get("utc") or "error"
+    return None
+
+
 def info_servicio(gh, raiz=None, error_consultas=None):
     """Qué código corre, cuándo vence la clave y la última actualización automática."""
     raiz = Path(raiz) if raiz else Path(__file__).resolve().parents[1]
@@ -494,6 +506,7 @@ def main(argv=None):
     ultimo_latido = 0.0
     ultima_info = 0.0
     error_publicado = False
+    error_actualizacion_publicado = None
     ticks = consultas_ok = 0
     while not parar["v"]:
         t0 = time.monotonic()
@@ -529,10 +542,16 @@ def main(argv=None):
                 ultimo_latido = time.monotonic()
             except Exception as exc:  # el latido nunca frena al detector
                 print(f"ADVERTENCIA: latido no publicado: {exc}", flush=True)
+            # Una actualización automática que falla se publica enseguida (no
+            # a las 6 h): la vigilancia avisa con la causa (24/11/2026).
+            act_error = actualizacion_con_error()
+            if act_error and act_error != error_actualizacion_publicado:
+                ultima_info = 0.0
             if ultimo_latido and time.monotonic() - ultima_info >= INFO_CADA_SEG:
                 try:
                     gh.escribir_info(info_servicio(gh))
                     ultima_info = time.monotonic()
+                    error_actualizacion_publicado = act_error
                 except Exception as exc:
                     print(f"ADVERTENCIA: información del servicio no publicada: {exc}", flush=True)
         if a.duracion_max_min and (

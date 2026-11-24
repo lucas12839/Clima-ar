@@ -62,6 +62,7 @@ CALIBRATION_SCHEMA = 2
 # Una predicción sin observación a su hora se descarta pasado este tiempo
 # (antes quedaba pendiente para siempre).
 PENDING_MAX_AGE_MIN = 60
+PESO_VELOCIDAD_FLUJO = 0.7  # velocidad del seguimiento (flujo óptico) vs. historial de posiciones
 MAX_HISTORY = 10
 
 MIN_MATCH_PIXELS = 10.0
@@ -719,6 +720,27 @@ def estimate_motion(track, history=None):
     else:
         vx = recent_vx
         vy = recent_vy
+
+    # 24/11/2026: el seguimiento mide la velocidad con el flujo óptico (el
+    # centro de la tormenta salta cuando cambia de forma). Con esa velocidad
+    # el error de posición baja de 6,3 / 12,3 / 17,4 km a 4,9 / 9,6 / 14,2 km
+    # a 10 / 20 / 30 min (4 días de tormentas, herramientas/medir_velocidades.py).
+    # Solo con el historial completo: con un historial recortado (pruebas
+    # hacia atrás) la velocidad de ahora sería información del futuro.
+    ultimo_historial = canonical_ts(history[-1].get("timestamp")) if history else None
+    if (
+        str(track.get("fuente_velocidad") or "").startswith("FLUJO")
+        and ultimo_historial is not None
+        and ultimo_historial == canonical_ts(track.get("ultimo_frame"))
+    ):
+        vx = (
+            PESO_VELOCIDAD_FLUJO * number(track.get("velocidad_x_pixeles_min"), vx)
+            + (1.0 - PESO_VELOCIDAD_FLUJO) * vx
+        )
+        vy = (
+            PESO_VELOCIDAD_FLUJO * number(track.get("velocidad_y_pixeles_min"), vy)
+            + (1.0 - PESO_VELOCIDAD_FLUJO) * vy
+        )
 
     speed = math.hypot(vx, vy)
 

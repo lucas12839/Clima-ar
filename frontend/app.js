@@ -191,7 +191,10 @@ function textoCelda(loc) {
   const c = ts.map(t => ({ t, d: distKm(p, [t.lat, t.lon]) })).sort((a, b) => a.d - b.d)[0];
   const donde = NOMBRE_PUNTO[punto(rumbo(p, [c.t.lat, c.t.lon]))];
   let txt = `Tormenta más cercana: a ${fmt(c.d)} km al ${donde}`;
-  if (c.t.direccion && num(c.t.velocidad_kmh) > 2) txt += `, se mueve hacia el ${NOMBRE_PUNTO[c.t.direccion] || c.t.direccion} a ${fmt(c.t.velocidad_kmh)} km/h`;
+  if (c.t.direccion && num(c.t.velocidad_kmh) > 2) {
+    txt += `, se mueve hacia el ${NOMBRE_PUNTO[c.t.direccion] || c.t.direccion}`;
+    txt += c.t.movimiento_dudoso ? " (velocidad incierta)" : ` a ${fmt(c.t.velocidad_kmh)} km/h`;
+  }
   if (c.t.tendencia_area === "DEBILITANDOSE") txt += " y se está debilitando";
   else if (c.t.tendencia_area === "FORTALECIENDOSE" || c.t.tendencia_area === "CRECIENDO") txt += " y está creciendo";
   return txt + ".";

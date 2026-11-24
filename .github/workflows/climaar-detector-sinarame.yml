@@ -38,12 +38,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
 
       - name: Configurar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -64,9 +64,10 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           CLIMAAR_DETECTOR_LATIDO: ${{ vars.CLIMAAR_DETECTOR_LATIDO }}
           CLIMAAR_DETECTOR_INFO: ${{ vars.CLIMAAR_DETECTOR_INFO }}
+          CLIMAAR_APP_URL: ${{ vars.CLIMAAR_APP_URL }}
         run: |
           # Etapa C (punto 11). Nunca corta el vigilante.
-          timeout 60 python scripts/vigilancia.py || echo "::warning::Vigilancia no disponible."
+          timeout 120 python scripts/vigilancia.py || echo "::warning::Vigilancia no disponible."
 
       - name: Servicio sano - no se hace nada
         if: steps.latido.outputs.vivo == 'true'

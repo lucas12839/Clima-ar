@@ -2,18 +2,33 @@
 # Publica la página de ClimaAR desde el VPS con https (24/11/2026).
 # Uso (por SSH):  sudo bash /opt/Clima-ar/deploy/instalar_web.sh [dirección]
 #   Sin dirección usa la gratuita basada en la IP: <ip-con-guiones>.sslip.io
-#   Con un nombre propio (ej. climaarbahiablanca.duckdns.org) usa ese.
+#   Con un nombre propio (ej. climaar-bahiablanca.duckdns.org) usa ese y
+#   la dirección sslip.io sigue andando (los enlaces viejos no se rompen).
 # Se puede volver a correr para cambiar la dirección.
+# Nombre gratis en DuckDNS: entrar a https://www.duckdns.org, crear el
+# subdominio "climaar-bahiablanca" y poner la IP del VPS. La IP es fija, así
+# que no hace falta ningún programa que la actualice.
 set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutar con sudo."; exit 1; }
 DEST=/opt/Clima-ar
 
 systemctl is-active --quiet climaar-api || { echo "Primero hay que instalar el servidor: deploy/instalar_api.sh"; exit 1; }
 
-DOMINIO="${1:-}"
+DOMINIO="$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z' | sed 's#^https\?://##; s#/.*$##')"
+IP="$(curl -fsS -m 10 https://api.ipify.org)"
+SSLIP="$(printf '%s' "$IP" | tr '.' '-').sslip.io"
 if [ -z "$DOMINIO" ]; then
-  IP="$(curl -fsS -m 10 https://api.ipify.org)"
-  DOMINIO="$(printf '%s' "$IP" | tr '.' '-').sslip.io"
+  DOMINIO="$SSLIP"
+  DIRECCIONES="$SSLIP"
+else
+  # El nombre tiene que apuntar a este VPS antes de pedir el certificado.
+  APUNTA="$(getent ahostsv4 "$DOMINIO" | awk 'NR==1{print $1}')"
+  if [ "$APUNTA" != "$IP" ]; then
+    echo "El nombre $DOMINIO apunta a '${APUNTA:-nada}' y el VPS es $IP."
+    echo "Revisar en DuckDNS que el subdominio tenga la IP $IP y volver a correr."
+    exit 1
+  fi
+  DIRECCIONES="$DOMINIO, $SSLIP"
 fi
 echo "Dirección: https://$DOMINIO"
 
@@ -30,13 +45,23 @@ if ! command -v caddy >/dev/null 2>&1; then
   fi
 fi
 
-# Puertos de la web (solo si el cortafuegos está activo).
+# Puertos de la web (solo si el cortafuegos está activo). El 8000 (el que
+# usaba Netlify) se cierra: ahora se entra solo por Caddy.
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
   ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null
-  echo "Puertos 80 y 443 abiertos en el cortafuegos."
+  ufw delete allow 8000/tcp >/dev/null 2>&1 || true
+  echo "Puertos 80 y 443 abiertos en el cortafuegos (8000 cerrado)."
 fi
 
-sed "s/^DOMINIO {/$DOMINIO {/" "$DEST/deploy/Caddyfile" > /etc/caddy/Caddyfile
+# Servidor de la app escuchando solo dentro del VPS.
+if ! cmp -s "$DEST/deploy/climaar-api.service" /etc/systemd/system/climaar-api.service; then
+  install -m 644 "$DEST/deploy/climaar-api.service" /etc/systemd/system/climaar-api.service
+  systemctl daemon-reload
+  systemctl restart climaar-api
+  sleep 10
+fi
+
+sed "s/^DOMINIO {/$DIRECCIONES {/" "$DEST/deploy/Caddyfile" > /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
 systemctl enable caddy >/dev/null 2>&1
 systemctl restart caddy
