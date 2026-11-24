@@ -239,6 +239,28 @@ def revisar(ahora: datetime | None = None, latido: str | None = None,
             alertas.append(f"El pronóstico europeo (Open-Meteo) no se actualiza hace "
                            f"{(edad_ecmwf or 0) / 60.0:.1f} h: se usa el anterior (sirve hasta 9 h).")
 
+    # Control de calidad de las estaciones (24/11/2026) -------------------------
+    # Un dato que no pasa el control no se usa; acá se avisa para que se vea
+    # (por ejemplo, un anemómetro roto) antes de que lo note otra persona.
+    sen = leer(DATA / "ia/estaciones/senales_superficie.json")
+    if isinstance(sen, dict):
+        descartes = sen.get("datos_descartados") or []
+        datos["datos_descartados"] = descartes
+        if descartes:
+            NOMBRE_DATO = {"temperatura_c": "temperatura", "viento_kmh": "viento", "rafaga_kmh": "ráfaga",
+                           "humedad_pct": "humedad", "presion_hpa": "presión"}
+            alertas.append("Datos de estaciones que no pasan el control de calidad (no se usan): " + "; ".join(
+                f"{d.get('estacion')} {NOMBRE_DATO.get(d.get('dato'), d.get('dato'))}: {d.get('motivo')}"
+                for d in descartes[:8]) + ".")
+    meteo = leer(DATA / "ia/estado_meteorologico.json")
+    if isinstance(meteo, dict):
+        ml = meteo.get("modelo_localidades") or {}
+        edad_ml = frescura.edad_min(ml.get("actualizado_utc"), ahora)
+        datos["modelo_localidades_edad_min"] = round(edad_ml, 1) if edad_ml is not None else None
+        if edad_ml is None or edad_ml > 5 * 60:
+            alertas.append("No hay modelo europeo por localidad al día: la página usa su respaldo "
+                           "y el viento del índice usa el de Bahía.")
+
     # Calibración de la lluvia con el SMN (corre 2 veces por día) ---------------
     cal_smn = leer(DATA / "ia/calibracion/factor_lluvia_smn.json")
     if isinstance(cal_smn, dict):

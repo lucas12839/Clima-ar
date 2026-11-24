@@ -1,4 +1,8 @@
-"""El tiempo ahora: lo medido en Bahía primero, el modelo de relleno (24/11/2026)."""
+"""El tiempo ahora: el servidor solo muestra lo que calcula la cadena (24/11/2026).
+
+Lo medido y controlado sale de senales_superficie.json ("tiempo_ahora"); lo que
+no mide nadie, del modelo europeo en el punto de la localidad
+(estado_meteorologico.json, "modelo_localidades")."""
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -6,89 +10,84 @@ from datetime import datetime, timedelta, timezone
 os.environ.setdefault("CLIMAAR_REMOTE_DATA_ENABLED", "0")
 import app  # noqa: E402
 
-MODELO = {"temperatura": 24, "viento_vel": 30, "viento_dir": 220, "rafagas": 47, "humedad": 20,
-          "presion": 1010, "nubosidad": 10, "codigo_tiempo": 1, "sensacion_termica": 23, "precipitacion": 0}
+LOCS = {l["id"]: l for l in json.load(open(app.LOCALIDADES_FILE, encoding="utf-8"))["localidades"]}
 
 
-def preparar(tmp_path, monkeypatch, bcp=None, cwop=None, sazb=None, modelo=MODELO):
-    obs = tmp_path / "obs"
-    obs.mkdir()
-    (obs / "bcp_actual.json").write_text(json.dumps({"stations": bcp or []}))
-    (obs / "cwop_actual.json").write_text(json.dumps({"stations": cwop or []}))
+def hace(m):
+    return (datetime.now(timezone.utc) - timedelta(minutes=m)).isoformat()
+
+
+def hora_actual():
+    return datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+
+
+def modelo(**por_loc):
+    h = hora_actual()
+    return {"modelo": "ECMWF IFS", "actualizado_utc": hace(10), "localidades": {
+        k: {"horas": [h], "temperature_2m": [v[0]], "wind_speed_10m": [v[1]], "wind_gusts_10m": [v[2]],
+            "wind_direction_10m": [200], "relative_humidity_2m": [40], "pressure_msl": [1012],
+            "cloud_cover": [20], "precipitation": [0], "weather_code": [1]}
+        for k, v in por_loc.items()}}
+
+
+def preparar(tmp_path, monkeypatch, tiempo_ahora=None, modelo_locs=None, sazb=None):
+    ia = tmp_path / "ia"
+    (ia / "estaciones").mkdir(parents=True)
+    (ia / "estaciones" / "senales_superficie.json").write_text(json.dumps(
+        {"generado_utc": hace(2), "tiempo_ahora": tiempo_ahora or {}}))
     meteo = tmp_path / "meteo.json"
-    meteo.write_text(json.dumps({"observacion_sazb": sazb or {}, "ambiente_actual": {}}))
-    monkeypatch.setattr(app, "OBS_DIR", obs)
+    meteo.write_text(json.dumps({"observacion_sazb": sazb or {}, "modelo_localidades": modelo_locs}))
+    monkeypatch.setattr(app, "IA_DIR", ia)
     monkeypatch.setattr(app, "METEO_FILE", meteo)
-    monkeypatch.setattr(app, "get_openmeteo_data", lambda: modelo)
+    monkeypatch.setattr(app, "get_openmeteo_locales", lambda: {})
 
 
-def hace(minutos):
-    return (datetime.now(timezone.utc) - timedelta(minutes=minutos)).isoformat()
+def med(valor, estacion, km=0.5, minutos=4, red="bcp", **extra):
+    return dict(valor=valor, estacion=estacion, km=km, utc=hace(minutos), red=red, **extra)
 
 
-CENTRO = {"station_id": 104, "observation_time": None,
-          "variables": {"temperatura_c": 22.5, "viento_kmh": 23.0, "direccion_viento": "Sudsudoeste",
-                        "rafaga_15min_kmh": None}}
-NOROESTE = {"indicativo": "LU4DRH-11", "observation_time": None,
-            "variables": {"temperatura_c": 23.9, "viento_kmh": 14.5, "direccion_viento_grados": 229.0,
-                          "rafaga_15min_kmh": 20.9, "humedad_relativa_pct": 19.0, "lluvia_1h_mm": 0.0}}
+def test_cada_localidad_su_dato_y_mismo_viento_que_la_tarjeta(tmp_path, monkeypatch):
+    preparar(tmp_path, monkeypatch, tiempo_ahora={
+        "bahia_blanca": {"temperatura": med(19.0, "BAHIA BLANCA CENTRO"),
+                         "viento": med(21.0, "BAHIA BLANCA CENTRO", direccion=90.0, rafaga=33.0)},
+        "punta_alta": {"temperatura": med(18.9, "PUNTA ALTA", km=0.4),
+                       "viento": med(16.0, "GRUMBEIN", km=14.0, direccion=67.5, rafaga=None)},
+    }, modelo_locs=modelo(bahia_blanca=(20, 25, 40), punta_alta=(21, 30, 61), tornquist=(23, 15, 35)))
+    b = app._tiempo_actual(LOCS["bahia_blanca"])
+    assert (b["temperatura"], b["viento_vel"], b["viento_dir"], b["rafagas"]) == (19.0, 21.0, 90.0, 33.0)
+    assert b["fuentes"]["rafagas"] == b["fuentes"]["viento"]      # misma estación (sin rafaga_estacion)
+    pa = app._tiempo_actual(LOCS["punta_alta"])
+    assert (pa["temperatura"], pa["viento_vel"], pa["rafagas"]) == (18.9, 16.0, None)
+    assert "Grünbein, a 14 km" in pa["fuentes"]["viento"]
+    assert "rafagas" not in pa["fuentes"]                  # no se mezcla la ráfaga del modelo
+    t = app._tiempo_actual(LOCS["tornquist"])               # sin estación: modelo de su punto
+    assert (t["temperatura"], t["viento_vel"], t["rafagas"]) == (23, 15, 35)
+    assert t["fuentes"] == {} and t["fuente_modelo"] == "modelo europeo"
 
 
-def test_medido_gana_al_modelo(tmp_path, monkeypatch):
-    preparar(tmp_path, monkeypatch, bcp=[dict(CENTRO, observation_time=hace(5))],
-             cwop=[dict(NOROESTE, observation_time=hace(3))])
-    t = app._tiempo_actual()
-    assert t["temperatura"] == 22.5                       # Centro
-    # 24/11/2026: el viento sale del Centro (primero en el orden); la ráfaga de
-    # la Noroeste no se mezcla con el viento de otra estación.
-    assert (t["viento_vel"], t["rafagas"]) == (23, None)
-    assert "Centro" in t["fuentes"]["viento"] and "rafagas" not in t["fuentes"]
-    assert t["humedad"] == 19
-    assert t["presion"] == 1010                           # sin aeropuerto: modelo
-    assert t["sensacion_termica"] is None                 # la del modelo no va con temperatura medida
-    assert "presion" not in t["fuentes"]
+def test_medicion_vieja_no_se_muestra(tmp_path, monkeypatch):
+    preparar(tmp_path, monkeypatch, tiempo_ahora={
+        "bahia_blanca": {"temperatura": med(19.0, "BAHIA BLANCA CENTRO", minutos=50)}},
+        modelo_locs=modelo(bahia_blanca=(20, 25, 40)))
+    b = app._tiempo_actual(LOCS["bahia_blanca"])
+    assert b["temperatura"] == 20 and "temperatura" not in b["fuentes"]
 
 
-def test_rafaga_menor_que_el_viento_no_se_muestra(tmp_path, monkeypatch):
-    centro = dict(CENTRO, observation_time=hace(3),
-                  variables=dict(CENTRO["variables"], viento_kmh=20.0, rafaga_15min_kmh=12.0))
-    preparar(tmp_path, monkeypatch, bcp=[centro])
-    t = app._tiempo_actual()
-    assert (t["viento_vel"], t["rafagas"]) == (20, None)
+def test_presion_del_aeropuerto_solo_cerca(tmp_path, monkeypatch):
+    sazb = {"disponible": True, "obsTime_utc": hace(20), "presion_hpa": 1009}
+    preparar(tmp_path, monkeypatch, modelo_locs=modelo(ingeniero_white=(20, 10, 20), punta_alta=(20, 10, 20)),
+             sazb=sazb)
+    assert app._tiempo_actual(LOCS["ingeniero_white"])["presion"] == 1009
+    assert app._tiempo_actual(LOCS["punta_alta"])["presion"] == 1012
 
 
-def test_viento_de_estaciones_cwop_no_se_usa(tmp_path, monkeypatch):
-    # Caso real 24/11/2026: Noroeste 3,2 km/h con 33 km/h en el Centro (reparada).
-    nor = dict(NOROESTE, observation_time=hace(3),
-               variables=dict(NOROESTE["variables"], viento_kmh=3.2, rafaga_15min_kmh=3.2))
-    preparar(tmp_path, monkeypatch, cwop=[nor])
-    t = app._tiempo_actual()
-    assert (t["viento_vel"], t["rafagas"]) == (30, 47)          # modelo
-    assert t["temperatura"] == 23.9 and "Noroeste" in t["fuentes"]["temperatura"]
+def test_sin_modelo_de_la_cadena_usa_el_respaldo(tmp_path, monkeypatch):
+    preparar(tmp_path, monkeypatch)
+    monkeypatch.setattr(app, "get_openmeteo_locales", lambda: {"medanos": {"temperatura": 22, "viento_vel": 9}})
+    m = app._tiempo_actual(LOCS["medanos"])
+    assert m["temperatura"] == 22 and m["fuente_modelo"] == "modelo (Open-Meteo)"
 
 
-def test_viento_medido_sin_rafaga_no_muestra_la_del_modelo(tmp_path, monkeypatch):
-    preparar(tmp_path, monkeypatch, bcp=[dict(CENTRO, observation_time=hace(5))])
-    t = app._tiempo_actual()
-    assert t["viento_vel"] == 23 and t["viento_dir"] == 202.5
-    assert t["rafagas"] is None
-
-
-def test_estaciones_viejas_no_entran(tmp_path, monkeypatch):
-    preparar(tmp_path, monkeypatch, bcp=[dict(CENTRO, observation_time=hace(40))],
-             cwop=[dict(NOROESTE, observation_time=hace(45))])
-    t = app._tiempo_actual()
-    assert (t["temperatura"], t["viento_vel"], t["rafagas"]) == (24, 30, 47)
-    assert t["fuentes"] == {}
-
-
-def test_aeropuerto_para_presion(tmp_path, monkeypatch):
-    preparar(tmp_path, monkeypatch, sazb={"disponible": True, "obsTime_utc": hace(50), "temperatura_c": 21,
-                                          "viento_kt": 16, "direccion_viento": 210, "presion_hpa": 1011})
-    t = app._tiempo_actual()
-    assert t["presion"] == 1011 and t["viento_vel"] == 30 and t["rafagas"] is None
-
-
-def test_sin_nada(tmp_path, monkeypatch):
-    preparar(tmp_path, monkeypatch, modelo={})
-    assert app._tiempo_actual() == {"disponible": False}
+def test_sin_nada_no_disponible(tmp_path, monkeypatch):
+    preparar(tmp_path, monkeypatch)
+    assert app._tiempo_actual(LOCS["medanos"]) == {"disponible": False}

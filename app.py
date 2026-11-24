@@ -2729,121 +2729,22 @@ def _num(value: Any, digits: int = 1) -> float | None:
     return round(v, digits) if math.isfinite(v) else None
 
 
-OBS_DIR = IA_DIR / "estaciones" / "observaciones"
-# Estaciones de Bahía Blanca para "El tiempo ahora", en orden de preferencia
-# (24/11/2026). Centro: en la ciudad, mide cada minuto. Noroeste (CWOP): la
-# única que mide ráfagas, humedad y lluvia de la última hora, cada ~10 min.
-# Grünbein: respaldo del viento.
-_ESTACIONES_BAHIA = (
-    ("bcp", "104", "Bahía Blanca Centro"),
-    ("cwop", "LU4DRH-11", "Bahía Blanca Noroeste"),
-    ("bcp", "1", "Grünbein"),
-)
-_RUMBOS_TEXTO = {
-    "norte": 0, "nornoreste": 22.5, "noreste": 45, "estenoreste": 67.5, "este": 90,
-    "estesudeste": 112.5, "sudeste": 135, "sudsudeste": 157.5, "sur": 180,
-    "sudsudoeste": 202.5, "sudoeste": 225, "oestesudoeste": 247.5, "oeste": 270,
-    "oestenoroeste": 292.5, "noroeste": 315, "nornoroeste": 337.5,
-}
-
-
-def _rumbo_grados(valor: Any) -> float | None:
-    if isinstance(valor, (int, float)):
-        return float(valor)
-    texto = str(valor or "").strip().lower().replace(" ", "").replace("-", "")
-    return _RUMBOS_TEXTO.get(texto)
-
-
-def _viento_zona(ident: str) -> dict[str, Any] | None:
-    """El viento que usa la tarjeta de la localidad (máximo de las estaciones
-    a 15 km o menos), con la dirección de la estación que lo midió."""
-    from scripts.estaciones.frescura import edad_min
-
-    sen = read_json(IA_DIR / "estaciones" / "senales_superficie.json") or {}
-    zona = (sen.get("localidades") or {}).get(ident) or {}
-    vmax = _num(zona.get("viento_max_kmh"), 0)
-    if vmax is None:
-        return None
-    edad = edad_min(sen.get("generado_utc"))
-    if edad is None or edad > 30:
-        return None
-    raf = _num(zona.get("rafaga_max_kmh"), 0)
-    nombres = [str(n) for n in zona.get("nombres") or []]
-    direccion, quien = None, None
-    for est in (read_json(OBS_DIR / "bcp_actual.json") or {}).get("stations") or []:
-        if isinstance(est, dict) and est.get("nombre") in nombres:
-            v = est.get("variables") or {}
-            if _num(v.get("viento_kmh"), 0) == vmax:
-                direccion = _rumbo_grados(v.get("direccion_viento_grados", v.get("direccion_viento")))
-                quien = str(est["nombre"]).title().replace("Grumbein", "Grünbein").replace("Bahia", "Bahía")
-                break
-    return {
-        "nombre": f"{quien or 'estaciones'} (zona de 15 km)",
-        "edad": edad,
-        "viento": vmax,
-        "viento_dir": direccion,
-        "rafaga": raf if raf is not None and raf >= vmax else None,
-    }
-
-
-def _vientos_trabados() -> set[str]:
-    """Estaciones con el anemómetro trabado en 0 (senales_superficie.py)."""
-    s = read_json(IA_DIR / "estaciones" / "senales_superficie.json") or {}
-    return {str(n).upper() for n in s.get("viento_trabado") or []}
-
-
-def _sin_viento_cwop(v: dict[str, Any]) -> dict[str, Any]:
-    """Las estaciones de aficionados (CWOP) no dan el viento en la página.
-
-    24/11/2026: Bahía Noroeste midió 3 km/h con 33 km/h en el Centro (viento
-    del este): está reparada. No se sabe cómo está instalada ninguna estación
-    CWOP, y el viento es lo que más depende de eso. La temperatura, la humedad
-    y la lluvia sí se usan."""
-    return {k: x for k, x in v.items() if not k.startswith(("viento", "rafaga", "direccion_viento"))}
-
-
-def _mediciones_bahia() -> list[dict[str, Any]]:
-    """Mediciones de las estaciones de Bahía, con la edad calculada ahora.
-
-    Solo entran las que están dentro del límite de su red (frescura.py)."""
-    from scripts.estaciones.frescura import edad_min, es_fresca
-
-    archivos = {"bcp": read_json(OBS_DIR / "bcp_actual.json") or {},
-                "cwop": read_json(OBS_DIR / "cwop_actual.json") or {}}
-    trabados = _vientos_trabados()
-    salida = []
-    for red, ident, nombre in _ESTACIONES_BAHIA:
-        for est in archivos[red].get("stations") or []:
-            if not isinstance(est, dict):
-                continue
-            clave = str(est.get("station_id") if red == "bcp" else est.get("indicativo"))
-            if clave != ident:
-                continue
-            hora = est.get("observation_time")
-            if not es_fresca(hora, red):
-                continue
-            v = est.get("variables") if isinstance(est.get("variables"), dict) else {}
-            if red == "cwop" or str(est.get("nombre") or "").upper() in trabados:
-                v = _sin_viento_cwop(v)
-            salida.append({
-                "nombre": nombre,
-                "edad": edad_min(hora),
-                "temperatura": _num(v.get("temperatura_c"), 1),
-                "viento": _num(v.get("viento_kmh"), 0),
-                "viento_dir": _rumbo_grados(v.get("direccion_viento_grados", v.get("direccion_viento"))),
-                "rafaga": _num(v.get("rafaga_15min_kmh"), 0),
-                "humedad": _num(v.get("humedad_relativa_pct"), 0),
-                "lluvia_1h": _num(v.get("lluvia_1h_mm"), 1),
-            })
-    return salida
-
-
-# Estaciones que cuentan como "de la localidad" (24/11/2026): a 8 km o menos.
-# Más lejos (o sobre las sierras, como Sierras Grandes para Sierra de la
-# Ventana) no representan el pueblo y se usa el modelo europeo en su punto.
-ESTACION_LOCAL_MAX_KM = 8.0
+# ============================================================
+# EL TIEMPO AHORA EN CADA LOCALIDAD (una sola fuente, 24/11/2026)
+# ============================================================
+# Antes este servidor elegía sus propias estaciones y pedía su propio modelo,
+# con reglas distintas a las de la cadena: arriba y en la tarjeta salían dos
+# números distintos para el mismo lugar, y se colaron datos malos (ráfaga de
+# 3 km/h con viento de 30, anemómetro trabado en 0). Ahora solo MUESTRA:
+# - lo medido y ya controlado: senales_superficie.json → "tiempo_ahora"
+#   (control de calidad de cada dato de cada estación);
+# - lo que no mide nadie: el modelo europeo en el punto de la localidad
+#   (estado_meteorologico.json → "modelo_localidades");
+# - la presión: el aeropuerto (SAZB) si está a 12 km o menos.
+# La edad de cada medición se calcula al usarla (frescura.py).
 AEROPUERTO_SAZB = (-38.71474, -62.16304)
 AEROPUERTO_MAX_KM = 12.0
+_NOMBRES_ESTACION = {"Grumbein": "Grünbein", "Bahia": "Bahía", " (Cwop)": "", "Medanos": "Médanos"}
 
 
 def _dist_km(lat1, lon1, lat2, lon2) -> float:
@@ -2853,167 +2754,91 @@ def _dist_km(lat1, lon1, lat2, lon2) -> float:
     return 2 * 6371.0 * math.asin(math.sqrt(a))
 
 
-def _mediciones_cerca(lat: float, lon: float) -> list[dict[str, Any]]:
-    """Mediciones frescas de las estaciones a 8 km o menos del punto, de la más
-    cercana a la más lejana (edad calculada ahora, frescura.py)."""
-    from scripts.estaciones.frescura import edad_min, es_fresca
+def _nombre_estacion(nombre: Any) -> str:
+    t = str(nombre or "Estación").title()
+    for a, b in _NOMBRES_ESTACION.items():
+        t = t.replace(a, b)
+    return t
 
-    cat = read_json(IA_DIR / "estaciones" / "catalogo_estaciones.json") or {}
-    pos = {}
-    for st in cat.get("stations") or []:
-        la, lo = _num(st.get("latitude"), 6), _num(st.get("longitude"), 6)
-        if la is not None and lo is not None:
-            pos[(st.get("network"), str(st.get("collector_id")))] = (la, lo)
-    trabados = _vientos_trabados()
-    salida = []
-    for red in ("bcp", "cwop"):
-        for est in (read_json(OBS_DIR / f"{red}_actual.json") or {}).get("stations") or []:
-            if not isinstance(est, dict):
-                continue
-            if red == "bcp":
-                coord = pos.get(("bcp", str(est.get("station_id"))))
-            else:
-                la, lo = _num(est.get("lat"), 6), _num(est.get("lon"), 6)
-                coord = (la, lo) if la is not None and lo is not None else None
-            if not coord:
-                continue
-            dist = _dist_km(lat, lon, coord[0], coord[1])
-            hora = est.get("observation_time")
-            if dist > ESTACION_LOCAL_MAX_KM or not es_fresca(hora, red):
-                continue
-            v = est.get("variables") if isinstance(est.get("variables"), dict) else {}
-            if red == "cwop" or str(est.get("nombre") or "").upper() in trabados:
-                v = _sin_viento_cwop(v)
-            nombre = str(est.get("nombre") or est.get("indicativo") or "Estación")
-            nombre = nombre.replace(" (CWOP)", "").title().replace("Grumbein", "Grünbein").replace("Bahia", "Bahía")
-            salida.append({
-                "nombre": nombre if dist < 1.5 else f"{nombre}, a {dist:.0f} km",
-                "distancia": dist,
-                "edad": edad_min(hora),
-                "temperatura": _num(v.get("temperatura_c"), 1),
-                "viento": _num(v.get("viento_kmh"), 0),
-                "viento_dir": _rumbo_grados(v.get("direccion_viento_grados", v.get("direccion_viento"))),
-                "rafaga": _num(v.get("rafaga_15min_kmh"), 0),
-                "humedad": _num(v.get("humedad_relativa_pct"), 0),
-                "lluvia_1h": _num(v.get("lluvia_1h_mm"), 1),
-            })
-    return sorted(salida, key=lambda m: m["distancia"])
+
+def _localidad_bahia() -> dict[str, Any]:
+    cfg = read_json(LOCALIDADES_FILE) or {}
+    return next((l for l in cfg.get("localidades") or [] if l.get("id") == "bahia_blanca"),
+                {"id": "bahia_blanca", "lat": LAT, "lon": LON})
 
 
 def _tiempo_actual(localidad: dict[str, Any] | None = None) -> dict[str, Any]:
-    """El tiempo ahora en una localidad: lo medido primero, el modelo de relleno.
-
-    Sin localidad (o Bahía Blanca) es Bahía, como siempre. Para las demás
-    (24/11/2026): estaciones a 8 km o menos y el modelo en su punto.
-
-    24/11/2026: antes se mostraba el modelo (Open-Meteo) aunque las
-    estaciones estuvieran al día, y aparecían ráfagas de 47 km/h con viento
-    medido de 13 km/h. Ahora cada dato sale de la primera estación de Bahía
-    que lo midió hace poco (Centro, Noroeste, Grünbein; el aeropuerto para la
-    presión) y el modelo solo completa lo que ninguna mide. Si hay viento
-    medido pero ninguna estación midió ráfagas, no se muestra la ráfaga del
-    modelo (no se mezcla lo medido con lo estimado)."""
-
+    """El tiempo ahora en una localidad (sin localidad: Bahía Blanca)."""
+    from scripts import modelo_localidades as ml
     from scripts.estaciones.frescura import edad_min, es_fresca
 
-    es_bahia = not localidad or localidad.get("id") == "bahia_blanca"
+    loc = localidad or _localidad_bahia()
+    ident = loc.get("id")
+    sen = read_json(IA_DIR / "estaciones" / "senales_superficie.json") or {}
+    medido = (sen.get("tiempo_ahora") or {}).get(ident) or {}
     estado = read_json(METEO_FILE) or {}
-    amb = estado.get("ambiente_actual") if isinstance(estado.get("ambiente_actual"), dict) else {}
-    if es_bahia:
-        modelo = get_openmeteo_data() or {}
-    else:
-        modelo = (get_openmeteo_locales() or {}).get(localidad["id"]) or {}
-        amb = {}     # el ambiente guardado es el de Bahía: no se usa para otro punto
-    if not modelo and amb:
-        modelo = {
-            "temperatura": amb.get("temperature_2m"), "punto_rocio": amb.get("dew_point_2m"),
-            "presion": amb.get("pressure_msl"), "viento_vel": amb.get("wind_speed_10m"),
-            "viento_dir": amb.get("wind_direction_10m"), "rafagas": amb.get("wind_gusts_10m"),
-            "humedad": amb.get("relative_humidity_2m"), "nubosidad": amb.get("cloud_cover"),
-            "precipitacion": amb.get("precipitation"),
-        }
-
-    obs = estado.get("observacion_sazb")
-    obs = obs if isinstance(obs, dict) and obs.get("disponible") else {}
-    if not es_fresca(obs.get("obsTime_utc"), "sazb"):
-        obs = {}
-    if es_bahia:
-        medidas = _mediciones_bahia()
-    else:
-        medidas = _mediciones_cerca(float(localidad["lat"]), float(localidad["lon"]))
-        # 24/11/2026: si ninguna estación propia da el viento, se usa el
-        # mismo que la tarjeta de la localidad (estaciones a 15 km o menos,
-        # senales_superficie.json). Antes arriba salía el modelo y abajo las
-        # estaciones: dos números distintos para el mismo lugar.
-        if not any(m.get("viento") is not None for m in medidas):
-            vz = _viento_zona(localidad["id"])
-            if vz:
-                medidas.append(vz)
-        if _dist_km(float(localidad["lat"]), float(localidad["lon"]), *AEROPUERTO_SAZB) > AEROPUERTO_MAX_KM:
-            obs = {}
-    if obs:
-        kt = _num(obs.get("viento_kt"), 1)
-        medidas.append({
-            "nombre": "Aeropuerto", "edad": edad_min(obs.get("obsTime_utc")),
-            "temperatura": _num(obs.get("temperatura_c"), 1),
-            "viento": round(kt * 1.852) if kt is not None else None,
-            "viento_dir": _num(obs.get("direccion_viento"), 0),
-            "presion": _num(obs.get("presion_hpa"), 0),
-        })
-
-    if not medidas and not modelo:
-        return {"disponible": False}
+    modelo_locs = estado.get("modelo_localidades")
+    modelo = ml.valor_actual(modelo_locs, ident) if ml.vigente(modelo_locs) else None
+    fuente_modelo = "modelo europeo"
+    if not modelo:
+        # Respaldo si la cadena no tiene el modelo por localidad.
+        modelo = (get_openmeteo_locales() or {}).get(ident) or {}
+        fuente_modelo = "modelo (Open-Meteo)"
 
     fuentes: dict[str, str] = {}
-
-    def medido(campo: str, clave: str):
-        for m in medidas:
-            if m.get(clave) is not None:
-                fuentes[campo] = f"{m['nombre']} (hace {round(m['edad'] or 0)} min)"
-                return m
-        return None
-
     salida: dict[str, Any] = {"disponible": True}
-    m = medido("temperatura", "temperatura")
-    salida["temperatura"] = m["temperatura"] if m else modelo.get("temperatura")
-    # Viento y ráfaga de la MISMA estación (si no, la ráfaga de una puede
-    # quedar por debajo del viento de otra). 24/11/2026: manda el orden de
-    # las estaciones (Centro primero), no "la que mide los dos": la Noroeste
-    # es la única con ráfagas y estaba reparada (3 km/h con 33 en el Centro).
-    m = medido("viento", "viento")
-    if m:
-        etiqueta = f"{m['nombre']} (hace {round(m['edad'] or 0)} min)"
-        fuentes["viento"] = etiqueta
-        salida["viento_vel"] = m["viento"]
-        salida["viento_dir"] = m.get("viento_dir")
-        raf = m.get("rafaga")
-        # Una ráfaga menor que el viento medio no es una medición válida.
-        salida["rafagas"] = raf if raf is not None and (m["viento"] is None or raf >= m["viento"]) else None
-        if salida["rafagas"] is not None:
-            fuentes["rafagas"] = etiqueta
+
+    def fresco(d):
+        return isinstance(d, dict) and d.get("valor") is not None and es_fresca(d.get("utc"), d.get("red") or "bcp")
+
+    def etiqueta(d):
+        km = _num(d.get("km"), 1) or 0
+        lugar = _nombre_estacion(d.get("estacion")) + (f", a {km:.0f} km" if km >= 1.5 else "")
+        return f"{lugar} (hace {round(edad_min(d.get('utc')) or 0)} min)"
+
+    for clave, campo in (("temperatura", "temperatura"), ("humedad", "humedad"), ("lluvia_1h", "precipitacion")):
+        d = medido.get(clave)
+        if fresco(d):
+            salida[campo] = d["valor"]
+            fuentes[campo] = etiqueta(d)
+        else:
+            salida[campo] = modelo.get(campo)
+    v = medido.get("viento")
+    if fresco(v):
+        salida["viento_vel"], salida["viento_dir"] = v["valor"], v.get("direccion")
+        fuentes["viento"] = etiqueta(v)
+        # La ráfaga más alta de la zona (la misma que la tarjeta), ya
+        # controlada y nunca menor que el viento que se muestra.
+        salida["rafagas"] = v.get("rafaga")
+        if v.get("rafaga") is not None:
+            fuentes["rafagas"] = etiqueta({"estacion": v.get("rafaga_estacion") or v.get("estacion"),
+                                           "km": v.get("rafaga_km", v.get("km")),
+                                           "utc": v.get("rafaga_utc") or v.get("utc")})
     else:
         salida["viento_vel"] = modelo.get("viento_vel")
         salida["viento_dir"] = modelo.get("viento_dir")
         salida["rafagas"] = modelo.get("rafagas")
-    m = medido("humedad", "humedad")
-    salida["humedad"] = m["humedad"] if m else modelo.get("humedad")
-    m = medido("presion", "presion")
-    salida["presion"] = m["presion"] if m else modelo.get("presion")
-    m = medido("precipitacion", "lluvia_1h")
-    salida["precipitacion"] = m["lluvia_1h"] if m else modelo.get("precipitacion")
 
-    # La sensación térmica del modelo solo si la temperatura también es del modelo.
+    salida["presion"] = modelo.get("presion")
+    obs = estado.get("observacion_sazb")
+    obs = obs if isinstance(obs, dict) and obs.get("disponible") else {}
+    if (obs and es_fresca(obs.get("obsTime_utc"), "sazb") and _num(obs.get("presion_hpa"), 0) is not None
+            and _dist_km(float(loc.get("lat", LAT)), float(loc.get("lon", LON)), *AEROPUERTO_SAZB)
+            <= AEROPUERTO_MAX_KM):
+        salida["presion"] = _num(obs.get("presion_hpa"), 0)
+        fuentes["presion"] = f"Aeropuerto (hace {round(edad_min(obs.get('obsTime_utc')) or 0)} min)"
+
+    if not fuentes and not any(modelo.get(k) is not None for k in ("temperatura", "viento_vel")):
+        return {"disponible": False}
     salida["sensacion_termica"] = None if "temperatura" in fuentes else modelo.get("sensacion_termica")
     salida["punto_rocio"] = modelo.get("punto_rocio")
     salida["nubosidad"] = modelo.get("nubosidad")
     salida["codigo_tiempo"] = modelo.get("codigo_tiempo")
     salida["fuentes"] = fuentes
+    salida["fuente_modelo"] = fuente_modelo
     medidos = sorted(set(fuentes.values()))
-    salida["fuente"] = (
-        ("medido: " + ", ".join(medidos) if medidos else "")
-        + ("; " if medidos and modelo else "")
-        + ("cielo y lo que falta: modelo europeo" if modelo else "")
-    )
+    salida["fuente"] = (("medido: " + ", ".join(medidos) if medidos else "")
+                        + ("; " if medidos else "") + f"cielo y lo que falta: {fuente_modelo}")
     return salida
 
 

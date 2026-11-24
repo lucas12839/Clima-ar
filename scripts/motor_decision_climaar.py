@@ -449,6 +449,15 @@ def confiabilidad_llegada(loc_id, eta, dbz, tabla=None):
     return None
 
 
+def ambiente_localidad(ambiente, modelo_loc):
+    """El ambiente regional con el viento del modelo en el punto de la localidad."""
+    if not isinstance(ambiente, dict) or not modelo_loc:
+        return ambiente
+    cambios = {k: modelo_loc[v] for k, v in (("wind_gusts_10m", "rafagas"), ("wind_speed_10m", "viento_vel"))
+               if modelo_loc.get(v) is not None}
+    return dict(ambiente, **cambios) if cambios else ambiente
+
+
 def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
     """Índices por fenómeno de cada localidad (Bahía Blanca, Punta Alta, ...)."""
     import localidades_radar
@@ -462,6 +471,12 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
                                     "sin_radar": True})
     mov = (flujo or {}).get("movimiento") or {}
     sup_locs = (_superficie_fresca().get("localidades") or {})
+    # Viento del modelo en el punto de cada localidad (24/11/2026): antes las
+    # 7 usaban el de Bahía. El resto del ambiente (cizalladura, CAPE, nivel de
+    # congelamiento) sigue siendo el regional.
+    import modelo_localidades as ml
+    meteo_loc = (load(METEO) if METEO.exists() else {}) or {}
+    modelo_locs = meteo_loc.get("modelo_localidades") if ml.vigente(meteo_loc.get("modelo_localidades")) else None
     topes = topes_por_localidad()
     tabla = load(CALIBRACION_LLEGADAS) if CALIBRACION_LLEGADAS.exists() else {}
     celdas = celdas_de(flujo)
@@ -504,7 +519,7 @@ def tipo_por_localidades(flujo, rayos, ambiente, radar_ok, sincronizado):
             },
             superficie=sup_locs.get(loc_id) or {},
             rayos=r_loc,
-            ambiente=ambiente,
+            ambiente=ambiente_localidad(ambiente, ml.valor_actual(modelo_locs, loc_id)),
             satelite=topes.get(loc_id) or {},
         )
         ev["nombre"] = d.get("nombre", loc_id)

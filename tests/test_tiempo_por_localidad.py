@@ -1,88 +1,8 @@
-"""El tiempo y el pronóstico de cada localidad (24/11/2026).
-
-Antes la página mostraba el tiempo de Bahía Blanca para cualquier localidad."""
-import json
+"""Pronóstico por localidad y modelo de respaldo de la página (24/11/2026)."""
 import os
-from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("CLIMAAR_REMOTE_DATA_ENABLED", "0")
 import app  # noqa: E402
-
-ORIGINAL_VIENTO_ZONA = app._viento_zona
-ORIGINAL_TRABADOS = app._vientos_trabados
-LOCS = {l["id"]: l for l in json.load(open(app.LOCALIDADES_FILE, encoding="utf-8"))["localidades"]}
-
-
-def hace(m):
-    return (datetime.now(timezone.utc) - timedelta(minutes=m)).isoformat()
-
-
-def modelo(temp):
-    return {"temperatura": temp, "viento_vel": 20, "viento_dir": 200, "rafagas": 40, "humedad": 30,
-            "presion": 1012, "nubosidad": 20, "codigo_tiempo": 1, "sensacion_termica": temp, "precipitacion": 0}
-
-
-def preparar(tmp_path, monkeypatch, bcp=(), cwop=(), sazb=None):
-    obs = tmp_path / "obs"
-    obs.mkdir()
-    (obs / "bcp_actual.json").write_text(json.dumps({"stations": list(bcp)}))
-    (obs / "cwop_actual.json").write_text(json.dumps({"stations": list(cwop)}))
-    meteo = tmp_path / "meteo.json"
-    meteo.write_text(json.dumps({"observacion_sazb": sazb or {}, "ambiente_actual": {}}))
-    monkeypatch.setattr(app, "OBS_DIR", obs)
-    monkeypatch.setattr(app, "METEO_FILE", meteo)
-    monkeypatch.setattr(app, "get_openmeteo_data", lambda: modelo(20))
-    temps = {"bahia_blanca": 20, "ingeniero_white": 19, "general_cerri": 21, "punta_alta": 18,
-             "tornquist": 25, "medanos": 24, "sierra_de_la_ventana": 22}
-    monkeypatch.setattr(app, "get_openmeteo_locales", lambda: {k: modelo(v) for k, v in temps.items()})
-    monkeypatch.setattr(app, "_viento_zona", lambda ident: None)
-    monkeypatch.setattr(app, "_vientos_trabados", lambda: set())
-
-
-PUNTA_ALTA = {"station_id": 76, "nombre": "PUNTA ALTA", "observation_time": None,
-              "variables": {"temperatura_c": 17.4, "viento_kmh": 31.0, "rafaga_15min_kmh": 52.0,
-                            "direccion_viento": "Sur"}}
-SIERRAS = {"station_id": 97, "nombre": "SIERRAS GRANDES", "observation_time": None,
-           "variables": {"temperatura_c": 12.0}}
-NOROESTE = {"indicativo": "LU4DRH-11", "nombre": "BAHIA BLANCA NOROESTE (CWOP)", "lat": -38.6893, "lon": -62.3342,
-            "observation_time": None, "variables": {"temperatura_c": 23.3, "viento_kmh": 10}}
-
-
-def test_cada_localidad_tiene_su_temperatura(tmp_path, monkeypatch):
-    preparar(tmp_path, monkeypatch, bcp=[dict(PUNTA_ALTA, observation_time=hace(4)),
-                                         dict(SIERRAS, observation_time=hace(4))],
-             cwop=[dict(NOROESTE, observation_time=hace(3))])
-    t = {k: app._tiempo_actual(v) for k, v in LOCS.items()}
-    # Punta Alta: su propia estación (viento y ráfaga de la misma).
-    assert t["punta_alta"]["temperatura"] == 17.4
-    assert (t["punta_alta"]["viento_vel"], t["punta_alta"]["rafagas"]) == (31, 52)
-    assert t["punta_alta"]["fuentes"]["temperatura"].startswith("Punta Alta (hace")
-    # Cerri: la estación Noroeste está a 5,5 km.
-    assert t["general_cerri"]["temperatura"] == 23.3
-    assert "Bahía Blanca Noroeste, a 5 km" in t["general_cerri"]["fuentes"]["temperatura"]
-    # Tornquist y Médanos: sin estación cerca, modelo en su punto.
-    assert t["tornquist"]["temperatura"] == 25 and "temperatura" not in t["tornquist"]["fuentes"]
-    assert t["medanos"]["temperatura"] == 24
-    # Sierra de la Ventana: Sierras Grandes está a 10,5 km sobre las sierras: no cuenta.
-    assert t["sierra_de_la_ventana"]["temperatura"] == 22
-    # Ya no son todas iguales.
-    assert len({v["temperatura"] for v in t.values()}) >= 5
-
-
-def test_estacion_vieja_no_cuenta_y_aeropuerto_solo_cerca(tmp_path, monkeypatch):
-    sazb = {"disponible": True, "obsTime_utc": hace(20), "temperatura_c": 19.0, "presion_hpa": 1009,
-            "viento_kt": 10, "direccion_viento": 180}
-    preparar(tmp_path, monkeypatch, bcp=[dict(PUNTA_ALTA, observation_time=hace(60))], sazb=sazb)
-    pa = app._tiempo_actual(LOCS["punta_alta"])
-    assert pa["temperatura"] == 18                 # estación vieja: modelo
-    assert pa["presion"] == 1012                   # el aeropuerto está a más de 12 km
-    white = app._tiempo_actual(LOCS["ingeniero_white"])
-    assert white["presion"] == 1009                # aeropuerto a 11,7 km
-
-
-def test_bahia_igual_que_antes(tmp_path, monkeypatch):
-    preparar(tmp_path, monkeypatch)
-    assert app._tiempo_actual(LOCS["bahia_blanca"])["temperatura"] == app._tiempo_actual()["temperatura"] == 20
 
 
 def test_openmeteo_un_solo_pedido_para_las_7(monkeypatch):
@@ -151,36 +71,3 @@ def test_modelo_caido_no_se_reintenta_en_cada_pedido(monkeypatch):
         c.update(ts=0.0, data=None, fallo=0.0)
     app._CURRENT_CACHE["fallo"] = 0.0
 
-
-def test_anemometro_trabado_no_se_muestra(tmp_path, monkeypatch):
-    preparar(tmp_path, monkeypatch, bcp=[dict(PUNTA_ALTA, observation_time=hace(4),
-                                              variables=dict(PUNTA_ALTA["variables"], viento_kmh=0.0,
-                                                             rafaga_15min_kmh=None))])
-    monkeypatch.setattr(app, "_vientos_trabados", lambda: {"PUNTA ALTA"})
-    t = app._tiempo_actual(LOCS["punta_alta"])
-    assert t["temperatura"] == 17.4                        # la temperatura sí
-    assert (t["viento_vel"], t["rafagas"]) == (20, 40)     # el viento, del modelo
-
-
-def test_sin_viento_propio_usa_el_de_la_tarjeta(tmp_path, monkeypatch):
-    """Punta Alta con el anemómetro trabado: arriba el mismo viento que la tarjeta."""
-    import json as js
-    bcp = [dict(PUNTA_ALTA, observation_time=hace(4), variables=dict(PUNTA_ALTA["variables"], viento_kmh=0.0)),
-           {"station_id": 1, "nombre": "GRUMBEIN", "observation_time": hace(5),
-            "variables": {"viento_kmh": 13.0, "direccion_viento": "Este", "rafaga_15min_kmh": 22.0}}]
-    preparar(tmp_path, monkeypatch, bcp=bcp)
-    import shutil
-    ia = tmp_path / "ia"
-    (ia / "estaciones").mkdir(parents=True)
-    shutil.copy(app.IA_DIR / "estaciones" / "catalogo_estaciones.json", ia / "estaciones")
-    (ia / "estaciones" / "senales_superficie.json").write_text(js.dumps({
-        "generado_utc": hace(3), "viento_trabado": ["PUNTA ALTA"],
-        "localidades": {"punta_alta": {"viento_max_kmh": 13.0, "rafaga_max_kmh": 22.0,
-                                       "nombres": ["GRUMBEIN", "PUNTA ALTA"]}}}))
-    monkeypatch.setattr(app, "IA_DIR", ia)
-    monkeypatch.setattr(app, "_viento_zona", ORIGINAL_VIENTO_ZONA)
-    monkeypatch.setattr(app, "_vientos_trabados", ORIGINAL_TRABADOS)
-    t = app._tiempo_actual(LOCS["punta_alta"])
-    assert t["temperatura"] == 17.4
-    assert (t["viento_vel"], t["rafagas"], t["viento_dir"]) == (13, 22, 90)
-    assert "Grünbein (zona de 15 km)" in t["fuentes"]["viento"]

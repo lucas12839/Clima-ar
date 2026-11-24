@@ -1069,6 +1069,16 @@ def main():
                 f"({respaldo_ecmwf['edad_minutos']} min)."
             )
 
+    # Modelo en el punto de cada localidad (modelo_localidades.py): se pide
+    # solo cuando se renueva el ECMWF; en los ciclos con el guardado se
+    # reutiliza el anterior mientras cubra la hora. Nunca corta el ciclo.
+    import modelo_localidades as ml
+    previo_ml = (load_json(FUSION_FILE) or {}).get("modelo_localidades")
+    if cache_ecmwf is None or not ml.vigente(previo_ml):
+        modelo_locs = ml.consultar() or (previo_ml if ml.vigente(previo_ml) else None)
+    else:
+        modelo_locs = previo_ml
+
     actual_ecmwf = obtener_actual_centro(ambiente)
 
     if actual_ecmwf is None:
@@ -1112,6 +1122,7 @@ def main():
         "estado": "operativo" if respaldo_ecmwf is None else "operativo_con_ecmwf_anterior",
         "ecmwf_respaldo": respaldo_ecmwf or {"usado": False},
         "ecmwf_cache": cache_ecmwf or {"usado": False},
+        "modelo_localidades": modelo_locs,
         "proxima_etapa": (
             "Motor IA de evolucion, trayectoria, "
             "fortalecimiento, debilitamiento, ETA, "

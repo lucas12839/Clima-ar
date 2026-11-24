@@ -111,6 +111,22 @@ def coordenadas() -> dict[str, tuple[float, float]]:
     return salida
 
 
+_RUMBOS = {
+    "norte": 0, "nornoreste": 22.5, "nornordeste": 22.5, "noreste": 45, "nordeste": 45,
+    "estenoreste": 67.5, "estenordeste": 67.5, "este": 90, "estesudeste": 112.5, "sudeste": 135,
+    "sudsudeste": 157.5, "sur": 180, "sudsudoeste": 202.5, "sudoeste": 225, "oestesudoeste": 247.5,
+    "oeste": 270, "oestenoroeste": 292.5, "noroeste": 315, "nornoroeste": 337.5,
+}
+
+
+def rumbo_grados(valor: Any) -> float | None:
+    """Dirección del viento en grados (la BCP la da en palabras)."""
+    n = numero(valor)
+    if n is not None:
+        return n
+    return _RUMBOS.get(str(valor or "").strip().lower().replace(" ", "")) if valor else None
+
+
 def _smn_valor(variables: dict, nombre: str) -> float | None:
     lista = variables.get(nombre) or []
     return numero(lista[0].get("value")) if lista and isinstance(lista[0], dict) else None
@@ -135,6 +151,8 @@ def observaciones_frescas(ahora: datetime | None = None) -> list[dict[str, Any]]
             "viento": numero(v.get("viento_kmh")),
             "rafaga": numero(v.get("rafaga_15min_kmh")),
             "presion": numero(v.get("presion_hpa")),
+            "humedad": numero(v.get("humedad_relativa_pct")),
+            "dir": rumbo_grados(v.get("direccion_viento")),
         })
     for s in leer(SMN).get("stations", []):
         if s.get("estado") != "valida":
@@ -149,6 +167,8 @@ def observaciones_frescas(ahora: datetime | None = None) -> list[dict[str, Any]]
             "viento": viento * 3.6 if viento is not None else None,
             "rafaga": rafaga * 3.6 if rafaga is not None else None,
             "presion": _smn_valor(v, "non_coordinate_pressure"),
+            "humedad": _smn_valor(v, "relative_humidity"),
+            "dir": _smn_valor(v, "wind_from_direction"),
         })
     # Red CWOP (estaciones ciudadanas validadas, config/estaciones_cwop.json).
     for s in leer(CWOP).get("stations", []):
@@ -162,6 +182,9 @@ def observaciones_frescas(ahora: datetime | None = None) -> list[dict[str, Any]]
             "viento": numero(v.get("viento_kmh")),
             "rafaga": numero(v.get("rafaga_15min_kmh")),
             "presion": numero(v.get("presion_hpa")),
+            "humedad": numero(v.get("humedad_relativa_pct")),
+            "dir": numero(v.get("direccion_viento_grados")),
+            "lluvia_1h_directa": numero(v.get("lluvia_1h_mm")),
         })
     return [o for o in obs if o["nombre"] and parse_utc(o["utc"])
             and frescura.es_fresca(o["utc"], o["red"], ahora)]
@@ -325,22 +348,189 @@ def vientos_trabados(historial: dict[str, list[dict]], ahora: datetime) -> list[
     return sorted(trabados)
 
 
+# ----------------------------------------------------------------------------
+# Control de calidad de cada dato de cada estación (24/11/2026)
+# ----------------------------------------------------------------------------
+# Antes solo se controlaba la lluvia. Pasaron sin control: el anemómetro de
+# Punta Alta trabado en 0, la estación Noroeste (aficionado) reparada del
+# viento y ráfagas imposibles. Un dato que falla no se usa en ningún lado
+# (índices, página, Facebook) y queda anotado con el motivo.
+RANGOS = {
+    "temperatura_c": (-25.0, 50.0),
+    "viento_kmh": (0.0, 200.0),
+    "rafaga_kmh": (0.0, 250.0),
+    "humedad_pct": (1.0, 100.0),
+    "presion_hpa": (850.0, 1080.0),
+}
+VECINAS_KM = 40.0
+VECINAS_MIN = 2
+TEMP_VECINAS_C = 7.0          # más lejos que esto de la mediana de las vecinas
+TEMP_SALTO_C = 6.0            # en 20 min o menos
+TEMP_TRABADA_MIN_MEDICIONES = 12
+
+
+def temperaturas_trabadas(historial: dict[str, list[dict]], ahora: datetime) -> list[str]:
+    """Misma temperatura exacta durante 4 h mientras otra estación cambió 1 °C o más."""
+    desde = ahora - timedelta(hours=TRABADO_HORAS)
+
+    def ventana(serie):
+        return [r.get("temp") for r in serie
+                if r.get("temp") is not None and (parse_utc(r.get("utc")) or desde) >= desde]
+
+    temps = {n: ventana(sr) for n, sr in historial.items()}
+    otras_cambian = {n for n, v in temps.items() if len(v) >= 2 and max(v) - min(v) >= 1.0}
+    return sorted(n for n, v in temps.items()
+                  if len(v) >= TEMP_TRABADA_MIN_MEDICIONES and len(set(v)) == 1 and otras_cambian - {n})
+
+
+def salto_temperatura(serie: list[dict]) -> bool:
+    puntos = [(parse_utc(r.get("utc")), r.get("temp")) for r in serie if r.get("temp") is not None]
+    puntos = [(t, v) for t, v in puntos if t is not None]
+    if len(puntos) < 2:
+        return False
+    (t0, v0), (t1, v1) = puntos[-2], puntos[-1]
+    return (t1 - t0) <= timedelta(minutes=20) and abs(v1 - v0) > TEMP_SALTO_C
+
+
+def _mediana(vals: list[float]) -> float:
+    v = sorted(vals)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2.0
+
+
+def controlar(estaciones: list[dict], historial: dict[str, list[dict]], ahora: datetime) -> list[dict]:
+    """Revisa cada dato; lo que falla se pone en None y se anota en e["descartes"]."""
+    trab_viento = set(vientos_trabados(historial, ahora))
+    trab_temp = set(temperaturas_trabadas(historial, ahora))
+    anotados = []
+
+    def descartar(e, campo, motivo, aviso=True):
+        if e.get(campo) is None:
+            return
+        e.setdefault("descartes", {})[campo] = motivo
+        if aviso:
+            anotados.append({"estacion": e["nombre"], "dato": campo, "valor": e[campo], "motivo": motivo})
+        e[campo] = None
+
+    for e in estaciones:
+        e.setdefault("descartes", {})
+        for campo, (lo, hi) in RANGOS.items():
+            v = e.get(campo)
+            if v is not None and not lo <= v <= hi:
+                descartar(e, campo, f"fuera de rango ({lo:g} a {hi:g})")
+        if e.get("red") == "cwop":
+            # Política, no falla: no se sabe cómo están instaladas (Noroeste reparada).
+            for campo in ("viento_kmh", "rafaga_kmh", "direccion_grados"):
+                descartar(e, campo, "estación de aficionado: el viento no se usa", aviso=False)
+        if e["nombre"] in trab_viento:
+            for campo in ("viento_kmh", "rafaga_kmh", "direccion_grados"):
+                descartar(e, campo, "anemómetro trabado: 0 km/h durante 4 h con viento en la región",
+                          aviso=campo == "viento_kmh")
+        if e["nombre"] in trab_temp:
+            descartar(e, "temperatura_c", "temperatura trabada: el mismo valor durante 4 h")
+        if salto_temperatura(historial.get(e["nombre"]) or []):
+            descartar(e, "temperatura_c", f"salto de más de {TEMP_SALTO_C:g} °C en 20 min")
+        if (e.get("rafaga_kmh") is not None and e.get("viento_kmh") is not None
+                and e["rafaga_kmh"] < e["viento_kmh"]):
+            descartar(e, "rafaga_kmh", "ráfaga menor que el viento medio")
+
+    # Temperatura contra las vecinas (con los datos ya limpios).
+    for e in estaciones:
+        if e.get("temperatura_c") is None or e.get("lat") is None:
+            continue
+        vecinas = [o["temperatura_c"] for o in estaciones
+                   if o is not e and o.get("temperatura_c") is not None and o.get("lat") is not None
+                   and not o.get("descartes", {}).get("temperatura_c")
+                   and distancia_km(e["lat"], e["lon"], o["lat"], o["lon"]) <= VECINAS_KM]
+        if len(vecinas) >= VECINAS_MIN and abs(e["temperatura_c"] - _mediana(vecinas)) > TEMP_VECINAS_C:
+            descartar(e, "temperatura_c",
+                      f"{e['temperatura_c']:.1f} °C, a más de {TEMP_VECINAS_C:g} °C de las vecinas "
+                      f"({_mediana(vecinas):.1f} °C)")
+    return anotados
+
+
+# ----------------------------------------------------------------------------
+# Lo medido en cada localidad (una sola fuente para la página y Facebook)
+# ----------------------------------------------------------------------------
+PROPIA_KM = 8.0
+
+
+def tiempo_ahora(estaciones: list[dict], path: Path = LOCALIDADES) -> dict[str, dict]:
+    """Lo medido en cada localidad, ya controlado (24/11/2026).
+
+    - Temperatura y humedad: la estación más cercana a 8 km o menos.
+    - Lluvia de la última hora: la más cercana a 15 km o menos.
+    - Viento y ráfaga: los mismos que usa la tarjeta de la localidad (el
+      máximo de las estaciones a 15 km), de una misma estación, con su
+      dirección. Así arriba y en la tarjeta nunca hay dos números distintos.
+    Lo que no mide nadie lo completa la página con el modelo europeo del
+    punto de la localidad (meteorologia_fusion.py)."""
+    try:
+        locs = json.loads(path.read_text(encoding="utf-8")).get("localidades") or []
+    except Exception:
+        return {}
+    salida = {}
+    for loc in locs:
+        cerca = sorted(
+            ((distancia_km(e["lat"], e["lon"], loc["lat"], loc["lon"]), e) for e in estaciones
+             if e.get("lat") is not None),
+            key=lambda x: x[0])
+        cerca = [(d, e) for d, e in cerca if d <= RADIO_LOCALIDAD_KM]
+        datos: dict[str, Any] = {}
+
+        def dato(campo, clave, max_km):
+            for d, e in cerca:
+                if d <= max_km and e.get(campo) is not None:
+                    datos[clave] = {"valor": e[campo], "estacion": e["nombre"], "km": round(d, 1),
+                                    "utc": e["utc"], "red": e.get("red")}
+                    return
+
+        # Temperatura y humedad: solo una estación de la localidad (a 8 km).
+        # Más lejos puede no representarla (Sierras Grandes está sobre las
+        # sierras): ahí completa el modelo del punto de la localidad.
+        dato("temperatura_c", "temperatura", PROPIA_KM)
+        dato("humedad_pct", "humedad", PROPIA_KM)
+        dato("lluvia_1h_mm", "lluvia_1h", RADIO_LOCALIDAD_KM)
+        # Viento y ráfaga: los MISMOS máximos que usa la tarjeta (resumir), cada
+        # uno con la estación que lo midió. La ráfaga solo si no es menor que
+        # el viento que se muestra.
+        con_viento = [(d, e) for d, e in cerca if e.get("viento_kmh") is not None]
+        if con_viento:
+            d, e = max(con_viento, key=lambda x: (x[1]["viento_kmh"], -x[0]))
+            datos["viento"] = {"valor": e["viento_kmh"], "direccion": e.get("direccion_grados"),
+                               "rafaga": None, "estacion": e["nombre"], "km": round(d, 1),
+                               "utc": e["utc"], "red": e.get("red")}
+            con_rafaga = [(dd, ee) for dd, ee in cerca if ee.get("rafaga_kmh") is not None]
+            if con_rafaga:
+                dr, er = max(con_rafaga, key=lambda x: (x[1]["rafaga_kmh"], -x[0]))
+                if er["rafaga_kmh"] >= e["viento_kmh"]:
+                    datos["viento"].update(rafaga=er["rafaga_kmh"], rafaga_estacion=er["nombre"],
+                                           rafaga_km=round(dr, 1), rafaga_utc=er["utc"])
+        if datos:
+            salida[loc["id"]] = datos
+    return salida
+
+
 def main(ahora: datetime | None = None) -> int:
     ahora = ahora or datetime.now(timezone.utc)
     coords = coordenadas()
     obs = observaciones_frescas(ahora)
     historial = actualizar_historial(obs, ahora)
-    frescas = {o["nombre"] for o in obs}
-    estaciones = [
-        resumen_estacion(n, s, ahora, coords) for n, s in historial.items() if n in frescas and s
-    ]
-    trabados = vientos_trabados(historial, ahora)
-    for e in estaciones:
-        if e["nombre"] in trabados:
-            e.update(viento_kmh=None, rafaga_kmh=None, viento_trabado=True)
-    # Control de calidad (calidad_y_calibracion.py, ciclo anterior): una
-    # estación dudosa no entra en los resúmenes; con la lluvia dudosa se
-    # usa todo menos su lluvia. El detalle queda en "estaciones".
+    frescas = {o["nombre"]: o for o in obs}
+    estaciones = []
+    for n, serie in historial.items():
+        if n not in frescas or not serie:
+            continue
+        e = resumen_estacion(n, serie, ahora, coords)
+        o = frescas[n]
+        e.update(red=o["red"], humedad_pct=o.get("humedad"), direccion_grados=o.get("dir"))
+        if e.get("lluvia_1h_mm") is None and o.get("lluvia_1h_directa") is not None:
+            e["lluvia_1h_mm"] = o["lluvia_1h_directa"]
+        estaciones.append(e)
+    anotados = controlar(estaciones, historial, ahora)
+    # Control de calidad de la lluvia (calidad_y_calibracion.py, ciclo
+    # anterior): una estación dudosa no entra en los resúmenes; con la lluvia
+    # dudosa se usa todo menos su lluvia. El detalle queda en "estaciones".
     calidad = calidad_estaciones()
     aptas = []
     for e in estaciones:
@@ -354,19 +544,24 @@ def main(ahora: datetime | None = None) -> int:
         aptas.append(e)
     bahia = [e for e in aptas if (e["distancia_bahia_km"] or 999) <= RADIO_BAHIA_KM]
     salida = {
-        "version": "1.0.0",
+        "version": "1.1.0",
         "generado_utc": ahora.isoformat(),
         "estaciones_frescas": len(estaciones),
         "bahia_blanca": resumir(bahia),
         "region": resumir(aptas),
         "localidades": por_localidad(aptas),
+        # Lo medido en cada localidad: lo muestran la página y Facebook.
+        "tiempo_ahora": tiempo_ahora(aptas),
         "descartadas_por_calidad": sorted(e["nombre"] for e in estaciones if e["calidad"] == "dudosa"),
-        # Lo lee también la página (app.py) para no mostrar ese viento.
-        "viento_trabado": trabados,
+        # Datos que no pasaron el control (falla de la estación o dato imposible).
+        "datos_descartados": anotados,
+        "viento_trabado": sorted(e["nombre"] for e in estaciones
+                                 if "anemómetro" in (e.get("descartes") or {}).get("viento_kmh", "")),
         "estaciones": estaciones,
     }
     escribir(SALIDA, salida)
-    print(json.dumps({"frescas": len(estaciones), "bahia": salida["bahia_blanca"]}, ensure_ascii=False))
+    print(json.dumps({"frescas": len(estaciones), "descartados": len(anotados),
+                      "bahia": salida["bahia_blanca"]}, ensure_ascii=False))
     return 0
 
 
