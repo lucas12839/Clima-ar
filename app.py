@@ -5,7 +5,7 @@ import math
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -2880,6 +2880,123 @@ def resumen() -> dict[str, Any]:
         },
         **radar_metadata(),
     }
+
+
+# ============================================================
+# SATÉLITE GOES-19 PARA EL MAPA (vista Meteorólogos, solo para mirar)
+# ============================================================
+# Nubes del canal 13 sobre los 240 km del radar y los rayos que ya guarda
+# Intelligence. Se lee del satélite solo cuando alguien lo pide y se guarda
+# un rato: no se agrega nada al repositorio ni a la estructura.
+
+GOES_STATE_FILE = DATA_BASE_DIR / "goes19" / "goes19_state.json"
+SATELITE_IMAGENES = 6            # última hora (una imagen cada 10 min)
+_SAT_LISTA: dict[str, Any] = {"ts": 0.0, "lista": []}
+_SAT_LISTA_SEG = 120.0
+_SAT_IMG: dict[str, bytes] = {}
+_SAT_LOCK = threading.Lock()
+
+
+def _satelite_lista() -> list[dict[str, Any]]:
+    from goes19 import goes19_engine as ge
+
+    ahora = time.time()
+    if _SAT_LISTA["lista"] and ahora - _SAT_LISTA["ts"] < _SAT_LISTA_SEG:
+        return _SAT_LISTA["lista"]
+    prefijo, contiene = ge.PRODUCT_SPECS["abi_c13"]
+    referencia = datetime.now(timezone.utc)
+    vistos: dict[str, dict[str, Any]] = {}
+    for horas in (0, 1):
+        for crudo in ge._list_candidate_objects(prefijo, referencia - timedelta(hours=horas)):
+            if contiene not in crudo.get("key", ""):
+                continue
+            meta = ge._enrich_object_metadata(crudo)
+            if meta and meta.get("end_time_utc"):
+                vistos[meta["key"]] = meta
+    lista = sorted(vistos.values(), key=lambda m: m["end_time_utc"])[-SATELITE_IMAGENES:]
+    salida = [
+        {
+            "clave": parse_iso(m["start_time_utc"]).strftime("%Y%m%d%H%M"),
+            "hora_utc": m["end_time_utc"],
+            "url": m["url"],
+        }
+        for m in lista
+        if parse_iso(m.get("start_time_utc"))
+    ]
+    if salida:
+        _SAT_LISTA["ts"] = ahora
+        _SAT_LISTA["lista"] = salida
+    return salida or _SAT_LISTA["lista"]
+
+
+def _satelite_png(item: dict[str, Any]) -> bytes | None:
+    import numpy as np
+
+    import satelite_visual
+    from goes19.geospatial import prepare_goes_domain_multi
+
+    clave = item["clave"]
+    with _SAT_LOCK:
+        if clave in _SAT_IMG:
+            return _SAT_IMG[clave]
+    dominio = prepare_goes_domain_multi(item["url"], ["CMI"], radio_km=_RADAR_RADIUS_KM + 25.0)
+    datos = satelite_visual.imagen_nubes(
+        dominio["latitude"],
+        dominio["longitude"],
+        np.asarray(dominio["datos"]["CMI"], np.float32) - 273.15,
+    )
+    with _SAT_LOCK:
+        _SAT_IMG[clave] = datos
+        while len(_SAT_IMG) > SATELITE_IMAGENES * 2:
+            _SAT_IMG.pop(next(iter(_SAT_IMG)))
+    return datos
+
+
+@app.get("/satelite")
+def satelite():
+    """Lista de las imágenes de la última hora y los rayos de la imagen de radar."""
+    try:
+        lista = _satelite_lista()
+    except Exception as exc:
+        lista = []
+        error = f"{type(exc).__name__}"
+    else:
+        error = None
+
+    estado = read_json(GOES_STATE_FILE) or {}
+    glm = estado.get("glm") if isinstance(estado.get("glm"), dict) else {}
+    rayos = glm.get("rayos_frame_radar") if isinstance(glm.get("rayos_frame_radar"), dict) else {}
+
+    return {
+        "imagenes": [
+            {"clave": i["clave"], "hora_utc": i["hora_utc"], "imagen": f"/satelite/nubes/{i['clave']}"}
+            for i in lista
+        ],
+        "rayos": {
+            "fin_utc": rayos.get("fin_utc"),
+            "ventana_min": rayos.get("ventana_min"),
+            "posiciones": rayos.get("posiciones") or [],
+        },
+        "error": error,
+    }
+
+
+@app.get("/satelite/nubes/{clave}")
+def satelite_nubes(clave: str):
+    if len(clave) != 12 or not clave.isdigit():
+        return JSONResponse(status_code=400, content={"ok": False, "error": "clave_invalida"})
+    try:
+        item = next((i for i in _satelite_lista() if i["clave"] == clave), None)
+        if item is None:
+            return JSONResponse(status_code=404, content={"ok": False, "error": "imagen_no_disponible"})
+        datos = _satelite_png(item)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "error": "satelite_no_disponible", "motivo": type(exc).__name__},
+        )
+    # Una imagen ya publicada no cambia.
+    return Response(content=datos, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ============================================================

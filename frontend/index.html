@@ -59,7 +59,10 @@
   <section class="tarjeta mapa-tarjeta">
     <div class="titulo-fila">
       <h2>Radar · 240 km</h2>
-      <button id="animar" class="boton">Animar 2 h</button>
+      <div class="botones">
+        <button id="animar" class="boton">Animar</button>
+        <button id="ultimo" class="boton">Último</button>
+      </div>
     </div>
     <div id="mapa" class="mapa"></div>
     <div class="escala-radar" aria-label="Intensidad de la lluvia en el radar">
@@ -88,6 +91,23 @@
 </main>
 
 <main id="meteo" class="oculto">
+  <section class="tarjeta mapa-tarjeta">
+    <div class="titulo-fila">
+      <h2>Satélite</h2>
+      <div class="botones">
+        <button id="animarSat" class="boton">Animar</button>
+        <button id="ultimoSat" class="boton">Último</button>
+      </div>
+    </div>
+    <div id="mapaSat" class="mapa"></div>
+    <div class="escala-radar" aria-label="Temperatura del tope de las nubes">
+      <div class="barra-color barra-sat"></div>
+      <div class="marcas"><span>0 °C</span><span>-30</span><span>-45</span><span>-60</span><span>-80 °C</span></div>
+    </div>
+    <label class="interruptor"><input type="checkbox" id="radarEncima"> Mostrar el radar encima</label>
+    <p id="satHora" class="pie"></p>
+    <p class="pie">GOES-19, canal 13 (infrarrojo), última hora: temperatura del tope de la nube. Más fría = nube más alta y tormenta más desarrollada. Puntos amarillos: rayos del detector GLM (vivos, últimos 5 min).</p>
+  </section>
   <p id="meteoEstado" class="pie">Cargando datos completos…</p>
   <div id="meteoContenido"></div>
 </main>

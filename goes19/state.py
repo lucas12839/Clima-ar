@@ -641,6 +641,26 @@ C13_AHORA = Path(tempfile.gettempdir()) / "climaar_c13_ahora.npz"
 C13_RADAR = Path(tempfile.gettempdir()) / "climaar_c13_radar.npz"
 
 
+MAPA_RAYOS_MAX = 600
+
+
+def _rayos_para_mapa(rayos: dict) -> list[list[float]]:
+    """[lat, lon, minutos antes de la imagen de radar], los más nuevos primero.
+    Redondeado a ~100 m y con tope, para que el estado siga siendo liviano."""
+    try:
+        lat = np.asarray(rayos["latitude"], dtype=float)
+        lon = np.asarray(rayos["longitude"], dtype=float)
+        minutos = np.asarray(rayos["minutos"], dtype=float)
+    except Exception:
+        return []
+    ok = np.isfinite(lat) & np.isfinite(lon) & np.isfinite(minutos)
+    orden = np.argsort(minutos[ok], kind="stable")[:MAPA_RAYOS_MAX]
+    return [
+        [round(float(a), 3), round(float(b), 3), round(float(c), 1)]
+        for a, b, c in zip(lat[ok][orden], lon[ok][orden], minutos[ok][orden])
+    ]
+
+
 def guardar_c13_ahora(dominio: dict, hora: datetime | None, destino: Path | None = None) -> None:
     """Deja la imagen más reciente del canal 13 (solo la zona) para el corrector del
     nowcast en capas, que corre más tarde en el MISMO ciclo. No se guarda en git."""
@@ -788,6 +808,8 @@ def build_state(reference_time: datetime | None = None) -> dict:
                     "ventana_min": por_tormenta.RAYOS_VENTANA_MIN,
                     "cobertura_min": round(float(rayos_radar["cobertura_min"]), 1),
                     "archivos": int(rayos_radar["archivos"]),
+                    # Posiciones para el mapa de la app (vista Meteorólogos).
+                    "posiciones": _rayos_para_mapa(rayos_radar),
                 }
         except Exception as exc:
             state["glm"]["ventana"] = {"disponible": False, "motivo": f"ERROR: {exc}"}

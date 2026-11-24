@@ -19,8 +19,7 @@ const estado = {
   resumen: null,
   pronostico: null,
   frameMostrado: null,
-  tiempos: {},
-  animando: null
+  tiempos: {}
 };
 
 function leer(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -199,6 +198,7 @@ function textoCelda(loc) {
 /* ---------- Mapa ---------- */
 
 const mapa = { m: null, radar: null, capas: null };
+let animRadar = null, animSat = null;
 
 // Bahía Blanca, White y Cerri están pegadas: sus nombres se muestran
 // solo cuando están elegidas (si no, al tocar el círculo).
@@ -209,31 +209,37 @@ const LADO = { bahia_blanca: "top", general_cerri: "left", ingeniero_white: "bot
 const RADAR_CENTRO = [-38.7342, -62.1654];
 const RADAR_KM = 240;
 
-function iniciarMapa() {
-  if (mapa.m || !window.L) return;
-  mapa.m = L.map("mapa", { zoomControl: true, attributionControl: true, zoomSnap: 0.25, minZoom: 6, maxZoom: 12 });
-  mapa.m.fitBounds(cuadroRadar(), { padding: [0, 0] });
-  mapa.m.attributionControl.addAttribution("Cartografía: Natural Earth, IGN · Radar: SINARAME RMA10");
-  // Capas: tierra abajo, el radar en el medio, y rutas, límites, ríos y
-  // nombres arriba (finos) para ubicar la lluvia sin taparla.
+// Mapa base (cartografía, anillos y nombres según el acercamiento). Lo usan
+// el radar de la vista General y el satélite de la vista Meteorólogos.
+function crearMapaBase(id, fuente) {
+  const m = L.map(id, { zoomControl: true, attributionControl: true, zoomSnap: 0.25, minZoom: 6, maxZoom: 12 });
+  m.fitBounds(cuadroRadar(), { padding: [0, 0] });
+  m.attributionControl.addAttribution("Cartografía: Natural Earth, IGN · " + fuente);
+  // Capas: tierra abajo, la imagen en el medio, y rutas, límites, ríos y
+  // nombres arriba (finos) para ubicar lo que se ve sin taparlo.
   [["tierra", 200], ["encima", 450]].forEach(([n, z]) => {
-    mapa.m.createPane(n); mapa.m.getPane(n).style.zIndex = z; mapa.m.getPane(n).style.pointerEvents = "none";
+    m.createPane(n); m.getPane(n).style.zIndex = z; m.getPane(n).style.pointerEvents = "none";
   });
   // Detalle de calles solo al acercarse mucho (zoom 10 o más).
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
     minZoom: 10, maxZoom: 12, subdomains: "abcd", pane: "tierra",
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>'
-  }).addTo(mapa.m);
-  cargarCartografia();
-  anillos();
-  // De lejos se ocultan los nombres chicos y los minutos de la trayectoria.
-  const zoomInicial = mapa.m.getZoom();
+  }).addTo(m);
+  cargarCartografia(m);
+  anillos(m);
+  const zoomInicial = m.getZoom();
   const zoomClase = () => {
-    const z = mapa.m.getZoom(), c = mapa.m.getContainer().classList;
+    const z = m.getZoom(), c = m.getContainer().classList;
     c.toggle("lejos", z < zoomInicial + 0.75);
     c.toggle("medio", z < zoomInicial + 1.75);   // White y Cerri, pegadas a Bahía
   };
-  mapa.m.on("zoomend", zoomClase); zoomClase();
+  m.on("zoomend", zoomClase); zoomClase();
+  return m;
+}
+
+function iniciarMapa() {
+  if (mapa.m || !window.L) return;
+  mapa.m = crearMapaBase("mapa", "Radar: SINARAME RMA10");
   mapa.capas = L.layerGroup().addTo(mapa.m);
 }
 
@@ -243,14 +249,14 @@ function cuadroRadar() {
 }
 
 // Anillos de distancia desde el radar, hasta su alcance (240 km).
-function anillos() {
+function anillos(m) {
   [50, 100, 150, 200, 240].forEach(km => {
-    L.circle(RADAR_CENTRO, { radius: km * 1000, pane: "encima", color: km === RADAR_KM ? "#5fd0e0" : "#9fb1cc", weight: km === RADAR_KM ? 1.5 : 1, opacity: km === RADAR_KM ? .7 : .35, fill: false, dashArray: km === RADAR_KM ? null : "2 6", interactive: false }).addTo(mapa.m);
+    L.circle(RADAR_CENTRO, { radius: km * 1000, pane: "encima", color: km === RADAR_KM ? "#5fd0e0" : "#9fb1cc", weight: km === RADAR_KM ? 1.5 : 1, opacity: km === RADAR_KM ? .7 : .35, fill: false, dashArray: km === RADAR_KM ? null : "2 6", interactive: false }).addTo(m);
     // Etiqueta al noroeste, lejos de las ciudades y del centro.
     const ang = -40 * Math.PI / 180, dLat = km * Math.cos(ang) / 110.574, dLon = km * Math.sin(ang) / (111.32 * Math.cos(RADAR_CENTRO[0] * Math.PI / 180));
-    L.marker([RADAR_CENTRO[0] + dLat, RADAR_CENTRO[1] + dLon], { pane: "encima", interactive: false, icon: L.divIcon({ className: "anillo-km", html: km + " km", iconSize: [48, 14] }) }).addTo(mapa.m);
+    L.marker([RADAR_CENTRO[0] + dLat, RADAR_CENTRO[1] + dLon], { pane: "encima", interactive: false, icon: L.divIcon({ className: "anillo-km", html: km + " km", iconSize: [48, 14] }) }).addTo(m);
   });
-  L.circleMarker(RADAR_CENTRO, { pane: "encima", radius: 3, color: "#5fd0e0", fillOpacity: 1, interactive: false }).addTo(mapa.m);
+  L.circleMarker(RADAR_CENTRO, { pane: "encima", radius: 3, color: "#5fd0e0", fillOpacity: 1, interactive: false }).addTo(m);
 }
 
 const ESTILO_CARTO = {
@@ -262,10 +268,11 @@ const ESTILO_CARTO = {
   partidos: { pane: "encima", color: "#8fa6c8", weight: .8, opacity: .5 }
 };
 
-async function cargarCartografia() {
+let cartografia = null;
+async function cargarCartografia(m) {
   try {
-    const r = await fetch("cartografia.json");
-    const g = await r.json();
+    if (!cartografia) cartografia = fetch("cartografia.json").then(r => r.json());
+    const g = await cartografia;
     // Las localidades de ClimaAR se dibujan aparte (con su nombre).
     const ya = new Set(["Bahía Blanca", "Punta Alta", "Tornquist", "Médanos", "Ingeniero White", "General Daniel Cerri", "Sierra de la Ventana"]);
     L.geoJSON(g, {
@@ -279,7 +286,7 @@ async function cargarCartografia() {
         : L.circleMarker(ll, { pane: "encima", radius: 2.5, color: "#c9d6ea", weight: 1, fillOpacity: 1, interactive: false })
         .bindTooltip(f.properties.nombre, { permanent: true, direction: "right", className: "etiqueta-ciudad" + ((f.properties.rango ?? 9) > 8 ? " menor" : ""), offset: [3, 0] }),
       interactive: false
-    }).addTo(mapa.m);
+    }).addTo(m);
   } catch (e) { /* sin cartografía: el mapa sigue funcionando */ }
 }
 
@@ -305,7 +312,7 @@ function pintarMapa() {
   if (!mapa.m) return;
   const r = estado.resumen || {};
   const frame = r.frame_actual_utc || "";
-  if (frame !== estado.frameMostrado && !estado.animando) {
+  if (frame !== estado.frameMostrado && !(animRadar && animRadar.activa())) {
     ponerImagenRadar((r.radar && r.radar.imagen) || "/radar/mapa", frame);
     estado.frameMostrado = frame;
   }
@@ -322,33 +329,107 @@ function pintarMapa() {
       .addTo(mapa.capas);
   });
 
+  if (animRadar && animRadar.activa()) return;
   const edad = num(r.frame_edad_minutos);
   $("radarHora").textContent = frame ? `Imagen del radar de las ${horaLocal(frame)}` + (edad !== null ? ` (hace ${fmt(edad)} min)` : "") + (r.radar_retrasado ? " · el radar viene atrasado" : "") : "Sin imagen del radar.";
 }
 
-async function animar() {
-  const btn = $("animar");
-  if (estado.animando) { clearInterval(estado.animando); estado.animando = null; btn.textContent = "Animar 2 h"; estado.frameMostrado = null; pintarMapa(); return; }
-  btn.textContent = "Cargando…";
+// Animación de imágenes con botón "Último" para volver al instante más nuevo
+// sin esperar a que termine la vuelta.
+function crearAnimador({ boton, botonUltimo, textoBoton, cargar, poner, rotulo, alVolver }) {
+  let reloj = null;
+  const volver = () => {
+    if (reloj) clearInterval(reloj);
+    reloj = null;
+    boton.textContent = textoBoton;
+    alVolver();
+  };
+  boton.addEventListener("click", async () => {
+    if (reloj) { volver(); return; }
+    boton.textContent = "Cargando…";
+    try {
+      const frames = await cargar();
+      if (!frames.length) throw new Error("sin imágenes");
+      frames.forEach(f => { const i = new Image(); i.src = f.url; });
+      let i = 0;
+      boton.textContent = "Pausa";
+      reloj = setInterval(() => {
+        const f = frames[i % frames.length];
+        poner(f); rotulo("Animación · " + horaLocal(f.hora));
+        i++;
+      }, 700);
+    } catch (e) {
+      boton.textContent = textoBoton;
+      rotulo("No se pudo cargar la animación.");
+    }
+  });
+  botonUltimo.addEventListener("click", volver);
+  return { activa: () => reloj !== null };
+}
+
+function isoDeClave(t) {
+  t = String(t);
+  return `${t.slice(0,4)}-${t.slice(4,6)}-${t.slice(6,8)}T${t.slice(8,10)}:${t.slice(10,12)}:00Z`;
+}
+
+/* ---------- Satélite GOES-19 (vista Meteorólogos) ---------- */
+
+const sat = { m: null, nubes: null, rayos: null, radar: null, mostrada: null };
+
+function iniciarSatelite() {
+  if (sat.m || !window.L) return;
+  sat.m = crearMapaBase("mapaSat", "Satélite: NOAA GOES-19");
+  sat.rayos = L.layerGroup().addTo(sat.m);
+}
+
+function ponerNubes(ruta, clave) {
+  if (!sat.m) return;
+  const url = urlImagen(ruta, clave);
+  if (sat.nubes) sat.nubes.setUrl(url);
+  else sat.nubes = L.imageOverlay(url, cuadroRadar(), { opacity: .95 }).addTo(sat.m);
+}
+
+// Rayos de los ~14 min que terminan en la imagen de radar: más nuevo, más vivo.
+function pintarRayos(r) {
+  sat.rayos.clearLayers();
+  (r.posiciones || []).forEach(p => {
+    if (!Array.isArray(p) || num(p[0]) === null) return;
+    const min = num(p[2]) || 0;
+    L.circleMarker([p[0], p[1]], { pane: "encima", radius: 2.5, weight: 1, color: "#fff27a", fillColor: "#ffe44d", fillOpacity: min <= 5 ? 1 : .45, opacity: min <= 5 ? 1 : .5, interactive: false }).addTo(sat.rayos);
+  });
+}
+
+function radarSobreSatelite() {
+  if (!sat.m) return;
+  if ($("radarEncima").checked) {
+    const url = urlImagen((estado.resumen && estado.resumen.radar && estado.resumen.radar.imagen) || "/radar/mapa", estado.frameMostrado || "");
+    if (sat.radar) sat.radar.setUrl(url);
+    else sat.radar = L.imageOverlay(url, limitesRadar(), { opacity: .85 }).addTo(sat.m);
+  } else if (sat.radar) {
+    sat.m.removeLayer(sat.radar); sat.radar = null;
+  }
+}
+
+async function cargarSatelite() {
+  iniciarSatelite();
+  if (!sat.m) return;
   try {
-    const s = await pedir("/secuencia");
-    // Misma imagen limpia que el mapa, no la cruda del radar.
-    const frames = (s.frames || []).filter(f => f.timestamp).map(f => ({ timestamp: f.timestamp, imagen: "/radar/mapa/" + f.timestamp }));
-    if (!frames.length) throw new Error("sin frames");
-    frames.forEach(f => { const i = new Image(); i.src = urlImagen(f.imagen, f.timestamp); });
-    let i = 0;
-    btn.textContent = "Detener";
-    estado.animando = setInterval(() => {
-      const f = frames[i % frames.length];
-      ponerImagenRadar(f.imagen, f.timestamp);
-      const t = String(f.timestamp);
-      const iso = `${t.slice(0,4)}-${t.slice(4,6)}-${t.slice(6,8)}T${t.slice(8,10)}:${t.slice(10,12)}:00Z`;
-      $("radarHora").textContent = "Animación · " + horaLocal(iso);
-      i++;
-    }, 700);
+    const s = await pedir("/satelite", 30000);
+    const lista = s.imagenes || [];
+    const ultima = lista[lista.length - 1];
+    if (ultima && ultima.clave !== sat.mostrada && !(animSat && animSat.activa())) {
+      ponerNubes(ultima.imagen, ultima.clave);
+      sat.mostrada = ultima.clave;
+    }
+    pintarRayos(s.rayos || {});
+    radarSobreSatelite();
+    if (animSat && animSat.activa()) return;
+    const n = (s.rayos && s.rayos.posiciones || []).length;
+    $("satHora").textContent = ultima
+      ? `Imagen del satélite de las ${horaLocal(ultima.hora_utc)} · ${n ? n + " rayos en los 14 min de la imagen de radar" : "sin rayos en la imagen de radar"}`
+      : "El satélite no está disponible en este momento.";
   } catch (e) {
-    btn.textContent = "Animar 2 h";
-    $("radarHora").textContent = "No se pudo cargar la animación.";
+    $("satHora").textContent = "El satélite no está disponible en este momento.";
   }
 }
 
@@ -401,6 +482,7 @@ function tabla(cab, filas) {
 const bloque = (titulo, html, abierto) => `<details${abierto ? " open" : ""}><summary>${esc(titulo)}</summary><div class="cuerpo">${html}</div></details>`;
 
 async function cargarMeteo() {
+  cargarSatelite();
   const st = $("meteoEstado");
   try {
     const [intel, radar, pred] = await Promise.all([pedir("/inteligencia", 40000), pedir("/radar"), pedir("/prediccion/en-vivo").catch(() => null)]);
@@ -516,14 +598,37 @@ function cambiarVista(v) {
   $("meteo").classList.toggle("oculto", v !== "meteo");
   $("tabGeneral").setAttribute("aria-selected", String(v === "general"));
   $("tabMeteo").setAttribute("aria-selected", String(v === "meteo"));
-  if (v === "meteo") cargarMeteo();
+  if (v === "meteo") { cargarMeteo(); if (sat.m) setTimeout(() => sat.m.invalidateSize(), 50); }
   else { actualizarGeneral(); if (mapa.m) setTimeout(() => mapa.m.invalidateSize(), 50); }
   programar();
 }
 
 $("localidad").addEventListener("change", e => elegirLocalidad(e.target.value));
 document.querySelectorAll(".vistas button").forEach(b => b.addEventListener("click", () => cambiarVista(b.dataset.vista)));
-$("animar").addEventListener("click", animar);
+animRadar = crearAnimador({
+  boton: $("animar"), botonUltimo: $("ultimo"), textoBoton: "Animar",
+  cargar: async () => {
+    const s = await pedir("/secuencia");
+    // Misma imagen limpia que el mapa, no la cruda del radar.
+    return (s.frames || []).filter(f => f.timestamp).map(f => ({
+      ruta: "/radar/mapa/" + f.timestamp, clave: f.timestamp, url: urlImagen("/radar/mapa/" + f.timestamp, f.timestamp), hora: isoDeClave(f.timestamp)
+    }));
+  },
+  poner: f => ponerImagenRadar(f.ruta, f.clave),
+  rotulo: t => { $("radarHora").textContent = t; },
+  alVolver: () => { estado.frameMostrado = null; pintarMapa(); }
+});
+animSat = crearAnimador({
+  boton: $("animarSat"), botonUltimo: $("ultimoSat"), textoBoton: "Animar",
+  cargar: async () => {
+    const s = await pedir("/satelite", 30000);
+    return (s.imagenes || []).map(f => ({ ruta: f.imagen, clave: f.clave, url: urlImagen(f.imagen, f.clave), hora: f.hora_utc }));
+  },
+  poner: f => ponerNubes(f.ruta, f.clave),
+  rotulo: t => { $("satHora").textContent = t; },
+  alVolver: () => { sat.mostrada = null; cargarSatelite(); }
+});
+$("radarEncima").addEventListener("change", radarSobreSatelite);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) { if (estado.vista === "general") actualizarGeneral(); else cargarMeteo(); }
   programar();
