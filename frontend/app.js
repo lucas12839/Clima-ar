@@ -116,8 +116,26 @@ function llenarSelector() {
 
 const f0 = t => Boolean(t.fuentes && t.fuentes.precipitacion);
 
+/* El tiempo y el pronóstico de la localidad elegida (24/11/2026: antes se
+   mostraba el de Bahía Blanca para todas). Si el servidor todavía no manda
+   el de la localidad, se usa el de Bahía y se aclara. */
+function tiempoLocal() {
+  const loc = localidadActual();
+  const r = estado.resumen || {};
+  if (loc && loc.tiempo_actual && loc.tiempo_actual.disponible) return [loc.tiempo_actual, loc.nombre];
+  return [r.tiempo_actual || {}, "Bahía Blanca"];
+}
+function pronosticoLocal() {
+  const p = estado.pronostico || {};
+  const loc = localidadActual();
+  const propio = loc && p.por_localidad && p.por_localidad[loc.id];
+  if (propio && (propio.dias || []).length) return [propio, loc.nombre];
+  return [p, "Bahía Blanca"];
+}
+
 function pintarTiempo() {
-  const t = (estado.resumen && estado.resumen.tiempo_actual) || {};
+  const [t, donde] = tiempoLocal();
+  $("tituloAhora").textContent = "El tiempo ahora en " + donde;
   const [texto, tipo] = cielo(t.codigo_tiempo, t.nubosidad, t.precipitacion);
   $("temp").textContent = fmt(t.temperatura);
   $("cielo").textContent = t.disponible ? texto : "Sin datos del tiempo en este momento";
@@ -220,7 +238,7 @@ function cifrasFenomeno(k, f, loc) {
     if (num(f.mm_3h) !== null) det.push(`Medido: ${fmt(f.mm_1h, 1)} mm en 1 h · ${fmt(f.mm_3h, 1)} mm en 3 h`);
     else if (num(ac["1h"]) >= 0.5 || num(ac["3h"]) >= 0.5) det.push(`Ya llovió: ${fmt(ac["1h"], 1)} mm en 1 h · ${fmt(ac["3h"], 1)} mm en 3 h (radar)`);
     if (llega && num(llega.mm_h) > 0 && minLlega !== null && f.cuando !== "al_llegar") det.push(`Puede llover al llegar: ~${fmt(llega.mm_h, 0)} mm/h`);
-    const hoy = estado.pronostico && estado.pronostico.hoy;   // "dias" empieza mañana
+    const hoy = pronosticoLocal()[0].hoy;   // "dias" empieza mañana
     if (hoy && num(hoy.prob_lluvia) !== null) det.push(`Hoy en la zona: ${fmt(hoy.prob_lluvia)} % de probabilidad` + (num(hoy.lluvia_mm) > 0 ? ` · ${fmt(hoy.lluvia_mm, 1)} mm (pronóstico)` : ""));
   } else if (k === "viento") {
     if (num(f.rafaga_kmh) !== null) dato = `ráfagas ${fmt(f.rafaga_kmh)} km/h`;
@@ -270,10 +288,10 @@ function pintarVivo() {
     aviso.classList.remove("oculto");
   } else aviso.classList.add("oculto");
 
-  const t = r.tiempo_actual || {};
+  const [t, donde] = tiempoLocal();
   const dir = punto(t.viento_dir);
   $("ahoraCorto").textContent = t.disponible && num(t.temperatura) !== null
-    ? `${fmt(t.temperatura)} °C · viento ${fmt(t.viento_vel)} km/h${dir ? " " + dir : ""}` : "";
+    ? `${donde}: ${fmt(t.temperatura)} °C · viento ${fmt(t.viento_vel)} km/h${dir ? " " + dir : ""}` : "";
 }
 
 function pintarLocalidades() {
@@ -628,7 +646,8 @@ async function cargarSatelite() {
 /* ---------- Pronóstico ---------- */
 
 function pintarDias() {
-  const p = estado.pronostico;
+  const [p, donde] = pronosticoLocal();
+  $("tituloDias").textContent = "Próximos 3 días en " + donde;
   const dias = (p && p.dias) || [];
   if (!dias.length) { $("dias").innerHTML = '<p class="pie" style="grid-column:1/-1">El pronóstico no está disponible en este momento.</p>'; return; }
   $("dias").innerHTML = dias.slice(0, 3).map(d => {
@@ -782,6 +801,7 @@ function elegirLocalidad(id) {
   estado.localidad = id; guardar("climaar_localidad", id);
   $("localidad").value = id;
   pintarTormenta(); pintarLocalidades(); pintarMapa(); pintarListaTormentas();
+  pintarTiempo(); pintarVivo(); pintarDias();
 }
 
 function cambiarVista(v) {

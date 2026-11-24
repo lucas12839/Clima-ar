@@ -679,6 +679,9 @@ def get_openmeteo_data() -> (
     ):
         return _CURRENT_CACHE["data"]
 
+    if now - _CURRENT_CACHE.get("fallo", 0.0) < REINTENTO_MODELO_SEG:
+        return _CURRENT_CACHE["data"]
+
     data = _fetch_openmeteo_current()
 
     if data is not None:
@@ -686,6 +689,7 @@ def get_openmeteo_data() -> (
         _CURRENT_CACHE["data"] = data
         return data
 
+    _CURRENT_CACHE["fallo"] = now
     return _CURRENT_CACHE["data"]
 
 
@@ -797,6 +801,11 @@ def get_openmeteo_forecast() -> (
     ):
         return _FORECAST_CACHE["data"]
 
+    if now - _FORECAST_CACHE.get("fallo", 0.0) < REINTENTO_MODELO_SEG:
+        return _FORECAST_CACHE["data"]
+    # Si algo falla abajo, se marca el intento (se vuelve a probar al minuto).
+    _FORECAST_CACHE["fallo"] = now
+
     url = (
         "https://api.open-meteo.com/v1/forecast?"
         f"latitude={LAT}"
@@ -858,11 +867,145 @@ def get_openmeteo_forecast() -> (
 
         _FORECAST_CACHE["ts"] = now
         _FORECAST_CACHE["data"] = days
+        _FORECAST_CACHE["fallo"] = 0.0
 
         return days
 
     except Exception:
         return _FORECAST_CACHE["data"]
+
+
+# ============================================================
+# TIEMPO Y PRONÓSTICO POR LOCALIDAD (24/11/2026)
+# ============================================================
+# Antes la página mostraba el tiempo y el pronóstico de Bahía Blanca para
+# cualquier localidad elegida. Ahora el modelo europeo se pide para el punto
+# de cada localidad, en UN solo pedido para las 7 (Open-Meteo acepta varias
+# coordenadas juntas), guardado 5 min (actual) y 15 min (pronóstico).
+
+_LOCALES_CACHE: dict[str, dict[str, Any]] = {
+    "actual": {"ts": 0.0, "data": None, "fallo": 0.0},
+    "pronostico": {"ts": 0.0, "data": None, "fallo": 0.0},
+}
+# Si Open-Meteo no responde, no se lo vuelve a esperar en cada pedido de la
+# página (cada intento puede tardar 10-12 s): se reintenta al minuto.
+REINTENTO_MODELO_SEG = 60.0
+
+
+def _puntos_localidades() -> list[dict[str, Any]]:
+    cfg = read_json(LOCALIDADES_FILE) or {}
+    return [
+        l for l in cfg.get("localidades") or []
+        if isinstance(l, dict) and l.get("id") and _num(l.get("lat")) is not None
+        and _num(l.get("lon")) is not None
+    ]
+
+
+def _openmeteo_varios(params: str) -> list[tuple[str, dict[str, Any]]] | None:
+    puntos = _puntos_localidades()
+    if not puntos:
+        return None
+    url = (
+        "https://api.open-meteo.com/v1/forecast?"
+        "latitude=" + ",".join(f"{p['lat']:.4f}" for p in puntos)
+        + "&longitude=" + ",".join(f"{p['lon']:.4f}" for p in puntos)
+        + params + "&timezone=America/Argentina/Buenos_Aires"
+    )
+    try:
+        response = requests.get(url, timeout=12)
+        response.raise_for_status()
+        datos = response.json()
+    except Exception:
+        return None
+    # Con un solo punto Open-Meteo devuelve un objeto; con varios, una lista
+    # en el mismo orden de las coordenadas.
+    lista = datos if isinstance(datos, list) else [datos]
+    if len(lista) != len(puntos):
+        return None
+    return [(p["id"], d if isinstance(d, dict) else {}) for p, d in zip(puntos, lista)]
+
+
+def _cache_locales(clave: str, segundos: float, armar) -> dict[str, Any]:
+    c = _LOCALES_CACHE[clave]
+    ahora = time.time()
+    if c["data"] is not None and ahora - c["ts"] < segundos:
+        return c["data"]
+    if ahora - c.get("fallo", 0.0) < REINTENTO_MODELO_SEG:
+        return c["data"] or {}
+    data = armar()
+    if data:
+        c["ts"], c["data"] = ahora, data
+        return data
+    c["fallo"] = ahora
+    return c["data"] or {}
+
+
+def get_openmeteo_locales() -> dict[str, dict[str, Any]]:
+    """Tiempo actual del modelo europeo en el punto de cada localidad."""
+
+    def armar():
+        res = _openmeteo_varios(
+            "&current=temperature_2m,dewpoint_2m,pressure_msl,wind_speed_10m,"
+            "wind_direction_10m,precipitation,apparent_temperature,relative_humidity_2m,"
+            "wind_gusts_10m,cloud_cover,weather_code"
+        )
+        if not res:
+            return None
+        salida = {}
+        for ident, d in res:
+            c = d.get("current")
+            if not isinstance(c, dict):
+                continue
+            salida[ident] = {
+                "temperatura": c.get("temperature_2m"), "punto_rocio": c.get("dewpoint_2m"),
+                "presion": c.get("pressure_msl"), "viento_vel": c.get("wind_speed_10m"),
+                "viento_dir": c.get("wind_direction_10m"), "precipitacion": c.get("precipitation"),
+                "sensacion_termica": c.get("apparent_temperature"),
+                "humedad": c.get("relative_humidity_2m"), "rafagas": c.get("wind_gusts_10m"),
+                "nubosidad": c.get("cloud_cover"), "codigo_tiempo": c.get("weather_code"),
+                "fuente": "Open-Meteo",
+            }
+        return salida or None
+
+    return _cache_locales("actual", CURRENT_CACHE_SECONDS, armar)
+
+
+def get_openmeteo_forecast_locales() -> dict[str, list[dict[str, Any]]]:
+    """Hoy y los próximos 3 días del modelo europeo en cada localidad."""
+
+    def armar():
+        res = _openmeteo_varios(
+            "&daily=weather_code,temperature_2m_max,temperature_2m_min,"
+            "precipitation_probability_max,precipitation_sum,wind_speed_10m_max,"
+            "wind_gusts_10m_max,wind_direction_10m_dominant&forecast_days=4"
+        )
+        if not res:
+            return None
+        salida = {}
+        for ident, d in res:
+            daily = d.get("daily")
+            if not isinstance(daily, dict):
+                continue
+            fechas = daily.get("time") or []
+
+            def pick(k, i):
+                v = daily.get(k)
+                return v[i] if isinstance(v, list) and i < len(v) else None
+
+            salida[ident] = [
+                {
+                    "fecha": fechas[i], "codigo_tiempo": pick("weather_code", i),
+                    "minima": pick("temperature_2m_min", i), "maxima": pick("temperature_2m_max", i),
+                    "prob_lluvia": pick("precipitation_probability_max", i),
+                    "lluvia_mm": pick("precipitation_sum", i), "viento": pick("wind_speed_10m_max", i),
+                    "rafagas": pick("wind_gusts_10m_max", i),
+                    "viento_direccion": pick("wind_direction_10m_dominant", i),
+                }
+                for i in range(min(4, len(fechas)))
+            ]
+        return salida or None
+
+    return _cache_locales("pronostico", FORECAST_CACHE_SECONDS, armar)
 
 
 # ============================================================
@@ -1701,15 +1844,26 @@ def pronostico() -> dict[str, Any]:
 
     days = get_openmeteo_forecast() or []
     hoy_fecha = datetime.now(_TZ_AR).date().isoformat()
-    hoy = next((d for d in days if d.get("fecha") == hoy_fecha), None)
+
+    def separar(lista):
+        return (next((d for d in lista if d.get("fecha") == hoy_fecha), None),
+                [d for d in lista if d.get("fecha") != hoy_fecha][:3])
+
+    hoy, dias = separar(days)
+    por_localidad = {}
+    for ident, lista in (get_openmeteo_forecast_locales() or {}).items():
+        h, ds = separar(lista)
+        por_localidad[ident] = {"hoy": h, "dias": ds}
 
     return {
         "disponible": bool(days),
         "fuente": "Open-Meteo",
         # Hoy aparte (lo usan la portada y la publicación de la mañana);
-        # "dias" sigue siendo los próximos 3 días, sin hoy.
+        # "dias" sigue siendo los próximos 3 días, sin hoy. Esto es Bahía Blanca.
         "hoy": hoy,
-        "dias": [d for d in days if d.get("fecha") != hoy_fecha][:3],
+        "dias": dias,
+        # El mismo pronóstico para el punto de cada localidad (24/11/2026).
+        "por_localidad": por_localidad,
     }
 
 
@@ -2633,8 +2787,70 @@ def _mediciones_bahia() -> list[dict[str, Any]]:
     return salida
 
 
-def _tiempo_actual() -> dict[str, Any]:
-    """El tiempo ahora en Bahía Blanca: lo medido primero, el modelo de relleno.
+# Estaciones que cuentan como "de la localidad" (24/11/2026): a 8 km o menos.
+# Más lejos (o sobre las sierras, como Sierras Grandes para Sierra de la
+# Ventana) no representan el pueblo y se usa el modelo europeo en su punto.
+ESTACION_LOCAL_MAX_KM = 8.0
+AEROPUERTO_SAZB = (-38.71474, -62.16304)
+AEROPUERTO_MAX_KM = 12.0
+
+
+def _dist_km(lat1, lon1, lat2, lon2) -> float:
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = (math.sin((p2 - p1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
+    return 2 * 6371.0 * math.asin(math.sqrt(a))
+
+
+def _mediciones_cerca(lat: float, lon: float) -> list[dict[str, Any]]:
+    """Mediciones frescas de las estaciones a 8 km o menos del punto, de la más
+    cercana a la más lejana (edad calculada ahora, frescura.py)."""
+    from scripts.estaciones.frescura import edad_min, es_fresca
+
+    cat = read_json(IA_DIR / "estaciones" / "catalogo_estaciones.json") or {}
+    pos = {}
+    for st in cat.get("stations") or []:
+        la, lo = _num(st.get("latitude"), 6), _num(st.get("longitude"), 6)
+        if la is not None and lo is not None:
+            pos[(st.get("network"), str(st.get("collector_id")))] = (la, lo)
+    salida = []
+    for red in ("bcp", "cwop"):
+        for est in (read_json(OBS_DIR / f"{red}_actual.json") or {}).get("stations") or []:
+            if not isinstance(est, dict):
+                continue
+            if red == "bcp":
+                coord = pos.get(("bcp", str(est.get("station_id"))))
+            else:
+                la, lo = _num(est.get("lat"), 6), _num(est.get("lon"), 6)
+                coord = (la, lo) if la is not None and lo is not None else None
+            if not coord:
+                continue
+            dist = _dist_km(lat, lon, coord[0], coord[1])
+            hora = est.get("observation_time")
+            if dist > ESTACION_LOCAL_MAX_KM or not es_fresca(hora, red):
+                continue
+            v = est.get("variables") if isinstance(est.get("variables"), dict) else {}
+            nombre = str(est.get("nombre") or est.get("indicativo") or "Estación")
+            nombre = nombre.replace(" (CWOP)", "").title().replace("Grumbein", "Grünbein").replace("Bahia", "Bahía")
+            salida.append({
+                "nombre": nombre if dist < 1.5 else f"{nombre}, a {dist:.0f} km",
+                "distancia": dist,
+                "edad": edad_min(hora),
+                "temperatura": _num(v.get("temperatura_c"), 1),
+                "viento": _num(v.get("viento_kmh"), 0),
+                "viento_dir": _rumbo_grados(v.get("direccion_viento_grados", v.get("direccion_viento"))),
+                "rafaga": _num(v.get("rafaga_15min_kmh"), 0),
+                "humedad": _num(v.get("humedad_relativa_pct"), 0),
+                "lluvia_1h": _num(v.get("lluvia_1h_mm"), 1),
+            })
+    return sorted(salida, key=lambda m: m["distancia"])
+
+
+def _tiempo_actual(localidad: dict[str, Any] | None = None) -> dict[str, Any]:
+    """El tiempo ahora en una localidad: lo medido primero, el modelo de relleno.
+
+    Sin localidad (o Bahía Blanca) es Bahía, como siempre. Para las demás
+    (24/11/2026): estaciones a 8 km o menos y el modelo en su punto.
 
     24/11/2026: antes se mostraba el modelo (Open-Meteo) aunque las
     estaciones estuvieran al día, y aparecían ráfagas de 47 km/h con viento
@@ -2646,9 +2862,14 @@ def _tiempo_actual() -> dict[str, Any]:
 
     from scripts.estaciones.frescura import edad_min, es_fresca
 
-    modelo = get_openmeteo_data() or {}
+    es_bahia = not localidad or localidad.get("id") == "bahia_blanca"
     estado = read_json(METEO_FILE) or {}
     amb = estado.get("ambiente_actual") if isinstance(estado.get("ambiente_actual"), dict) else {}
+    if es_bahia:
+        modelo = get_openmeteo_data() or {}
+    else:
+        modelo = (get_openmeteo_locales() or {}).get(localidad["id"]) or {}
+        amb = {}     # el ambiente guardado es el de Bahía: no se usa para otro punto
     if not modelo and amb:
         modelo = {
             "temperatura": amb.get("temperature_2m"), "punto_rocio": amb.get("dew_point_2m"),
@@ -2662,7 +2883,12 @@ def _tiempo_actual() -> dict[str, Any]:
     obs = obs if isinstance(obs, dict) and obs.get("disponible") else {}
     if not es_fresca(obs.get("obsTime_utc"), "sazb"):
         obs = {}
-    medidas = _mediciones_bahia()
+    if es_bahia:
+        medidas = _mediciones_bahia()
+    else:
+        medidas = _mediciones_cerca(float(localidad["lat"]), float(localidad["lon"]))
+        if _dist_km(float(localidad["lat"]), float(localidad["lon"]), *AEROPUERTO_SAZB) > AEROPUERTO_MAX_KM:
+            obs = {}
     if obs:
         kt = _num(obs.get("viento_kt"), 1)
         medidas.append({
@@ -2790,6 +3016,9 @@ def _localidades_resumen() -> list[dict[str, Any]]:
             "minutos_hasta_llegada": _num(
                 datos.get("minutos_hasta_llegada"), 0
             ),
+            # El tiempo ahora en esa localidad (24/11/2026): antes la página
+            # mostraba el de Bahía para todas.
+            "tiempo_actual": _tiempo_actual(loc),
             "llegada": llegada if isinstance(llegada, dict) else None,
             "sobre_la_localidad": datos.get("sobre_la_localidad"),
             # Lluvia que ya cayó según el radar (mm en 1, 3 y 6 h).
