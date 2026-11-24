@@ -196,31 +196,76 @@ function colorNivel(n) {
   return ["#33465f", "#9fd8f0", "#6fa4f2", "#6a63e6", "#b03bd4"][Math.max(0, Math.min(4, num(n) || 0))];
 }
 
+const RADAR_CENTRO = [-38.7342, -62.1654];
+const RADAR_KM = 240;
+
 function iniciarMapa() {
   if (mapa.m || !window.L) return;
-  mapa.m = L.map("mapa", { zoomControl: true, attributionControl: true }).setView([-38.55, -62.25], 8);
-  // Fondo oscuro con rutas, costa y ríos; los nombres van en una capa
-  // aparte, por encima del radar, para que la lluvia no los tape.
-  const atrib = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>';
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", { maxZoom: 13, subdomains: "abcd", attribution: atrib }).addTo(mapa.m);
-  mapa.m.createPane("nombres");
-  mapa.m.getPane("nombres").style.zIndex = 450;
-  mapa.m.getPane("nombres").style.pointerEvents = "none";
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", { maxZoom: 13, subdomains: "abcd", pane: "nombres" }).addTo(mapa.m);
-  // Anillos de distancia desde Bahía Blanca.
-  [50, 100].forEach(km => {
-    L.circle([-38.7196, -62.2724], { radius: km * 1000, color: "#9fb1cc", weight: 1, opacity: .45, fill: false, dashArray: "2 6", interactive: false }).addTo(mapa.m);
-    L.marker([-38.7196 + km / 110.574, -62.2724], { interactive: false, icon: L.divIcon({ className: "anillo-km", html: km + " km", iconSize: [44, 14] }) }).addTo(mapa.m);
+  mapa.m = L.map("mapa", { zoomControl: true, attributionControl: true, zoomSnap: 0.25, minZoom: 6, maxZoom: 12 });
+  mapa.m.fitBounds(cuadroRadar(), { padding: [0, 0] });
+  mapa.m.attributionControl.addAttribution("Cartografía: Natural Earth · Radar: SINARAME RMA10");
+  // Capas: tierra abajo, el radar en el medio, y rutas, límites, ríos y
+  // nombres arriba (finos) para ubicar la lluvia sin taparla.
+  [["tierra", 200], ["encima", 450]].forEach(([n, z]) => {
+    mapa.m.createPane(n); mapa.m.getPane(n).style.zIndex = z; mapa.m.getPane(n).style.pointerEvents = "none";
   });
+  // Detalle de calles solo al acercarse mucho (zoom 10 o más).
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    minZoom: 10, maxZoom: 12, subdomains: "abcd", pane: "tierra",
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>'
+  }).addTo(mapa.m);
+  cargarCartografia();
+  anillos();
+  // De lejos se ocultan los nombres chicos y los minutos de la trayectoria.
+  const zoomClase = () => mapa.m.getContainer().classList.toggle("lejos", mapa.m.getZoom() < 8.25);
+  mapa.m.on("zoomend", zoomClase); zoomClase();
   mapa.capas = L.layerGroup().addTo(mapa.m);
+}
+
+function cuadroRadar() {
+  const dLat = RADAR_KM / 110.574, dLon = RADAR_KM / (111.32 * Math.cos(RADAR_CENTRO[0] * Math.PI / 180));
+  return [[RADAR_CENTRO[0] - dLat, RADAR_CENTRO[1] - dLon], [RADAR_CENTRO[0] + dLat, RADAR_CENTRO[1] + dLon]];
+}
+
+// Anillos de distancia desde el radar, hasta su alcance (240 km).
+function anillos() {
+  [50, 100, 150, 200, 240].forEach(km => {
+    L.circle(RADAR_CENTRO, { radius: km * 1000, pane: "encima", color: km === RADAR_KM ? "#5fd0e0" : "#9fb1cc", weight: km === RADAR_KM ? 1.5 : 1, opacity: km === RADAR_KM ? .7 : .35, fill: false, dashArray: km === RADAR_KM ? null : "2 6", interactive: false }).addTo(mapa.m);
+    // Etiqueta al noroeste, lejos de las ciudades y del centro.
+    const ang = -40 * Math.PI / 180, dLat = km * Math.cos(ang) / 110.574, dLon = km * Math.sin(ang) / (111.32 * Math.cos(RADAR_CENTRO[0] * Math.PI / 180));
+    L.marker([RADAR_CENTRO[0] + dLat, RADAR_CENTRO[1] + dLon], { pane: "encima", interactive: false, icon: L.divIcon({ className: "anillo-km", html: km + " km", iconSize: [48, 14] }) }).addTo(mapa.m);
+  });
+  L.circleMarker(RADAR_CENTRO, { pane: "encima", radius: 3, color: "#5fd0e0", fillOpacity: 1, interactive: false }).addTo(mapa.m);
+}
+
+const ESTILO_CARTO = {
+  tierra: { pane: "tierra", stroke: true, color: "#34507a", weight: 1, fillColor: "#16233a", fillOpacity: 1 },
+  lagos: { pane: "tierra", stroke: false, fillColor: "#0b1524", fillOpacity: 1 },
+  rios: { pane: "encima", color: "#3f7fbf", weight: 1.2, opacity: .7 },
+  provincias: { pane: "encima", color: "#c9d6ea", weight: 1.2, opacity: .55, dashArray: "6 4" },
+  rutas: { pane: "encima", color: "#e2b86b", weight: 1, opacity: .45 }
+};
+
+async function cargarCartografia() {
+  try {
+    const r = await fetch("cartografia.json");
+    const g = await r.json();
+    const ya = new Set(((estado.resumen && estado.resumen.localidades) || []).map(l => l.nombre));
+    ["Bahía Blanca", "Punta Alta", "Tornquist", "Médanos", "Ingeniero White", "General Daniel Cerri", "Sierra de la Ventana"].forEach(n => ya.add(n));
+    L.geoJSON(g, {
+      filter: f => f.properties.capa !== "ciudades" || !ya.has(f.properties.nombre),
+      style: f => ESTILO_CARTO[f.properties.capa] || {},
+      pointToLayer: (f, ll) => L.circleMarker(ll, { pane: "encima", radius: 2.5, color: "#c9d6ea", weight: 1, fillOpacity: 1, interactive: false })
+        .bindTooltip(f.properties.nombre, { permanent: true, direction: "right", className: "etiqueta-ciudad" + ((f.properties.rango ?? 9) > 8 ? " menor" : ""), offset: [3, 0] }),
+      interactive: false
+    }).addTo(mapa.m);
+  } catch (e) { /* sin cartografía: el mapa sigue funcionando */ }
 }
 
 function limitesRadar() {
   const r = estado.resumen && estado.resumen.radar;
   if (r && Array.isArray(r.bounds)) return r.bounds;
-  const c = (r && r.centro) || [-38.7342, -62.1654], km = (r && r.alcance_km) || 240;
-  const dLat = km / 110.574, dLon = km / (111.32 * Math.cos(c[0] * Math.PI / 180));
-  return [[c[0] - dLat, c[1] - dLon], [c[0] + dLat, c[1] + dLon]];
+  return cuadroRadar();
 }
 
 function urlImagen(ruta, clave) {
@@ -249,7 +294,7 @@ function pintarMapa() {
     if (num(l.lat) === null) return;
     const sel = l.id === estado.localidad;
     L.circle([l.lat, l.lon], { radius: (num(l.radio_km) || 4) * 1000, color: sel ? "#fff" : colorNivel(l.nivel), weight: sel ? 3 : 2, fillOpacity: .08 })
-      .bindTooltip(l.nombre, { permanent: sel || !CERCANAS.has(l.id), direction: LADO[l.id] || "top", className: "etiqueta-loc" })
+      .bindTooltip(l.nombre, { permanent: sel || !CERCANAS.has(l.id), direction: LADO[l.id] || "top", className: "etiqueta-loc" + (sel ? " elegida" : "") })
       .on("click", () => elegirLocalidad(l.id))
       .addTo(mapa.capas);
   });
@@ -266,7 +311,7 @@ function pintarMapa() {
     const info = `Intensidad ${esc(fmt(t.intensidad))}/6` +
       (t.direccion ? `<br>Va hacia el ${esc(NOMBRE_PUNTO[t.direccion] || t.direccion)} a ${esc(fmt(t.velocidad_kmh))} km/h` : "") +
       (num(t.tamano_km2) ? `<br>Tamaño ~${esc(fmt(t.tamano_km2))} km²` : "");
-    L.circleMarker([t.lat, t.lon], { radius: 7, color: "#fff", weight: 2, fillColor: "#ff6b5e", fillOpacity: 1 }).bindPopup(info).addTo(mapa.capas);
+    L.circleMarker([t.lat, t.lon], { radius: 5, color: "#fff", weight: 1.5, fillColor: "#ff6b5e", fillOpacity: 1 }).bindPopup(info).addTo(mapa.capas);
   });
 
   const edad = num(r.frame_edad_minutos);
