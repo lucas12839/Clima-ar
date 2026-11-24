@@ -9,6 +9,20 @@ Leer junto con `CLAUDE.md` (reglas fijas del repo).
 - Claude genera, arregla, prueba y sube los cambios (rama + pull request + merge).
 - El VPS no se actualiza solo desde GitHub: si hay que tocarlo, darle el comando a Lucas.
 
+## Pasos del 23/11/2026, noche (orden de Lucas: 1 reloj externo, 2 servidor, 3 seguimiento, 4 estaciones O/SO, interfaz al final)
+- **1 Reloj externo: hecho.** cron-job.org "ClimaAR vigilante" cada 10 min, clave `climaar-reloj-externo`
+  (solo Actions, vence 21/02/2027, igual que la del detector). Prueba 204 y corrida en GitHub a las 20:37.
+- **2 Servidor: hecho.** El VPS se actualiza solo desde main (`climaar-actualizar.timer`). El servicio
+  instalado queda con `.venv-ia` y tiempos 10/10 (distinto del de `deploy/`, a propósito: no tocar).
+- **3 Seguimiento, divisiones y uniones: hecho.** `herramientas/medir_division_union.py` (8 días).
+  La mayoría de lo que el seguimiento marca como división o unión son pedazos chicos que aparecen al lado
+  o parpadeos del detector; las de verdad (los pedazos suman lo que había y caen dentro de la tormenta de
+  antes) son ~24 por día. En esas, el centro del pedazo saltaba y el tamaño cambiaba aunque el sistema no.
+  Ahora se conserva el centro ponderado del sistema: salto de velocidad 67-70 → 24 km/h; cambio de tamaño
+  falso +66 % (unión) / −43 % (división) → ~0 % (ya no "crece" ni "se debilita" por eso); la hija hereda
+  dirección y pasado. Las trayectorias que se muestran (5b, flujo) no usan esto y no cambian.
+- **Sigue: 4 estaciones al oeste y suroeste.**
+
 ## Reparación de la sincronización de la cadena (23/11/2026, 17:00 hora de Argentina)
 Revisión de punta a punta con las corridas reales de GitHub. Lo que se encontró y se arregló:
 - **La IA rechazaba tormentas recién nacidas**: la validación comparaba la trayectoria del 5b con el
