@@ -1,0 +1,24 @@
+# Recolector de radares de otras zonas (Córdoba RMA1, Resistencia RMA4) para calibrar.
+# Proceso aparte del detector de Bahía: si falla, Bahía sigue igual.
+# Instalar: deploy/instalar_recoleccion.sh   Apagar: systemctl disable --now climaar-recoleccion.timer
+[Unit]
+Description=ClimaAR - recolectar radares de otras zonas (calibracion)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=climaar
+WorkingDirectory=/opt/Clima-ar
+# Solo biblioteca estándar: no depende de los entornos de Python del proyecto.
+ExecStart=/usr/bin/python3 /opt/Clima-ar/scripts/recoleccion_radares.py --destino /var/lib/climaar-recoleccion
+# Crea /var/lib/climaar-recoleccion con dueño climaar.
+StateDirectory=climaar-recoleccion
+TimeoutStartSec=240
+# Prioridad baja: el detector de Bahía siempre va primero.
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=25%
+MemoryMax=150M
+NoNewPrivileges=true
+PrivateTmp=true
