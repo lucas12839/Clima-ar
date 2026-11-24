@@ -98,6 +98,17 @@ if printf '%s\n' "$cambiados" | grep -qx -e requirements.txt -e TODO; then
       exit 1
     fi
     detalle="$detalle; paquetes: $paquetes"
+    # 23/11/2026: Playwright nuevo sin su navegador dejó al detector 27 min sin
+    # poder consultar SINARAME. Se baja el navegador de esa versión (si ya está, no
+    # hace nada) en la carpeta del usuario del detector, que es donde lo busca.
+    if printf '%s\n' "$paquetes" | grep -qi playwright; then
+      CASA="$(getent passwd "$USUARIO" | cut -d: -f6)"
+      if ! salida="$(como env HOME="${CASA:-$HOME}" "$PY" -m playwright install chromium 2>&1)"; then
+        resultado error "no se pudo bajar el navegador de Playwright: $salida" "${nuevo:0:12}"
+        exit 1
+      fi
+      detalle="$detalle; navegador al día"
+    fi
   fi
 fi
 
