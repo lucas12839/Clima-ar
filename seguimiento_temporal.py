@@ -27,14 +27,137 @@ UMBRAL_CAMBIO_RUMBO = 20.0
 MAX_DISTANCIA_BASE = 70.0
 MAX_DISTANCIA_SIN_OVERLAP = 85.0
 # Límite físico para asociar celdas SIN superposición entre frames:
-# 120 km/h (2,13 px/min en la grilla de 512 px) más un margen de 12 px por
+# 120 km/h (2,13 px/min en la grilla de 512 px) más un margen de 6 px por
 # cambio de forma del centroide. Sin esto se unían celdas distintas a
 # 50-80 km y salían velocidades de 150-850 km/h.
 VELOCIDAD_MAX_PX_MIN = 120.0 / 60.0 / (240.0 / 255.5)
-MARGEN_CENTROIDE_PX = 12.0
+# 24/11/2026: 12 -> 6 px (unos 6 km). Con la velocidad del flujo óptico la
+# predicción es mejor y alcanza un margen chico: error a 10 min 4,7 -> 4,5 km.
+MARGEN_CENTROIDE_PX = 6.0
 MAX_MISSED_FRAMES = 2
 MAX_HISTORIAL = 20
 MAX_REPLAY_FRAMES = 6
+
+
+# Velocidad por flujo óptico (24/11/2026). El centro de una tormenta se corre
+# cuando cambia de forma (crece de un lado, se desarma del otro) y eso daba
+# velocidades imposibles (1 de cada 5 tramos > 80 km/h, máximo 400 km/h).
+# El flujo óptico mide cómo se movió el eco entero entre las dos imágenes:
+# la velocidad sale del flujo (ver elegir_velocidad).
+KM_POR_PIXEL = 240.0 / 255.5
+VELOCIDAD_FISICA_MAX_KMH = 120.0
+PESO_MEDIDA_NUEVA = 0.4
+GIRO_BRUSCO_GRADOS = 90.0
+
+
+def kmh_a_px_min(kmh):
+    return kmh / 60.0 / KM_POR_PIXEL
+
+
+def px_min_a_kmh(px_min):
+    return px_min * 60.0 * KM_POR_PIXEL
+
+
+def ruta_frame(ts, actual=None):
+    """Imagen guardada de un horario (historico) o None."""
+    dt = parse_iso(ts)
+    if dt is None:
+        return None
+    nombre = dt.strftime("%Y%m%d%H%M%S") + ".png"
+    for carpeta in (BASE / "historico", BASE / "historico_tracking_backup"):
+        ruta = carpeta / nombre
+        if ruta.exists():
+            return ruta
+    if actual is not None:
+        candidato = Path(actual).parent / nombre
+        if candidato.exists():
+            return candidato
+    return None
+
+
+def flujo_entre(frame_previo, frame_actual, intervalo):
+    """Campo (u, v) en px/min entre dos imágenes, o None si no se puede.
+
+    Usa el mismo flujo óptico del nowcast (dBZ limpios, sin ecos fijos,
+    suavizado y acotado a 120 km/h)."""
+    if frame_previo is None or frame_actual is None or not intervalo or intervalo <= 0:
+        return None
+    try:
+        import contextlib
+        import io
+        import sys as _sys
+        raiz = Path(__file__).resolve().parent
+        for carpeta in (raiz, raiz / "scripts"):
+            if str(carpeta) not in _sys.path:
+                _sys.path.insert(0, str(carpeta))
+        from scripts import nowcast_flujo_optico as nf
+        with contextlib.redirect_stdout(io.StringIO()):
+            previo = nf.cargar_dbz(Path(frame_previo))
+            actual = nf.cargar_dbz(Path(frame_actual))
+        if previo is None or actual is None or previo.shape != actual.shape:
+            return None
+        clutter = nf.cargar_mascara_clutter(actual.shape)
+        flujo = nf.estimar_flujo(
+            nf.campo_limpio(previo, clutter),
+            nf.campo_limpio(actual, clutter),
+            float(intervalo),
+            nf.km_por_pixel(actual.shape[1]),
+        )
+        if not flujo.get("valido"):
+            return None
+        return flujo["u"], flujo["v"]
+    except Exception:
+        return None
+
+
+def velocidad_flujo_nucleo(flujo, nucleo):
+    """Vector medio (px/min) del flujo dentro del rectángulo del núcleo."""
+    if flujo is None:
+        return None
+    u, v = flujo
+    h, w = u.shape
+    medio_ancho = max(3.0, numero(nucleo.get("ancho"), 1) / 2.0)
+    medio_alto = max(3.0, numero(nucleo.get("alto"), 1) / 2.0)
+    x, y = numero(nucleo.get("x")), numero(nucleo.get("y"))
+    x0, x1 = max(0, int(x - medio_ancho)), min(w, int(x + medio_ancho) + 1)
+    y0, y1 = max(0, int(y - medio_alto)), min(h, int(y + medio_alto) + 1)
+    if x0 >= x1 or y0 >= y1:
+        return None
+    return float(u[y0:y1, x0:x1].mean()), float(v[y0:y1, x0:x1].mean())
+
+
+def elegir_velocidad(vx_centro, vy_centro, flujo_vec, previa=None):
+    """Velocidad final (px/min), si el tramo es dudoso y de dónde salió.
+
+    - Con flujo óptico se mide el movimiento con el flujo (el centro se corre
+      cuando la tormenta cambia de forma). Sin flujo, con el centro.
+    - Si había una velocidad anterior válida se suaviza (40 % la medida nueva,
+      60 % la anterior): una tormenta no cambia de velocidad de golpe.
+    - Si el centro implica más de 120 km/h el tramo queda dudoso (puede ser
+      otra tormenta). Sin flujo, en ese caso se mantiene la velocidad
+      anterior (o quieta si no había).
+
+    Medido con 10 días guardados (herramientas/medir_velocidades.py): tramos
+    > 80 km/h 21,8 % -> 1,5 %; máximo 403 -> 120 km/h; error de posición a
+    10/20/30 min 7,5/14,5/20,8 -> 4,7/8,9/13,2 km.
+    """
+    rapidez_centro = px_min_a_kmh(math.hypot(vx_centro, vy_centro))
+    salto = rapidez_centro > VELOCIDAD_FISICA_MAX_KMH
+    if flujo_vec is not None:
+        mx, my = flujo_vec
+        fuente = "FLUJO"
+    elif not salto:
+        mx, my = vx_centro, vy_centro
+        fuente = "CENTRO"
+    elif previa is not None:
+        return previa[0], previa[1], True, "ANTERIOR"
+    else:
+        return 0.0, 0.0, True, "SIN_DATO"
+    if previa is not None and math.hypot(previa[0], previa[1]) > 0:
+        mx = PESO_MEDIDA_NUEVA * mx + (1.0 - PESO_MEDIDA_NUEVA) * previa[0]
+        my = PESO_MEDIDA_NUEVA * my + (1.0 - PESO_MEDIDA_NUEVA) * previa[1]
+        fuente += "_SUAVIZADA"
+    return mx, my, salto, fuente
 
 
 def cargar_json(path, default=None):
@@ -1166,7 +1289,8 @@ def actualizar_track(
     nucleo,
     radar_ts,
     intervalo,
-    calidad
+    calidad,
+    flujo_vec=None,
 ):
 
     anterior_x = numero(
@@ -1251,24 +1375,26 @@ def actualizar_track(
         dy
     )
 
+    velocidad_centro = 0.0
+    movimiento_dudoso = False
+    fuente_velocidad = "SIN_INTERVALO"
+
     if intervalo_valido:
 
-        velocidad = (
-            desplazamiento
-            /
-            intervalo
+        velocidad_centro = desplazamiento / intervalo
+        velocidad_x, velocidad_y, movimiento_dudoso, fuente_velocidad = elegir_velocidad(
+            dx / intervalo,
+            dy / intervalo,
+            flujo_vec,
+            (
+                (anterior_velocidad_x, anterior_velocidad_y)
+                if movimiento_previo_valido
+                else None
+            ),
         )
-
-        velocidad_x = (
-            dx
-            /
-            intervalo
-        )
-
-        velocidad_y = (
-            dy
-            /
-            intervalo
+        velocidad = math.hypot(
+            velocidad_x,
+            velocidad_y
         )
 
         if movimiento_previo_valido:
@@ -1303,10 +1429,17 @@ def actualizar_track(
         aceleracion_x = 0.0
         aceleracion_y = 0.0
 
-    grados, direccion = rumbo(
-        dx,
-        dy
-    )
+    # El rumbo sale de la velocidad elegida, no del salto del centro.
+    if intervalo_valido and velocidad > 1e-6:
+        grados, direccion = rumbo(
+            velocidad_x,
+            velocidad_y
+        )
+    else:
+        grados, direccion = rumbo(
+            dx,
+            dy
+        )
 
     rumbo_comparable = (
         movimiento_previo_valido
@@ -1459,6 +1592,17 @@ def actualizar_track(
             estabilidad * 0.45
         )
 
+    # Un giro de más de 90° entre dos imágenes no es físico para una
+    # tormenta: el tramo queda dudoso y baja la confianza del movimiento.
+    if rumbo_comparable and cambio_rumbo >= GIRO_BRUSCO_GRADOS:
+        movimiento_dudoso = True
+
+    if movimiento_dudoso:
+        confianza_movimiento = min(
+            confianza_movimiento,
+            0.45
+        )
+
     historial = list(
         historial_previo
     )
@@ -1584,6 +1728,15 @@ def actualizar_track(
 
             "rumbo_comparable":
                 rumbo_comparable,
+
+            "velocidad_centro_pixeles_min":
+                velocidad_centro,
+
+            "movimiento_dudoso":
+                movimiento_dudoso,
+
+            "fuente_velocidad":
+                fuente_velocidad,
 
             "calidad_movimiento":
                 calidad,
@@ -2306,7 +2459,8 @@ def procesar_frame_secuencia(
     estado,
     nucleos,
     radar_ts,
-    anterior_ts
+    anterior_ts,
+    frame_actual=None,
 ):
 
     """Procesa un frame RMA10 manteniendo recuperación de tracks perdidos.
@@ -2723,6 +2877,25 @@ def procesar_frame_secuencia(
         "BAJA"
     )
 
+    # Flujo óptico del par de imágenes (una vez por frame). El flujo está
+    # indexado en la imagen anterior: se mide donde estaba cada tormenta.
+    flujo = None
+    if frame_actual is not None and asociaciones:
+        flujo = flujo_entre(
+            ruta_frame(anterior_ts, frame_actual),
+            frame_actual,
+            intervalo,
+        )
+    previo_por_track = {
+        asociacion["track"]["track_id"]: {
+            "x": numero(asociacion["track"].get("x")),
+            "y": numero(asociacion["track"].get("y")),
+            "ancho": numero(asociacion["track"].get("ancho", 1), 1),
+            "alto": numero(asociacion["track"].get("alto", 1), 1),
+        }
+        for asociacion in asociaciones
+    }
+
     for asociacion in asociaciones:
 
         track = asociacion["track"]
@@ -2739,7 +2912,11 @@ def procesar_frame_secuencia(
                 "intervalo_track",
                 intervalo
             ),
-            calidad
+            calidad,
+            velocidad_flujo_nucleo(
+                flujo,
+                previo_por_track.get(track["track_id"], nucleo)
+            ),
         )
 
         if era_recuperacion:
@@ -3202,7 +3379,8 @@ def procesar():
                 estado,
                 nucleos,
                 radar_ts,
-                estado_previo_ts
+                estado_previo_ts,
+                frame_actual=actual_path,
             )
         )
 
@@ -3263,7 +3441,8 @@ def procesar():
                     frame_ts,
                     estado.get(
                         "ultimo_radar_timestamp"
-                    )
+                    ),
+                    frame_actual=frame_path,
                 )
             )
 

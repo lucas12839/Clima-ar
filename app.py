@@ -2751,6 +2751,8 @@ def _tormentas_mapa() -> list[dict[str, Any]]:
             ),
             "tendencia_area": t.get("tendencia_area"),
             "confianza_movimiento": _num(t.get("confianza_movimiento"), 2),
+            # El centro saltó más de lo físico: puede ser otra tormenta.
+            "movimiento_dudoso": bool(t.get("movimiento_dudoso")),
             "tamano_km2": _num(
                 (t.get("pixeles") or 0) * kmpx * kmpx, 0
             ),

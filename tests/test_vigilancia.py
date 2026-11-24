@@ -165,3 +165,46 @@ class SaludPersistenteTest(unittest.TestCase):
 
     def test_sin_salud_no_falla(self):
         self.assertEqual(self.r(None), [])
+
+
+class AppPublicaTest(unittest.TestCase):
+    def _revisar(self, app):
+        d = SANO
+        return {p["clave"] for p in vg.revisar(AHORA, d["latido"], d["info"], d["radar_ts"], d["respaldo"],
+                                                d["cwop"], app=app)}
+
+    def test_app_que_responde_no_avisa(self):
+        self.assertEqual(self._revisar({"url": "x", "ok": True}), set())
+        self.assertEqual(self._revisar(None), set())
+
+    def test_app_caida_avisa(self):
+        self.assertEqual(self._revisar({"url": "x", "ok": False, "detalle": "timeout"}), {"app_publica"})
+
+    def test_probar_app_reintenta_y_un_fallo_no_alcanza(self):
+        llamadas = []
+
+        class Resp:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def abrir(req, timeout):
+            llamadas.append(req.full_url)
+            if len(llamadas) == 1:
+                raise OSError("corte")
+            return Resp()
+
+        r = vg.probar_app("https://ejemplo.org/", espera=0, abrir=abrir)
+        self.assertTrue(r["ok"])
+        self.assertEqual(llamadas[0], "https://ejemplo.org/api/health")
+
+        def siempre_falla(req, timeout):
+            raise OSError("caído")
+
+        r = vg.probar_app("https://ejemplo.org", intentos=2, espera=0, abrir=siempre_falla)
+        self.assertFalse(r["ok"])
+        self.assertIn("caído", r["detalle"])

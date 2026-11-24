@@ -74,3 +74,38 @@ def test_sin_imagenes_nuevas_no_falla(tmp_path):
     assert e["detenido"] is None
     assert e["radares"]["RMA1"]["imagenes"] == 0
     assert (tmp_path / "estado.json").exists()
+
+
+def test_mascaras_recoleccion_eco_fijo(tmp_path):
+    """Un eco que está siempre en el mismo lugar queda en la máscara; la lluvia que pasa, no."""
+    import numpy as np
+    from PIL import Image
+    from datetime import datetime, timedelta, timezone
+
+    import scripts.mascaras_recoleccion as mr
+
+    carpeta = tmp_path / "RMA1" / "20261124"
+    carpeta.mkdir(parents=True)
+    t0 = datetime(2026, 11, 24, tzinfo=timezone.utc)
+    for i in range(mr.MIN_IMAGENES):
+        rgba = np.zeros((60, 60, 4), dtype=np.uint8)
+        rgba[10:14, 10:14] = (200, 200, 0, 255)          # eco fijo
+        x = i % 50
+        rgba[40:44, x:x + 4] = (0, 200, 0, 255)          # lluvia que se mueve
+        nombre = (t0 + timedelta(minutes=10 * i)).strftime("%Y%m%d%H%M%S")
+        Image.fromarray(rgba, mode="RGBA").save(carpeta / f"{nombre}.png")
+    resumen = mr.procesar(tmp_path, ahora=t0)
+    assert "máscara nueva" in resumen["RMA1"]
+    with Image.open(tmp_path / "RMA1" / "mascara_ecos_fijos.png") as img:
+        m = np.asarray(img) > 0
+    assert m[12, 12]
+    assert not m[42, 20]
+    # Al día: no se rehace antes de 24 h.
+    assert mr.procesar(tmp_path, ahora=t0 + timedelta(hours=1))["RMA1"] == "al día"
+
+
+def test_mascaras_recoleccion_faltan_imagenes(tmp_path):
+    import scripts.mascaras_recoleccion as mr
+
+    (tmp_path / "RMA4" / "20261124").mkdir(parents=True)
+    assert mr.procesar(tmp_path)["RMA4"].startswith("faltan imágenes")

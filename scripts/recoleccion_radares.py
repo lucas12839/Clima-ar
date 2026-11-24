@@ -189,7 +189,30 @@ def main(argv=None):
     )
     print(f"recoleccion: {resumen}; ocupado {estado['ocupado_mb']} MB"
           + (f"; DETENIDA: {estado['detenido']}" if estado["detenido"] else ""))
+    armar_mascaras(a.destino)
     return 0
+
+
+def armar_mascaras(destino, timeout=180):
+    """Máscara de ecos fijos de cada radar, una vez por día (scripts/mascaras_recoleccion.py).
+
+    Necesita numpy y Pillow: usa el Python del proyecto. Si no está o falla,
+    la recolección sigue igual."""
+    raiz = Path(__file__).resolve().parents[1]
+    for py in (raiz / ".venv-ia/bin/python", raiz / ".venv/bin/python"):
+        if py.exists():
+            break
+    else:
+        return
+    try:
+        import subprocess
+        salida = subprocess.run([str(py), str(raiz / "scripts/mascaras_recoleccion.py"), "--destino", str(destino)],
+                                capture_output=True, text=True, timeout=timeout)
+        texto = (salida.stdout or salida.stderr or "").strip()
+        if texto:
+            print(texto[-600:])
+    except Exception as exc:  # nunca frena la recolección
+        print(f"mascaras: no se pudieron armar ({type(exc).__name__})")
 
 
 if __name__ == "__main__":

@@ -512,6 +512,13 @@ def guardar_log(registro):
             ) + "\n"
         )
 
+    # Solo los últimos 30 días (antes crecía sin fin).
+    try:
+        from recorte_historial import recortar_jsonl
+    except ImportError:
+        from scripts.recorte_historial import recortar_jsonl
+    recortar_jsonl(LOG_FILE, campo="actualizado_utc", otros=("obsTime_utc",))
+
 
 def conservar_ultima_observacion(
     error

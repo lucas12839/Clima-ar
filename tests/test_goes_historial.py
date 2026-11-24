@@ -72,3 +72,20 @@ def test_reemplaza_si_llega_mas_satelite_para_la_misma_imagen(tmp_path):
     assert len(renglones) == 1 and json.loads(renglones[0])["productos"]["abi_c13"] == "sincronizado"
     # Al revés no: un ciclo sin satélite no pisa uno completo.
     assert h.guardar(sin, tmp_path).startswith("ya guardado")
+
+
+def test_dias_cerrados_se_comprimen_y_se_siguen_leyendo(tmp_path):
+    h.guardar(_estado([T]), tmp_path)                                   # 19/11
+    h.guardar(_estado([T], frame="2026-11-22T10:00:00Z"), tmp_path)     # 22/11: el 19 ya cerró
+    assert not (tmp_path / "2026-11-19.jsonl").exists()
+    assert (tmp_path / "2026-11-19.jsonl.gz").exists()
+    assert (tmp_path / "2026-11-22.jsonl").exists()                     # el día en curso sigue abierto
+    casos = h.leer(datetime(2026, 11, 19, 0, 0, tzinfo=timezone.utc),
+                   datetime(2026, 11, 22, 23, 0, tzinfo=timezone.utc), tmp_path)
+    assert [c["frame_radar_utc"] for c in casos] == [FRAME, "2026-11-22T10:00:00Z"]
+    # Lo lee también la verificación del puntaje.
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import verificar_puntaje as vp
+    assert vp.leer_jsonl(tmp_path / "2026-11-19.jsonl")[0]["frame_radar_utc"] == FRAME

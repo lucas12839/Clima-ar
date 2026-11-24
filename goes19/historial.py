@@ -9,11 +9,15 @@ aciertos, calibración del puntaje del punto 4).
 Archivos: data/goes19/historial/AAAA-MM-DD.jsonl (día en hora UTC, igual que
 la hora del radar). Solo los números que hacen falta: ~0,3 KB por tormenta.
 Se guarda solo cuando hay tormentas y una sola vez por imagen de radar.
-Se conservan 400 días.
+Se conservan 400 días. Los días que ya cerraron (más de 2 días) se comprimen
+(AAAA-MM-DD.jsonl.gz, ~10 veces más chico): 400 días sin comprimir eran
+~300 MB dentro del repositorio (24/11/2026).
 """
 from __future__ import annotations
 
+import gzip
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +25,7 @@ from typing import Any
 BASE_DIR = Path(__file__).resolve().parent.parent
 CARPETA = BASE_DIR / "data" / "goes19" / "historial"
 DIAS_CONSERVAR = 400
+DIAS_SIN_COMPRIMIR = 2
 VERSION = 1
 
 
@@ -107,15 +112,49 @@ def _completitud(caso: dict) -> int:
     return sum(1 for v in (caso.get("productos") or {}).values() if v == "sincronizado")
 
 
+def _dia(p: Path):
+    nombre = p.name.split(".", 1)[0]
+    try:
+        return datetime.strptime(nombre, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _comprimir(p: Path) -> None:
+    gz = p.with_name(p.name + ".gz")
+    tmp = gz.with_name(gz.name + ".tmp")
+    with p.open("rb") as origen, gzip.open(tmp, "wb", compresslevel=9) as destino:
+        destino.write(origen.read())
+    os.replace(tmp, gz)
+    p.unlink(missing_ok=True)
+
+
 def _limpiar(carpeta: Path, hoy: datetime) -> None:
     limite = (hoy - timedelta(days=DIAS_CONSERVAR)).date()
-    for p in carpeta.glob("*.jsonl"):
-        try:
-            dia = datetime.strptime(p.stem, "%Y-%m-%d").date()
-        except ValueError:
+    cerrado = (hoy - timedelta(days=DIAS_SIN_COMPRIMIR)).date()
+    for p in list(carpeta.glob("*.jsonl")) + list(carpeta.glob("*.jsonl.gz")):
+        dia = _dia(p)
+        if dia is None:
             continue
         if dia < limite:
             p.unlink(missing_ok=True)
+        elif p.suffix == ".jsonl" and dia < cerrado:
+            try:
+                _comprimir(p)
+            except OSError:
+                pass  # se reintenta la próxima vez
+
+
+def leer_renglones(path: Path) -> list[str]:
+    """Renglones de un día, esté comprimido o no (AAAA-MM-DD.jsonl[.gz])."""
+    renglones = []
+    gz = path.with_name(path.name + ".gz")
+    if gz.exists():
+        with gzip.open(gz, "rt", encoding="utf-8") as f:
+            renglones += f.read().splitlines()
+    if path.exists():
+        renglones += path.read_text(encoding="utf-8").splitlines()
+    return renglones
 
 
 def guardar(estado: dict, carpeta: Path = CARPETA) -> str:
@@ -158,15 +197,13 @@ def leer(desde: datetime, hasta: datetime, carpeta: Path = CARPETA) -> list[dict
     salida = []
     dia = desde.date()
     while dia <= hasta.date():
-        path = carpeta / f"{dia:%Y-%m-%d}.jsonl"
-        if path.exists():
-            for renglon in path.read_text(encoding="utf-8").splitlines():
-                try:
-                    caso = json.loads(renglon)
-                    t = datetime.fromisoformat(caso["frame_radar_utc"].replace("Z", "+00:00"))
-                except (ValueError, KeyError):
-                    continue
-                if desde <= t <= hasta:
-                    salida.append(caso)
+        for renglon in leer_renglones(carpeta / f"{dia:%Y-%m-%d}.jsonl"):
+            try:
+                caso = json.loads(renglon)
+                t = datetime.fromisoformat(caso["frame_radar_utc"].replace("Z", "+00:00"))
+            except (ValueError, KeyError):
+                continue
+            if desde <= t <= hasta:
+                salida.append(caso)
         dia += timedelta(days=1)
     return salida

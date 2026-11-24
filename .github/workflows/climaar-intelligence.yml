@@ -87,14 +87,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # Solo el último estado (antes bajaba los ~540 MB de historia: 25-36 s).
           fetch-depth: 1
           ref: main
 
       - name: Configurar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
@@ -835,7 +835,7 @@ jobs:
             2>/dev/null || true
 
       - name: Publicar artefacto final
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: climaar-resultado-final
           path: /tmp/climaar-final

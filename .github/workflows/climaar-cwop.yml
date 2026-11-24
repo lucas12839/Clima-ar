@@ -54,11 +54,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 1
           ref: main
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Escuchar estaciones CWOP (solo lectura)
@@ -71,7 +71,7 @@ jobs:
           assert d.get("collector") == "cwop" and isinstance(d.get("stations"), list)
           print("estaciones válidas:", d.get("stations_validas"))
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cwop
           path: data/ia/estaciones/observaciones/cwop_actual.json
@@ -88,11 +88,11 @@ jobs:
     # archivo (cwop_actual.json, que nadie más toca), así que alcanza con el
     # rebase con reintentos de abajo.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 1
           ref: main
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cwop
           path: data/ia/estaciones/observaciones/

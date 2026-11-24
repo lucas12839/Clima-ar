@@ -31,7 +31,7 @@ jobs:
       # ============================================================
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # Solo el último estado (antes bajaba los ~540 MB de historia: 25-36 s).
           fetch-depth: 1
@@ -42,7 +42,7 @@ jobs:
       # ============================================================
 
       - name: Configurar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
@@ -986,7 +986,7 @@ jobs:
 
       - name: Publicar artefacto Radar RMA10
         if: steps.reclamar.outputs.procesar == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: radar-rma10
           path: /tmp/radar-rma10
