@@ -1,0 +1,19 @@
+# Página y datos de ClimaAR desde el VPS (24/11/2026, reemplaza a Netlify y Render).
+# Lo instala deploy/instalar_web.sh, que cambia DOMINIO por la dirección elegida.
+# Caddy saca y renueva solo el certificado de seguridad (https).
+DOMINIO {
+	encode gzip
+
+	# Datos: el servidor de la app (climaar-api) en el puerto 8000.
+	handle_path /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Página: los archivos de frontend/ de la copia del repo (se actualiza
+	# sola desde main cada 10 min, sin publicar nada).
+	handle {
+		root * /opt/Clima-ar/frontend
+		header Cache-Control "no-cache"
+		file_server
+	}
+}
