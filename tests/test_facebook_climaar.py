@@ -115,11 +115,32 @@ def test_imagenes_se_arman():
     assert Image.open(io.BytesIO(png)).size == (1080, 1080)
 
 
-def test_sin_clave_no_publica(monkeypatch):
-    monkeypatch.delenv("FB_PAGE_TOKEN", raising=False)
-    monkeypatch.delenv("FB_PAGE_ID", raising=False)
-    with pytest.raises(RuntimeError, match="faltan"):
-        fb.publicar_foto("hola", b"png")
+def test_sin_webhook_no_publica(monkeypatch):
+    monkeypatch.delenv("MAKE_WEBHOOK_URL", raising=False)
+    with pytest.raises(RuntimeError, match="falta MAKE_WEBHOOK_URL"):
+        fb.publicar("hola", b"png", "manana", AHORA)
+
+
+def test_publicar_manda_texto_e_imagen_a_make(tmp_path, monkeypatch):
+    import requests
+
+    monkeypatch.setenv("MAKE_WEBHOOK_URL", "https://hook.make.com/secreto")
+    monkeypatch.setattr(fb, "PUBLICO", tmp_path / "publico")
+    enviado = {}
+
+    class Resp:
+        status_code = 200
+        text = "Accepted"
+
+    def post(url, json, timeout):
+        enviado.update(url=url, json=json)
+        return Resp()
+
+    monkeypatch.setattr(requests, "post", post)
+    url = fb.publicar("hola", b"PNG", "tormenta", AHORA)
+    assert url == f"{fb.URL_PUBLICA}/publicaciones/20261113-153600-tormenta.png"
+    assert (tmp_path / "publico" / "20261113-153600-tormenta.png").read_bytes() == b"PNG"
+    assert enviado["json"] == {"mensaje": "hola", "imagen_url": url, "tipo": "tormenta"}
 
 
 def test_ciclo_apagado_no_publica_pero_registra(tmp_path, monkeypatch):
@@ -128,7 +149,7 @@ def test_ciclo_apagado_no_publica_pero_registra(tmp_path, monkeypatch):
     r = resumen(loc("punta_alta", 3, nombre="Punta Alta"))
     monkeypatch.setattr(fb, "pedir_json", lambda ruta, timeout=30: r if ruta == "/resumen" else {})
     monkeypatch.setattr(fb, "pedir_bytes", lambda ruta, timeout=30: None)
-    monkeypatch.setattr(fb, "publicar_foto", lambda *a: pytest.fail("no tenía que publicar"))
+    monkeypatch.setattr(fb, "publicar", lambda *a: pytest.fail("no tenía que publicar"))
     hechos = fb.ciclo(ahora=AHORA)
     assert hechos == ["tormenta: armado sin publicar"]
     # Ya registrada: en el ciclo siguiente no se repite.

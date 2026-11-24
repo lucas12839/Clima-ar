@@ -16,9 +16,13 @@ del servidor de la app que corre en el mismo VPS (http://127.0.0.1:8000) y:
 
 Cada texto lleva el enlace a la página oficial de ClimaAR (sin enlace al SMN).
 
+Publica a través de Make.com (servicio que ya tiene permiso de Meta para
+publicar en páginas): ClimaAR le manda el texto y la dirección de la imagen,
+y Make lo publica en la página. La imagen la sirve la página de ClimaAR en
+/publicaciones/ (deploy/Caddyfile).
+
 Configuración (/etc/climaar-facebook.env, solo la lee root):
-  FB_PAGE_ID=...        número de la página
-  FB_PAGE_TOKEN=...     clave de la página (no se guarda en el repositorio)
+  MAKE_WEBHOOK_URL=...  dirección privada del escenario de Make (no va al repositorio)
   FB_ACTIVO=1           0 = no publica nada (prueba)
 Estado: /var/lib/climaar-facebook/estado.json (qué y cuándo se publicó).
 
@@ -41,7 +45,6 @@ RAIZ = Path(__file__).resolve().parents[1]
 TZ_AR = timezone(timedelta(hours=-3))
 API = os.environ.get("CLIMAAR_API", "http://127.0.0.1:8000").rstrip("/")
 URL_PUBLICA = os.environ.get("CLIMAAR_URL_PUBLICA", "https://climaar-bahiablanca.duckdns.org")
-GRAPH = "https://graph.facebook.com/" + os.environ.get("FB_GRAPH_VERSION", "v23.0")
 ESTADO = Path(os.environ.get("CLIMAAR_FB_ESTADO", "/var/lib/climaar-facebook/estado.json"))
 
 HORA_MANANA = (7, 30)
@@ -499,29 +502,52 @@ def imagen_tormenta(sit: dict, resumen: dict, radar_png: bytes | None, ahora: da
 # ----------------------------------------------------------------------------
 # Facebook
 # ----------------------------------------------------------------------------
-def publicar_foto(texto: str, png: bytes) -> str:
-    """Publica una foto con texto en la página. Devuelve el número de publicación."""
+PUBLICO = Path(os.environ.get("CLIMAAR_FB_PUBLICO", "/var/lib/climaar-facebook/publico"))
+DIAS_IMAGENES = 3
+
+
+def guardar_imagen_publica(png: bytes, tipo: str, ahora: datetime) -> str:
+    """Deja la imagen donde la sirve la página (/publicaciones/...) y devuelve su dirección.
+
+    Make la descarga de ahí para publicarla. Se borran las de más de 3 días."""
+    PUBLICO.mkdir(parents=True, exist_ok=True)
+    nombre = f"{ahora.astimezone(TZ_AR):%Y%m%d-%H%M%S}-{tipo}.png"
+    tmp = PUBLICO / f".{nombre}.tmp"
+    tmp.write_bytes(png)
+    os.replace(tmp, PUBLICO / nombre)
+    limite = time_now() - DIAS_IMAGENES * 86400
+    for viejo in PUBLICO.glob("*.png"):
+        try:
+            if viejo.stat().st_mtime < limite:
+                viejo.unlink()
+        except OSError:
+            pass
+    return f"{URL_PUBLICA}/publicaciones/{nombre}"
+
+
+def time_now() -> float:
+    import time
+
+    return time.time()
+
+
+def publicar(texto: str, png: bytes, tipo: str, ahora: datetime) -> str:
+    """Publica en la página de Facebook a través de Make (24/11/2026).
+
+    Make ya tiene permiso de Meta para publicar en páginas: ClimaAR le manda el
+    texto y la dirección de la imagen a su "webhook" (dirección privada que da
+    Make) y Make lo publica. Sin app propia ni verificación de empresa."""
     import requests
 
-    pagina = os.environ.get("FB_PAGE_ID", "").strip()
-    clave = os.environ.get("FB_PAGE_TOKEN", "").strip()
-    if not pagina or not clave:
-        raise RuntimeError("faltan FB_PAGE_ID o FB_PAGE_TOKEN en /etc/climaar-facebook.env")
-    r = requests.post(
-        f"{GRAPH}/{pagina}/photos",
-        data={"message": texto, "published": "true", "access_token": clave},
-        files={"source": ("climaar.png", png, "image/png")},
-        timeout=60,
-    )
-    try:
-        cuerpo = r.json()
-    except ValueError:
-        cuerpo = {}
-    if r.status_code != 200 or "id" not in cuerpo:
-        error = (cuerpo.get("error") or {}) if isinstance(cuerpo, dict) else {}
-        # Nunca se escribe la clave en el registro.
-        raise RuntimeError(f"Facebook respondió {r.status_code}: {error.get('message') or r.text[:200]}")
-    return str(cuerpo.get("post_id") or cuerpo["id"])
+    webhook = os.environ.get("MAKE_WEBHOOK_URL", "").strip()
+    if not webhook.startswith("https://"):
+        raise RuntimeError("falta MAKE_WEBHOOK_URL en /etc/climaar-facebook.env")
+    imagen = guardar_imagen_publica(png, tipo, ahora)
+    r = requests.post(webhook, json={"mensaje": texto, "imagen_url": imagen, "tipo": tipo}, timeout=60)
+    if r.status_code >= 300:
+        # Nunca se escribe la dirección del webhook en el registro.
+        raise RuntimeError(f"Make respondió {r.status_code}: {r.text[:200]}")
+    return imagen
 
 
 # ----------------------------------------------------------------------------
@@ -546,7 +572,7 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
                 return
             post = None
         else:
-            post = publicar_foto(texto, png)
+            post = publicar(texto, png, tipo, ahora)
             hechos.append(f"{tipo}: publicado {post}")
         estado.setdefault("publicaciones", []).append(
             dict(extra, tipo=tipo, utc=ahora.isoformat(), id=post))

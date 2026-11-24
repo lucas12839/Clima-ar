@@ -9,6 +9,17 @@ DOMINIO {
 		reverse_proxy 127.0.0.1:8000
 	}
 
+	# Imágenes de las publicaciones de Facebook (scripts/facebook_climaar.py):
+	# Make las descarga de acá para publicarlas. Solo imágenes .png.
+	handle_path /publicaciones/* {
+		@png path *.png
+		handle @png {
+			root * /var/lib/climaar-facebook/publico
+			file_server
+		}
+		respond 404
+	}
+
 	# Página: los archivos de frontend/ de la copia del repo (se actualiza
 	# sola desde main cada 10 min, sin publicar nada).
 	handle {
