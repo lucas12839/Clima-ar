@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
@@ -625,7 +626,38 @@ def png_is_valid(
 # METEOROLOGÍA EXTERNA
 # ============================================================
 
+_CURRENT_CACHE: dict[str, Any] = {
+    "ts": 0.0,
+    "data": None,
+}
+
+CURRENT_CACHE_SECONDS = 300.0
+
+
 def get_openmeteo_data() -> (
+    dict[str, Any] | None
+):
+    """Tiempo actual. Se guarda 5 min: no hace falta pedirlo en cada visita."""
+
+    now = time.time()
+
+    if (
+        _CURRENT_CACHE["data"] is not None
+        and now - _CURRENT_CACHE["ts"] < CURRENT_CACHE_SECONDS
+    ):
+        return _CURRENT_CACHE["data"]
+
+    data = _fetch_openmeteo_current()
+
+    if data is not None:
+        _CURRENT_CACHE["ts"] = now
+        _CURRENT_CACHE["data"] = data
+        return data
+
+    return _CURRENT_CACHE["data"]
+
+
+def _fetch_openmeteo_current() -> (
     dict[str, Any] | None
 ):
 
@@ -2443,6 +2475,336 @@ def debug() -> (
         "sincronizacion":
             synchronized_frame_status(),
 
+        **radar_metadata(),
+    }
+
+
+# ============================================================
+# RESUMEN PARA LA PANTALLA GENERAL (interfaz 24/11/2026)
+# ============================================================
+# Un solo pedido chico con lo que necesita la vista "General":
+# tiempo actual, estado por localidad, tormentas sobre el mapa.
+# La vista "Meteorólogos" sigue usando /inteligencia y el resto.
+
+SEGUIMIENTO_FILE = RADAR_DIR / "seguimiento" / "estado.json"
+EVOLUCION_FILE = RADAR_DIR / "seguimiento" / "prediccion_evolucion.json"
+LOCALIDADES_FILE = BASE_DIR / "config" / "localidades.json"
+
+# Geometría del RMA10 (igual que scripts/rma10_features.py).
+_RADAR_LAT = -38.7342
+_RADAR_LON = -62.1654
+_RADAR_RADIUS_KM = 240.0
+_RADAR_PX = 512
+_KM_LAT = 110.574
+_KM_LON = 111.320 * math.cos(math.radians(_RADAR_LAT))
+
+# Puntos de recorrido que se mandan por tormenta (2 h a 10 min).
+_MAX_RECORRIDO = 12
+
+
+def _pixel_a_latlon(x: Any, y: Any) -> list[float] | None:
+    try:
+        x = float(x)
+        y = float(y)
+    except (TypeError, ValueError):
+        return None
+
+    if not (math.isfinite(x) and math.isfinite(y)):
+        return None
+
+    c = (_RADAR_PX - 1) / 2.0
+    este = (x - c) / c * _RADAR_RADIUS_KM
+    norte = (c - y) / c * _RADAR_RADIUS_KM
+
+    return [
+        round(_RADAR_LAT + norte / _KM_LAT, 4),
+        round(_RADAR_LON + este / _KM_LON, 4),
+    ]
+
+
+def _km_por_pixel() -> float:
+    return _RADAR_RADIUS_KM / ((_RADAR_PX - 1) / 2.0)
+
+
+def _num(value: Any, digits: int = 1) -> float | None:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(v, digits) if math.isfinite(v) else None
+
+
+def _tiempo_actual() -> dict[str, Any]:
+    """Open-Meteo si responde; si no, lo último que guardó Intelligence."""
+
+    meteo = get_openmeteo_data()
+
+    if meteo:
+        return {**meteo, "disponible": True}
+
+    estado = read_json(METEO_FILE) or {}
+    amb = estado.get("ambiente_actual")
+
+    if not isinstance(amb, dict):
+        return {"disponible": False}
+
+    obs = estado.get("observacion_sazb")
+    obs = obs if isinstance(obs, dict) and obs.get("disponible") else {}
+
+    return {
+        "disponible": True,
+        "temperatura": obs.get("temperatura_c", amb.get("temperature_2m")),
+        "punto_rocio": obs.get("punto_rocio_c", amb.get("dew_point_2m")),
+        "presion": obs.get("presion_hpa", amb.get("pressure_msl")),
+        "viento_vel": amb.get("wind_speed_10m"),
+        "viento_dir": amb.get("wind_direction_10m"),
+        "rafagas": amb.get("wind_gusts_10m"),
+        "humedad": amb.get("relative_humidity_2m"),
+        "nubosidad": amb.get("cloud_cover"),
+        "precipitacion": amb.get("precipitation"),
+        "sensacion_termica": None,
+        "codigo_tiempo": None,
+        "fuente": "respaldo (modelo europeo y aeropuerto)",
+    }
+
+
+def _fenomeno_corto(item: Any) -> dict[str, Any]:
+    item = item if isinstance(item, dict) else {}
+    return {
+        "grado": item.get("grado"),
+        "categoria": item.get("categoria"),
+        "confirmado": bool(item.get("confirmado")),
+        "en_calibracion": bool(item.get("en_calibracion")),
+        "fuente": item.get("fuente"),
+    }
+
+
+def _localidades_resumen() -> list[dict[str, Any]]:
+    config = read_json(LOCALIDADES_FILE) or {}
+    final = read_json(DECISION_FILE) or {}
+    tipo = final.get("tipo_tiempo")
+    tipo = tipo if isinstance(tipo, dict) else {}
+    por_loc = tipo.get("localidades")
+    por_loc = por_loc if isinstance(por_loc, dict) else {}
+
+    salida = []
+
+    for loc in config.get("localidades") or []:
+        if not isinstance(loc, dict) or not loc.get("id"):
+            continue
+
+        datos = por_loc.get(loc["id"])
+        datos = datos if isinstance(datos, dict) else {}
+        fen = datos.get("fenomenos")
+        fen = fen if isinstance(fen, dict) else {}
+        calif = datos.get("calificacion")
+        calif = calif if isinstance(calif, dict) else {}
+        llegada = datos.get("llegada")
+
+        salida.append({
+            "id": loc["id"],
+            "nombre": loc.get("nombre"),
+            "lat": loc.get("lat"),
+            "lon": loc.get("lon"),
+            "radio_km": loc.get("radio_km"),
+            "con_datos": bool(datos),
+            "nivel": calif.get("grado"),
+            "etiqueta": calif.get("etiqueta"),
+            "resumen_ahora": datos.get("resumen_ahora"),
+            "resumen_al_llegar": datos.get("resumen_al_llegar"),
+            "minutos_hasta_llegada": _num(
+                datos.get("minutos_hasta_llegada"), 0
+            ),
+            "llegada": llegada if isinstance(llegada, dict) else None,
+            "sobre_la_localidad": datos.get("sobre_la_localidad"),
+            "fenomenos": {
+                k: _fenomeno_corto(fen.get(k))
+                for k in ("lluvia", "viento", "granizo", "electrica")
+            },
+        })
+
+    return salida
+
+
+def _tormentas_mapa() -> list[dict[str, Any]]:
+    seguimiento = read_json(SEGUIMIENTO_FILE) or {}
+    evolucion = read_json(EVOLUCION_FILE) or {}
+
+    activos = {
+        str(t) for t in seguimiento.get("tracks_activos") or []
+    }
+
+    pron: dict[str, list[dict[str, Any]]] = {}
+
+    for n in evolucion.get("nucleos") or []:
+        if not isinstance(n, dict) or not n.get("pronostico_disponible"):
+            continue
+        puntos = []
+        for h in n.get("horizontes") or []:
+            if not isinstance(h, dict):
+                continue
+            ll = _pixel_a_latlon(h.get("x_estimado"), h.get("y_estimado"))
+            if ll:
+                puntos.append({
+                    "minutos": h.get("horizonte_minutos"),
+                    "lat": ll[0],
+                    "lon": ll[1],
+                    "incertidumbre_km": _num(
+                        (h.get("incertidumbre_pixeles") or 0)
+                        * _km_por_pixel(),
+                        1,
+                    ),
+                })
+        pron[str(n.get("track_id"))] = puntos
+
+    kmpx = _km_por_pixel()
+    salida = []
+
+    for t in seguimiento.get("tracks") or []:
+        if not isinstance(t, dict):
+            continue
+        tid = str(t.get("track_id"))
+        if tid not in activos or not t.get("presente_en_ultimo_frame"):
+            continue
+
+        pos = _pixel_a_latlon(t.get("x"), t.get("y"))
+        if not pos:
+            continue
+
+        historial = [
+            h for h in (t.get("historial") or []) if isinstance(h, dict)
+        ][-_MAX_RECORRIDO:]
+        recorrido = _recorrido_continuo(historial)
+
+        vel = _num(t.get("velocidad_pixeles_min"), 4)
+
+        if seguimiento.get("ultimo_radar_timestamp") == evolucion.get(
+            "radar_timestamp"
+        ):
+            futuro = pron.get(tid, [])
+            fuente_futuro = "prediccion_evolucion"
+        else:
+            # La predicción guardada es de un frame anterior: arrancaría
+            # desde otra posición. Se usa el movimiento actual de la celda.
+            futuro = _extrapolar(t)
+            fuente_futuro = "movimiento_actual"
+
+        salida.append({
+            "id": tid,
+            "lat": pos[0],
+            "lon": pos[1],
+            "intensidad": t.get("intensidad"),
+            "nivel_intensidad": t.get("nivel_intensidad"),
+            "direccion": t.get("direccion"),
+            "rumbo_grados": _num(t.get("rumbo_grados"), 0),
+            "velocidad_kmh": (
+                round(vel * kmpx * 60.0, 0) if vel is not None else None
+            ),
+            "tendencia_area": t.get("tendencia_area"),
+            "confianza_movimiento": _num(t.get("confianza_movimiento"), 2),
+            "tamano_km2": _num(
+                (t.get("pixeles") or 0) * kmpx * kmpx, 0
+            ),
+            "recorrido": recorrido,
+            "pronostico": futuro,
+            "pronostico_fuente": fuente_futuro,
+        })
+
+    salida.sort(key=lambda x: -(x.get("intensidad") or 0))
+    return salida
+
+
+# Salto máximo creíble entre dos puntos del recorrido: 120 km/h
+# (tope físico del proyecto) más 5 km de margen por el tamaño de la celda.
+_VEL_MAX_KMH = 120.0
+
+
+def _recorrido_continuo(historial: list[dict[str, Any]]) -> list[list[float]]:
+    """Recorrido hacia atrás hasta el primer salto imposible.
+
+    Si el seguimiento heredó el número de otra celda (división o unión),
+    el salto no se dibuja como si la tormenta hubiera viajado.
+    """
+
+    puntos = []
+    for h in historial:
+        ll = _pixel_a_latlon(h.get("x"), h.get("y"))
+        if ll:
+            puntos.append((parse_iso(h.get("timestamp")), ll))
+
+    if not puntos:
+        return []
+
+    salida = [puntos[-1][1]]
+    for (t_prev, a), (t_sig, b) in zip(
+        reversed(puntos[:-1]), reversed(puntos[1:])
+    ):
+        minutos = 10.0
+        if t_prev and t_sig:
+            minutos = max((t_sig - t_prev).total_seconds() / 60.0, 1.0)
+        dist = math.hypot(
+            (a[0] - b[0]) * _KM_LAT, (a[1] - b[1]) * _KM_LON
+        )
+        if dist > _VEL_MAX_KMH * minutos / 60.0 + 5.0:
+            break
+        salida.append(a)
+
+    salida.reverse()
+    return salida
+
+
+def _extrapolar(t: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        vx = float(t.get("velocidad_x_pixeles_min"))
+        vy = float(t.get("velocidad_y_pixeles_min"))
+        x = float(t.get("x"))
+        y = float(t.get("y"))
+    except (TypeError, ValueError):
+        return []
+
+    if not all(math.isfinite(v) for v in (vx, vy, x, y)):
+        return []
+
+    # Celda quieta o recién aparecida: no hay hacia dónde dibujar.
+    if math.hypot(vx, vy) < 0.02:
+        return []
+
+    salida = []
+    for minutos in (10, 20, 30):
+        ll = _pixel_a_latlon(x + vx * minutos, y + vy * minutos)
+        if ll:
+            salida.append({
+                "minutos": minutos,
+                "lat": ll[0],
+                "lon": ll[1],
+                "incertidumbre_km": None,
+            })
+    return salida
+
+
+@app.get("/resumen")
+def resumen() -> dict[str, Any]:
+    """Todo lo que usa la vista General, en un pedido chico."""
+
+    final = read_json(DECISION_FILE) or {}
+    tipo = final.get("tipo_tiempo")
+    tipo = tipo if isinstance(tipo, dict) else {}
+    amb = tipo.get("ambiente")
+    amb = amb if isinstance(amb, dict) else {}
+    geo = radar_geo()
+
+    return {
+        "ciudad": CITY,
+        "tiempo_actual": _tiempo_actual(),
+        "localidades": _localidades_resumen(),
+        "tormentas": _tormentas_mapa(),
+        "ambiente": amb.get("etiqueta"),
+        "radar": {
+            "bounds": geo.get("bounds"),
+            "centro": [_RADAR_LAT, _RADAR_LON],
+            "alcance_km": _RADAR_RADIUS_KM,
+            "imagen": "/radar/imagen",
+        },
         **radar_metadata(),
     }
 
