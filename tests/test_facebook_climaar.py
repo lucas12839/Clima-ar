@@ -148,8 +148,8 @@ def test_publicar_manda_los_tres_campos_a_make(tmp_path, monkeypatch):
         enviado["revisada"] = url
         return Resp(200, (tmp_path / "publico" / url.rsplit("/", 1)[-1]).read_bytes())
 
-    def post(url, json, timeout):
-        enviado.update(url=url, json=json)
+    def post(url, data, files, timeout):
+        enviado.update(url=url, data=data, files=files)
         return Resp()
 
     monkeypatch.setattr(requests, "get", get)
@@ -157,7 +157,8 @@ def test_publicar_manda_los_tres_campos_a_make(tmp_path, monkeypatch):
     url = fb.publicar("hola", png, "advertencia", AHORA)
     assert url == "https://climaar-bahiablanca.duckdns.org/publicaciones/20261113-153600-advertencia.png"
     assert enviado["revisada"] == url
-    assert enviado["json"] == {"mensaje": "hola", "imagen_url": url, "tipo": "advertencia"}
+    assert enviado["data"] == {"mensaje": "hola", "imagen_url": url, "tipo": "advertencia"}
+    assert enviado["files"]["imagen"] == ("20261113-153600-advertencia.png", png, "image/png")
 
     # Imagen que no se ve desde afuera: no se le avisa a Make.
     monkeypatch.setattr(requests, "get", lambda url, timeout: Resp(404))
