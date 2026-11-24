@@ -299,6 +299,32 @@ def por_localidad(estaciones: list[dict], path: Path = LOCALIDADES) -> dict[str,
     return salida
 
 
+# Anemómetro trabado (24/11/2026): Punta Alta marcó 0,0 km/h en 51 mediciones
+# seguidas con 5-45 km/h en Bahía Centro. Si una estación marca 0 en todas
+# sus mediciones de las últimas 4 h (al menos 12) mientras otra estación de la
+# región midió 15 km/h o más en ese tiempo, su viento no se usa.
+TRABADO_HORAS = 4.0
+TRABADO_MIN_MEDICIONES = 12
+TRABADO_OTRAS_KMH = 15.0
+
+
+def vientos_trabados(historial: dict[str, list[dict]], ahora: datetime) -> list[str]:
+    desde = ahora - timedelta(hours=TRABADO_HORAS)
+
+    def ventana(serie):
+        return [r.get("viento") for r in serie
+                if r.get("viento") is not None and (parse_utc(r.get("utc")) or desde) >= desde]
+
+    vientos = {n: ventana(s) for n, s in historial.items()}
+    trabados = []
+    for n, vals in vientos.items():
+        if len(vals) < TRABADO_MIN_MEDICIONES or any(v > 0 for v in vals):
+            continue
+        if any(max(o) >= TRABADO_OTRAS_KMH for m, o in vientos.items() if m != n and o):
+            trabados.append(n)
+    return sorted(trabados)
+
+
 def main(ahora: datetime | None = None) -> int:
     ahora = ahora or datetime.now(timezone.utc)
     coords = coordenadas()
@@ -308,6 +334,10 @@ def main(ahora: datetime | None = None) -> int:
     estaciones = [
         resumen_estacion(n, s, ahora, coords) for n, s in historial.items() if n in frescas and s
     ]
+    trabados = vientos_trabados(historial, ahora)
+    for e in estaciones:
+        if e["nombre"] in trabados:
+            e.update(viento_kmh=None, rafaga_kmh=None, viento_trabado=True)
     # Control de calidad (calidad_y_calibracion.py, ciclo anterior): una
     # estación dudosa no entra en los resúmenes; con la lluvia dudosa se
     # usa todo menos su lluvia. El detalle queda en "estaciones".
@@ -331,6 +361,8 @@ def main(ahora: datetime | None = None) -> int:
         "region": resumir(aptas),
         "localidades": por_localidad(aptas),
         "descartadas_por_calidad": sorted(e["nombre"] for e in estaciones if e["calidad"] == "dudosa"),
+        # Lo lee también la página (app.py) para no mostrar ese viento.
+        "viento_trabado": trabados,
         "estaciones": estaciones,
     }
     escribir(SALIDA, salida)

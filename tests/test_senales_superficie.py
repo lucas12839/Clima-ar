@@ -82,3 +82,21 @@ def test_viento_cwop_no_entra_al_resumen():
     assert r["lluvia_1h_mm"] == 0.4                     # la lluvia de la CWOP sí cuenta
     solo = ss.resumir(est[1:])
     assert (solo["viento_max_kmh"], solo["rafaga_max_kmh"]) == (None, None)
+
+
+def test_anemometro_trabado_en_cero():
+    from datetime import timedelta
+    ahora = datetime(2026, 11, 24, 21, 40, tzinfo=timezone.utc)
+
+    def serie(vals):
+        return [{"utc": (ahora - timedelta(minutes=10 * (len(vals) - i))).isoformat(), "viento": v}
+                for i, v in enumerate(vals)]
+
+    h = {"PUNTA ALTA": serie([0.0] * 20), "BAHIA BLANCA CENTRO": serie([25.0] * 20)}
+    assert ss.vientos_trabados(h, ahora) == ["PUNTA ALTA"]
+    # Noche calma en toda la región: nadie está trabado.
+    calma = {"PUNTA ALTA": serie([0.0] * 20), "BAHIA BLANCA CENTRO": serie([3.0] * 20)}
+    assert ss.vientos_trabados(calma, ahora) == []
+    # Pocas mediciones o alguna distinta de cero: no.
+    assert ss.vientos_trabados({"PUNTA ALTA": serie([0.0] * 8), "X": serie([25.0] * 8)}, ahora) == []
+    assert ss.vientos_trabados({"PUNTA ALTA": serie([0.0] * 19 + [4.0]), "X": serie([25.0] * 20)}, ahora) == []
