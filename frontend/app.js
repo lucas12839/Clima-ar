@@ -132,26 +132,45 @@ function pintarTiempo() {
   $("fuenteTiempo").textContent = t.fuente ? "Datos de Bahía Blanca · fuente: " + t.fuente : "";
 }
 
+const ICONO_FEN = {
+  lluvia: '<path d="M12 3c-3 4.5-6 8-6 11a6 6 0 0 0 12 0c0-3-3-6.5-6-11z"/>',
+  viento: '<path d="M3 9h11a3 3 0 1 0-3-3M3 14h15a3 3 0 1 1-3 3M3 19h7" fill="none" stroke-width="2" stroke-linecap="round"/>',
+  granizo: '<circle cx="7" cy="8" r="3"/><circle cx="16" cy="7" r="2.5"/><circle cx="11" cy="15" r="3.2"/><circle cx="18" cy="16" r="2.2"/>',
+  electrica: '<path d="M13 2 4 14h6l-2 8 10-13h-6l3-7z"/>'
+};
+const NIVEL_TXT = ["Sin tormentas", "Nivel 1 · Débil", "Nivel 2 · Moderado", "Nivel 3 · Fuerte", "Nivel 4 · Severo"];
+
 function pintarTormenta() {
   const loc = localidadActual();
   const nivel = $("nivelGeneral");
+  $("focoNombre").textContent = loc ? loc.nombre : "—";
   if (!loc || !loc.con_datos) {
-    nivel.dataset.n = "0"; nivel.textContent = "Sin datos";
+    nivel.dataset.n = "0"; nivel.textContent = "Sin datos"; $("foco").dataset.n = "0";
     $("resumenLocal").textContent = "Todavía no hay análisis para esta localidad.";
     $("fenomenos").innerHTML = ""; $("llegada").classList.add("oculto"); $("celdaCercana").textContent = "";
     return;
   }
   const n = num(loc.nivel) || 0;
   nivel.dataset.n = String(n);
-  nivel.textContent = n ? "Nivel " + n : "Sin tormentas";
-  $("resumenLocal").textContent = loc.resumen_ahora || (n ? loc.etiqueta : "Sin lluvia ni tormentas");
+  $("foco").dataset.n = String(n);
+  // Un 4 sin confirmar por una estación es "posible severo".
+  nivel.textContent = n === 4 && /^posible/i.test(loc.etiqueta || "") ? "Nivel 4 · Posible severo" : (NIVEL_TXT[n] || "Nivel " + n);
+  // El título va con el nivel (incluye lo de los últimos minutos); si ahora
+  // es distinto, se aclara abajo para que no parezca una contradicción.
+  const titulo = loc.resumen || loc.resumen_ahora || (n ? loc.etiqueta : "Sin lluvia ni tormentas");
+  $("resumenLocal").innerHTML = esc(titulo) +
+    (loc.resumen_ahora && loc.resumen && loc.resumen_ahora !== loc.resumen ? `<span class="foco-ahora">En este momento: ${esc(loc.resumen_ahora.charAt(0).toLowerCase() + loc.resumen_ahora.slice(1))}</span>` : "");
 
   const min = num(loc.minutos_hasta_llegada);
   const caja = $("llegada");
   if (min !== null) {
     const hora = new Date(Date.now() + min * 60000);
-    caja.innerHTML = `Llega a ${esc(loc.nombre)} en <b>~${esc(fmt(min))} min</b> (cerca de las ${esc(horaLocal(hora.toISOString()))})` +
-      (loc.resumen_al_llegar ? `<br>Al llegar: ${esc(loc.resumen_al_llegar)}` : "");
+    caja.innerHTML = `<div class="cuenta-min"><b>${esc(fmt(min))}</b><span>min</span></div>
+      <div class="cuenta-txt">para que llegue a ${esc(loc.nombre)}<br><strong>cerca de las ${esc(horaLocal(hora.toISOString()))}</strong>` +
+      (loc.resumen_al_llegar ? `<br><span class="al-llegar">Al llegar: ${esc(loc.resumen_al_llegar)}</span>` : "") + `</div>`;
+    caja.classList.remove("oculto");
+  } else if (loc.sobre_la_localidad) {
+    caja.innerHTML = `<div class="cuenta-txt"><strong>La tormenta está sobre ${esc(loc.nombre)}</strong></div>`;
     caja.classList.remove("oculto");
   } else {
     caja.classList.add("oculto");
@@ -162,12 +181,138 @@ function pintarTormenta() {
     const g = num(f.grado) || 0;
     const barras = [1,2,3,4].map(i => `<i class="${i <= g ? "on" + g : ""}"></i>`).join("");
     let cat = f.categoria || "sin datos";
-    if (g > 0 && !f.confirmado) cat = "posible · " + cat;
+    if (g > 0 && !f.confirmado && !/^posible/i.test(cat)) cat = "posible · " + cat;
+    if (num(f.minutos_desde_deteccion) > 0) cat += ` · hace ${fmt(f.minutos_desde_deteccion)} min`;
     if (f.en_calibracion) cat += " · en calibración";
-    return `<li><span class="nombre">${esc(nombre)}</span><span class="barra" role="img" aria-label="${esc(nombre)} nivel ${g} de 4">${barras}</span><span class="cat">${esc(cat)}</span></li>`;
+    const [dato, detalles] = cifrasFenomeno(k, f, loc);
+    return `<li data-g="${g}"><svg class="fen-icono" viewBox="0 0 24 24" aria-hidden="true">${ICONO_FEN[k]}</svg>
+      <span class="nombre">${esc(nombre)}</span>
+      ${dato ? `<span class="fen-dato">${esc(dato)}</span>` : ""}
+      <span class="barra" role="img" aria-label="${esc(nombre)} nivel ${g} de 4">${barras}</span>
+      <span class="cat">${esc(cat)}</span>
+      ${detalles.length ? `<span class="fen-det">${detalles.map(esc).join("<br>")}</span>` : ""}</li>`;
   }).join("");
 
   $("celdaCercana").textContent = textoCelda(loc);
+}
+
+const FUENTE_TXT = { radar: "radar", estaciones: "estaciones", modelo: "modelo europeo", goes19: "satélite", radar_movido: "radar estimado" };
+const fuenteTxt = f => String(f || "").split("+").map(x => FUENTE_TXT[x] || x).filter(Boolean).join(" + ");
+
+/* Números que acompañan a cada nivel: [dato grande, renglones de detalle].
+   Todo sale de lo que midió o calculó la estructura; si no hay número, no se inventa. */
+function cifrasFenomeno(k, f, loc) {
+  const det = [];
+  const llega = (loc.al_llegar && loc.al_llegar[k]) || null;
+  const minLlega = num(loc.minutos_hasta_llegada);
+  let dato = null;
+  if (k === "lluvia") {
+    if (num(f.mm_h) !== null && num(f.grado) > 0) dato = `${fmt(f.mm_h, 1)} mm/h`;
+    else if (num(f.mm_1h) !== null) dato = `${fmt(f.mm_1h, 1)} mm en 1 h`;
+    const ac = loc.acumulado_radar_mm || {};
+    if (num(f.mm_3h) !== null) det.push(`Medido: ${fmt(f.mm_1h, 1)} mm en 1 h · ${fmt(f.mm_3h, 1)} mm en 3 h`);
+    else if (num(ac["1h"]) >= 0.5 || num(ac["3h"]) >= 0.5) det.push(`Ya llovió: ${fmt(ac["1h"], 1)} mm en 1 h · ${fmt(ac["3h"], 1)} mm en 3 h (radar)`);
+    if (llega && num(llega.mm_h) > 0 && minLlega !== null && f.cuando !== "al_llegar") det.push(`Puede llover al llegar: ~${fmt(llega.mm_h, 0)} mm/h`);
+    const hoy = estado.pronostico && estado.pronostico.dias && estado.pronostico.dias[0];
+    if (hoy && num(hoy.prob_lluvia) !== null) det.push(`Hoy en la zona: ${fmt(hoy.prob_lluvia)} % de probabilidad` + (num(hoy.lluvia_mm) > 0 ? ` · ${fmt(hoy.lluvia_mm, 1)} mm (pronóstico)` : ""));
+  } else if (k === "viento") {
+    if (num(f.rafaga_kmh) !== null) dato = `ráfagas ${fmt(f.rafaga_kmh)} km/h`;
+    if (num(f.viento_kmh) !== null) det.push(`Viento medio: ${fmt(f.viento_kmh)} km/h`);
+    if (llega && num(llega.rafaga_kmh) > num(f.rafaga_kmh || 0) && minLlega !== null) det.push(`Al llegar: ráfagas de ~${fmt(llega.rafaga_kmh)} km/h`);
+  } else if (k === "granizo") {
+    const m = /(\d+)\s*dBZ/.exec(f.razon || "");
+    if (m && num(f.grado) > 0) det.push(`Señal del radar: ${m[1]} dBZ (el granizo es posible desde 50)`);
+    if (llega && num(llega.grado) > num(f.grado || 0) && minLlega !== null) det.push(`Al llegar: granizo ${llega.categoria}`);
+  } else if (k === "electrica") {
+    if (num(f.tasa_por_min) > 0) dato = `${fmt(f.tasa_por_min, 1)} rayos/min`;
+    if (num(f.grado) > 0) det.push("A menos de 30 km de la localidad");
+  }
+  // El nivel puede venir de la tormenta que llega: que se note.
+  if (dato && f.cuando === "al_llegar") dato = dato.replace(/(\d[\d.,]*)/, "~$1") + " al llegar";
+  if (num(f.grado) > 0 && f.fuente) det.push(`Fuente: ${fuenteTxt(f.fuente)}`);
+  return [dato, det];
+}
+
+/* Lo que ClimaAR está vigilando en este momento (todo con la edad calculada ahora). */
+function pintarVivo() {
+  const r = estado.resumen || {};
+  const frame = r.frame_actual_utc, edad = num(r.frame_edad_minutos);
+  const chip = (id, valor, detalle, estadoChip) => {
+    const c = $(id);
+    c.querySelector("b").textContent = valor;
+    if (detalle !== undefined) c.querySelector("small").textContent = detalle;
+    c.dataset.estado = estadoChip || "ok";
+  };
+  chip("chipRadar", frame ? horaLocal(frame) : "sin imagen",
+    edad !== null ? `hace ${fmt(edad)} min` : "—",
+    !frame ? "mal" : r.radar_retrasado || (edad !== null && edad > 20) ? "atraso" : "ok");
+  const ts = r.tormentas || [];
+  const fuertes = ts.filter(t => num(t.intensidad) >= 5).length;
+  chip("chipTormentas", String(ts.length), fuertes ? `${fuertes} tormenta${fuertes > 1 ? "s" : ""} fuerte${fuertes > 1 ? "s" : ""}` : "en 240 km", fuertes ? "activo" : "ok");
+  const ry = r.rayos || {};
+  chip("chipRayos", ry.disponible ? String(ry.ultimos_10_min ?? 0) : "sin datos",
+    ry.disponible ? `últimos 10 min · ${fmt(ry.ultima_hora)} en la hora` : "satélite sin datos nuevos",
+    !ry.disponible ? "atraso" : ry.ultimos_10_min > 0 ? "activo" : "ok");
+  const amb = r.ambiente || "—";
+  chip("chipAmbiente", amb.replace(/^Ambiente\s+/i, "").replace(/\s+a tormentas$/i, ""), "para tormentas",
+    /muy favorable|favorable/i.test(amb) && !/poco/i.test(amb) ? "activo" : "ok");
+
+  const aviso = $("avisoAtraso");
+  if (frame && edad !== null && edad > 15) {
+    aviso.textContent = `El radar se publicó hace ${fmt(edad)} min. Mientras llega la imagen nueva, ClimaAR sigue estimando dónde están las tormentas con el satélite, los rayos y las estaciones.`;
+    aviso.classList.remove("oculto");
+  } else aviso.classList.add("oculto");
+
+  const t = r.tiempo_actual || {};
+  const dir = punto(t.viento_dir);
+  $("ahoraCorto").textContent = t.disponible && num(t.temperatura) !== null
+    ? `${fmt(t.temperatura)} °C · viento ${fmt(t.viento_vel)} km/h${dir ? " " + dir : ""}` : "";
+}
+
+function pintarLocalidades() {
+  const lista = (estado.resumen && estado.resumen.localidades) || [];
+  $("localidadesGrid").innerHTML = lista.map(l => {
+    const n = num(l.nivel) || 0, min = num(l.minutos_hasta_llegada);
+    const sub = min !== null ? `llega en ~${fmt(min)} min` : l.sobre_la_localidad ? "tormenta encima" : (l.resumen || l.resumen_ahora || (n ? l.etiqueta : "sin tormentas"));
+    return `<button class="loc${l.id === estado.localidad ? " elegida" : ""}" data-id="${esc(l.id)}" data-n="${n}">
+      <span class="loc-nivel">${n || "–"}</span><span class="loc-nombre">${esc(l.nombre)}</span>
+      <span class="loc-sub${min !== null ? " llega" : ""}">${esc(sub)}</span></button>`;
+  }).join("");
+  $("localidadesGrid").querySelectorAll(".loc").forEach(b => b.addEventListener("click", () => {
+    elegirLocalidad(b.dataset.id);
+    $("foco").scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+}
+
+const INTENSIDAD_TXT = { DEBIL: "Lluvia débil", MODERADO: "Lluvia moderada", FUERTE: "Tormenta fuerte", MUY_FUERTE: "Tormenta muy fuerte" };
+const TENDENCIA_TXT = { FORTALECIENDOSE: "creciendo", CRECIENDO: "creciendo", DEBILITANDOSE: "debilitándose", ESTABLE: "estable" };
+function nivelIntensidad(t) {
+  const i = num(t.intensidad) || 0;
+  return i >= 6 ? 4 : i >= 5 ? 3 : i >= 3 ? 2 : 1;   // escala del radar 1-6 → 1-4
+}
+
+function pintarListaTormentas() {
+  const ts = (estado.resumen && estado.resumen.tormentas) || [];
+  const loc = localidadActual();
+  $("cuentaTormentas").textContent = ts.length ? `${ts.length} en 240 km` : "";
+  if (!ts.length) {
+    $("listaTormentas").innerHTML = '<li class="vacia">El radar no ve lluvia ni tormentas en los 240 km. ClimaAR sigue vigilando cada imagen nueva.</li>';
+    return;
+  }
+  const p = loc ? [loc.lat, loc.lon] : RADAR_CENTRO;
+  const orden = ts.map(t => ({ t, d: distKm(p, [t.lat, t.lon]) }))
+    .sort((a, b) => (nivelIntensidad(b.t) >= 3) - (nivelIntensidad(a.t) >= 3) || a.d - b.d).slice(0, 6);
+  $("listaTormentas").innerHTML = orden.map(({ t, d }) => {
+    const n = nivelIntensidad(t);
+    const donde = NOMBRE_PUNTO[punto(rumbo(p, [t.lat, t.lon]))] || "";
+    const mov = t.direccion && num(t.velocidad_kmh) > 2
+      ? `va hacia el ${NOMBRE_PUNTO[t.direccion] || t.direccion}` + (t.movimiento_dudoso ? " (velocidad incierta)" : ` a ${fmt(t.velocidad_kmh)} km/h`)
+      : "casi quieta";
+    const tend = TENDENCIA_TXT[t.tendencia_area];
+    return `<li data-n="${n}"><span class="num">N.º ${esc(t.id)}</span>
+      <div><b>${esc(INTENSIDAD_TXT[t.nivel_intensidad] || "Eco de lluvia")}</b>${num(t.tamano_km2) ? ` · ${esc(fmt(t.tamano_km2))} km²` : ""}${tend ? ` · ${esc(tend)}` : ""}
+      <br><span class="suave">a ${esc(fmt(d))} km al ${esc(donde)} de ${esc(loc ? loc.nombre : "el radar")} · ${esc(mov)}</span></div></li>`;
+  }).join("");
 }
 
 function distKm(a, b) {
@@ -478,7 +623,7 @@ async function cargarSatelite() {
 function pintarDias() {
   const p = estado.pronostico;
   const dias = (p && p.dias) || [];
-  if (!dias.length) { $("dias").innerHTML = '<p class="pie">El pronóstico no está disponible en este momento.</p>'; return; }
+  if (!dias.length) { $("dias").innerHTML = '<p class="pie" style="grid-column:1/-1">El pronóstico no está disponible en este momento.</p>'; return; }
   $("dias").innerHTML = dias.slice(0, 3).map(d => {
     const fecha = new Date(d.fecha + "T12:00:00-03:00");
     const nombre = isNaN(fecha) ? d.fecha : fecha.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", timeZone: "America/Argentina/Buenos_Aires" });
@@ -604,14 +749,14 @@ function pintarMeteo(intel, radar, pred) {
 async function actualizarGeneral() {
   try {
     estado.resumen = await pedir("/resumen");
-    llenarSelector(); pintarTiempo(); pintarTormenta(); pintarMapa();
+    llenarSelector(); pintarVivo(); pintarTormenta(); pintarLocalidades(); pintarMapa(); pintarListaTormentas(); pintarTiempo();
   } catch (e) {
     $("cielo").textContent = "Sin conexión con el servidor. Se reintenta solo.";
   }
 }
 async function actualizarPronostico() {
   try { estado.pronostico = await pedir("/pronostico"); } catch (e) { estado.pronostico = null; }
-  pintarDias();
+  pintarDias(); pintarTormenta();
 }
 
 function programar() {
@@ -629,7 +774,7 @@ function programar() {
 function elegirLocalidad(id) {
   estado.localidad = id; guardar("climaar_localidad", id);
   $("localidad").value = id;
-  pintarTormenta(); pintarMapa();
+  pintarTormenta(); pintarLocalidades(); pintarMapa(); pintarListaTormentas();
 }
 
 function cambiarVista(v) {

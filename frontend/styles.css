@@ -235,3 +235,98 @@ main { max-width: 760px; margin: 0 auto; padding: 14px max(4vw, 12px) 8px; }
   background: rgba(15, 27, 45, .88); border: 1px solid #c9a2f2; color: #eef3fb; border-radius: 10px;
   padding: 4px 10px; font: 600 12px "Red Hat Text", sans-serif; white-space: nowrap; max-width: 92%; overflow: hidden; text-overflow: ellipsis;
 }
+
+/* ---------- Portada 24/11/2026: que se vea lo que hace ClimaAR ---------- */
+
+/* Vigilancia en vivo */
+.vivo { padding: 12px 14px; }
+.vivo-cabeza { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.vivo-titulo { font: 700 13px "Red Hat Text", sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--acento); display: flex; align-items: center; gap: 8px; }
+.latido { width: 9px; height: 9px; border-radius: 50%; background: #3ee08f; box-shadow: 0 0 0 0 rgba(62, 224, 143, .6); animation: latido 2s infinite; }
+@keyframes latido { 0% { box-shadow: 0 0 0 0 rgba(62, 224, 143, .55); } 70% { box-shadow: 0 0 0 9px rgba(62, 224, 143, 0); } 100% { box-shadow: 0 0 0 0 rgba(62, 224, 143, 0); } }
+@media (prefers-reduced-motion: reduce) { .latido { animation: none; } }
+.ahora-corto { font-weight: 600; font-size: 14px; color: var(--texto); }
+.chips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.chip { background: #1b2e4a; border-radius: 12px; padding: 8px 10px; border-left: 3px solid #3ee08f; display: flex; flex-direction: column; }
+.chip[data-estado="activo"] { border-left-color: #c9a2f2; }
+.chip[data-estado="atraso"] { border-left-color: #ffb347; }
+.chip[data-estado="mal"] { border-left-color: #ff6b6b; }
+.chip-nombre { font-size: 11px; color: var(--suave); text-transform: uppercase; letter-spacing: .04em; }
+.chip b { font: 800 20px/1.2 "Red Hat Display", sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip small { font-size: 12px; color: var(--suave); line-height: 1.3; }
+.atraso { margin: 10px 0 0; padding: 8px 10px; border-radius: 10px; background: rgba(255, 179, 71, .12); border: 1px solid rgba(255, 179, 71, .5); font-size: 14px; }
+
+/* Localidad elegida, en grande */
+.foco { position: relative; overflow: hidden; border-width: 1px; }
+.foco::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 4px; background: var(--n0); }
+.foco[data-n="1"]::before { background: var(--n1); }
+.foco[data-n="2"]::before { background: var(--n2); }
+.foco[data-n="3"]::before { background: var(--n3); }
+.foco[data-n="4"]::before { background: var(--n4); }
+.foco[data-n="3"], .foco[data-n="4"] { border-color: var(--n3); box-shadow: 0 0 0 1px rgba(106, 99, 230, .35), 0 10px 30px rgba(106, 99, 230, .15); }
+.foco-cabeza { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.foco-nombre { font: 800 24px/1.1 "Red Hat Display", sans-serif; }
+.foco-titulo { font: 600 20px/1.3 "Red Hat Display", sans-serif; margin: 10px 0 12px; }
+.cuenta { display: flex; align-items: center; gap: 14px; border: 1px solid var(--acento); background: rgba(95, 208, 224, .08); border-radius: 14px; padding: 10px 14px; margin-bottom: 14px; }
+.cuenta-min { text-align: center; line-height: 1; }
+.cuenta-min b { display: block; font: 800 44px/1 "Red Hat Display", sans-serif; color: var(--acento); }
+.cuenta-min span { font-size: 13px; color: var(--suave); }
+.cuenta-txt { font-size: 15px; }
+.cuenta-txt strong { font-size: 17px; }
+.al-llegar { color: var(--suave); font-size: 14px; }
+
+.fen-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.fen-grid li { background: #1b2e4a; border-radius: 12px; padding: 10px; display: grid; grid-template-columns: 26px 1fr; gap: 2px 8px; align-items: center; }
+.fen-icono { width: 24px; height: 24px; fill: var(--n0); stroke: var(--n0); grid-row: span 2; }
+.fen-grid li[data-g="1"] .fen-icono { fill: var(--n1); stroke: var(--n1); }
+.fen-grid li[data-g="2"] .fen-icono { fill: var(--n2); stroke: var(--n2); }
+.fen-grid li[data-g="3"] .fen-icono { fill: var(--n3); stroke: var(--n3); }
+.fen-grid li[data-g="4"] .fen-icono { fill: var(--n4); stroke: var(--n4); }
+.fen-grid .nombre { font-weight: 700; }
+.fen-grid .barra { grid-column: 1 / -1; margin-top: 6px; }
+.fen-grid .cat { grid-column: 1 / -1; font-size: 13px; color: var(--suave); }
+
+/* Las 7 localidades */
+.loc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.loc { text-align: left; display: grid; grid-template-columns: 30px 1fr; gap: 0 8px; align-items: center; min-height: 56px;
+  background: #1b2e4a; border: 1px solid transparent; border-radius: 12px; padding: 8px 10px; color: var(--texto); font: inherit; cursor: pointer; }
+.loc.elegida { border-color: var(--acento); }
+.loc-nivel { grid-row: span 2; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; font: 800 15px "Red Hat Display", sans-serif; background: var(--n0); }
+.loc[data-n="1"] .loc-nivel { background: var(--n1); color: #0b2433; }
+.loc[data-n="2"] .loc-nivel { background: var(--n2); color: #081a36; }
+.loc[data-n="3"] .loc-nivel { background: var(--n3); }
+.loc[data-n="4"] .loc-nivel { background: var(--n4); }
+.loc-nombre { font-weight: 700; font-size: 15px; line-height: 1.2; }
+.loc-sub { font-size: 12px; color: var(--suave); line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.loc-sub.llega { color: var(--acento); font-weight: 700; }
+
+/* Lista de tormentas seguidas */
+.cuenta-chica { font-size: 13px; color: var(--suave); white-space: nowrap; }
+.lista-tormentas { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.lista-tormentas li { display: grid; grid-template-columns: 58px 1fr; gap: 10px; align-items: center; background: #1b2e4a; border-radius: 12px; padding: 9px 10px; font-size: 14px; border-left: 4px solid var(--n1); }
+.lista-tormentas li[data-n="2"] { border-left-color: var(--n2); }
+.lista-tormentas li[data-n="3"] { border-left-color: var(--n3); }
+.lista-tormentas li[data-n="4"] { border-left-color: var(--n4); }
+.lista-tormentas li.vacia { display: block; border-left-color: #3ee08f; color: var(--suave); }
+.lista-tormentas .num { font: 800 14px "Red Hat Display", sans-serif; color: var(--acento); }
+.suave { color: var(--suave); }
+
+/* Cómo trabaja */
+.pasos { list-style: none; counter-reset: paso; margin: 0; padding: 0; display: grid; gap: 10px; }
+.pasos li { counter-increment: paso; display: grid; grid-template-columns: 34px 1fr; gap: 2px 10px; }
+.pasos li::before { content: counter(paso); grid-row: span 2; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  font: 800 16px "Red Hat Display", sans-serif; background: rgba(95, 208, 224, .15); color: var(--acento); border: 1px solid var(--acento); }
+.pasos b { font-size: 16px; }
+.pasos span { font-size: 14px; color: var(--suave); }
+.ahora h2 { margin-bottom: 12px; }
+
+@media (max-width: 560px) {
+  .chips { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.foco-ahora { display: block; font: 500 15px/1.4 "Red Hat Text", sans-serif; color: var(--suave); margin-top: 4px; }
+.titulo-fila { flex-wrap: wrap; }
+.titulo-fila h2 { flex: 1 1 200px; }
+.fen-dato { grid-column: 1 / -1; font: 800 19px/1.2 "Red Hat Display", sans-serif; margin-top: 4px; }
+.fen-det { grid-column: 1 / -1; font-size: 12px; color: var(--suave); line-height: 1.4; margin-top: 4px; border-top: 1px solid var(--borde); padding-top: 4px; }
+.fen-grid .fen-icono { grid-row: auto; }
+.fen-grid li { align-content: start; }

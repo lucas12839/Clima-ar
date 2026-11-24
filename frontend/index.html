@@ -26,33 +26,28 @@
 
 <main id="general">
 
-  <section class="ahora tarjeta">
-    <div class="ahora-cabeza">
-      <div id="cieloIcono" class="cielo-icono" aria-hidden="true"></div>
-      <div>
-        <div class="temp"><span id="temp">—</span><small>°C</small></div>
-        <div id="cielo" class="cielo">Cargando…</div>
-      </div>
+  <section class="vivo tarjeta" aria-label="Lo que vigila ClimaAR en este momento">
+    <div class="vivo-cabeza">
+      <span class="vivo-titulo"><i class="latido" aria-hidden="true"></i>Vigilancia en vivo</span>
+      <span id="ahoraCorto" class="ahora-corto"></span>
     </div>
-    <dl class="datos">
-      <div><dt>Sensación</dt><dd id="sensacion">—</dd></div>
-      <div><dt>Viento</dt><dd id="viento">—</dd></div>
-      <div><dt>Ráfagas</dt><dd id="rafagas">—</dd></div>
-      <div><dt>Humedad</dt><dd id="humedad">—</dd></div>
-      <div><dt>Presión</dt><dd id="presion">—</dd></div>
-      <div><dt>Lluvia ahora</dt><dd id="lluviaAhora">—</dd></div>
-    </dl>
-    <p id="fuenteTiempo" class="pie"></p>
+    <div class="chips">
+      <div class="chip" id="chipRadar"><span class="chip-nombre">Radar RMA10</span><b>—</b><small>—</small></div>
+      <div class="chip" id="chipTormentas"><span class="chip-nombre">Lluvias y tormentas</span><b>—</b><small>en 240 km</small></div>
+      <div class="chip" id="chipRayos"><span class="chip-nombre">Rayos · satélite</span><b>—</b><small>últimos 10 min</small></div>
+      <div class="chip" id="chipAmbiente"><span class="chip-nombre">Ambiente</span><b>—</b><small>para tormentas</small></div>
+    </div>
+    <p id="avisoAtraso" class="atraso oculto"></p>
   </section>
 
-  <section class="tarjeta tormenta">
-    <div class="titulo-fila">
-      <h2>Tormentas y fenómenos</h2>
+  <section id="foco" class="tarjeta foco" data-n="0">
+    <div class="foco-cabeza">
+      <span id="focoNombre" class="foco-nombre">—</span>
       <span id="nivelGeneral" class="nivel" data-n="0">—</span>
     </div>
-    <p id="resumenLocal" class="resumen">—</p>
-    <div id="llegada" class="llegada oculto"></div>
-    <ul id="fenomenos" class="fenomenos"></ul>
+    <p id="resumenLocal" class="foco-titulo">Cargando…</p>
+    <div id="llegada" class="cuenta oculto"></div>
+    <ul id="fenomenos" class="fen-grid"></ul>
     <p id="celdaCercana" class="celda"></p>
   </section>
 
@@ -73,8 +68,53 @@
   </section>
 
   <section class="tarjeta">
+    <h2>Las 7 localidades</h2>
+    <div id="localidadesGrid" class="loc-grid"></div>
+    <p class="pie">Cada localidad se analiza por separado: una tormenta que va hacia Bahía puede pegar en Punta Alta o en Cerri. Tocá una para verla arriba.</p>
+  </section>
+
+  <section class="tarjeta">
+    <div class="titulo-fila">
+      <h2>Lluvias y tormentas que sigue ClimaAR</h2>
+      <span id="cuentaTormentas" class="cuenta-chica"></span>
+    </div>
+    <ol id="listaTormentas" class="lista-tormentas"></ol>
+    <p class="pie">Cada una conserva su número mientras exista. Primero las tormentas fuertes, después las más cercanas a la localidad elegida. La velocidad se mide con el movimiento del eco entero entre imágenes del radar (flujo óptico), no con un punto suelto.</p>
+  </section>
+
+  <section class="ahora tarjeta">
+    <h2>El tiempo ahora</h2>
+    <div class="ahora-cabeza">
+      <div id="cieloIcono" class="cielo-icono" aria-hidden="true"></div>
+      <div>
+        <div class="temp"><span id="temp">—</span><small>°C</small></div>
+        <div id="cielo" class="cielo">Cargando…</div>
+      </div>
+    </div>
+    <dl class="datos">
+      <div><dt>Sensación</dt><dd id="sensacion">—</dd></div>
+      <div><dt>Viento</dt><dd id="viento">—</dd></div>
+      <div><dt>Ráfagas</dt><dd id="rafagas">—</dd></div>
+      <div><dt>Humedad</dt><dd id="humedad">—</dd></div>
+      <div><dt>Presión</dt><dd id="presion">—</dd></div>
+      <div><dt>Lluvia ahora</dt><dd id="lluviaAhora">—</dd></div>
+    </dl>
+    <p id="fuenteTiempo" class="pie"></p>
+  </section>
+
+  <section class="tarjeta">
     <h2>Próximos 3 días</h2>
     <div id="dias" class="dias"></div>
+  </section>
+
+  <section class="tarjeta tecno">
+    <h2>Cómo trabaja ClimaAR</h2>
+    <ol class="pasos">
+      <li><b>Radar cada 10 minutos</b><span>Lee la imagen del radar de Bahía Blanca (240 km) apenas se publica, y separa la lluvia de los ecos falsos de las sierras con el satélite.</span></li>
+      <li><b>Sigue cada tormenta</b><span>Le pone un número, mide su tamaño, su fuerza y hacia dónde y a qué velocidad va. Error medio de posición a 10 minutos: 4,5 km.</span></li>
+      <li><b>Cruza todo lo que hay</b><span>Rayos y nubes del satélite GOES-19, estaciones meteorológicas y el modelo europeo. Si el radar se atrasa, sigue estimando con esos datos.</span></li>
+      <li><b>Dice qué llega y cuándo</b><span>Para cada localidad: lluvia, viento, granizo y rayos por separado, del nivel 1 al 4, y la hora estimada de llegada.</span></li>
+    </ol>
   </section>
 
   <section class="tarjeta escala">
