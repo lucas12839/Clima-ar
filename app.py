@@ -852,7 +852,8 @@ def get_openmeteo_forecast() -> (
                     "wind_direction_10m_dominant", i
                 ),
             }
-            for i in range(1, min(4, len(dates)))
+            # 24/11/2026: incluye hoy (posición 0); /pronostico lo separa.
+            for i in range(0, min(4, len(dates)))
         ]
 
         _FORECAST_CACHE["ts"] = now
@@ -1692,15 +1693,23 @@ def radar_geo() -> dict[str, Any]:
     }
 
 
+_TZ_AR = timezone(timedelta(hours=-3))   # Argentina, sin horario de verano
+
+
 @app.get("/pronostico")
 def pronostico() -> dict[str, Any]:
 
-    days = get_openmeteo_forecast()
+    days = get_openmeteo_forecast() or []
+    hoy_fecha = datetime.now(_TZ_AR).date().isoformat()
+    hoy = next((d for d in days if d.get("fecha") == hoy_fecha), None)
 
     return {
         "disponible": bool(days),
         "fuente": "Open-Meteo",
-        "dias": days or [],
+        # Hoy aparte (lo usan la portada y la publicación de la mañana);
+        # "dias" sigue siendo los próximos 3 días, sin hoy.
+        "hoy": hoy,
+        "dias": [d for d in days if d.get("fecha") != hoy_fecha][:3],
     }
 
 

@@ -213,7 +213,7 @@ function cifrasFenomeno(k, f, loc) {
     if (num(f.mm_3h) !== null) det.push(`Medido: ${fmt(f.mm_1h, 1)} mm en 1 h · ${fmt(f.mm_3h, 1)} mm en 3 h`);
     else if (num(ac["1h"]) >= 0.5 || num(ac["3h"]) >= 0.5) det.push(`Ya llovió: ${fmt(ac["1h"], 1)} mm en 1 h · ${fmt(ac["3h"], 1)} mm en 3 h (radar)`);
     if (llega && num(llega.mm_h) > 0 && minLlega !== null && f.cuando !== "al_llegar") det.push(`Puede llover al llegar: ~${fmt(llega.mm_h, 0)} mm/h`);
-    const hoy = estado.pronostico && estado.pronostico.dias && estado.pronostico.dias[0];
+    const hoy = estado.pronostico && estado.pronostico.hoy;   // "dias" empieza mañana
     if (hoy && num(hoy.prob_lluvia) !== null) det.push(`Hoy en la zona: ${fmt(hoy.prob_lluvia)} % de probabilidad` + (num(hoy.lluvia_mm) > 0 ? ` · ${fmt(hoy.lluvia_mm, 1)} mm (pronóstico)` : ""));
   } else if (k === "viento") {
     if (num(f.rafaga_kmh) !== null) dato = `ráfagas ${fmt(f.rafaga_kmh)} km/h`;

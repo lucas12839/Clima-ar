@@ -1,0 +1,12 @@
+# Cada 5 minutos revisa si toca publicar (la de la mañana o una tormenta).
+[Unit]
+Description=ClimaAR - revisar publicaciones de Facebook cada 5 min
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+RandomizedDelaySec=20
+Persistent=true
+
+[Install]
+WantedBy=timers.target

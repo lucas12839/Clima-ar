@@ -1,0 +1,607 @@
+#!/usr/bin/env python3
+"""Publicaciones automáticas de ClimaAR en su página de Facebook (24/11/2026).
+
+Corre en el VPS cada 5 minutos (deploy/climaar-facebook.timer). Lee los datos
+del servidor de la app que corre en el mismo VPS (http://127.0.0.1:8000) y:
+
+1. Todas las mañanas (desde las 7:30, hora de Argentina) publica cómo viene
+   el día, con una imagen.
+2. Con tormentas publica un informe con la imagen del radar:
+   - nivel 2 (moderado): hasta 3 por día, con 90 min entre una y otra;
+   - nivel 3 o 4 (fuerte o severo): "ADVERTENCIA", como máximo una cada
+     30 min, y una actualización cada hora aunque no cambie nada;
+   - solo si algo cambió: localidad nueva, nivel más alto o tormenta que
+     ahora va hacia una localidad.
+   Nunca con un radar de más de 20 min (no se informa con datos viejos).
+
+Cada texto lleva el enlace a la página oficial de ClimaAR (sin enlace al SMN).
+
+Configuración (/etc/climaar-facebook.env, solo la lee root):
+  FB_PAGE_ID=...        número de la página
+  FB_PAGE_TOKEN=...     clave de la página (no se guarda en el repositorio)
+  FB_ACTIVO=1           0 = no publica nada (prueba)
+Estado: /var/lib/climaar-facebook/estado.json (qué y cuándo se publicó).
+
+Uso a mano:
+  python scripts/facebook_climaar.py --probar --salida /tmp/fb   # arma texto e imagen, no publica
+  python scripts/facebook_climaar.py --forzar manana             # publica la de la mañana ya
+"""
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import math
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parents[1]
+TZ_AR = timezone(timedelta(hours=-3))
+API = os.environ.get("CLIMAAR_API", "http://127.0.0.1:8000").rstrip("/")
+URL_PUBLICA = os.environ.get("CLIMAAR_URL_PUBLICA", "https://climaar-bahiablanca.duckdns.org")
+GRAPH = "https://graph.facebook.com/" + os.environ.get("FB_GRAPH_VERSION", "v23.0")
+ESTADO = Path(os.environ.get("CLIMAAR_FB_ESTADO", "/var/lib/climaar-facebook/estado.json"))
+
+HORA_MANANA = (7, 30)
+HORA_MANANA_LIMITE = 11            # pasadas las 11 ya no se publica la de la mañana
+RADAR_MAX_EDAD_MIN = 20
+NIVEL_MINIMO = 2
+MAX_DIA_MODERADO = 3
+ESPERA_MODERADO_MIN = 90
+ESPERA_FUERTE_MIN = 30
+REPETIR_FUERTE_MIN = 60
+# Sin enlace a las alertas del SMN (decisión de Lucas, 24/11/2026: el SMN
+# declara alerta para una zona entera y ClimaAR analiza cada localidad).
+# Cada publicación lleva el enlace a la página de ClimaAR.
+PIE_ENLACE = "Página oficial de ClimaAR: " + URL_PUBLICA
+PIE = "Información de ClimaAR por localidad. No es una alerta oficial."
+
+NIVEL_TXT = {1: "débil", 2: "moderado", 3: "fuerte", 4: "severo"}
+PUNTOS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"]
+NOMBRE_PUNTO = {"N": "norte", "NNE": "norte", "NE": "noreste", "ENE": "este", "E": "este", "ESE": "este",
+                "SE": "sureste", "SSE": "sur", "S": "sur", "SSO": "sur", "SO": "suroeste", "OSO": "oeste",
+                "O": "oeste", "ONO": "oeste", "NO": "noroeste", "NNO": "norte"}
+DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
+         "octubre", "noviembre", "diciembre"]
+
+
+# ----------------------------------------------------------------------------
+# Datos
+# ----------------------------------------------------------------------------
+def pedir_json(ruta: str, timeout: float = 30.0):
+    import requests
+
+    r = requests.get(API + ruta, timeout=timeout, headers={"Accept": "application/json"})
+    r.raise_for_status()
+    return r.json()
+
+
+def pedir_bytes(ruta: str, timeout: float = 30.0) -> bytes:
+    import requests
+
+    r = requests.get(API + ruta, timeout=timeout)
+    r.raise_for_status()
+    return r.content
+
+
+def num(v):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if math.isfinite(x) else None
+
+
+def fmt(v, d=0):
+    x = num(v)
+    if x is None:
+        return "—"
+    return f"{x:,.{d}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def punto(grados):
+    g = num(grados)
+    return None if g is None else PUNTOS[round((g % 360) / 22.5) % 16]
+
+
+def ahora_ar(ahora: datetime | None = None) -> datetime:
+    return (ahora or datetime.now(timezone.utc)).astimezone(TZ_AR)
+
+
+def hora_txt(dt: datetime) -> str:
+    return dt.astimezone(TZ_AR).strftime("%H:%M")
+
+
+def fecha_txt(dt: datetime) -> str:
+    dt = dt.astimezone(TZ_AR)
+    return f"{DIAS[dt.weekday()]} {dt.day} de {MESES[dt.month - 1]}"
+
+
+def cielo(codigo) -> str:
+    c = num(codigo)
+    if c is None:
+        return ""
+    c = int(c)
+    if c >= 95:
+        return "tormentas"
+    if c >= 80:
+        return "chaparrones"
+    if 71 <= c <= 77:
+        return "nieve"
+    if c >= 51:
+        return "lluvia"
+    if c >= 45:
+        return "niebla"
+    return {0: "despejado", 1: "mayormente despejado", 2: "parcialmente nublado", 3: "nublado"}.get(c, "")
+
+
+# ----------------------------------------------------------------------------
+# Estado (qué se publicó)
+# ----------------------------------------------------------------------------
+def leer_estado() -> dict:
+    try:
+        e = json.loads(ESTADO.read_text(encoding="utf-8"))
+        return e if isinstance(e, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def guardar_estado(e: dict, ahora: datetime | None = None) -> None:
+    ESTADO.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ESTADO.with_suffix(".tmp")
+    # Solo las publicaciones de los últimos 3 días.
+    limite = ((ahora or datetime.now(timezone.utc)) - timedelta(days=3)).isoformat()
+    e["publicaciones"] = [p for p in e.get("publicaciones", []) if p.get("utc", "") >= limite]
+    tmp.write_text(json.dumps(e, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, ESTADO)
+
+
+# ----------------------------------------------------------------------------
+# Mañana
+# ----------------------------------------------------------------------------
+def toca_manana(estado: dict, ahora: datetime) -> bool:
+    local = ahora_ar(ahora)
+    if (local.hour, local.minute) < HORA_MANANA or local.hour >= HORA_MANANA_LIMITE:
+        return False
+    return estado.get("manana_fecha") != local.date().isoformat()
+
+
+def texto_manana(resumen: dict, pron: dict, ahora: datetime) -> str:
+    hoy = (pron or {}).get("hoy") or {}
+    t = (resumen or {}).get("tiempo_actual") or {}
+    lineas = [f"Buen día, Bahía Blanca. Así viene el {fecha_txt(ahora)}:", ""]
+    if hoy:
+        c = cielo(hoy.get("codigo_tiempo"))
+        lineas.append(f"🌡️ Máxima {fmt(hoy.get('maxima'))}° y mínima {fmt(hoy.get('minima'))}°.")
+        if c:
+            lineas.append(f"☁️ Cielo: {c}.")
+        prob = num(hoy.get("prob_lluvia"))
+        mm = num(hoy.get("lluvia_mm"))
+        if prob is not None:
+            lineas.append(f"☔ Probabilidad de lluvia: {fmt(prob)} %"
+                          + (f" (unos {fmt(mm, 1)} mm)" if mm and mm >= 0.5 else "") + ".")
+        dirv = punto(hoy.get("viento_direccion"))
+        lineas.append(f"💨 Viento del {NOMBRE_PUNTO.get(dirv, '—')} hasta {fmt(hoy.get('viento'))} km/h,"
+                      f" ráfagas de {fmt(hoy.get('rafagas'))} km/h.")
+    if num(t.get("temperatura")) is not None and t.get("disponible"):
+        lineas.append(f"Ahora: {fmt(t.get('temperatura'))}°.")
+    amb = (resumen or {}).get("ambiente")
+    if amb:
+        lineas.append(f"⛈️ {amb}.")
+    activos = [l for l in (resumen or {}).get("localidades") or [] if (num(l.get("nivel")) or 0) >= NIVEL_MINIMO]
+    if activos:
+        lineas.append("")
+        lineas.append("Ahora hay actividad en: " + ", ".join(
+            f"{l['nombre']} (nivel {int(num(l['nivel']))})" for l in activos) + ".")
+    lineas += ["", "Radar en vivo y detalle por localidad en la página.", PIE_ENLACE, "", PIE,
+               "#BahíaBlanca #PuntaAlta #Clima"]
+    return "\n".join(lineas)
+
+
+# ----------------------------------------------------------------------------
+# Tormentas
+# ----------------------------------------------------------------------------
+def situacion(resumen: dict) -> dict | None:
+    """Localidades con nivel >= 2 y lo que se publica de cada una."""
+    locs = []
+    for l in (resumen or {}).get("localidades") or []:
+        n = int(num(l.get("nivel")) or 0)
+        if n < NIVEL_MINIMO:
+            continue
+        locs.append({
+            "id": l.get("id"),
+            "nombre": l.get("nombre"),
+            "nivel": n,
+            "posible": str(l.get("etiqueta") or "").lower().startswith("posible"),
+            "resumen": l.get("resumen") or l.get("resumen_ahora") or "",
+            "minutos": num(l.get("minutos_hasta_llegada")),
+            "encima": bool(l.get("sobre_la_localidad")),
+        })
+    if not locs:
+        return None
+    locs.sort(key=lambda x: (-x["nivel"], x["minutos"] if x["minutos"] is not None else 999))
+    return {
+        "nivel": max(x["nivel"] for x in locs),
+        "localidades": locs,
+        "firma": {x["id"]: [x["nivel"], x["minutos"] is not None or x["encima"]] for x in locs},
+    }
+
+
+def cambio(firma_nueva: dict, firma_vieja: dict | None) -> bool:
+    if not firma_vieja:
+        return True
+    for loc, (nivel, llega) in firma_nueva.items():
+        previo = firma_vieja.get(loc)
+        if previo is None or nivel > previo[0] or (llega and not previo[1]):
+            return True
+    return False
+
+
+def toca_tormenta(estado: dict, sit: dict | None, resumen: dict, ahora: datetime) -> tuple[bool, str]:
+    if not sit:
+        return False, "sin tormentas de nivel 2 o más"
+    edad = num((resumen or {}).get("frame_edad_minutos"))
+    if edad is None or edad > RADAR_MAX_EDAD_MIN:
+        return False, f"radar viejo ({fmt(edad)} min): no se informa con datos viejos"
+    pubs = [p for p in estado.get("publicaciones", []) if p.get("tipo") == "tormenta"]
+    hoy = ahora_ar(ahora).date().isoformat()
+    ultima = pubs[-1] if pubs else None
+    minutos = ((ahora - datetime.fromisoformat(ultima["utc"])).total_seconds() / 60.0) if ultima else None
+    fuerte = sit["nivel"] >= 3
+    if fuerte:
+        if minutos is not None and minutos < ESPERA_FUERTE_MIN:
+            return False, f"última hace {fmt(minutos)} min (mínimo {ESPERA_FUERTE_MIN})"
+        if cambio(sit["firma"], ultima and ultima.get("firma")):
+            return True, "cambió la situación"
+        if minutos is None or minutos >= REPETIR_FUERTE_MIN:
+            return True, "actualización de tormenta fuerte"
+        return False, "sin cambios"
+    del_dia = [p for p in pubs if ahora_ar(datetime.fromisoformat(p["utc"])).date().isoformat() == hoy]
+    if len(del_dia) >= MAX_DIA_MODERADO:
+        return False, f"ya hubo {len(del_dia)} informes hoy"
+    if minutos is not None and minutos < ESPERA_MODERADO_MIN:
+        return False, f"última hace {fmt(minutos)} min (mínimo {ESPERA_MODERADO_MIN})"
+    if cambio(sit["firma"], ultima and ultima.get("firma")):
+        return True, "cambió la situación"
+    return False, "sin cambios"
+
+
+def texto_tormenta(sit: dict, resumen: dict, ahora: datetime) -> str:
+    n = sit["nivel"]
+    frame = resumen.get("frame_actual_utc")
+    hora_radar = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
+    if n >= 3:
+        titulo = f"⚠️ ADVERTENCIA · Tormenta {'fuerte' if n == 3 else 'posiblemente severa'} en la zona"
+    else:
+        titulo = "⛈️ INFORME · Tormentas en la zona"
+    lineas = [titulo, ""]
+    for l in sit["localidades"][:5]:
+        nivel = f"nivel {l['nivel']} ({'posible ' if l['posible'] and l['nivel'] == 4 else ''}{NIVEL_TXT[l['nivel']]})"
+        linea = f"📍 {l['nombre']}: {nivel}."
+        if l["resumen"]:
+            linea += f" {l['resumen']}."
+        if l["minutos"] is not None:
+            llega = ahora + timedelta(minutes=l["minutos"])
+            linea += f" Llega en ~{fmt(l['minutos'])} min (cerca de las {hora_txt(llega)})."
+        elif l["encima"]:
+            linea += " La tormenta está encima."
+        lineas.append(linea)
+    lineas += [""]
+    if hora_radar:
+        lineas.append(f"Radar de las {hora_radar}.")
+    lineas += ["Seguila en vivo, localidad por localidad.", PIE_ENLACE, "", PIE, "#BahíaBlanca #Tormenta"]
+    return "\n".join(lineas)
+
+
+# ----------------------------------------------------------------------------
+# Imágenes (1080 x 1080)
+# ----------------------------------------------------------------------------
+FONDO = (15, 27, 45)
+TARJETA = (22, 38, 61)
+TEXTO = (238, 243, 251)
+SUAVE = (159, 177, 204)
+ACENTO = (95, 208, 224)
+NIVEL_COLOR = {0: (51, 70, 95), 1: (159, 216, 240), 2: (111, 164, 242), 3: (106, 99, 230), 4: (176, 59, 212)}
+
+
+def fuente(tam: int, negrita: bool = False):
+    from PIL import ImageFont
+
+    nombres = (["DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"] if negrita
+               else ["DejaVuSans.ttf", "LiberationSans-Regular.ttf"])
+    for carpeta in ("/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/truetype/liberation",
+                    "/usr/share/fonts/dejavu", "/usr/share/fonts/TTF"):
+        for n in nombres:
+            p = Path(carpeta) / n
+            if p.exists():
+                return ImageFont.truetype(str(p), tam)
+    return ImageFont.load_default(size=tam)
+
+
+def cabecera(d, titulo: str, sub: str):
+    d.text((60, 50), "Clima", font=fuente(54, True), fill=TEXTO)
+    w = d.textlength("Clima", font=fuente(54, True))
+    d.text((60 + w, 50), "AR", font=fuente(54, True), fill=ACENTO)
+    d.text((60, 130), titulo, font=fuente(40, True), fill=TEXTO)
+    d.text((60, 182), sub, font=fuente(28), fill=SUAVE)
+
+
+def pie_imagen(d, alto=1080):
+    d.text((60, alto - 70), URL_PUBLICA.replace("https://", ""), font=fuente(26, True), fill=ACENTO)
+
+
+def imagen_manana(resumen: dict, pron: dict, ahora: datetime) -> bytes:
+    from PIL import Image, ImageDraw
+
+    im = Image.new("RGB", (1080, 1080), FONDO)
+    d = ImageDraw.Draw(im)
+    cabecera(d, "Cómo viene el día", f"Bahía Blanca · {fecha_txt(ahora)}")
+    hoy = (pron or {}).get("hoy") or {}
+    d.rounded_rectangle((60, 250, 1020, 640), 28, fill=TARJETA)
+    d.text((100, 280), f"{fmt(hoy.get('maxima'))}°", font=fuente(150, True), fill=TEXTO)
+    d.text((100, 460), f"mínima {fmt(hoy.get('minima'))}°", font=fuente(40), fill=SUAVE)
+    c = cielo(hoy.get("codigo_tiempo"))
+    d.text((100, 530), c.capitalize() if c else "", font=fuente(44, True), fill=ACENTO)
+    x = 560
+    filas = [
+        ("Lluvia", f"{fmt(hoy.get('prob_lluvia'))} %" + (f" · {fmt(hoy.get('lluvia_mm'), 1)} mm"
+                                                          if (num(hoy.get('lluvia_mm')) or 0) >= 0.5 else "")),
+        ("Viento", f"{fmt(hoy.get('viento'))} km/h {punto(hoy.get('viento_direccion')) or ''}"),
+        ("Ráfagas", f"{fmt(hoy.get('rafagas'))} km/h"),
+    ]
+    for i, (k, v) in enumerate(filas):
+        d.text((x, 290 + i * 110), k, font=fuente(30), fill=SUAVE)
+        d.text((x, 328 + i * 110), v, font=fuente(42, True), fill=TEXTO)
+    # Localidades con su nivel
+    d.text((60, 680), "Las 7 localidades ahora", font=fuente(32, True), fill=TEXTO)
+    locs = (resumen or {}).get("localidades") or []
+    for i, l in enumerate(locs[:8]):
+        col, fil = i % 2, i // 2
+        x0, y0 = 60 + col * 485, 735 + fil * 68
+        n = int(num(l.get("nivel")) or 0)
+        d.rounded_rectangle((x0, y0, x0 + 46, y0 + 46), 10, fill=NIVEL_COLOR.get(n, NIVEL_COLOR[0]))
+        d.text((x0 + 23, y0 + 23), str(n or "–"), font=fuente(28, True),
+               fill=(11, 36, 51) if n in (1, 2) else TEXTO, anchor="mm")
+        d.text((x0 + 62, y0 + 6), str(l.get("nombre") or ""), font=fuente(30), fill=TEXTO)
+    pie_imagen(d)
+    salida = io.BytesIO()
+    im.save(salida, "PNG", optimize=True)
+    return salida.getvalue()
+
+
+VISTA_KM = 110.0      # medio ancho del mapa de la publicación (zona de las localidades)
+
+
+def _vista(sit: dict, resumen: dict):
+    """Cuadro de ~220 km centrado en las localidades con actividad (o Bahía)."""
+    pos = {l.get("id"): (num(l.get("lat")), num(l.get("lon"))) for l in resumen.get("localidades") or []}
+    pts = [pos[l["id"]] for l in sit["localidades"] if pos.get(l["id"]) and None not in pos[l["id"]]]
+    lat = sum(p[0] for p in pts) / len(pts) if pts else -38.72
+    lon = sum(p[1] for p in pts) / len(pts) if pts else -62.27
+    dlat = VISTA_KM / 110.574
+    dlon = VISTA_KM / (111.32 * math.cos(math.radians(lat)))
+    return [[lat - dlat, lon - dlon], [lat + dlat, lon + dlon]]
+
+
+def _proyector(bounds, lado):
+    (la0, lo0), (la1, lo1) = bounds
+
+    def p(lat, lon):
+        return ((lon - lo0) / (lo1 - lo0) * lado, (la1 - lat) / (la1 - la0) * lado)
+    return p
+
+
+def imagen_tormenta(sit: dict, resumen: dict, radar_png: bytes | None, ahora: datetime) -> bytes:
+    from PIL import Image, ImageDraw
+
+    im = Image.new("RGB", (1080, 1350), FONDO)   # vertical 4:5, la que mejor se ve en Facebook
+    d = ImageDraw.Draw(im)
+    n = sit["nivel"]
+    titulo = "ADVERTENCIA" if n >= 3 else "INFORME"
+    que = ("Tormenta fuerte" if n == 3 else "Tormenta posiblemente severa") if n >= 3 else "Tormentas en la zona"
+    frame = resumen.get("frame_actual_utc")
+    hora = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
+    local = ahora_ar(ahora)
+    sub = que + (f" · radar de las {hora}" if hora else "") + f" ({local.day}/{local.month})"
+    cabecera(d, titulo, sub)
+
+    # El mapa se dibuja aparte (así nada se sale del cuadro) y se pega.
+    lado, x0, y0 = 960, 60, 250
+    vista = _vista(sit, resumen)
+    p = _proyector(vista, lado)
+    mapa = Image.new("RGB", (lado, lado), (11, 21, 36))
+    dm = ImageDraw.Draw(mapa)
+    try:
+        geo = json.loads((RAIZ / "frontend" / "cartografia.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        geo = {"features": []}
+
+    def lineas(geom):
+        t, c = geom.get("type"), geom.get("coordinates") or []
+        if t == "LineString":
+            yield c
+        elif t in ("MultiLineString", "Polygon"):
+            yield from c
+        elif t == "MultiPolygon":
+            for pol in c:
+                yield from pol
+
+    estilos = {"provincias": ((150, 165, 190), 2), "partidos": ((80, 100, 130), 1),
+               "rutas": ((150, 125, 80), 2), "rios": ((63, 127, 191), 2)}
+    for f in geo.get("features", []):
+        if f["properties"].get("capa") == "tierra" and f["geometry"]["type"] in ("Polygon", "MultiPolygon"):
+            for anillo in lineas(f["geometry"]):
+                if len(anillo) > 2:
+                    dm.polygon([p(la, lo) for lo, la in anillo], fill=(22, 35, 58), outline=(52, 80, 122))
+    for f in geo.get("features", []):
+        capa = f["properties"].get("capa")
+        if capa in estilos:
+            color, ancho = estilos[capa]
+            for linea in lineas(f["geometry"]):
+                if len(linea) > 1:
+                    dm.line([p(la, lo) for lo, la in linea], fill=color, width=ancho)
+
+    # Radar: se recorta la parte de la vista y se agranda al cuadro.
+    bounds = ((resumen.get("radar") or {}).get("bounds")) or [[-40.8926, -64.9315], [-36.5758, -59.3993]]
+    if radar_png:
+        try:
+            rad = Image.open(io.BytesIO(radar_png)).convert("RGBA")
+            (b0, c0), (b1, c1) = bounds
+            (v0, w0), (v1, w1) = vista
+            W, H = rad.size
+            caja = ((w0 - c0) / (c1 - c0) * W, (b1 - v1) / (b1 - b0) * H,
+                    (w1 - c0) / (c1 - c0) * W, (b1 - v0) / (b1 - b0) * H)
+            rad = rad.transform((lado, lado), Image.Transform.EXTENT, caja, Image.Resampling.BILINEAR)
+            mapa.paste(rad, (0, 0), rad)
+        except Exception:
+            pass
+    # Anillo del alcance del radar (240 km) y localidades
+    cx, cy = p(-38.7342, -62.1654)
+    radio = 240.0 / (2 * VISTA_KM) * lado
+    dm.ellipse((cx - radio, cy - radio, cx + radio, cy + radio), outline=(95, 208, 224), width=2)
+    activos = {l["id"] for l in sit["localidades"]}
+    for l in resumen.get("localidades") or []:
+        if num(l.get("lat")) is None:
+            continue
+        x, y = p(l["lat"], l["lon"])
+        act = l.get("id") in activos
+        dm.ellipse((x - 7, y - 7, x + 7, y + 7), fill=ACENTO if act else TEXTO, outline=(11, 21, 36), width=2)
+        if act or l.get("id") not in ("ingeniero_white", "general_cerri"):
+            dm.text((x + 12, y - 18), l["nombre"], font=fuente(28 if act else 24, True),
+                    fill=ACENTO if act else TEXTO, stroke_width=4, stroke_fill=(11, 21, 36))
+    dm.text((lado - 16, lado - 14), "Radar RMA10 · SINARAME", font=fuente(20), fill=SUAVE, anchor="rd")
+    im.paste(mapa, (x0, y0))
+    d.rectangle((x0, y0, x0 + lado, y0 + lado), outline=(36, 56, 90), width=2)
+
+    # Debajo del mapa: hasta 2 localidades con su nivel y llegada
+    y = y0 + lado + 24
+    for l in sit["localidades"][:2]:
+        col = NIVEL_COLOR[l["nivel"]]
+        d.rounded_rectangle((60, y, 112, y + 52), 12, fill=col)
+        d.text((86, y + 26), str(l["nivel"]), font=fuente(32, True),
+               fill=(11, 36, 51) if l["nivel"] in (1, 2) else TEXTO, anchor="mm")
+        txt = l["nombre"]
+        if l["minutos"] is not None:
+            txt += f" · llega en ~{fmt(l['minutos'])} min"
+        elif l["encima"]:
+            txt += " · tormenta encima"
+        d.text((130, y + 8), txt, font=fuente(32, True), fill=TEXTO)
+        y += 64
+    pie_imagen(d, 1350)
+    salida = io.BytesIO()
+    im.save(salida, "PNG", optimize=True)
+    return salida.getvalue()
+
+
+# ----------------------------------------------------------------------------
+# Facebook
+# ----------------------------------------------------------------------------
+def publicar_foto(texto: str, png: bytes) -> str:
+    """Publica una foto con texto en la página. Devuelve el número de publicación."""
+    import requests
+
+    pagina = os.environ.get("FB_PAGE_ID", "").strip()
+    clave = os.environ.get("FB_PAGE_TOKEN", "").strip()
+    if not pagina or not clave:
+        raise RuntimeError("faltan FB_PAGE_ID o FB_PAGE_TOKEN en /etc/climaar-facebook.env")
+    r = requests.post(
+        f"{GRAPH}/{pagina}/photos",
+        data={"message": texto, "published": "true", "access_token": clave},
+        files={"source": ("climaar.png", png, "image/png")},
+        timeout=60,
+    )
+    try:
+        cuerpo = r.json()
+    except ValueError:
+        cuerpo = {}
+    if r.status_code != 200 or "id" not in cuerpo:
+        error = (cuerpo.get("error") or {}) if isinstance(cuerpo, dict) else {}
+        # Nunca se escribe la clave en el registro.
+        raise RuntimeError(f"Facebook respondió {r.status_code}: {error.get('message') or r.text[:200]}")
+    return str(cuerpo.get("post_id") or cuerpo["id"])
+
+
+# ----------------------------------------------------------------------------
+# Ciclo
+# ----------------------------------------------------------------------------
+def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None = None,
+          ahora: datetime | None = None) -> list[str]:
+    ahora = ahora or datetime.now(timezone.utc)
+    activo = os.environ.get("FB_ACTIVO", "1").strip() != "0"
+    estado = leer_estado()
+    hechos = []
+    resumen = pedir_json("/resumen")
+
+    def emitir(tipo: str, texto: str, png: bytes, extra: dict) -> None:
+        if probar or not activo:
+            if salida:
+                salida.mkdir(parents=True, exist_ok=True)
+                (salida / f"{tipo}.txt").write_text(texto, encoding="utf-8")
+                (salida / f"{tipo}.png").write_bytes(png)
+            hechos.append(f"{tipo}: armado sin publicar")
+            if probar:
+                return
+            post = None
+        else:
+            post = publicar_foto(texto, png)
+            hechos.append(f"{tipo}: publicado {post}")
+        estado.setdefault("publicaciones", []).append(
+            dict(extra, tipo=tipo, utc=ahora.isoformat(), id=post))
+
+    # 1) Mañana
+    if forzar == "manana" or (forzar is None and toca_manana(estado, ahora)):
+        pron = pedir_json("/pronostico")
+        if (pron or {}).get("hoy") or forzar:
+            emitir("manana", texto_manana(resumen, pron, ahora), imagen_manana(resumen, pron, ahora), {})
+            if not probar:
+                estado["manana_fecha"] = ahora_ar(ahora).date().isoformat()
+        else:
+            hechos.append("mañana: sin pronóstico todavía, se reintenta")
+
+    # 2) Tormentas
+    sit = situacion(resumen)
+    toca, motivo = (True, "forzada") if (forzar == "tormenta" and sit) else toca_tormenta(estado, sit, resumen, ahora)
+    if toca:
+        try:
+            radar = pedir_bytes("/radar/mapa")
+        except Exception:
+            radar = None
+        emitir("tormenta", texto_tormenta(sit, resumen, ahora), imagen_tormenta(sit, resumen, radar, ahora),
+               {"firma": sit["firma"], "nivel": sit["nivel"], "motivo": motivo})
+    else:
+        hechos.append(f"tormenta: no ({motivo})")
+
+    if not probar:
+        estado["ultimo_ciclo_utc"] = ahora.isoformat()
+        estado.pop("ultimo_error", None)
+        guardar_estado(estado, ahora)
+    return hechos
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="Publicaciones de ClimaAR en Facebook")
+    ap.add_argument("--probar", action="store_true", help="arma texto e imagen sin publicar ni guardar estado")
+    ap.add_argument("--salida", type=Path, help="carpeta donde dejar lo armado (con --probar)")
+    ap.add_argument("--forzar", choices=["manana", "tormenta"], help="publicar ya, sin esperar la hora")
+    a = ap.parse_args(argv)
+    try:
+        for h in ciclo(probar=a.probar, salida=a.salida, forzar=a.forzar):
+            print("facebook:", h)
+    except Exception as exc:
+        print(f"facebook: ERROR {type(exc).__name__}: {exc}")
+        if not a.probar:
+            e = leer_estado()
+            e["ultimo_error"] = {"utc": datetime.now(timezone.utc).isoformat(), "error": str(exc)[:300]}
+            try:
+                guardar_estado(e)
+            except OSError:
+                pass
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

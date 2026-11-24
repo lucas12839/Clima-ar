@@ -1,0 +1,22 @@
+# Publicaciones automáticas de ClimaAR en Facebook (24/11/2026).
+# Instalar: deploy/instalar_facebook.sh   Apagar: systemctl disable --now climaar-facebook.timer
+[Unit]
+Description=ClimaAR - publicaciones en la pagina de Facebook
+After=network-online.target climaar-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=climaar
+WorkingDirectory=/opt/Clima-ar
+# La clave de la página está solo acá (la lee systemd; el archivo es de root, permiso 600).
+EnvironmentFile=/etc/climaar-facebook.env
+Environment=CLIMAAR_API=http://127.0.0.1:8000
+ExecStart=/opt/Clima-ar/.venv-ia/bin/python /opt/Clima-ar/scripts/facebook_climaar.py
+StateDirectory=climaar-facebook
+TimeoutStartSec=180
+Nice=10
+CPUQuota=30%
+MemoryMax=300M
+NoNewPrivileges=true
+PrivateTmp=true
