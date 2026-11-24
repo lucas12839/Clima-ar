@@ -2906,7 +2906,7 @@ def resumen() -> dict[str, Any]:
 # Intelligence. Se lee del satélite solo cuando alguien lo pide y se guarda
 # un rato: no se agrega nada al repositorio ni a la estructura.
 
-GOES_STATE_FILE = DATA_BASE_DIR / "goes19" / "goes19_state.json"
+RAYOS_MAPA_FILE = DATA_BASE_DIR / "goes19" / "rayos_mapa.json"
 SATELITE_IMAGENES = 6            # última hora (una imagen cada 10 min)
 _SAT_LISTA: dict[str, Any] = {"ts": 0.0, "lista": []}
 _SAT_LISTA_SEG = 120.0
@@ -2971,7 +2971,7 @@ def _satelite_png(item: dict[str, Any]) -> bytes | None:
 
 @app.get("/satelite")
 def satelite():
-    """Lista de las imágenes de la última hora y los rayos de la imagen de radar."""
+    """Imágenes del satélite de la última hora y los rayos de esa hora."""
     try:
         lista = _satelite_lista()
     except Exception as exc:
@@ -2980,19 +2980,17 @@ def satelite():
     else:
         error = None
 
-    estado = read_json(GOES_STATE_FILE) or {}
-    glm = estado.get("glm") if isinstance(estado.get("glm"), dict) else {}
-    rayos = glm.get("rayos_frame_radar") if isinstance(glm.get("rayos_frame_radar"), dict) else {}
+    rayos = read_json(RAYOS_MAPA_FILE) or {}
 
     return {
         "imagenes": [
             {"clave": i["clave"], "hora_utc": i["hora_utc"], "imagen": f"/satelite/nubes/{i['clave']}"}
             for i in lista
         ],
+        # [lat, lon, segundos UTC] de la última hora (los guarda Intelligence).
         "rayos": {
-            "fin_utc": rayos.get("fin_utc"),
-            "ventana_min": rayos.get("ventana_min"),
-            "posiciones": rayos.get("posiciones") or [],
+            "actualizado_utc": rayos.get("actualizado_utc"),
+            "lista": rayos.get("rayos") or [],
         },
         "error": error,
     }

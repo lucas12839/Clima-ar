@@ -374,12 +374,13 @@ function isoDeClave(t) {
 
 /* ---------- Satélite GOES-19 (vista Meteorólogos) ---------- */
 
-const sat = { m: null, nubes: null, rayos: null, radar: null, mostrada: null, datosRayos: [] };
+const sat = { m: null, nubes: null, rayos: null, radar: null, mostrada: null, datosRayos: [], finRayos: null, ultimaImagen: null };
 
 function iniciarSatelite() {
   if (sat.m || !window.L) return;
   sat.m = crearMapaBase("mapaSat", "Satélite: NOAA GOES-19");
   sat.rayos = L.layerGroup().addTo(sat.m);
+  sat.m.on("move", medirMira);
 }
 
 function ponerNubes(ruta, clave) {
@@ -389,24 +390,43 @@ function ponerNubes(ruta, clave) {
   else sat.nubes = L.imageOverlay(url, cuadroRadar(), { opacity: .95 }).addTo(sat.m);
 }
 
-// Rayos de los ~14 min que terminan en la imagen de radar, como en Windy:
-// un rayito chico por cada rayo (la cantidad se ve sola por cuántos hay
-// juntos); los de los últimos 5 min destellan y los de los últimos 2 min
-// tienen además un brillo blanco.
+// Rayos como en Windy: un rayito chico por cada rayo (la cantidad se ve
+// sola por cuántos hay juntos). Se muestran los 10 min que terminan en la
+// imagen que se está viendo, así acompañan la animación. Destellan los de
+// los últimos 5 min de esa imagen; los de los últimos 2 min, con brillo.
 const RAYO_SVG = '<svg viewBox="0 0 16 22" aria-hidden="true"><path d="M10 0 2 12h5l-2 10 9-13H9l3-9z"/></svg>';
+const RAYOS_VENTANA_S = 600;
+const MIRA_KM = 15;
 
-function pintarRayos(r) {
-  if (r) sat.datosRayos = (r.posiciones || []).filter(p => Array.isArray(p) && num(p[0]) !== null);
+function rayosHasta(finSeg) {
+  return (sat.datosRayos || []).filter(r => r[2] <= finSeg && r[2] > finSeg - RAYOS_VENTANA_S);
+}
+
+function pintarRayos(finSeg) {
+  sat.finRayos = finSeg;
   sat.rayos.clearLayers();
-  // Los más viejos primero, así los nuevos quedan arriba.
-  [...(sat.datosRayos || [])].sort((a, b) => (num(b[2]) || 0) - (num(a[2]) || 0)).forEach(p => {
-    const min = num(p[2]) || 0;
-    const clase = min <= 2 ? "rayo nuevo brillo" : min <= 5 ? "rayo nuevo" : "rayo";
+  const lista = rayosHasta(finSeg).sort((a, b) => a[2] - b[2]);   // los nuevos quedan arriba
+  lista.forEach(p => {
+    const edad = (finSeg - p[2]) / 60;
+    const clase = edad <= 2 ? "rayo nuevo brillo" : edad <= 5 ? "rayo nuevo" : "rayo";
     L.marker([p[0], p[1]], {
       pane: "encima", interactive: false, keyboard: false,
       icon: L.divIcon({ className: "icono-rayo", html: `<span class="${clase}" style="animation-delay:-${(Math.random() * 1.6).toFixed(2)}s">${RAYO_SVG}</span>`, iconSize: [10, 14], iconAnchor: [5, 7] })
     }).addTo(sat.rayos);
   });
+  medirMira();
+}
+
+// Mira fija en el centro del mapa: cuántos rayos hay alrededor (15 km) y su
+// densidad, en los 10 min de la imagen que se está viendo.
+function medirMira() {
+  if (!sat.m || sat.finRayos == null) return;
+  const c = sat.m.getCenter(), centro = [c.lat, c.lng];
+  const n = rayosHasta(sat.finRayos).filter(r => distKm(centro, [r[0], r[1]]) <= MIRA_KM).length;
+  const area = Math.PI * MIRA_KM * MIRA_KM;
+  $("miraDato").textContent = n
+    ? `${n} rayo${n > 1 ? "s" : ""} a ${MIRA_KM} km · ${fmt(n / area * 100, 1)} por 100 km² (10 min)`
+    : `Sin rayos a ${MIRA_KM} km (10 min)`;
 }
 
 function radarSobreSatelite() {
@@ -431,12 +451,17 @@ async function cargarSatelite() {
       ponerNubes(ultima.imagen, ultima.clave);
       sat.mostrada = ultima.clave;
     }
-    pintarRayos(s.rayos || {});
+    sat.datosRayos = ((s.rayos && s.rayos.lista) || []).filter(r => Array.isArray(r) && num(r[0]) !== null && num(r[2]) !== null);
+    sat.ultimaImagen = ultima || null;
     radarSobreSatelite();
     if (animSat && animSat.activa()) return;
-    const n = (s.rayos && s.rayos.posiciones || []).length;
+    // Vista "Último": los rayos más nuevos que haya (aunque el satélite tarde).
+    const masNuevo = sat.datosRayos.reduce((m, r) => Math.max(m, r[2]), 0);
+    const finImagen = ultima ? Date.parse(ultima.hora_utc) / 1000 : 0;
+    pintarRayos(Math.max(masNuevo, finImagen) || Date.now() / 1000);
+    const n = rayosHasta(sat.finRayos).length;
     $("satHora").textContent = ultima
-      ? `Imagen del satélite de las ${horaLocal(ultima.hora_utc)} · ${n ? n + " rayos en los 14 min de la imagen de radar" : "sin rayos en la imagen de radar"}`
+      ? `Imagen del satélite de las ${horaLocal(ultima.hora_utc)} · ${n ? n + " rayos en los últimos 10 min" : "sin rayos en los últimos 10 min"}`
       : "El satélite no está disponible en este momento.";
   } catch (e) {
     $("satHora").textContent = "El satélite no está disponible en este momento.";
@@ -634,7 +659,7 @@ animSat = crearAnimador({
     const s = await pedir("/satelite", 30000);
     return (s.imagenes || []).map(f => ({ ruta: f.imagen, clave: f.clave, url: urlImagen(f.imagen, f.clave), hora: f.hora_utc }));
   },
-  poner: f => ponerNubes(f.ruta, f.clave),
+  poner: f => { ponerNubes(f.ruta, f.clave); pintarRayos(Date.parse(f.hora) / 1000); },
   rotulo: t => { $("satHora").textContent = t; },
   alVolver: () => { sat.mostrada = null; cargarSatelite(); }
 });

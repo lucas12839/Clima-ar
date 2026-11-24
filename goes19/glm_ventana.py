@@ -251,6 +251,14 @@ def ventana_y_rayos_radar(ahora: datetime | None = None, centro=(-38.7342, -62.1
     if "archivos_leidos" in salida:
         salida["archivos_esperados"] = len(recientes)
     rayos = _rayos_radar(res, frame_radar, minutos_radar) if frame_radar is not None else None
+    # Para el mapa de la app: cada rayo leído con su hora (lo guarda state.py
+    # en data/goes19/rayos_mapa.json y lo saca del estado antes de guardarlo).
+    salida["_posiciones_mapa"] = [
+        (float(la), float(lo), int(r["fin"].timestamp()))
+        for r in res
+        for la, lo in zip(np.asarray(r["lat"]), np.asarray(r["lon"]))
+        if np.isfinite(la) and np.isfinite(lo)
+    ]
     return salida, rayos
 
 

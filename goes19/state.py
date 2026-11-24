@@ -641,24 +641,40 @@ C13_AHORA = Path(tempfile.gettempdir()) / "climaar_c13_ahora.npz"
 C13_RADAR = Path(tempfile.gettempdir()) / "climaar_c13_radar.npz"
 
 
-MAPA_RAYOS_MAX = 600
+RAYOS_MAPA_FILE = BASE_DIR / "data" / "goes19" / "rayos_mapa.json"
+RAYOS_MAPA_MINUTOS = 70          # la animación del satélite cubre 1 hora
+RAYOS_MAPA_MAX = 4000
 
 
-def _rayos_para_mapa(rayos: dict) -> list[list[float]]:
-    """[lat, lon, minutos antes de la imagen de radar], los más nuevos primero.
-    Redondeado a ~100 m y con tope, para que el estado siga siendo liviano."""
+def guardar_rayos_mapa(nuevos: list, ahora: datetime | None = None, destino: Path | None = None) -> None:
+    """Rayos de la última hora con su hora, para el mapa de la app (vista
+    Meteorólogos). Solo lo escribe este programa; nadie de la estructura lo lee.
+    Formato compacto: [lat, lon, segundos UTC]."""
+    destino = destino or RAYOS_MAPA_FILE
+    ahora = ahora or datetime.now(timezone.utc)
+    limite = int(ahora.timestamp()) - RAYOS_MAPA_MINUTOS * 60
     try:
-        lat = np.asarray(rayos["latitude"], dtype=float)
-        lon = np.asarray(rayos["longitude"], dtype=float)
-        minutos = np.asarray(rayos["minutos"], dtype=float)
+        viejos = json.loads(destino.read_text(encoding="utf-8")).get("rayos") or []
     except Exception:
-        return []
-    ok = np.isfinite(lat) & np.isfinite(lon) & np.isfinite(minutos)
-    orden = np.argsort(minutos[ok], kind="stable")[:MAPA_RAYOS_MAX]
-    return [
-        [round(float(a), 3), round(float(b), 3), round(float(c), 1)]
-        for a, b, c in zip(lat[ok][orden], lon[ok][orden], minutos[ok][orden])
-    ]
+        viejos = []
+    unicos = {}
+    for la, lo, t in list(viejos) + [list(n) for n in nuevos]:
+        try:
+            la, lo, t = round(float(la), 3), round(float(lo), 3), int(t)
+        except (TypeError, ValueError):
+            continue
+        if t >= limite:
+            unicos[(la, lo, t)] = [la, lo, t]
+    rayos = sorted(unicos.values(), key=lambda r: r[2])[-RAYOS_MAPA_MAX:]
+    try:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(json.dumps({
+            "actualizado_utc": por_tormenta.iso(ahora),
+            "minutos": RAYOS_MAPA_MINUTOS,
+            "rayos": rayos,
+        }, separators=(",", ":")), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def guardar_c13_ahora(dominio: dict, hora: datetime | None, destino: Path | None = None) -> None:
@@ -802,14 +818,13 @@ def build_state(reference_time: datetime | None = None) -> dict:
                 centro=(RADAR_LAT, RADAR_LON), radio_km=RADIO_TORMENTAS_KM,
                 frame_radar=reference_time,
             )
+            guardar_rayos_mapa(state["glm"]["ventana"].pop("_posiciones_mapa", None) or [])
             if rayos_radar is not None:
                 state["glm"]["rayos_frame_radar"] = {
                     "fin_utc": por_tormenta.iso(reference_time),
                     "ventana_min": por_tormenta.RAYOS_VENTANA_MIN,
                     "cobertura_min": round(float(rayos_radar["cobertura_min"]), 1),
                     "archivos": int(rayos_radar["archivos"]),
-                    # Posiciones para el mapa de la app (vista Meteorólogos).
-                    "posiciones": _rayos_para_mapa(rayos_radar),
                 }
         except Exception as exc:
             state["glm"]["ventana"] = {"disponible": False, "motivo": f"ERROR: {exc}"}

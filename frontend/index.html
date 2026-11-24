@@ -99,14 +99,18 @@
         <button id="ultimoSat" class="boton">Último</button>
       </div>
     </div>
-    <div id="mapaSat" class="mapa"></div>
+    <div class="mapa-con-mira">
+      <div id="mapaSat" class="mapa"></div>
+      <div class="mira" aria-hidden="true"></div>
+      <div id="miraDato" class="mira-dato">—</div>
+    </div>
     <div class="escala-radar" aria-label="Temperatura del tope de las nubes">
       <div class="barra-color barra-sat"></div>
       <div class="marcas"><span>0 °C</span><span>-30</span><span>-45</span><span>-60</span><span>-80 °C</span></div>
     </div>
     <label class="interruptor"><input type="checkbox" id="radarEncima"> Mostrar el radar encima</label>
     <p id="satHora" class="pie"></p>
-    <p class="pie">GOES-19, canal 13 (infrarrojo), última hora: temperatura del tope de la nube. Más fría = nube más alta y tormenta más desarrollada. Rayitos lilas: cada uno es un rayo del detector GLM; destellan los de los últimos 5 min.</p>
+    <p class="pie">GOES-19, canal 13 (infrarrojo), última hora: temperatura del tope de la nube. Más fría = nube más alta y tormenta más desarrollada. Rayitos lilas: cada uno es un rayo del detector GLM (10 min de cada imagen); destellan los de los últimos 5 min. La mira del centro cuenta los rayos a 15 km: mové el mapa para medir otra zona.</p>
   </section>
   <p id="meteoEstado" class="pie">Cargando datos completos…</p>
   <div id="meteoContenido"></div>

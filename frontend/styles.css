@@ -223,3 +223,15 @@ main { max-width: 760px; margin: 0 auto; padding: 14px max(4vw, 12px) 8px; }
 .rayo.brillo { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px rgba(255, 255, 255, .7)); }
 @keyframes destello { 0%, 55%, 100% { opacity: 1; } 8% { opacity: .2; } 16% { opacity: 1; } 24% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .rayo.nuevo { animation: none; } }
+
+/* Mira de densidad de rayos (centro del mapa del satélite) */
+.mapa-con-mira { position: relative; }
+.mira { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px; z-index: 500; pointer-events: none; }
+.mira::before, .mira::after { content: ""; position: absolute; background: #fff; box-shadow: 0 0 2px #000; }
+.mira::before { left: 16px; top: 0; width: 2px; height: 34px; }
+.mira::after { top: 16px; left: 0; height: 2px; width: 34px; }
+.mira-dato {
+  position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 500; pointer-events: none;
+  background: rgba(15, 27, 45, .88); border: 1px solid #c9a2f2; color: #eef3fb; border-radius: 10px;
+  padding: 4px 10px; font: 600 12px "Red Hat Text", sans-serif; white-space: nowrap; max-width: 92%; overflow: hidden; text-overflow: ellipsis;
+}
