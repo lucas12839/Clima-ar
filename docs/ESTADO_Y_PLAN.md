@@ -21,6 +21,11 @@ Leer junto con `CLAUDE.md` (reglas fijas del repo).
   Ahora se conserva el centro ponderado del sistema: salto de velocidad 67-70 → 24 km/h; cambio de tamaño
   falso +66 % (unión) / −43 % (división) → ~0 % (ya no "crece" ni "se debilita" por eso); la hija hereda
   dirección y pasado. Las trayectorias que se muestran (5b, flujo) no usan esto y no cambian.
+- **Falla del 23/11, 20:41-21:08:** la actualización instaló Playwright 1.65.2 sin su navegador; el
+  detector falló cada consulta 27 min y seguía dando latido. Arreglado a mano (`playwright install
+  chromium` como `climaar`). Ahora: el actualizador baja el navegador cuando cambia Playwright; si el
+  detector falla ~10 min seguidos deja de dar latido (toma el respaldo de GitHub) y publica el error, y
+  la vigilancia avisa a los 5 min con la causa y el comando.
 - **Sigue: 4 estaciones al oeste y suroeste.**
 
 ## Reparación de la sincronización de la cadena (23/11/2026, 17:00 hora de Argentina)

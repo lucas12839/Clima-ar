@@ -54,6 +54,11 @@ ACTUALIZACION_LOCAL = Path(".climaar/actualizacion.json")
 # El watchdog considera caido al servicio si el latido supera esto.
 LATIDO_MAX_MIN = 5.0
 LATIDO_CADA_SEG = 120.0
+# 23/11/2026: una actualización de Playwright dejó al detector sin navegador y
+# falló cada consulta durante 27 min sin que nadie se enterara (el latido seguía).
+# Si falla seguido (~10 min), deja de dar latido: el respaldo de GitHub toma la
+# captura y la vigilancia avisa con el error.
+ERRORES_SIN_LATIDO = 20
 
 
 def _env_float(nombre, defecto):
@@ -310,6 +315,7 @@ class Detector:
             accion = "error_sinarame"
             est["collector_state"] = "error"
             est["ultimo_error"] = str(exc)[:200]
+            est["ultimo_error_sinarame"] = str(exc)[:200]
             est["errores_consecutivos"] = int(
                 est.get("errores_consecutivos", 0)
             ) + 1
@@ -371,7 +377,7 @@ class Detector:
         return accion
 
 
-def info_servicio(gh, raiz=None):
+def info_servicio(gh, raiz=None, error_consultas=None):
     """Qué código corre, cuándo vence la clave y la última actualización automática."""
     raiz = Path(raiz) if raiz else Path(__file__).resolve().parents[1]
     try:
@@ -384,7 +390,8 @@ def info_servicio(gh, raiz=None):
     except (OSError, ValueError):
         actualizacion = None
     return {"utc": re_.iso(re_.ahora_utc()), "commit": commit, "clave_vence": gh.clave_vence,
-            "actualizacion": actualizacion, "python": sys.prefix}
+            "actualizacion": actualizacion, "python": sys.prefix,
+            "error_consultas": error_consultas}
 
 
 def mostrar_estado(ahora=None, estado_path=ESTADO_LOCAL, max_min=LATIDO_MAX_MIN):
@@ -486,6 +493,7 @@ def main(argv=None):
     inicio = time.monotonic()
     ultimo_latido = 0.0
     ultima_info = 0.0
+    error_publicado = False
     ticks = consultas_ok = 0
     while not parar["v"]:
         t0 = time.monotonic()
@@ -496,11 +504,26 @@ def main(argv=None):
             f"{datetime.now(timezone.utc).isoformat()} tick: {accion}",
             flush=True,
         )
-        if (
+        errores = int(det._estado().get("errores_consecutivos", 0) or 0)
+        if a.latido and not a.sin_despachar and errores >= ERRORES_SIN_LATIDO:
+            if not error_publicado:
+                try:
+                    gh.escribir_info(info_servicio(gh, error_consultas={
+                        "consecutivos": errores,
+                        "ultimo_error": det._estado().get("ultimo_error_sinarame"),
+                        "utc": re_.iso(re_.ahora_utc())}))
+                    error_publicado = True
+                except Exception as exc:
+                    print(f"ADVERTENCIA: error no publicado: {exc}", flush=True)
+            print(f"ERROR: {errores} consultas seguidas fallaron: sin latido, toma el respaldo.", flush=True)
+        elif (
             a.latido
             and not a.sin_despachar
             and time.monotonic() - ultimo_latido >= LATIDO_CADA_SEG
         ):
+            if error_publicado:
+                ultima_info = 0.0  # se recuperó: se publica enseguida sin el error
+                error_publicado = False
             try:
                 gh.escribir_latido(re_.iso(re_.ahora_utc()))
                 ultimo_latido = time.monotonic()

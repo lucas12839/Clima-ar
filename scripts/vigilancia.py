@@ -89,10 +89,22 @@ def revisar(ahora: datetime, latido: str | None, info: dict | None, radar_ts: st
     info = info or {}
 
     edad_latido = minutos(parse(latido), ahora)
-    latido_ok = edad_latido is not None and edad_latido <= LATIDO_MAX_MIN
+    # Si el detector avisó que no puede consultar SINARAME, cortó el latido a
+    # propósito: se avisa apenas el respaldo de GitHub lo toma (5 min).
+    con_error = isinstance(info.get("error_consultas"), dict)
+    latido_ok = edad_latido is not None and edad_latido <= (5.0 if con_error else LATIDO_MAX_MIN)
     if not latido_ok:
         hace = "nunca dio latido" if edad_latido is None else f"no da latido hace {edad_latido:.0f} min"
-        problemas.append({"clave": "latido", "texto":
+        err = info.get("error_consultas") if isinstance(info.get("error_consultas"), dict) else None
+        if err:
+            problemas.append({"clave": "latido", "texto":
+                f"El detector del VPS {hace} porque no puede consultar SINARAME "
+                f"({err.get('consecutivos')} consultas seguidas fallaron; último error: "
+                f"{str(err.get('ultimo_error') or 'sin detalle')[:160]}). Si dice que falta el navegador: "
+                "`runuser -u climaar -- env HOME=/opt/clima-ar /opt/Clima-ar/.venv-ia/bin/python -m "
+                "playwright install chromium`. Mientras tanto trabaja el respaldo de GitHub."})
+        else:
+            problemas.append({"clave": "latido", "texto":
             f"El detector del VPS {hace}. Causas posibles: la clave de GitHub del VPS venció o la "
             "rechazan (error 401), el VPS está apagado o sin internet, o el servicio se cayó. "
             "Mientras tanto trabaja el respaldo de GitHub. Para ver la causa, por SSH: "
