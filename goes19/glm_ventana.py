@@ -145,8 +145,11 @@ def _leer(meta: dict, destino: Path, centro: tuple[float, float], radio_km: floa
                 if "flash_area" in ds else np.full(lat.shape, np.nan))
         energia = (np.asarray(ds["flash_energy"].values, dtype=float)
                    if "flash_energy" in ds else np.full(lat.shape, np.nan))
+        # 25/11/2026: la marca de calidad de cada rayo (0 = bueno) no se usaba.
+        calidad = (np.asarray(ds["flash_quality_flag"].values, dtype=float)
+                   if "flash_quality_flag" in ds else np.zeros(lat.shape))
     destino.unlink(missing_ok=True)
-    ok = np.isfinite(lat) & np.isfinite(lon)
+    ok = np.isfinite(lat) & np.isfinite(lon) & (calidad == 0)
     lat, lon, area, energia = lat[ok], lon[ok], area[ok], energia[ok]
     if lat.size:
         dentro = distancia_km(centro[0], centro[1], lat, lon) <= radio_km
@@ -158,6 +161,67 @@ def _leer(meta: dict, destino: Path, centro: tuple[float, float], radio_km: floa
         "area_km2": area / 1e6,       # GLM da m²
         "energia_fj": energia * 1e15,  # GLM da J
     }
+
+
+# ----------------------------------------------------------------------------
+# Rayo sin nube de tormenta = falso (25/11/2026)
+# ----------------------------------------------------------------------------
+# A las 6:29-6:42 del 25/11 entraron 4 "rayos" sueltos con el cielo despejado
+# (sin eco de radar ni nube fría) y Médanos mostró "Rayos aislados". Un rayo
+# real sale de una nube de tormenta: tope a -15 °C o más frío a 15 km o menos
+# (margen por el desplazamiento aparente del satélite). Se usa la imagen del
+# canal 13 que el mismo ciclo ya guardó (state.py). Sin imagen al día, no se
+# puede controlar y los rayos quedan como están.
+NUBE_TOPE_MAX_C = -15.0
+NUBE_RADIO_KM = 15.0
+NUBE_IMAGEN_MAX_MIN = 25.0
+
+
+def _imagen_c13() -> dict | None:
+    import tempfile
+    import time
+
+    candidatos = [Path(tempfile.gettempdir()) / n for n in ("climaar_c13_ahora.npz", "climaar_c13_radar.npz")]
+    vivos = [c for c in candidatos if c.exists() and time.time() - c.stat().st_mtime <= NUBE_IMAGEN_MAX_MIN * 60]
+    if not vivos:
+        return None
+    try:
+        z = np.load(max(vivos, key=lambda c: c.stat().st_mtime))
+        return {"lat": np.asarray(z["lat"], float), "lon": np.asarray(z["lon"], float),
+                "temp_c": np.asarray(z["temp_c"], float)}
+    except Exception:
+        return None
+
+
+def con_nube(lat: np.ndarray, lon: np.ndarray, c13: dict | None) -> np.ndarray:
+    """True donde hay una nube de tormenta cerca (o no se puede controlar)."""
+    lat = np.asarray(lat, float)
+    lon = np.asarray(lon, float)
+    if c13 is None or lat.size == 0:
+        return np.ones(lat.shape, bool)
+    glat, glon, temp = c13["lat"], c13["lon"], c13["temp_c"]
+    fria = np.isfinite(temp) & (temp <= NUBE_TOPE_MAX_C)
+    if not fria.any():
+        return np.zeros(lat.shape, bool)
+    flat, flon = glat[fria], glon[fria]
+    salida = np.zeros(lat.shape, bool)
+    dlat = NUBE_RADIO_KM / 111.0
+    for i, (la, lo) in enumerate(zip(lat, lon)):
+        cerca = (np.abs(flat - la) <= dlat) & (np.abs(flon - lo) <= dlat * 1.3)
+        if cerca.any():
+            salida[i] = bool((distancia_km(la, lo, flat[cerca], flon[cerca]) <= NUBE_RADIO_KM).any())
+    return salida
+
+
+def filtrar_sin_nube(res: list[dict], c13: dict | None) -> int:
+    """Saca de cada archivo leído los rayos sin nube de tormenta. Devuelve cuántos."""
+    sacados = 0
+    for r in res:
+        ok = con_nube(r["lat"], r["lon"], c13)
+        sacados += int((~ok).sum())
+        for k in ("lat", "lon", "area_km2", "energia_fj"):
+            r[k] = np.asarray(r[k])[ok]
+    return sacados
 
 
 def _bajar_y_leer(archivos: list[dict], centro, radio_km) -> list[tuple]:
@@ -246,10 +310,14 @@ def ventana_y_rayos_radar(ahora: datetime | None = None, centro=(-38.7342, -62.1
         del_radar = _elegir(vistos, frame_radar - timedelta(minutes=minutos_radar), frame_radar)
     union = {m["key"]: m for m in recientes + del_radar}
     res = _bajar_y_leer(sorted(union.values(), key=lambda m: m["end_time_utc"]), centro, radio_km)
+    c13 = _imagen_c13()
+    sin_nube = filtrar_sin_nube(res, c13)
     fines_recientes = {_parse_utc(m["end_time_utc"]) for m in recientes}
     salida = _resumen_ventana([r for r in res if r["fin"] in fines_recientes])
     if "archivos_leidos" in salida:
         salida["archivos_esperados"] = len(recientes)
+    salida["rayos_sin_nube_descartados"] = sin_nube
+    salida["control_nube"] = c13 is not None
     rayos = _rayos_radar(res, frame_radar, minutos_radar) if frame_radar is not None else None
     # Para el mapa de la app: cada rayo leído con su hora (lo guarda state.py
     # en data/goes19/rayos_mapa.json y lo saca del estado antes de guardarlo).
