@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Máscara de ecos fijos de cada radar del recolector (Córdoba, Resistencia, Tostado).
+"""Máscara de ecos fijos de cada radar del recolector (Córdoba, Resistencia, Tostado, Formosa, Salta).
 
 Un eco que aparece en el mismo lugar en la mayoría de las imágenes (sierras,
 edificios, antenas) no es lluvia: es un eco fijo. Con las imágenes que juntó

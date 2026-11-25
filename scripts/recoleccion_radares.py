@@ -1,7 +1,7 @@
 """Recolector de radares de otras zonas (calibración, 23/11/2026).
 
 Guarda las imágenes crudas de radares SINARAME con tormentas frecuentes
-(por defecto Córdoba RMA1, Resistencia RMA4 y Tostado RMA21) para calibrar el seguimiento,
+(por defecto Córdoba RMA1, Resistencia RMA4, Tostado RMA16, Las Lomitas RMA3 y Las Lajitas RMA13) para calibrar el seguimiento,
 las trayectorias, las falsas alarmas y las señales de tormenta severa con
 muchas más tormentas reales que las que llegan a Bahía Blanca.
 
@@ -28,7 +28,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 URL_BASE = "https://radares.hidricosargentina.gob.ar/cache/{radar}/{nombre}.png"
-RADARES = {"RMA1": "Córdoba", "RMA4": "Resistencia", "RMA21": "Tostado"}
+# 25/11/2026: Tostado es RMA16 (antes figuraba RMA21 y nunca bajó nada); se suman
+# Formosa (Las Lomitas, RMA3) y Salta (Las Lajitas, RMA13), pedido de Lucas.
+RADARES = {"RMA1": "Córdoba", "RMA4": "Resistencia", "RMA16": "Tostado",
+           "RMA3": "Las Lomitas (Formosa)", "RMA13": "Las Lajitas (Salta)"}
 # Argentina no tiene horario de verano: UTC-3 fijo (SINARAME nombra en hora local).
 ARGENTINA = timezone(timedelta(hours=-3))
 PASO_MIN = 10
@@ -177,7 +180,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--destino", default="/var/lib/climaar-recoleccion")
     p.add_argument("--radares", default=",".join(RADARES),
-                   help="códigos separados por coma (por defecto RMA1,RMA4,RMA21)")
+                   help="códigos separados por coma (por defecto RMA1,RMA4,RMA16,RMA3,RMA13)")
     p.add_argument("--libre-min-gb", type=float, default=LIBRE_MIN_GB)
     p.add_argument("--tope-gb", type=float, default=TOPE_GB)
     a = p.parse_args(argv)
