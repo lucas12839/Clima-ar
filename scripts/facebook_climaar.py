@@ -69,7 +69,12 @@ FIN_DENTRO_DE_H = 6                # "se alejaron" solo si hubo advertencia en l
 # declara alerta para una zona entera y ClimaAR analiza cada localidad).
 # Cada publicación lleva el enlace a la página de ClimaAR.
 PIE_ENLACE = "Página oficial de ClimaAR: " + URL_PUBLICA
-PIE = "Información de ClimaAR por localidad. No reemplaza los avisos oficiales."
+# 25/11/2026 (Lucas): sin "no reemplaza los avisos oficiales"; en los informes,
+# el aviso de que ClimaAR no pide dinero; hashtags sin #PuntaAlta.
+PIE = ""
+PIE_INFORME = ("ClimaAR no pide dinero ni donaciones. Somos autónomos. "
+               "Nos ayudaría mucho compartiendo y siguiéndonos. ¡Gracias! ✅")
+HASHTAGS = "#BahíaBlanca #Clima #Tiempo"
 TIPO_ADV = "advertencia"
 TIPO_FIN = "fin"
 TIPOS_TORMENTA = (TIPO_ADV, "tormenta", TIPO_FIN)
@@ -261,23 +266,157 @@ def texto_manana(resumen: dict, pron: dict, ahora: datetime) -> str:
     if amb:
         lineas.append(f"⛈️ {amb}.")
     lineas += _activos(resumen)
-    lineas += ["", "Radar en vivo y detalle por localidad en la página.", PIE_ENLACE, "", PIE,
-               "#BahíaBlanca #PuntaAlta #Clima"]
+    lineas += ["", "Radar en vivo y detalle por localidad en la página.", PIE_ENLACE, "", PIE_INFORME,
+               HASHTAGS]
     return "\n".join(lineas)
+
+
+# Informe de la noche (25/11/2026): cómo sigue el tiempo ESTA noche y la
+# madrugada (de 21 a 7), así complementa al de la mañana (día y tarde) en vez
+# de repetirlo.
+NOCHE_DESDE_H = 21
+NOCHE_HASTA_H = 7
+
+
+def horas_noche(pron: dict, ahora: datetime) -> list[dict]:
+    """Las horas de 21 a 7 (hora argentina) de esta noche, con su hora local."""
+    hoy = ahora_ar(ahora).date()
+    desde = datetime(hoy.year, hoy.month, hoy.day, NOCHE_DESDE_H)
+    hasta = desde + timedelta(hours=24 - NOCHE_DESDE_H + NOCHE_HASTA_H)
+    salida = []
+    for h in (pron or {}).get("horas") or []:
+        try:
+            t = datetime.fromisoformat(str(h.get("hora")))
+        except ValueError:
+            continue
+        if desde <= t <= hasta:
+            salida.append(dict(h, _t=t))
+    return salida
+
+
+def resumen_noche(horas: list[dict]) -> dict | None:
+    if len(horas) < 6:
+        return None
+
+    def vals(k):
+        return [num(h.get(k)) for h in horas if num(h.get(k)) is not None]
+
+    temps = [(num(h.get("temperatura")), h["_t"]) for h in horas if num(h.get("temperatura")) is not None]
+    if not temps:
+        return None
+    tmin, hmin = min(temps, key=lambda x: x[0])
+
+    def a_la(hora):
+        return next((num(h.get("temperatura")) for h in horas if h["_t"].hour == hora), None)
+
+    mitad = len(horas) // 2
+    cod1 = [num(h.get("codigo_tiempo")) for h in horas[:mitad] if num(h.get("codigo_tiempo")) is not None]
+    cod2 = [num(h.get("codigo_tiempo")) for h in horas[mitad:] if num(h.get("codigo_tiempo")) is not None]
+    moda = lambda xs: max(set(xs), key=xs.count) if xs else None  # noqa: E731
+    viento = vals("viento")
+    raf = [(num(h.get("rafagas")), h["_t"]) for h in horas if num(h.get("rafagas")) is not None]
+    rmax, hraf = max(raf, key=lambda x: x[0]) if raf else (None, None)
+    v1 = vals("viento")[:mitad]
+    v2 = vals("viento")[mitad:]
+    tendencia = None
+    if v1 and v2:
+        m1, m2 = sum(v1) / len(v1), sum(v2) / len(v2)
+        tendencia = "aumenta de madrugada" if m2 - m1 >= 8 else "se calma de madrugada" if m1 - m2 >= 8 else None
+    dirs = vals("viento_direccion")
+    return {
+        "minima": tmin, "hora_minima": hmin.hour,
+        "medianoche": a_la(0), "amanecer": a_la(6),
+        "cielo_1": cielo(moda(cod1)), "cielo_2": cielo(moda(cod2)),
+        "prob_lluvia": max(vals("prob_lluvia"), default=None),
+        "lluvia_mm": sum(vals("lluvia_mm")) if vals("lluvia_mm") else None,
+        "viento_min": min(viento) if viento else None, "viento_max": max(viento) if viento else None,
+        "direccion": dirs[len(dirs) // 2] if dirs else None,
+        "rafaga_max": rmax, "hora_rafaga": hraf.hour if hraf else None,
+        "tendencia_viento": tendencia,
+        "puntos": [(h["_t"].hour, num(h.get("temperatura")), num(h.get("viento")), num(h.get("codigo_tiempo")))
+                   for h in horas if h["_t"].hour in (21, 0, 3, 6)],
+    }
 
 
 def texto_noche(resumen: dict, pron: dict, ahora: datetime) -> str:
-    dia = manana_de(pron, ahora) or {}
+    n = resumen_noche(horas_noche(pron, ahora)) or {}
     t = (resumen or {}).get("tiempo_actual") or {}
-    lineas = [f"Buenas noches, Bahía Blanca. Así viene mañana, {fecha_txt(ahora + timedelta(days=1))}:", ""]
-    if dia:
-        lineas += _lineas_dia(dia)
-    if num(t.get("temperatura")) is not None and t.get("disponible"):
-        lineas.append(f"Ahora: {fmt(t.get('temperatura'))}°.")
+    lineas = ["Buenas noches, Bahía Blanca. Así sigue el tiempo esta noche y en la madrugada:", ""]
+    if n:
+        temp = []
+        if num(t.get("temperatura")) is not None and t.get("disponible"):
+            temp.append(f"Ahora {fmt(t.get('temperatura'))}°")
+        if n.get("medianoche") is not None:
+            temp.append(f"a la medianoche {fmt(n['medianoche'])}°")
+        if n.get("amanecer") is not None:
+            temp.append(f"al amanecer {fmt(n['amanecer'])}°")
+        minima = f"Mínima de {fmt(n['minima'])}° cerca de las {n['hora_minima']}."
+        lineas.append("🌡️ " + (", ".join(temp) + ". " if temp else "") + minima)
+        c1, c2 = n.get("cielo_1"), n.get("cielo_2")
+        if c1 and c2 and c1 != c2:
+            lineas.append(f"☁️ Cielo: {c1} a la noche y {c2} de madrugada.")
+        elif c1 or c2:
+            lineas.append(f"☁️ Cielo: {c1 or c2}.")
+        if n.get("prob_lluvia") is not None:
+            mm = n.get("lluvia_mm") or 0
+            lineas.append(f"☔ Probabilidad de lluvia: hasta {fmt(n['prob_lluvia'])} %"
+                          + (f" (unos {fmt(mm, 1)} mm)" if mm >= 0.5 else "") + ".")
+        if n.get("viento_max") is not None:
+            dirv = NOMBRE_PUNTO.get(punto(n.get("direccion")), "")
+            rango = (f"de {fmt(n['viento_min'])} a {fmt(n['viento_max'])} km/h"
+                     if n["viento_max"] - n["viento_min"] >= 5 else f"de unos {fmt(n['viento_max'])} km/h")
+            raf = f", ráfagas de hasta {fmt(n['rafaga_max'])} km/h" if n.get("rafaga_max") else ""
+            tend = f" ({n['tendencia_viento']})" if n.get("tendencia_viento") else ""
+            lineas.append(f"💨 Viento{(' del ' + dirv) if dirv else ''} {rango}{raf}{tend}.")
+    elif num(t.get("temperatura")) is not None and t.get("disponible"):
+        lineas.append(f"🌡️ Ahora {fmt(t.get('temperatura'))}°.")
     lineas += _activos(resumen)
-    lineas += ["", "Si se forman tormentas, vamos informando acá y en la página.", PIE_ENLACE, "", PIE,
-               "#BahíaBlanca #PuntaAlta #Clima"]
+    lineas += ["", "Mañana a la mañana, cómo viene el día.",
+               "Si se forman tormentas, vamos informando acá y en la página.", PIE_ENLACE, "", PIE_INFORME,
+               HASHTAGS]
     return "\n".join(lineas)
+
+
+def imagen_noche(resumen: dict, pron: dict, ahora: datetime) -> bytes:
+    from PIL import Image, ImageDraw
+
+    n = resumen_noche(horas_noche(pron, ahora)) or {}
+    im = Image.new("RGB", (1080, 1080), FONDO)
+    d = ImageDraw.Draw(im)
+    cabecera(d, "Esta noche y la madrugada", f"Bahía Blanca · {fecha_txt(ahora)}, de 21 a 7 h")
+    d.rounded_rectangle((60, 250, 1020, 640), 28, fill=TARJETA)
+    d.text((100, 270), "mínima", font=fuente(36), fill=SUAVE)
+    d.text((100, 305), f"{fmt(n.get('minima'))}°", font=fuente(150, True), fill=TEXTO)
+    if n.get("hora_minima") is not None:
+        d.text((100, 480), f"cerca de las {n['hora_minima']} h", font=fuente(36), fill=SUAVE)
+    c = n.get("cielo_2") or n.get("cielo_1")
+    if c:
+        tam = 44
+        while tam > 24 and d.textlength(c.capitalize(), font=fuente(tam, True)) > 430:
+            tam -= 2
+        d.text((100, 545), c.capitalize(), font=fuente(tam, True), fill=ACENTO)
+    filas = [
+        ("Lluvia", f"hasta {fmt(n.get('prob_lluvia'))} %"),
+        ("Viento", f"{fmt(n.get('viento_max'))} km/h {punto(n.get('direccion')) or ''}"),
+        ("Ráfagas", f"{fmt(n.get('rafaga_max'))} km/h"),
+    ]
+    for i, (k, v) in enumerate(filas):
+        d.text((560, 290 + i * 110), k, font=fuente(30), fill=SUAVE)
+        d.text((560, 328 + i * 110), v, font=fuente(42, True), fill=TEXTO)
+    # Cuatro momentos de la noche
+    d.text((60, 680), "Hora por hora", font=fuente(32, True), fill=TEXTO)
+    puntos = n.get("puntos") or []
+    ancho = 225
+    for i, (hora, temp, viento, cod) in enumerate(puntos[:4]):
+        x0 = 60 + i * (ancho + 20)
+        d.rounded_rectangle((x0, 735, x0 + ancho, 960), 22, fill=TARJETA)
+        d.text((x0 + ancho / 2, 775), f"{hora:02d} h", font=fuente(32, True), fill=SUAVE, anchor="mm")
+        d.text((x0 + ancho / 2, 845), f"{fmt(temp)}°", font=fuente(64, True), fill=TEXTO, anchor="mm")
+        d.text((x0 + ancho / 2, 920), f"{fmt(viento)} km/h", font=fuente(28), fill=ACENTO, anchor="mm")
+    pie_imagen(d)
+    salida = io.BytesIO()
+    im.save(salida, "PNG", optimize=True)
+    return salida.getvalue()
 
 
 # ----------------------------------------------------------------------------
@@ -373,7 +512,7 @@ def texto_fin(resumen: dict, ahora: datetime) -> str:
               "Por ahora no hay tormentas sobre las localidades ni acercándose."]
     if hora_radar:
         lineas.append(f"Radar de las {hora_radar}.")
-    lineas += ["Si vuelven a formarse, vamos informando.", PIE_ENLACE, "", PIE, "#BahíaBlanca"]
+    lineas += ["Si vuelven a formarse, vamos informando.", PIE_ENLACE, "", HASHTAGS]
     return "\n".join(lineas)
 
 
@@ -402,7 +541,7 @@ def texto_tormenta(sit: dict, resumen: dict, ahora: datetime) -> str:
     lineas += [""]
     if hora_radar:
         lineas.append(f"Radar de las {hora_radar}.")
-    lineas += ["Seguila en vivo, localidad por localidad.", PIE_ENLACE, "", PIE, "#BahíaBlanca #Tormenta"]
+    lineas += ["Seguila en vivo, localidad por localidad.", PIE_ENLACE, "", HASHTAGS + " #Tormenta"]
     return "\n".join(lineas)
 
 
@@ -443,17 +582,13 @@ def pie_imagen(d, alto=1080):
     d.text((60, alto - 70), URL_PUBLICA.replace("https://", ""), font=fuente(26, True), fill=ACENTO)
 
 
-def imagen_manana(resumen: dict, pron: dict, ahora: datetime, noche: bool = False) -> bytes:
+def imagen_manana(resumen: dict, pron: dict, ahora: datetime) -> bytes:
     from PIL import Image, ImageDraw
 
     im = Image.new("RGB", (1080, 1080), FONDO)
     d = ImageDraw.Draw(im)
-    if noche:
-        cabecera(d, "Cómo viene mañana", f"Bahía Blanca · {fecha_txt(ahora + timedelta(days=1))}")
-        hoy = manana_de(pron, ahora) or {}
-    else:
-        cabecera(d, "Cómo viene el día", f"Bahía Blanca · {fecha_txt(ahora)}")
-        hoy = (pron or {}).get("hoy") or {}
+    cabecera(d, "Cómo viene el día", f"Bahía Blanca · {fecha_txt(ahora)}")
+    hoy = (pron or {}).get("hoy") or {}
     d.rounded_rectangle((60, 250, 1020, 640), 28, fill=TARJETA)
     d.text((100, 280), f"{fmt(hoy.get('maxima'))}°", font=fuente(150, True), fill=TEXTO)
     d.text((100, 460), f"mínima {fmt(hoy.get('minima'))}°", font=fuente(40), fill=SUAVE)
@@ -725,8 +860,8 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
     # 1b) Noche: cómo viene mañana
     if forzar == "noche" or (forzar is None and toca_noche(estado, ahora)):
         pron = pedir_json("/pronostico")
-        if manana_de(pron, ahora) or forzar:
-            emitir("noche", texto_noche(resumen, pron, ahora), imagen_manana(resumen, pron, ahora, noche=True), {})
+        if resumen_noche(horas_noche(pron, ahora)) or forzar:
+            emitir("noche", texto_noche(resumen, pron, ahora), imagen_noche(resumen, pron, ahora), {})
             if not probar:
                 estado["noche_fecha"] = ahora_ar(ahora).date().isoformat()
         else:

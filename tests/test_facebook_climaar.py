@@ -94,13 +94,21 @@ def test_noche_una_vez_desde_las_2030_con_pronostico_de_manana():
     assert fb.toca_noche({}, hora)
     assert not fb.toca_noche({"noche_fecha": "2026-11-24"}, hora)
     assert not fb.toca_noche({}, tarde)
-    pron = {"dias": [{"fecha": "2026-11-25", "maxima": 30, "minima": 16, "prob_lluvia": 60, "lluvia_mm": 8,
-                      "viento": 20, "rafagas": 45, "viento_direccion": 0, "codigo_tiempo": 95}]}
+    # 25/11/2026: la de la noche cuenta esta noche y la madrugada (de 21 a 7), no mañana.
+    base = datetime(2026, 11, 24, 20, 0)
+    horas = [{"hora": (base + timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M"), "temperatura": 19 - i,
+              "prob_lluvia": 40 if i == 6 else 0, "lluvia_mm": 1.0 if i == 6 else 0, "codigo_tiempo": 1 if i < 6 else 61,
+              "viento": 10 + (12 if i >= 6 else 0), "viento_direccion": 180, "rafagas": 30 + i}
+             for i in range(16)]
+    pron = {"horas": horas}
     t = fb.texto_noche(resumen(loc("bahia_blanca", 1)), pron, hora)
-    assert t.startswith("Buenas noches, Bahía Blanca. Así viene mañana, miércoles 25 de noviembre:")
-    assert "Máxima 30°" in t and fb.URL_PUBLICA in t and "alerta" not in t.lower()
+    assert t.startswith("Buenas noches, Bahía Blanca. Así sigue el tiempo esta noche y en la madrugada:")
+    assert "a la medianoche 15°" in t and "al amanecer 9°" in t and "Mínima de 8° cerca de las 7" in t
+    assert "de madrugada" in t and "hasta 40 % (unos 1,0 mm)" in t and "(aumenta de madrugada)" in t
+    assert fb.URL_PUBLICA in t and "alerta" not in t.lower() and "Máxima" not in t
+    assert fb.PIE_INFORME in t and t.endswith("#BahíaBlanca #Clima #Tiempo")
     from PIL import Image
-    png = fb.imagen_manana(resumen(loc("bahia_blanca", 1)), pron, hora, noche=True)
+    png = fb.imagen_noche(resumen(loc("bahia_blanca", 1)), pron, hora)
     assert Image.open(io.BytesIO(png)).size == (1080, 1080)
 
 
@@ -131,7 +139,8 @@ def test_textos_con_enlace_propio_y_sin_smn():
         assert fb.URL_PUBLICA in texto
         assert "smn" not in texto.lower()
         assert "alerta" not in texto.lower()
-        assert "No reemplaza los avisos oficiales" in texto
+        assert "No reemplaza" not in texto and "#PuntaAlta" not in texto
+    assert fb.PIE_INFORME in m and fb.PIE_INFORME not in t
     assert t.startswith("⚠️ ADVERTENCIA")
     r2 = resumen(loc("medanos", 2, nombre="Médanos"))
     assert fb.texto_tormenta(fb.situacion(r2), r2, AHORA).startswith("⚠️ ADVERTENCIA · Tormentas moderadas")
