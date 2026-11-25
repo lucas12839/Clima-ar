@@ -371,9 +371,7 @@ def texto_noche(resumen: dict, pron: dict, ahora: datetime) -> str:
     elif num(t.get("temperatura")) is not None and t.get("disponible"):
         lineas.append(f"🌡️ Ahora {fmt(t.get('temperatura'))}°.")
     lineas += _activos(resumen)
-    lineas += ["", "Mañana a la mañana, cómo viene el día.",
-               "Si se forman tormentas, vamos informando acá y en la página.", PIE_ENLACE, "", PIE_INFORME,
-               HASHTAGS]
+    lineas += ["", PIE_ENLACE, "", PIE_INFORME, HASHTAGS]
     return "\n".join(lineas)
 
 
