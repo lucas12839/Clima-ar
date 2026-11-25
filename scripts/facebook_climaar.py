@@ -255,19 +255,19 @@ def _activos(resumen: dict) -> list[str]:
 
 
 def texto_manana(resumen: dict, pron: dict, ahora: datetime) -> str:
+    """Misma forma que el informe de la noche (25/11/2026, Lucas)."""
     hoy = (pron or {}).get("hoy") or {}
     t = (resumen or {}).get("tiempo_actual") or {}
     lineas = [f"Buen día, Bahía Blanca. Así viene el {fecha_txt(ahora)}:", ""]
     if hoy:
-        lineas += _lineas_dia(hoy)
-    if num(t.get("temperatura")) is not None and t.get("disponible"):
-        lineas.append(f"Ahora: {fmt(t.get('temperatura'))}°.")
-    amb = (resumen or {}).get("ambiente")
-    if amb:
-        lineas.append(f"⛈️ {amb}.")
+        dia = _lineas_dia(hoy)
+        if num(t.get("temperatura")) is not None and t.get("disponible"):
+            dia[0] = dia[0].replace("🌡️ ", f"🌡️ Ahora {fmt(t.get('temperatura'))}°. ", 1)
+        lineas += dia
+    elif num(t.get("temperatura")) is not None and t.get("disponible"):
+        lineas.append(f"🌡️ Ahora {fmt(t.get('temperatura'))}°.")
     lineas += _activos(resumen)
-    lineas += ["", "Radar en vivo y detalle por localidad en la página.", PIE_ENLACE, "", PIE_INFORME,
-               HASHTAGS]
+    lineas += ["", PIE_ENLACE, "", PIE_INFORME, HASHTAGS]
     return "\n".join(lineas)
 
 
