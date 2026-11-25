@@ -75,6 +75,9 @@ PIE = ""
 PIE_INFORME = ("ClimaAR no pide dinero ni donaciones. Somos autónomos. "
                "Nos ayudaría mucho compartiendo y siguiéndonos. ¡Gracias! ✅")
 HASHTAGS = "#BahíaBlanca #Clima #Tiempo"
+# Con tormentas (advertencias, y los informes si hay actividad): breve y con esto al final.
+SEGUIR = ("Si querés seguir informado, no te olvides de seguir nuestra página de Facebook o nuestra "
+          "página oficial. Vigilamos el tiempo las 24 horas: " + URL_PUBLICA)
 TIPO_ADV = "advertencia"
 TIPO_FIN = "fin"
 TIPOS_TORMENTA = (TIPO_ADV, "tormenta", TIPO_FIN)
@@ -250,8 +253,8 @@ def _activos(resumen: dict) -> list[str]:
     activos = [l for l in (resumen or {}).get("localidades") or [] if (num(l.get("nivel")) or 0) >= NIVEL_MINIMO]
     if not activos:
         return []
-    return ["", "Ahora hay actividad en: " + ", ".join(
-        f"{l['nombre']} (nivel {int(num(l['nivel']))})" for l in activos) + "."]
+    return ["⚠️ Tormentas ahora en: " + ", ".join(
+        f"{l['nombre']} (nivel {int(num(l['nivel']))})" for l in activos) + ".", ""]
 
 
 def texto_manana(resumen: dict, pron: dict, ahora: datetime) -> str:
@@ -266,8 +269,10 @@ def texto_manana(resumen: dict, pron: dict, ahora: datetime) -> str:
         lineas += dia
     elif num(t.get("temperatura")) is not None and t.get("disponible"):
         lineas.append(f"🌡️ Ahora {fmt(t.get('temperatura'))}°.")
-    lineas += _activos(resumen)
-    lineas += ["", PIE_ENLACE, "", PIE_INFORME, HASHTAGS]
+    # Con tormentas, lo primero que se lee es dónde están (breve e informativo).
+    activos = _activos(resumen)
+    lineas[2:2] = activos
+    lineas += ["", SEGUIR if activos else PIE_ENLACE, "", PIE_INFORME, HASHTAGS]
     return "\n".join(lineas)
 
 
@@ -370,8 +375,10 @@ def texto_noche(resumen: dict, pron: dict, ahora: datetime) -> str:
             lineas.append(f"💨 Viento{(' del ' + dirv) if dirv else ''} {rango}{raf}{tend}.")
     elif num(t.get("temperatura")) is not None and t.get("disponible"):
         lineas.append(f"🌡️ Ahora {fmt(t.get('temperatura'))}°.")
-    lineas += _activos(resumen)
-    lineas += ["", PIE_ENLACE, "", PIE_INFORME, HASHTAGS]
+    # Con tormentas, lo primero que se lee es dónde están (breve e informativo).
+    activos = _activos(resumen)
+    lineas[2:2] = activos
+    lineas += ["", SEGUIR if activos else PIE_ENLACE, "", PIE_INFORME, HASHTAGS]
     return "\n".join(lineas)
 
 
@@ -510,7 +517,7 @@ def texto_fin(resumen: dict, ahora: datetime) -> str:
               "Por ahora no hay tormentas sobre las localidades ni acercándose."]
     if hora_radar:
         lineas.append(f"Radar de las {hora_radar}.")
-    lineas += ["Si vuelven a formarse, vamos informando.", PIE_ENLACE, "", HASHTAGS]
+    lineas += ["", SEGUIR, "", HASHTAGS]
     return "\n".join(lineas)
 
 
@@ -539,7 +546,7 @@ def texto_tormenta(sit: dict, resumen: dict, ahora: datetime) -> str:
     lineas += [""]
     if hora_radar:
         lineas.append(f"Radar de las {hora_radar}.")
-    lineas += ["Seguila en vivo, localidad por localidad.", PIE_ENLACE, "", HASHTAGS + " #Tormenta"]
+    lineas += ["", SEGUIR, "", HASHTAGS + " #Tormenta"]
     return "\n".join(lineas)
 
 
