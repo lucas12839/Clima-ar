@@ -40,7 +40,8 @@ RADIO_KM = 240.0
 CENTRO_EXCLUIDO_KM = 5.0
 PERSISTENCIA_TERRENO = 0.20   # eco en más del 20 % de las imágenes del período = terreno
 MUESTRA_PERSISTENCIA = 400
-NOMBRES = {"RMA1": "Córdoba", "RMA4": "Resistencia", "RMA21": "Tostado"}
+NOMBRES = {"RMA1": "Córdoba", "RMA4": "Resistencia", "RMA16": "Tostado", "RMA3": "Las Lomitas (Formosa)",
+           "RMA13": "Las Lajitas (Salta)"}
 CLASES = [  # (nombre, dBZ mínimo, km² mínimos)
     ("lluvia", 20.0, 20.0),
     ("tormenta", 45.0, 10.0),
@@ -151,7 +152,7 @@ def analizar(destino: Path, radares: list[str]) -> int:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--destino", default="/var/lib/climaar-recoleccion")
-    p.add_argument("--radares", default="RMA1,RMA4,RMA21")
+    p.add_argument("--radares", default="RMA1,RMA4,RMA16,RMA3,RMA13")
     a = p.parse_args()
     return analizar(Path(a.destino), [r.strip() for r in a.radares.split(",") if r.strip()])
 
