@@ -275,6 +275,10 @@ def resumir(estaciones: list[dict]) -> dict[str, Any]:
                 if e.get(campo) is not None and not (sin_cwop and _es_cwop(e))]
         return max(vals) if vals else None
 
+    def quien(campo):
+        con = [e for e in estaciones if e.get(campo) is not None and not _es_cwop(e)]
+        return max(con, key=lambda e: e[campo])["nombre"] if con else None
+
     return {
         "estaciones": len(estaciones),
         "lluvia_1h_mm": maximo("lluvia_1h_mm"),
@@ -285,6 +289,10 @@ def resumir(estaciones: list[dict]) -> dict[str, Any]:
         # reparada bajaría el nivel de viento por error.
         "viento_max_kmh": maximo("viento_kmh", sin_cwop=True),
         "rafaga_max_kmh": maximo("rafaga_kmh", sin_cwop=True),
+        # Qué estación lo midió (para decirlo bien: antes decía "Bahía Blanca"
+        # aunque fuera de Sierra de la Ventana).
+        "viento_estacion": quien("viento_kmh"),
+        "rafaga_estacion": quien("rafaga_kmh"),
         "frente_de_rafagas": any(e["frente_de_rafagas"] for e in estaciones),
         "con_frente_de_rafagas": [e["nombre"] for e in estaciones if e["frente_de_rafagas"]],
     }
@@ -304,8 +312,16 @@ RADIO_LOCALIDAD_KM = 15.0
 LOCALIDADES = Path(__file__).resolve().parents[2] / "config" / "localidades.json"
 
 
+# Estaciones que no representan a ninguna localidad (25/11/2026): Sierras
+# Grandes está arriba de las sierras, donde el viento es mucho más fuerte y
+# hace más frío. Midió ráfagas de 52 km/h (Villa Ventana 40) y Sierra de la
+# Ventana quedó en nivel 2 de viento. Sigue en el resumen regional.
+NO_REPRESENTAN_LOCALIDADES = {"SIERRAS GRANDES"}
+
+
 def por_localidad(estaciones: list[dict], path: Path = LOCALIDADES) -> dict[str, dict]:
     """Estaciones a <= 15 km de cada localidad (las demás no la representan)."""
+    estaciones = [e for e in estaciones if e["nombre"] not in NO_REPRESENTAN_LOCALIDADES]
     try:
         locs = json.loads(path.read_text(encoding="utf-8")).get("localidades") or []
     except Exception:
@@ -469,6 +485,7 @@ def tiempo_ahora(estaciones: list[dict], path: Path = LOCALIDADES) -> dict[str, 
         locs = json.loads(path.read_text(encoding="utf-8")).get("localidades") or []
     except Exception:
         return {}
+    estaciones = [e for e in estaciones if e["nombre"] not in NO_REPRESENTAN_LOCALIDADES]
     salida = {}
     for loc in locs:
         cerca = sorted(

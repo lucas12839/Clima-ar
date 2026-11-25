@@ -247,13 +247,18 @@ def viento_por_estaciones(sup: dict[str, Any]) -> dict[str, Any] | None:
     if rafaga is not None and medio is not None and rafaga < medio:
         rafaga = None
     grado = grado_viento_kmh(rafaga)
+
+    def donde(clave):
+        n = sup.get(clave)
+        return " en " + str(n).title().replace("Grumbein", "Grünbein").replace("Bahia", "Bahía") if n else ""
+
     if rafaga is not None and grado:
-        razones.append(f"ráfaga de {rafaga:.0f} km/h medida en Bahía Blanca")
+        razones.append(f"ráfaga de {rafaga:.0f} km/h medida{donde('rafaga_estacion')}")
     if medio is not None:
         g_medio = 3 if medio >= VIENTO_MEDIO_FUERTE_KMH else grado_viento_kmh(medio)
         if g_medio > grado:
             grado = g_medio
-            razones.append(f"viento de {medio:.0f} km/h medido en Bahía Blanca")
+            razones.append(f"viento de {medio:.0f} km/h medido{donde('viento_estacion')}")
     confirmado = True
     if sup.get("frente_de_rafagas") and grado < 3:
         grado = 3

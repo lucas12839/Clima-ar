@@ -12,10 +12,13 @@ import facebook_climaar as fb  # noqa: E402
 AHORA = datetime(2026, 11, 13, 18, 36, tzinfo=timezone.utc)   # 15:36 en Argentina
 
 
-def loc(id_, nivel, minutos=None, nombre=None, lat=-38.88, lon=-62.07):
+def loc(id_, nivel, minutos=None, nombre=None, lat=-38.88, lon=-62.07, solo_viento=False):
+    fen = ({"lluvia": {"grado": 0}, "viento": {"grado": nivel, "fuente": "estaciones"}} if solo_viento
+           else {"lluvia": {"grado": nivel, "fuente": "radar"}})
     return {"id": id_, "nombre": nombre or id_, "nivel": nivel, "etiqueta": "Posible severa" if nivel == 4 else "",
-            "resumen": "Lluvia fuerte", "minutos_hasta_llegada": minutos, "sobre_la_localidad": False,
-            "lat": lat, "lon": lon}
+            "resumen": "Viento moderado, sin lluvia" if solo_viento else "Lluvia fuerte",
+            "minutos_hasta_llegada": minutos, "sobre_la_localidad": False, "lat": lat, "lon": lon,
+            "fenomenos": fen}
 
 
 def resumen(*locs, edad=6):
@@ -260,3 +263,21 @@ def test_informe_con_tormentas_lleva_el_radar(monkeypatch):
     assert fb.imagen_con_tormentas(resumen(loc("bahia_blanca", 1)), AHORA) is None
     png = fb.imagen_con_tormentas(resumen(loc("punta_alta", 3, minutos=20)), AHORA)
     assert Image.open(io.BytesIO(png)).size == (1080, 1350)
+
+
+def test_viento_solo_no_es_tormenta():
+    # Caso real 25/11 9:20: Sierra de la Ventana nivel 2 por viento (sin lluvia) → "Tormentas moderadas".
+    r = resumen(loc("sierra_de_la_ventana", 2, nombre="Sierra de la Ventana", solo_viento=True))
+    assert fb.situacion(r) is None
+    # Viento fuerte (nivel 3) sí, pero como advertencia de VIENTO.
+    r = resumen(loc("sierra_de_la_ventana", 3, nombre="Sierra de la Ventana", solo_viento=True))
+    sit = fb.situacion(r)
+    t = fb.texto_tormenta(sit, r, AHORA)
+    assert t.startswith("⚠️ ADVERTENCIA · Viento fuerte en la zona") and "#Viento" in t and "Tormenta" not in t
+    # Con tormenta en otra localidad, el título es de tormenta.
+    r = resumen(loc("sierra_de_la_ventana", 3, solo_viento=True), loc("punta_alta", 2))
+    assert fb.texto_tormenta(fb.situacion(r), r, AHORA).startswith("⚠️ ADVERTENCIA · Tormenta fuerte")
+    # Viento de una tormenta del radar (arco) cuenta como tormenta.
+    l = loc("medanos", 2, solo_viento=True)
+    l["fenomenos"]["viento"]["fuente"] = "radar"
+    assert fb.situacion(resumen(l)) is not None
