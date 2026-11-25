@@ -521,6 +521,19 @@ def texto_fin(resumen: dict, ahora: datetime) -> str:
     return "\n".join(lineas)
 
 
+def imagen_con_tormentas(resumen: dict, ahora: datetime) -> bytes | None:
+    """25/11/2026 (Lucas): si hay tormentas, los informes llevan la imagen del
+    radar (la misma de las advertencias) en vez de la tarjeta del pronóstico."""
+    sit = situacion(resumen)
+    if not sit:
+        return None
+    try:
+        radar = pedir_bytes("/radar/mapa")
+    except Exception:
+        radar = None
+    return imagen_tormenta(sit, resumen, radar, ahora)
+
+
 def _que(n: int) -> str:
     return {2: "Tormentas moderadas en la zona", 3: "Tormenta fuerte en la zona"}.get(
         n, "Tormenta posiblemente severa en la zona")
@@ -856,7 +869,8 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
     if forzar == "manana" or (forzar is None and toca_manana(estado, ahora)):
         pron = pedir_json("/pronostico")
         if (pron or {}).get("hoy") or forzar:
-            emitir("manana", texto_manana(resumen, pron, ahora), imagen_manana(resumen, pron, ahora), {})
+            emitir("manana", texto_manana(resumen, pron, ahora),
+                   imagen_con_tormentas(resumen, ahora) or imagen_manana(resumen, pron, ahora), {})
             if not probar:
                 estado["manana_fecha"] = ahora_ar(ahora).date().isoformat()
         else:
@@ -866,7 +880,8 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
     if forzar == "noche" or (forzar is None and toca_noche(estado, ahora)):
         pron = pedir_json("/pronostico")
         if resumen_noche(horas_noche(pron, ahora)) or forzar:
-            emitir("noche", texto_noche(resumen, pron, ahora), imagen_noche(resumen, pron, ahora), {})
+            emitir("noche", texto_noche(resumen, pron, ahora),
+                   imagen_con_tormentas(resumen, ahora) or imagen_noche(resumen, pron, ahora), {})
             if not probar:
                 estado["noche_fecha"] = ahora_ar(ahora).date().isoformat()
         else:

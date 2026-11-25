@@ -252,3 +252,11 @@ def test_espera_si_el_servidor_se_esta_reiniciando(monkeypatch):
     monkeypatch.setattr(requests, "get", lambda url, timeout, **kw: (_ for _ in ()).throw(requests.ConnectionError()))
     with pytest.raises(requests.ConnectionError):
         fb.pedir_json("/resumen")
+
+
+def test_informe_con_tormentas_lleva_el_radar(monkeypatch):
+    from PIL import Image
+    monkeypatch.setattr(fb, "pedir_bytes", lambda ruta: None)
+    assert fb.imagen_con_tormentas(resumen(loc("bahia_blanca", 1)), AHORA) is None
+    png = fb.imagen_con_tormentas(resumen(loc("punta_alta", 3, minutos=20)), AHORA)
+    assert Image.open(io.BytesIO(png)).size == (1080, 1350)
