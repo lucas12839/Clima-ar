@@ -13,8 +13,10 @@ AHORA = datetime(2026, 11, 13, 18, 36, tzinfo=timezone.utc)   # 15:36 en Argenti
 
 
 def loc(id_, nivel, minutos=None, nombre=None, lat=-38.88, lon=-62.07, solo_viento=False):
+    # Tormenta = lluvia del radar al día + rayos del satélite (dos fuentes).
     fen = ({"lluvia": {"grado": 0}, "viento": {"grado": nivel, "fuente": "estaciones"}} if solo_viento
-           else {"lluvia": {"grado": nivel, "fuente": "radar"}})
+           else {"lluvia": {"grado": nivel, "fuente": "radar"},
+                 "electrica": {"grado": 1, "fuente": "goes19", "categoria": "aislada"}})
     return {"id": id_, "nombre": nombre or id_, "nivel": nivel, "etiqueta": "Posible severa" if nivel == 4 else "",
             "resumen": "Viento moderado, sin lluvia" if solo_viento else "Lluvia fuerte",
             "minutos_hasta_llegada": minutos, "sobre_la_localidad": False, "lat": lat, "lon": lon,
@@ -68,8 +70,12 @@ def test_fin_una_sola_vez_cuando_se_van():
     r = resumen(loc("punta_alta", 1))
     assert fb.situacion(r) is None
     assert not fb.toca_fin({}, None, r, AHORA)
-    assert not fb.toca_fin({"publicaciones": [pub(20, {})]}, None, r, AHORA)
-    assert fb.toca_fin({"publicaciones": [pub(40, {})]}, None, r, AHORA)
+    nada = (AHORA - timedelta(minutes=25)).isoformat()      # 25 min seguidos sin nada
+    assert not fb.toca_fin({"publicaciones": [pub(20, {})], "nada_desde": nada}, None, r, AHORA)
+    assert fb.toca_fin({"publicaciones": [pub(40, {})], "nada_desde": nada}, None, r, AHORA)
+    # Un bajón de una sola lectura (hace 5 min) todavía no es "terminó".
+    corto = (AHORA - timedelta(minutes=5)).isoformat()
+    assert not fb.toca_fin({"publicaciones": [pub(40, {})], "nada_desde": corto}, None, r, AHORA)
     fin = dict(pub(10, {}), tipo="fin")
     assert not fb.toca_fin({"publicaciones": [pub(60, {}), fin]}, None, r, AHORA)
     assert not fb.toca_fin({"publicaciones": [pub(400, {})]}, None, r, AHORA)
@@ -274,10 +280,169 @@ def test_viento_solo_no_es_tormenta():
     sit = fb.situacion(r)
     t = fb.texto_tormenta(sit, r, AHORA)
     assert t.startswith("⚠️ ADVERTENCIA · Viento fuerte en la zona") and "#Viento" in t and "Tormenta" not in t
-    # Con tormenta en otra localidad, el título es de tormenta.
+    # Con tormenta en otra localidad, el título es de tormenta (con su propio nivel)
+    # y la línea de la otra localidad dice que es viento.
     r = resumen(loc("sierra_de_la_ventana", 3, solo_viento=True), loc("punta_alta", 2))
-    assert fb.texto_tormenta(fb.situacion(r), r, AHORA).startswith("⚠️ ADVERTENCIA · Tormenta fuerte")
-    # Viento de una tormenta del radar (arco) cuenta como tormenta.
-    l = loc("medanos", 2, solo_viento=True)
+    t = fb.texto_tormenta(fb.situacion(r), r, AHORA)
+    assert t.startswith("⚠️ ADVERTENCIA · Tormentas moderadas") and "Viento fuerte" in t
+    # Eco en arco del radar sin rayos: no alcanza solo (puede ser un eco falso).
+    l = loc("medanos", 3, solo_viento=True)
     l["fenomenos"]["viento"]["fuente"] = "radar"
-    assert fb.situacion(resumen(l)) is not None
+    assert fb.situacion(resumen(l)) is None
+
+
+# ---------------------------------------------------------------------------
+# 25/11/2026: solo lo confirmado por mediciones reales, cada cosa con su nombre
+# ---------------------------------------------------------------------------
+def real(id_, nombre, **fen):
+    base = {k: {"grado": 0, "fuente": "estaciones" if k in ("lluvia", "viento") else "goes19"}
+            for k in ("lluvia", "viento", "granizo", "electrica")}
+    base.update(fen)
+    nivel = max(v["grado"] for v in base.values())
+    return {"id": id_, "nombre": nombre, "nivel": nivel, "etiqueta": "", "resumen": "texto del motor",
+            "minutos_hasta_llegada": None, "sobre_la_localidad": None, "lat": -38.72, "lon": -62.27,
+            "fenomenos": base, "acumulado_radar_mm": {"1h": 0.0}, "tiempo_actual": {"disponible": True}}
+
+
+def test_caso_real_25_11_viento_medido_51_kmh_no_publica_nada():
+    viento = {"grado": 2, "fuente": "estaciones", "categoria": "moderado", "rafaga_kmh": 51}
+    r = resumen(*[real(i, n, viento=dict(viento)) for i, n in
+                  (("bahia_blanca", "Bahía Blanca"), ("ingeniero_white", "Ingeniero White"),
+                   ("general_cerri", "General Daniel Cerri"), ("sierra_de_la_ventana", "Sierra de la Ventana"))])
+    assert fb.situacion(r) is None
+    assert fb.toca_tormenta({}, fb.situacion(r), r, AHORA)[0] is False
+    # El informe de la mañana tampoco dice "tormentas".
+    t = fb.texto_manana(r, {"hoy": {}}, AHORA)
+    assert "⚠️" not in t and "ormenta" not in t
+
+
+def test_llovizna_con_viento_no_es_tormenta():
+    l = real("bahia_blanca", "Bahía Blanca", lluvia={"grado": 1, "fuente": "radar", "categoria": "débil"},
+             viento={"grado": 2, "fuente": "estaciones"})
+    assert fb.situacion(resumen(l)) is None
+
+
+def test_eco_sin_rayos_no_es_tormenta():
+    # Puede ser un eco falso del radar que la máscara no tapó.
+    l = real("punta_alta", "Punta Alta", lluvia={"grado": 2, "fuente": "radar", "categoria": "moderada"})
+    assert fb.situacion(resumen(l)) is None
+
+
+def test_rayos_sin_eco_no_es_tormenta():
+    # El detector de rayos del satélite a veces marca destellos falsos.
+    l = real("tornquist", "Tornquist", electrica={"grado": 2, "fuente": "goes19", "categoria": "moderada"})
+    assert fb.situacion(resumen(l)) is None
+
+
+def test_eco_y_rayos_es_tormenta_y_dice_solo_lo_confirmado():
+    l = real("punta_alta", "Punta Alta", lluvia={"grado": 2, "fuente": "radar", "categoria": "moderada"},
+             electrica={"grado": 2, "fuente": "goes19", "categoria": "moderada"},
+             viento={"grado": 3, "fuente": "modelo", "categoria": "fuerte"})   # pronóstico: no va
+    sit = fb.situacion(resumen(l))
+    assert sit["clase"] == "tormenta" and sit["nivel"] == 2
+    t = fb.texto_tormenta(sit, resumen(l), AHORA)
+    assert "Tormentas moderadas" in t and "Lluvia moderada con rayos seguidos" in t and "viento" not in t
+    assert "#Tormenta" in t
+
+
+def test_lluvia_estimada_o_mantenida_no_confirma():
+    for fuente in ("radar_movido", "goes19"):
+        l = real("medanos", "Médanos", lluvia={"grado": 2, "fuente": fuente},
+                 electrica={"grado": 2, "fuente": "goes19"})
+        assert fb.situacion(resumen(l)) is None, fuente
+    l = real("medanos", "Médanos", lluvia={"grado": 2, "fuente": "radar"},
+             electrica={"grado": 4, "fuente": "goes19", "minutos_desde_deteccion": 25})
+    assert fb.situacion(resumen(l)) is None
+
+
+def test_llegada_poco_probable_no_cuenta():
+    l = real("bahia_blanca", "Bahía Blanca", electrica={"grado": 1, "fuente": "goes19"})
+    l["minutos_hasta_llegada"] = 20
+    l["al_llegar"] = {"lluvia": {"grado": 3, "fuente": "radar"}}
+    l["llegada"] = {"probable": False}
+    assert fb.situacion(resumen(l)) is None
+    l["llegada"] = {"probable": True}
+    sit = fb.situacion(resumen(l))
+    assert sit["clase"] == "tormenta" and sit["nivel"] == 3 and sit["localidades"][0]["minutos"] == 20
+
+
+def test_encima_solo_si_ya_esta_encima():
+    l = real("general_cerri", "General Daniel Cerri", lluvia={"grado": 2, "fuente": "radar"},
+             electrica={"grado": 1, "fuente": "goes19"})
+    l["sobre_la_localidad"] = {"que": "tormenta eléctrica", "minutos": 15}
+    t = fb.texto_tormenta(fb.situacion(resumen(l)), resumen(l), AHORA)
+    assert "está encima" not in t and "próximos 30 min" in t
+    l["sobre_la_localidad"] = {"que": "tormenta eléctrica", "minutos": 0}
+    assert "La tormenta está encima" in fb.texto_tormenta(fb.situacion(resumen(l)), resumen(l), AHORA)
+
+
+def test_lluvia_fuerte_sin_rayos_necesita_estacion():
+    l = real("bahia_blanca", "Bahía Blanca", lluvia={"grado": 3, "fuente": "radar", "categoria": "fuerte"})
+    l["acumulado_radar_mm"] = {"1h": 8.0}
+    assert fb.situacion(resumen(l)) is None
+    l["tiempo_actual"] = {"disponible": True, "precipitacion": 9.4, "fuentes": {"precipitacion": "Bahía Blanca Centro"}}
+    sit = fb.situacion(resumen(l))
+    assert sit["clase"] == "lluvia"
+    t = fb.texto_tormenta(sit, resumen(l), AHORA)
+    assert t.startswith("⚠️ ADVERTENCIA · Lluvia fuerte") and "ormenta" not in t and "#Lluvia" in t
+    # El valor del modelo (sin estación) no confirma.
+    l["tiempo_actual"] = {"disponible": True, "precipitacion": 9.4, "fuentes": {}}
+    assert fb.situacion(resumen(l)) is None
+
+
+def test_viento_fuerte_solo_medido_y_su_cierre_dice_viento():
+    mod = real("tornquist", "Tornquist", viento={"grado": 3, "fuente": "modelo"})
+    assert fb.situacion(resumen(mod)) is None          # pronóstico: no se anuncia como medido
+    med = real("bahia_blanca", "Bahía Blanca",
+               viento={"grado": 3, "fuente": "estaciones", "categoria": "fuerte", "rafaga_kmh": 74})
+    sit = fb.situacion(resumen(med))
+    t = fb.texto_tormenta(sit, resumen(med), AHORA)
+    assert t.startswith("⚠️ ADVERTENCIA · Viento fuerte") and "ráfagas de 74 km/h" in t and "ormenta" not in t
+    estado = {"publicaciones": [dict(pub(40, sit["firma"], 3), clase="viento")],
+              "nada_desde": (AHORA - timedelta(minutes=20)).isoformat()}
+    assert fb.toca_fin(estado, None, resumen(), AHORA)
+    fin = fb.texto_fin(resumen(), AHORA, fb.clase_publicada(estado["publicaciones"][-1]))
+    assert fin.startswith("✅ Bajó el viento") and "ormenta" not in fin
+
+
+def test_cambio_de_viento_a_tormenta_publica_de_nuevo():
+    assert fb.cambio({"bb": [3, False, "tormenta"]}, {"bb": [3, False, "viento"]})
+    assert not fb.cambio({"bb": [3, False, "viento"]}, {"bb": [3, False, "viento"]})
+    assert not fb.cambio({"bb": [2, False, "tormenta"]}, {"bb": [2, False]})   # estado viejo
+
+
+def test_ciclo_caso_real_no_publica_ni_cierra(tmp_path, monkeypatch):
+    """Lo de hoy de punta a punta (ráfagas de 51 km/h medidas): no sale advertencia."""
+    viento = {"grado": 2, "fuente": "estaciones", "rafaga_kmh": 51}
+    r = resumen(real("bahia_blanca", "Bahía Blanca", viento=viento))
+    monkeypatch.setattr(fb, "ESTADO", tmp_path / "estado.json")
+    monkeypatch.setattr(fb, "pedir_json", lambda ruta, timeout=30.0: r)
+    monkeypatch.setattr(fb, "pedir_bytes", lambda ruta, timeout=30.0: None)
+    hechos = fb.ciclo(probar=True, salida=tmp_path / "out", ahora=datetime(2026, 11, 25, 13, 20, tzinfo=timezone.utc))
+    assert not any(h.startswith("advertencia: armado") for h in hechos), hechos
+
+
+def test_viento_de_una_sola_lectura_no_se_publica():
+    """24/11 16:43: Bahía Blanca Centro marcó una vez 45 km/h (Grünbein y la Noroeste, 11)."""
+    l = real("bahia_blanca", "Bahía Blanca", viento={"grado": 3, "fuente": "estaciones", "viento_kmh": 45})
+    sit = fb.situacion(resumen(l))
+    estado = {}
+    assert fb.sostenido(sit, estado, AHORA) is None                              # recién aparece
+    assert fb.sostenido(sit, estado, AHORA + timedelta(minutes=5)) is None
+    assert fb.sostenido(None, estado, AHORA + timedelta(minutes=10)) is None     # se fue: se olvida
+    assert estado["viento_desde"] == {}
+    for m in (15, 20, 25, 30):
+        res = fb.sostenido(sit, estado, AHORA + timedelta(minutes=m))
+    assert res is not None and res["clase"] == "viento"                          # 15 min seguidos: sí
+    # La tormenta no espera.
+    t = real("punta_alta", "Punta Alta", lluvia={"grado": 2, "fuente": "radar"},
+             electrica={"grado": 1, "fuente": "goes19"})
+    assert fb.sostenido(fb.situacion(resumen(t)), {}, AHORA)["clase"] == "tormenta"
+
+
+def test_informe_con_lo_ya_filtrado_no_vuelve_a_calcular():
+    l = real("bahia_blanca", "Bahía Blanca", viento={"grado": 3, "fuente": "estaciones"})
+    r = resumen(l)
+    assert "Viento fuerte ahora en: Bahía Blanca" in fb.texto_manana(r, {"hoy": {}}, AHORA)
+    assert "⚠️" not in fb.texto_manana(r, {"hoy": {}}, AHORA, None)      # el ciclo ya lo descartó
+    assert fb.imagen_con_tormentas(r, AHORA, None) is None

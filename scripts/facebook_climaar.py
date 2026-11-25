@@ -6,7 +6,9 @@ del servidor de la app que corre en el mismo VPS (http://127.0.0.1:8000) y:
 
 1. Todas las mañanas (desde las 7:30, hora de Argentina) publica cómo viene
    el día, y todas las noches (desde las 20:30) cómo viene mañana, con imagen.
-2. Con tormentas en las localidades o acercándose, publica una "ADVERTENCIA"
+2. Con algo CONFIRMADO en las localidades (reglas en la sección "Tormentas", más abajo:
+   tormenta con radar y rayos, lluvia fuerte con radar y estación, o viento
+   fuerte medido 15 min seguidos), publica una "ADVERTENCIA"
    con la imagen del radar (nunca la palabra "alerta") y va informando con
    cada actualización del radar, sin llenar la página (24/11/2026):
    - si algo cambió (localidad nueva, nivel más alto o tormenta que ahora va
@@ -64,6 +66,7 @@ MAX_DIA = 12                       # advertencias por día (nivel 4 sin tope)
 ESPERA_MIN = 30                    # mínimo entre dos advertencias
 REPETIR_FUERTE_MIN = 60            # sigue igual: actualización (fuerte o severa)
 REPETIR_MODERADO_MIN = 90          # sigue igual: actualización (moderada)
+FIN_SIN_NADA_MIN = 20              # "terminó" recién tras 20 min seguidos sin nada
 FIN_DENTRO_DE_H = 6                # "se alejaron" solo si hubo advertencia en las últimas 6 h
 # Sin enlace a las alertas del SMN (decisión de Lucas, 24/11/2026: el SMN
 # declara alerta para una zona entera y ClimaAR analiza cada localidad).
@@ -249,15 +252,31 @@ def _lineas_dia(dia: dict) -> list[str]:
     return lineas
 
 
-def _activos(resumen: dict) -> list[str]:
-    activos = [l for l in (resumen or {}).get("localidades") or [] if (num(l.get("nivel")) or 0) >= NIVEL_MINIMO]
-    if not activos:
+CALCULAR = object()   # "sit" no recibido: se calcula con situacion()
+QUE_HAY = {"tormenta": "Tormenta", "lluvia": "Lluvia fuerte", "viento": "Viento fuerte"}
+
+
+def _activos(resumen: dict, sit=CALCULAR) -> list[str]:
+    """Lo confirmado ahora (mismo criterio que las advertencias), con su nombre.
+    25/11/2026: decía "Tormentas ahora en..." con cualquier nivel 2, aunque
+    fuera solo viento."""
+    edad = num((resumen or {}).get("frame_edad_minutos"))
+    if sit is CALCULAR:
+        sit = situacion(resumen)
+    if edad is None or edad > RADAR_MAX_EDAD_MIN:
+        sit = None
+    if not sit:
         return []
-    return ["⚠️ Tormentas ahora en: " + ", ".join(
-        f"{l['nombre']} (nivel {int(num(l['nivel']))})" for l in activos) + ".", ""]
+    lineas = []
+    for clase in CLASES:
+        locs = [l for l in sit["localidades"] if l["clase"] == clase]
+        if locs:
+            lineas.append(f"⚠️ {QUE_HAY[clase]} ahora en: " + ", ".join(
+                f"{l['nombre']} (nivel {l['nivel']})" for l in locs) + ".")
+    return lineas + [""]
 
 
-def texto_manana(resumen: dict, pron: dict, ahora: datetime) -> str:
+def texto_manana(resumen: dict, pron: dict, ahora: datetime, sit=CALCULAR) -> str:
     """Misma forma que el informe de la noche (25/11/2026, Lucas)."""
     hoy = (pron or {}).get("hoy") or {}
     t = (resumen or {}).get("tiempo_actual") or {}
@@ -270,7 +289,7 @@ def texto_manana(resumen: dict, pron: dict, ahora: datetime) -> str:
     elif num(t.get("temperatura")) is not None and t.get("disponible"):
         lineas.append(f"🌡️ Ahora {fmt(t.get('temperatura'))}°.")
     # Con tormentas, lo primero que se lee es dónde están (breve e informativo).
-    activos = _activos(resumen)
+    activos = _activos(resumen, sit)
     lineas[2:2] = activos
     lineas += ["", SEGUIR if activos else PIE_ENLACE, "", PIE_INFORME, HASHTAGS]
     return "\n".join(lineas)
@@ -343,7 +362,7 @@ def resumen_noche(horas: list[dict]) -> dict | None:
     }
 
 
-def texto_noche(resumen: dict, pron: dict, ahora: datetime) -> str:
+def texto_noche(resumen: dict, pron: dict, ahora: datetime, sit=CALCULAR) -> str:
     n = resumen_noche(horas_noche(pron, ahora)) or {}
     t = (resumen or {}).get("tiempo_actual") or {}
     lineas = ["Buenas noches, Bahía Blanca. Así sigue el tiempo esta noche y en la madrugada:", ""]
@@ -376,7 +395,7 @@ def texto_noche(resumen: dict, pron: dict, ahora: datetime) -> str:
     elif num(t.get("temperatura")) is not None and t.get("disponible"):
         lineas.append(f"🌡️ Ahora {fmt(t.get('temperatura'))}°.")
     # Con tormentas, lo primero que se lee es dónde están (breve e informativo).
-    activos = _activos(resumen)
+    activos = _activos(resumen, sit)
     lineas[2:2] = activos
     lineas += ["", SEGUIR if activos else PIE_ENLACE, "", PIE_INFORME, HASHTAGS]
     return "\n".join(lineas)
@@ -427,61 +446,235 @@ def imagen_noche(resumen: dict, pron: dict, ahora: datetime) -> bytes:
 # ----------------------------------------------------------------------------
 # Tormentas
 # ----------------------------------------------------------------------------
+# 25/11/2026 (Lucas): se publicaron advertencias de "tormentas" con viento solo
+# (ráfagas de 51 km/h medidas, sin lluvia ni rayos) y después un "se alejaron
+# las tormentas" de algo que nunca existió. Regla desde ahora: no se publica
+# nada que no esté confirmado por mediciones reales, y cada cosa con su nombre.
+#
+# - TORMENTA: el radar al día ve lluvia sobre la localidad (o una que llega con
+#   llegada probable) Y el satélite ve rayos (dos fuentes distintas), o la celda
+#   con rayos validada que pasa sobre la localidad. Un rayo sin eco de radar
+#   (el detector del satélite a veces marca destellos falsos) o un eco sin
+#   rayos (puede ser un eco falso del radar) no alcanzan solos.
+# - LLUVIA sin rayos: solo lluvia fuerte (nivel 3 o más) del radar al día y
+#   confirmada por una estación que mide lluvia en la localidad.
+# - VIENTO sin tormenta: solo medido por estaciones (no el pronóstico del
+#   modelo) y desde el nivel 3 (ráfagas de 70 km/h o más).
+# Lo estimado (radar viejo movido, nube fría del satélite) y lo que se mantiene
+# de minutos atrás nunca sirve para confirmar.
 VIENTO_SOLO_NIVEL_MINIMO = 3
+LLUVIA_SOLA_NIVEL_MINIMO = 3
+CLASES = ("tormenta", "lluvia", "viento")     # de más a menos importante
+FUENTES_RADAR = ("radar",)                    # lluvia medida por el radar al día
 
 
-def es_tormenta(l: dict) -> bool:
-    """Hay tormenta (no solo viento): lluvia, granizo o rayos, o viento que
-    sale de una tormenta del radar (no de las estaciones ni del modelo)."""
+def _g(f: dict | None) -> int:
+    return int(num((f or {}).get("grado")) or 0)
+
+
+def _fuente(f: dict | None) -> str:
+    return str((f or {}).get("fuente") or "")
+
+
+def _medido(f: dict | None) -> bool:
+    """Detectado ahora (no mantenido de minutos atrás)."""
+    return bool(f) and not f.get("mantenido") and f.get("minutos_desde_deteccion") is None
+
+
+def _llega_probable(l: dict) -> bool:
+    if num(l.get("minutos_hasta_llegada")) is None:
+        return False
+    lleg = l.get("llegada")
+    return not isinstance(lleg, dict) or lleg.get("probable") is not False
+
+
+def _encima(l: dict) -> dict | None:
+    """Celda con rayos validada sobre la localidad (ahora o en 30 min)."""
+    s = l.get("sobre_la_localidad")
+    if isinstance(s, dict):
+        return s
+    return {"minutos": 0} if s is True else None
+
+
+def evaluar_localidad(l: dict) -> dict | None:
+    """Qué hay de verdad en la localidad, solo con lo confirmado. None = nada para publicar."""
     f = l.get("fenomenos") or {}
-    if any((num((f.get(k) or {}).get("grado")) or 0) >= 1 for k in ("lluvia", "granizo", "electrica")):
+    lluvia, viento, granizo, rayos = (f.get(k) or {} for k in ("lluvia", "viento", "granizo", "electrica"))
+    llega = (l.get("al_llegar") or {}) if _llega_probable(l) else {}
+
+    eco_ahora = _medido(lluvia) and _fuente(lluvia) in FUENTES_RADAR and _g(lluvia) >= 1
+    eco_llega = _fuente(llega.get("lluvia")) in FUENTES_RADAR and _g(llega.get("lluvia")) >= 1
+    radar_ve_lluvia = eco_ahora or (num((l.get("acumulado_radar_mm") or {}).get("1h")) or 0) > 0
+    estacion_mide_lluvia = _estacion_mide_lluvia(l)
+    hay_rayos = _medido(rayos) and _g(rayos) >= 1
+    encima = _encima(l)
+
+    usados = {}
+    if (hay_rayos and (eco_ahora or eco_llega or estacion_mide_lluvia)) or encima:
+        clase, minimo = "tormenta", NIVEL_MINIMO
+        if _g(lluvia) >= 1 and _fuente(lluvia) in ("radar", "estaciones"):
+            usados["lluvia"] = lluvia
+        if _g(llega.get("lluvia")) > _g(usados.get("lluvia")):
+            usados["lluvia"] = llega["lluvia"]
+        if hay_rayos:
+            usados["electrica"] = rayos
+        # El granizo y el viento de tormenta salen del mismo radar: valen
+        # porque la tormenta ya está confirmada por dos fuentes.
+        for ev in (granizo, llega.get("granizo")):
+            if _g(ev) > _g(usados.get("granizo")) and _fuente(ev).startswith("radar"):
+                usados["granizo"] = ev
+        for ev in (viento, llega.get("viento")):
+            if _g(ev) > _g(usados.get("viento")) and _fuente(ev) not in ("", "modelo"):
+                usados["viento"] = ev
+    elif (_medido(lluvia) and _fuente(lluvia) in ("radar", "estaciones")
+          and _g(lluvia) >= LLUVIA_SOLA_NIVEL_MINIMO and radar_ve_lluvia and estacion_mide_lluvia):
+        clase, minimo = "lluvia", LLUVIA_SOLA_NIVEL_MINIMO
+        usados["lluvia"] = lluvia
+    elif _medido(viento) and _fuente(viento) == "estaciones" and _g(viento) >= VIENTO_SOLO_NIVEL_MINIMO:
+        clase, minimo = "viento", VIENTO_SOLO_NIVEL_MINIMO
+        usados["viento"] = viento
+    else:
+        return None
+    # Una ráfaga fuerte medida también se informa junto a la lluvia.
+    if clase == "lluvia" and _medido(viento) and _fuente(viento) == "estaciones" and _g(viento) >= 2:
+        usados["viento"] = viento
+
+    nivel = max((_g(v) for v in usados.values()), default=0)
+    if clase == "tormenta" and encima and nivel < NIVEL_MINIMO:
+        nivel = NIVEL_MINIMO                  # tormenta eléctrica encima: moderada como mínimo
+    if nivel < minimo:
+        return None
+    arriba = [v for v in usados.values() if _g(v) == nivel]
+    return {"clase": clase, "nivel": nivel, "usados": usados,
+            "posible": nivel == 4 and not any(v.get("confirmado") for v in arriba),
+            "encima": encima}
+
+
+def _estacion_mide_lluvia(l: dict) -> bool:
+    """Una estación de la localidad (dato fresco) mide lluvia en la última hora."""
+    f = (l.get("fenomenos") or {}).get("lluvia") or {}
+    if _fuente(f) == "estaciones" and _g(f) >= 1 and _medido(f):
         return True
-    v = f.get("viento") or {}
-    return (num(v.get("grado")) or 0) >= 1 and v.get("fuente") not in (None, "estaciones", "modelo")
+    t = l.get("tiempo_actual") or {}
+    medida = num(t.get("precipitacion"))
+    return "precipitacion" in (t.get("fuentes") or {}) and medida is not None and medida > 0
+
+
+def _frase(clave: str, ev: dict) -> str:
+    cat = str(ev.get("categoria") or NIVEL_TXT.get(_g(ev), "")).strip()
+    if clave == "lluvia":
+        return f"lluvia {cat}".strip()
+    if clave == "viento":
+        # El número que da el nivel: la ráfaga, o el viento sostenido si es
+        # el que lo sube (45 km/h sostenidos ya es "fuerte").
+        raf, medio = num(ev.get("rafaga_kmh")), num(ev.get("viento_kmh"))
+        nums = []
+        if medio is not None and medio >= 45:
+            nums.append(f"{fmt(medio)} km/h sostenidos")
+        if raf is not None and raf >= 30:
+            nums.append(f"ráfagas de {fmt(raf)} km/h")
+        return f"viento {cat}".strip() + (f" ({', '.join(nums)})" if nums else "")
+    if clave == "granizo":
+        return f"granizo {cat}".strip()
+    return {"aislada": "rayos aislados", "moderada": "rayos seguidos", "frecuente": "rayos frecuentes",
+            "severa": "actividad eléctrica severa"}.get(cat, "rayos")
+
+
+def descripcion(usados: dict) -> str:
+    """Solo lo confirmado, de lo más fuerte a lo más débil."""
+    orden = ("lluvia", "electrica", "granizo", "viento")
+    partes = [_frase(k, usados[k]) for k in sorted(usados, key=lambda k: (-_g(usados[k]), orden.index(k)))]
+    if not partes:
+        return ""
+    texto = partes[0][0].upper() + partes[0][1:]
+    if len(partes) > 1:
+        texto += " con " + (", ".join(partes[1:-1]) + " y " if len(partes) > 2 else "") + partes[-1]
+    return texto
 
 
 def situacion(resumen: dict) -> dict | None:
-    """Localidades con nivel >= 2 y lo que se publica de cada una.
-
-    25/11/2026: salió "Tormentas moderadas" en Sierra de la Ventana por un nivel
-    2 de viento solo (sin lluvia ni tormenta). Ahora: con tormenta, desde el
-    nivel 2; viento solo (estaciones o modelo), recién desde el nivel 3 y como
-    advertencia de VIENTO."""
+    """Localidades con algo confirmado para publicar (tormenta, lluvia fuerte o viento fuerte)."""
     locs = []
     for l in (resumen or {}).get("localidades") or []:
-        n = int(num(l.get("nivel")) or 0)
-        if n < NIVEL_MINIMO:
+        ev = evaluar_localidad(l)
+        if not ev:
             continue
-        tormenta = es_tormenta(l)
-        if not tormenta and n < VIENTO_SOLO_NIVEL_MINIMO:
-            continue
+        encima = ev["encima"]
+        min_encima = num((encima or {}).get("minutos"))
         locs.append({
-            "tormenta": tormenta,
             "id": l.get("id"),
             "nombre": l.get("nombre"),
-            "nivel": n,
-            "posible": str(l.get("etiqueta") or "").lower().startswith("posible"),
-            "resumen": l.get("resumen") or l.get("resumen_ahora") or "",
-            "minutos": num(l.get("minutos_hasta_llegada")),
-            "encima": bool(l.get("sobre_la_localidad")),
+            "clase": ev["clase"],
+            "tormenta": ev["clase"] == "tormenta",
+            "nivel": ev["nivel"],
+            "posible": ev["posible"],
+            "resumen": descripcion(ev["usados"]),
+            "minutos": num(l.get("minutos_hasta_llegada")) if _llega_probable(l) else None,
+            # "encima" solo si la celda con rayos ya está sobre la localidad.
+            "encima": bool(encima) and (min_encima is None or min_encima <= 0),
+            "pronto": bool(encima) and min_encima is not None and min_encima > 0,
         })
     if not locs:
         return None
-    locs.sort(key=lambda x: (-x["nivel"], x["minutos"] if x["minutos"] is not None else 999))
+    locs.sort(key=lambda x: (CLASES.index(x["clase"]), -x["nivel"],
+                             x["minutos"] if x["minutos"] is not None else 999))
+    clase = min((x["clase"] for x in locs), key=CLASES.index)
     return {
         "nivel": max(x["nivel"] for x in locs),
-        "solo_viento": not any(x["tormenta"] for x in locs),
+        "clase": clase,
+        "solo_viento": clase == "viento",
         "localidades": locs,
-        "firma": {x["id"]: [x["nivel"], x["minutos"] is not None or x["encima"]] for x in locs},
+        "firma": {x["id"]: [x["nivel"], x["minutos"] is not None or x["encima"], x["clase"]] for x in locs},
     }
 
 
+# 25/11/2026: el 24/11 a las 16:43 la estación Bahía Blanca Centro marcó una
+# sola vez 45 km/h (antes 18, después 29) mientras Grünbein y la Noroeste
+# medían 11. Un dato suelto así no se publica: el viento solo (sin tormenta) se
+# informa recién cuando se sigue midiendo al menos 15 min (dos lecturas).
+VIENTO_SOSTENIDO_MIN = 15
+
+
+def sostenido(sit: dict | None, estado: dict, ahora: datetime) -> dict | None:
+    """Saca el viento solo que todavía no se midió durante 15 min seguidos.
+    Guarda en el estado desde cuándo se viene midiendo en cada localidad."""
+    vistos = estado.get("viento_desde") if isinstance(estado.get("viento_desde"), dict) else {}
+    ahora_txt = ahora.isoformat()
+    actuales = {l["id"] for l in (sit or {}).get("localidades", []) if l["clase"] == "viento"}
+    vistos = {k: v for k, v in vistos.items() if k in actuales}
+    for k in actuales:
+        vistos.setdefault(k, ahora_txt)
+    estado["viento_desde"] = vistos
+    if not sit:
+        return None
+
+    def listo(l):
+        if l["clase"] != "viento":
+            return True
+        desde = datetime.fromisoformat(vistos[l["id"]])
+        return (ahora - desde).total_seconds() / 60.0 >= VIENTO_SOSTENIDO_MIN
+
+    locs = [l for l in sit["localidades"] if listo(l)]
+    if not locs:
+        return None
+    clase = min((x["clase"] for x in locs), key=CLASES.index)
+    return dict(sit, localidades=locs, nivel=max(x["nivel"] for x in locs), clase=clase,
+                solo_viento=clase == "viento", firma={k: v for k, v in sit["firma"].items()
+                                                      if k in {x["id"] for x in locs}})
+
+
 def cambio(firma_nueva: dict, firma_vieja: dict | None) -> bool:
+    """Localidad nueva, nivel más alto, algo que ahora llega o que cambió de
+    tipo (por ejemplo, de viento a tormenta)."""
     if not firma_vieja:
         return True
-    for loc, (nivel, llega) in firma_nueva.items():
+    for loc, nueva in firma_nueva.items():
+        nivel, llega = nueva[0], nueva[1]
+        clase = nueva[2] if len(nueva) > 2 else None
         previo = firma_vieja.get(loc)
         if previo is None or nivel > previo[0] or (llega and not previo[1]):
+            return True
+        if clase is not None and len(previo) > 2 and previo[2] != clase:
             return True
     return False
 
@@ -496,7 +689,7 @@ def _minutos_desde(p: dict | None, ahora: datetime) -> float | None:
 
 def toca_tormenta(estado: dict, sit: dict | None, resumen: dict, ahora: datetime) -> tuple[bool, str]:
     if not sit:
-        return False, "sin tormentas de nivel 2 o más"
+        return False, "nada confirmado para publicar"
     edad = num((resumen or {}).get("frame_edad_minutos"))
     if edad is None or edad > RADAR_MAX_EDAD_MIN:
         return False, f"radar viejo ({fmt(edad)} min): no se informa con datos viejos"
@@ -520,35 +713,56 @@ def toca_tormenta(estado: dict, sit: dict | None, resumen: dict, ahora: datetime
 
 
 def toca_fin(estado: dict, sit: dict | None, resumen: dict, ahora: datetime) -> bool:
-    """Una última publicación cuando ya no hay tormentas (con radar al día)."""
+    """Una última publicación cuando ya no hay nada (con radar al día)."""
     if sit:
         return False
     edad = num((resumen or {}).get("frame_edad_minutos"))
     if edad is None or edad > RADAR_MAX_EDAD_MIN:
         return False
     pubs = _pubs_tormenta(estado)
-    if not pubs or pubs[-1].get("tipo") == TIPO_FIN:
+    if not pubs or pubs[-1].get("tipo") != TIPO_ADV:
+        return False
+    # Sin nada durante 20 min seguidos (no por un bajón de una sola lectura).
+    nada = estado.get("nada_desde")
+    if not nada or (ahora - datetime.fromisoformat(nada)).total_seconds() / 60.0 < FIN_SIN_NADA_MIN:
         return False
     minutos = _minutos_desde(pubs[-1], ahora)
     return ESPERA_MIN <= minutos <= FIN_DENTRO_DE_H * 60
 
 
-def texto_fin(resumen: dict, ahora: datetime) -> str:
+def clase_publicada(p: dict | None) -> str:
+    """Qué anunciaba una advertencia guardada (las viejas no lo guardaban)."""
+    p = p or {}
+    if p.get("clase") in CLASES:
+        return p["clase"]
+    clases = [v[2] for v in (p.get("firma") or {}).values() if isinstance(v, list) and len(v) > 2]
+    return min(clases, key=CLASES.index) if clases else "tormenta"
+
+
+FIN_TITULO = {"tormenta": "Se alejaron las tormentas", "lluvia": "Paró la lluvia fuerte",
+              "viento": "Bajó el viento"}
+FIN_TEXTO = {"tormenta": "Por ahora no hay tormentas sobre las localidades ni acercándose.",
+             "lluvia": "Por ahora no hay lluvia fuerte en las localidades.",
+             "viento": "Por ahora no se mide viento fuerte en las localidades."}
+
+
+def texto_fin(resumen: dict, ahora: datetime, clase: str = "tormenta") -> str:
     frame = resumen.get("frame_actual_utc")
     hora_radar = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
-    lineas = ["✅ Se alejaron las tormentas", "",
-              "Por ahora no hay tormentas sobre las localidades ni acercándose."]
-    if hora_radar:
+    lineas = ["✅ " + FIN_TITULO[clase], "", FIN_TEXTO[clase]]
+    if hora_radar and clase != "viento":
         lineas.append(f"Radar de las {hora_radar}.")
     lineas += ["", SEGUIR, "", HASHTAGS]
     return "\n".join(lineas)
 
 
-def imagen_con_tormentas(resumen: dict, ahora: datetime) -> bytes | None:
+def imagen_con_tormentas(resumen: dict, ahora: datetime, sit=CALCULAR) -> bytes | None:
     """25/11/2026 (Lucas): si hay tormentas, los informes llevan la imagen del
     radar (la misma de las advertencias) en vez de la tarjeta del pronóstico."""
-    sit = situacion(resumen)
-    if not sit:
+    if sit is CALCULAR:
+        sit = situacion(resumen)
+    edad = num((resumen or {}).get("frame_edad_minutos"))
+    if not sit or edad is None or edad > RADAR_MAX_EDAD_MIN:
         return None
     try:
         radar = pedir_bytes("/radar/mapa")
@@ -557,34 +771,43 @@ def imagen_con_tormentas(resumen: dict, ahora: datetime) -> bytes | None:
     return imagen_tormenta(sit, resumen, radar, ahora)
 
 
-def _que(n: int, solo_viento: bool = False) -> str:
-    if solo_viento:
-        return "Viento fuerte en la zona" if n == 3 else "Viento posiblemente severo en la zona"
+def _que(n: int, clase: str = "tormenta") -> str:
+    if clase is True:                 # compatibilidad: _que(n, solo_viento)
+        clase = "viento"
+    elif clase is False:
+        clase = "tormenta"
+    if clase == "viento":
+        return "Viento fuerte en la zona" if n <= 3 else "Viento posiblemente severo en la zona"
+    if clase == "lluvia":
+        return "Lluvia fuerte en la zona" if n <= 3 else "Lluvia posiblemente severa en la zona"
     return {2: "Tormentas moderadas en la zona", 3: "Tormenta fuerte en la zona"}.get(
         n, "Tormenta posiblemente severa en la zona")
 
 
 def texto_tormenta(sit: dict, resumen: dict, ahora: datetime) -> str:
-    n = sit["nivel"]
+    n = max(l["nivel"] for l in sit["localidades"] if l["clase"] == sit["clase"])
     frame = resumen.get("frame_actual_utc")
     hora_radar = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
-    titulo = f"⚠️ ADVERTENCIA · {_que(n, sit.get('solo_viento', False))}"
+    titulo = f"⚠️ ADVERTENCIA · {_que(n, sit['clase'])}"
     lineas = [titulo, ""]
     for l in sit["localidades"][:5]:
         nivel = f"nivel {l['nivel']} ({'posible ' if l['posible'] and l['nivel'] == 4 else ''}{NIVEL_TXT[l['nivel']]})"
         linea = f"📍 {l['nombre']}: {nivel}."
         if l["resumen"]:
             linea += f" {l['resumen']}."
-        if l["minutos"] is not None:
+        if l["encima"]:
+            linea += " La tormenta está encima."
+        elif l["minutos"] is not None:
             llega = ahora + timedelta(minutes=l["minutos"])
             linea += f" Llega en ~{fmt(l['minutos'])} min (cerca de las {hora_txt(llega)})."
-        elif l["encima"]:
-            linea += " La tormenta está encima."
+        elif l.get("pronto"):
+            linea += " Puede pasar sobre la localidad en los próximos 30 min."
         lineas.append(linea)
     lineas += [""]
-    if hora_radar:
+    if hora_radar and sit["clase"] != "viento":
         lineas.append(f"Radar de las {hora_radar}.")
-    lineas += ["", SEGUIR, "", HASHTAGS + (" #Viento" if sit.get("solo_viento") else " #Tormenta")]
+    etiqueta = {"tormenta": " #Tormenta", "lluvia": " #Lluvia", "viento": " #Viento"}[sit["clase"]]
+    lineas += ["", SEGUIR, "", HASHTAGS + etiqueta]
     return "\n".join(lineas)
 
 
@@ -698,13 +921,15 @@ def imagen_tormenta(sit: dict, resumen: dict, radar_png: bytes | None, ahora: da
 
     im = Image.new("RGB", (1080, 1350), FONDO)   # vertical 4:5, la que mejor se ve en Facebook
     d = ImageDraw.Draw(im)
-    n = sit["nivel"]
-    titulo = "SE ALEJARON LAS TORMENTAS" if fin else "ADVERTENCIA"
-    que = "Sin tormentas en las localidades" if fin else _que(n, sit.get("solo_viento", False)).replace(" en la zona", "")
+    clase = sit.get("clase") or ("viento" if sit.get("solo_viento") else "tormenta")
+    n = max([l["nivel"] for l in sit["localidades"] if l.get("clase", clase) == clase] or [sit["nivel"]])
+    titulo = FIN_TITULO[clase].upper() if fin else "ADVERTENCIA"
+    que = ("Nada fuerte en las localidades" if fin
+           else _que(n, clase).replace(" en la zona", ""))
     frame = resumen.get("frame_actual_utc")
     hora = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
     local = ahora_ar(ahora)
-    sub = que + (f" · radar de las {hora}" if hora else "") + f" ({local.day}/{local.month})"
+    sub = que + (f" · radar de las {hora}" if hora and clase != "viento" else "") + f" ({local.day}/{local.month})"
     cabecera(d, titulo, sub)
 
     # El mapa se dibuja aparte (así nada se sale del cuadro) y se pega.
@@ -783,10 +1008,10 @@ def imagen_tormenta(sit: dict, resumen: dict, radar_png: bytes | None, ahora: da
         d.text((86, y + 26), str(l["nivel"]), font=fuente(32, True),
                fill=(11, 36, 51) if l["nivel"] in (1, 2) else TEXTO, anchor="mm")
         txt = l["nombre"]
-        if l["minutos"] is not None:
-            txt += f" · llega en ~{fmt(l['minutos'])} min"
-        elif l["encima"]:
+        if l["encima"]:
             txt += " · tormenta encima"
+        elif l["minutos"] is not None:
+            txt += f" · llega en ~{fmt(l['minutos'])} min"
         d.text((130, y + 8), txt, font=fuente(32, True), fill=TEXTO)
         y += 64
     pie_imagen(d, 1350)
@@ -872,6 +1097,12 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
     estado = leer_estado()
     hechos = []
     resumen = pedir_json("/resumen")
+    # Lo confirmado, una sola vez por ciclo: lo usan los informes y las advertencias.
+    sit = sostenido(situacion(resumen), estado, ahora)
+    if sit:
+        estado.pop("nada_desde", None)
+    else:
+        estado.setdefault("nada_desde", ahora.isoformat())
 
     def emitir(tipo: str, texto: str, png: bytes, extra: dict) -> None:
         texto = sin_alerta(texto)
@@ -894,8 +1125,8 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
     if forzar == "manana" or (forzar is None and toca_manana(estado, ahora)):
         pron = pedir_json("/pronostico")
         if (pron or {}).get("hoy") or forzar:
-            emitir("manana", texto_manana(resumen, pron, ahora),
-                   imagen_con_tormentas(resumen, ahora) or imagen_manana(resumen, pron, ahora), {})
+            emitir("manana", texto_manana(resumen, pron, ahora, sit),
+                   imagen_con_tormentas(resumen, ahora, sit) or imagen_manana(resumen, pron, ahora), {})
             if not probar:
                 estado["manana_fecha"] = ahora_ar(ahora).date().isoformat()
         else:
@@ -905,15 +1136,14 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
     if forzar == "noche" or (forzar is None and toca_noche(estado, ahora)):
         pron = pedir_json("/pronostico")
         if resumen_noche(horas_noche(pron, ahora)) or forzar:
-            emitir("noche", texto_noche(resumen, pron, ahora),
-                   imagen_con_tormentas(resumen, ahora) or imagen_noche(resumen, pron, ahora), {})
+            emitir("noche", texto_noche(resumen, pron, ahora, sit),
+                   imagen_con_tormentas(resumen, ahora, sit) or imagen_noche(resumen, pron, ahora), {})
             if not probar:
                 estado["noche_fecha"] = ahora_ar(ahora).date().isoformat()
         else:
             hechos.append("noche: sin pronóstico todavía, se reintenta")
 
-    # 2) Tormentas
-    sit = situacion(resumen)
+    # 2) Tormentas, lluvia fuerte o viento fuerte (lo mismo que dicen los informes)
     forzar_adv = forzar in (TIPO_ADV, "tormenta")
     toca, motivo = (True, "forzada") if (forzar_adv and sit) else toca_tormenta(estado, sit, resumen, ahora)
     if toca:
@@ -922,17 +1152,19 @@ def ciclo(probar: bool = False, salida: Path | None = None, forzar: str | None =
         except Exception:
             radar = None
         emitir(TIPO_ADV, texto_tormenta(sit, resumen, ahora), imagen_tormenta(sit, resumen, radar, ahora),
-               {"firma": sit["firma"], "nivel": sit["nivel"], "motivo": motivo})
+               {"firma": sit["firma"], "nivel": sit["nivel"], "clase": sit["clase"], "motivo": motivo})
     elif forzar_adv:
-        hechos.append(f"{TIPO_ADV}: no se puede forzar, no hay tormentas de nivel 2 o más")
+        hechos.append(f"{TIPO_ADV}: no se puede forzar, no hay nada confirmado para publicar")
     elif forzar is None and toca_fin(estado, sit, resumen, ahora):
         try:
             radar = pedir_bytes("/radar/mapa")
         except Exception:
             radar = None
-        vacia = {"nivel": 0, "localidades": [], "firma": {}}
-        emitir(TIPO_FIN, texto_fin(resumen, ahora), imagen_tormenta(vacia, resumen, radar, ahora, fin=True),
-               {"firma": {}, "nivel": 0, "motivo": "se alejaron"})
+        clase = clase_publicada(_pubs_tormenta(estado)[-1])
+        vacia = {"nivel": 0, "clase": clase, "localidades": [], "firma": {}}
+        emitir(TIPO_FIN, texto_fin(resumen, ahora, clase),
+               imagen_tormenta(vacia, resumen, radar, ahora, fin=True),
+               {"firma": {}, "nivel": 0, "clase": clase, "motivo": "terminó"})
     else:
         hechos.append(f"{TIPO_ADV}: no ({motivo})")
 
