@@ -940,6 +940,49 @@ def _cache_locales(clave: str, segundos: float, armar) -> dict[str, Any]:
     return c["data"] or {}
 
 
+_HORAS_CACHE: dict[str, Any] = {"ts": 0.0, "data": None, "fallo": 0.0}
+
+
+def get_openmeteo_horas() -> list[dict[str, Any]]:
+    """Las próximas 16 horas en Bahía Blanca (hora argentina), para el informe
+    de la noche de Facebook: cómo sigue esta noche y la madrugada (25/11/2026)."""
+    c = _HORAS_CACHE
+    ahora = time.time()
+    if c["data"] is not None and ahora - c["ts"] < FORECAST_CACHE_SECONDS:
+        return c["data"]
+    if ahora - c.get("fallo", 0.0) < REINTENTO_MODELO_SEG:
+        return c["data"] or []
+    url = (
+        "https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,cloud_cover,"
+        "wind_speed_10m,wind_direction_10m,wind_gusts_10m"
+        "&forecast_hours=16&timezone=America/Argentina/Buenos_Aires"
+    )
+    try:
+        r = requests.get(url, timeout=12)
+        r.raise_for_status()
+        h = r.json().get("hourly") or {}
+        horas = h.get("time") or []
+
+        def v(k, i):
+            serie = h.get(k) or []
+            return serie[i] if i < len(serie) else None
+
+        data = [{"hora": horas[i], "temperatura": v("temperature_2m", i),
+                 "prob_lluvia": v("precipitation_probability", i), "lluvia_mm": v("precipitation", i),
+                 "codigo_tiempo": v("weather_code", i), "nubosidad": v("cloud_cover", i),
+                 "viento": v("wind_speed_10m", i), "viento_direccion": v("wind_direction_10m", i),
+                 "rafagas": v("wind_gusts_10m", i)} for i in range(len(horas))]
+    except Exception:
+        data = []
+    if data:
+        c["ts"], c["data"] = ahora, data
+        return data
+    c["fallo"] = ahora
+    return c["data"] or []
+
+
 def get_openmeteo_locales() -> dict[str, dict[str, Any]]:
     """Tiempo actual del modelo europeo en el punto de cada localidad."""
 
@@ -1864,6 +1907,8 @@ def pronostico() -> dict[str, Any]:
         "dias": dias,
         # El mismo pronóstico para el punto de cada localidad (24/11/2026).
         "por_localidad": por_localidad,
+        # Hora por hora en Bahía (próximas 16 h): informe de la noche (25/11/2026).
+        "horas": get_openmeteo_horas(),
     }
 
 
