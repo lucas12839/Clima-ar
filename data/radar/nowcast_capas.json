@@ -1,11 +1,11 @@
 {
   "version": "nowcast-capas-1.1",
   "en_paralelo": false,
-  "generado_utc": "2026-11-25T09:46:22.127822Z",
+  "generado_utc": "2026-11-25T09:58:46.192644Z",
   "en_uso": "llegadas a la zona de cada localidad (tormenta a <= 10 km, grado probable) y movimiento de las trayectorias por tormenta",
-  "radar_timestamp": "2026-11-25T09:20:00+00:00",
-  "edad_radar_min": 26.4,
-  "confianza_radar_por_edad": 0.685,
+  "radar_timestamp": "2026-11-25T09:40:00+00:00",
+  "edad_radar_min": 18.8,
+  "confianza_radar_por_edad": 0.816,
   "configuracion": {
     "movimiento_3_imagenes": true,
     "tendencia_radar": false,
@@ -41,20 +41,20 @@
   },
   "fuentes": {
     "radar": {
-      "hora": "2026-11-25T09:20:00+00:00",
-      "edad_min": 26.4,
+      "hora": "2026-11-25T09:40:00+00:00",
+      "edad_min": 18.8,
       "fuente": "SINARAME RMA10"
     },
     "rayos": {
-      "hora": "2026-11-25T09:46:00Z",
+      "hora": "2026-11-25T09:58:00Z",
       "fuente": "GOES-19 GLM"
     },
     "satelite": {
-      "hora": "2026-11-25T09:38:26.212750Z",
+      "hora": "2026-11-25T09:48:26.297647Z",
       "fuente": "GOES-19 canal 13"
     },
     "estaciones": {
-      "hora": "2026-11-25T09:45:58.458590+00:00",
+      "hora": "2026-11-25T09:58:04.565882+00:00",
       "fuente": "BCP / SMN / CWOP"
     },
     "ambiente": {
@@ -79,8 +79,8 @@
   "control_calidad_satelite": {
     "usado": true,
     "diferencia_satelite_radar_min": 1.6,
-    "pixeles_eco": 45,
-    "pixeles_sin_nube": 45,
+    "pixeles_eco": 13,
+    "pixeles_sin_nube": 13,
     "fraccion_sin_nube": 1.0
   },
   "movimiento": null,
@@ -97,9 +97,9 @@
       "quitado_sin_nube": 0,
       "agregado_con_rayos": 0
     },
-    "satelite_edad_min": 7.9,
-    "rayos_edad_min": 0.4,
-    "rayos": 2
+    "satelite_edad_min": 10.3,
+    "rayos_edad_min": 0.8,
+    "rayos": 5
   },
   "llegada_proxima_hora": {
     "usado": true,
@@ -120,28 +120,28 @@
           "a_15km_10min": 0,
           "a_30km_10min": 0,
           "tasa_30km_por_min": 0.0,
-          "distancia_rayo_km": 37.7,
-          "edad_min": 0.4,
+          "distancia_rayo_km": 111.8,
+          "edad_min": 0.8,
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": 10.2,
-          "tope_min_c_15km": 9.2,
-          "enfriamiento_c_10min": -0.5,
-          "edad_min": 7.9,
+          "tope_p10_c_15km": 10.7,
+          "tope_min_c_15km": 9.6,
+          "enfriamiento_c_10min": -0.7,
+          "edad_min": 10.3,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         },
         "estaciones": {
           "cantidad": 3,
           "lluvia_1h_mm": 0.0,
-          "rafaga_max_kmh": 32.0,
+          "rafaga_max_kmh": 36.0,
           "frente_de_rafagas": false,
           "nombres": [
             "BAHIA BLANCA CENTRO",
             "GRUMBEIN",
             "BAHIA BLANCA NOROESTE (CWOP)"
           ],
-          "edad_min": 0.4,
+          "edad_min": 0.7,
           "fuente": "estaciones BCP / SMN / CWOP"
         }
       },
@@ -157,12 +157,12 @@
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 0.69,
+        "peso_radar": 0.82,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
           "tormenta_electrica": false,
-          "viento_medido_kmh": 32.0,
+          "viento_medido_kmh": 36.0,
           "lluvia_medida_1h_mm": 0.0
         }
       },
@@ -200,7 +200,18 @@
       },
       "tormenta_electrica_ahora": false,
       "suelo": {
-        "firmas_estaciones": [],
+        "firmas_estaciones": [
+          {
+            "estacion": "BAHIA BLANCA CENTRO",
+            "firma": "frente_de_rafagas_debil",
+            "utc": "2026-11-25T09:56:00+00:00"
+          },
+          {
+            "estacion": "BAHIA BLANCA NOROESTE (CWOP)",
+            "firma": "frente_de_rafagas_debil",
+            "utc": "2026-11-25T09:50:00+00:00"
+          }
+        ],
         "conveccion_elevada": true
       },
       "confianza": 0.3
@@ -212,28 +223,28 @@
           "a_15km_10min": 0,
           "a_30km_10min": 0,
           "tasa_30km_por_min": 0.0,
-          "distancia_rayo_km": 35.7,
-          "edad_min": 0.4,
+          "distancia_rayo_km": 114.7,
+          "edad_min": 0.8,
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": 9.9,
-          "tope_min_c_15km": 9.2,
-          "enfriamiento_c_10min": -0.5,
-          "edad_min": 7.9,
+          "tope_p10_c_15km": 10.4,
+          "tope_min_c_15km": 9.6,
+          "enfriamiento_c_10min": -0.6,
+          "edad_min": 10.3,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         },
         "estaciones": {
           "cantidad": 3,
           "lluvia_1h_mm": 0.0,
-          "rafaga_max_kmh": 32.0,
+          "rafaga_max_kmh": 36.0,
           "frente_de_rafagas": false,
           "nombres": [
             "BAHIA BLANCA CENTRO",
             "GRUMBEIN",
             "BAHIA BLANCA NOROESTE (CWOP)"
           ],
-          "edad_min": 0.4,
+          "edad_min": 0.7,
           "fuente": "estaciones BCP / SMN / CWOP"
         }
       },
@@ -249,12 +260,12 @@
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 0.69,
+        "peso_radar": 0.82,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
           "tormenta_electrica": false,
-          "viento_medido_kmh": 32.0,
+          "viento_medido_kmh": 36.0,
           "lluvia_medida_1h_mm": 0.0
         }
       },
@@ -292,7 +303,18 @@
       },
       "tormenta_electrica_ahora": false,
       "suelo": {
-        "firmas_estaciones": [],
+        "firmas_estaciones": [
+          {
+            "estacion": "BAHIA BLANCA CENTRO",
+            "firma": "frente_de_rafagas_debil",
+            "utc": "2026-11-25T09:56:00+00:00"
+          },
+          {
+            "estacion": "BAHIA BLANCA NOROESTE (CWOP)",
+            "firma": "frente_de_rafagas_debil",
+            "utc": "2026-11-25T09:50:00+00:00"
+          }
+        ],
         "conveccion_elevada": true
       },
       "confianza": 0.3
@@ -302,29 +324,29 @@
       "relleno_tiempo_real": {
         "rayos": {
           "a_15km_10min": 0,
-          "a_30km_10min": 1,
-          "tasa_30km_por_min": 0.1,
-          "distancia_rayo_km": 28.4,
-          "edad_min": 0.4,
+          "a_30km_10min": 0,
+          "tasa_30km_por_min": 0.0,
+          "distancia_rayo_km": 101.7,
+          "edad_min": 0.8,
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": 9.9,
-          "tope_min_c_15km": 9.2,
+          "tope_p10_c_15km": 10.4,
+          "tope_min_c_15km": 9.6,
           "enfriamiento_c_10min": -0.7,
-          "edad_min": 7.9,
+          "edad_min": 10.3,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         },
         "estaciones": {
           "cantidad": 2,
           "lluvia_1h_mm": 0.0,
-          "rafaga_max_kmh": 32.0,
+          "rafaga_max_kmh": 36.0,
           "frente_de_rafagas": false,
           "nombres": [
             "BAHIA BLANCA CENTRO",
             "BAHIA BLANCA NOROESTE (CWOP)"
           ],
-          "edad_min": 0.4,
+          "edad_min": 0.7,
           "fuente": "estaciones BCP / SMN / CWOP"
         }
       },
@@ -340,12 +362,12 @@
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 0.69,
+        "peso_radar": 0.82,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
           "tormenta_electrica": false,
-          "viento_medido_kmh": 32.0,
+          "viento_medido_kmh": 36.0,
           "lluvia_medida_1h_mm": 0.0
         }
       },
@@ -383,7 +405,18 @@
       },
       "tormenta_electrica_ahora": false,
       "suelo": {
-        "firmas_estaciones": [],
+        "firmas_estaciones": [
+          {
+            "estacion": "BAHIA BLANCA CENTRO",
+            "firma": "frente_de_rafagas_debil",
+            "utc": "2026-11-25T09:56:00+00:00"
+          },
+          {
+            "estacion": "BAHIA BLANCA NOROESTE (CWOP)",
+            "firma": "frente_de_rafagas_debil",
+            "utc": "2026-11-25T09:50:00+00:00"
+          }
+        ],
         "conveccion_elevada": true
       },
       "confianza": 0.3
@@ -395,27 +428,27 @@
           "a_15km_10min": 0,
           "a_30km_10min": 0,
           "tasa_30km_por_min": 0.0,
-          "distancia_rayo_km": 51.6,
-          "edad_min": 0.4,
+          "distancia_rayo_km": 134.1,
+          "edad_min": 0.8,
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": 10.6,
-          "tope_min_c_15km": 10.3,
-          "enfriamiento_c_10min": -0.7,
-          "edad_min": 7.9,
+          "tope_p10_c_15km": 11.2,
+          "tope_min_c_15km": 10.7,
+          "enfriamiento_c_10min": -0.6,
+          "edad_min": 10.3,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         },
         "estaciones": {
           "cantidad": 2,
           "lluvia_1h_mm": 0.0,
-          "rafaga_max_kmh": 21.0,
+          "rafaga_max_kmh": 27.0,
           "frente_de_rafagas": false,
           "nombres": [
             "GRUMBEIN",
             "PUNTA ALTA"
           ],
-          "edad_min": 0.4,
+          "edad_min": 0.7,
           "fuente": "estaciones BCP / SMN / CWOP"
         }
       },
@@ -431,12 +464,12 @@
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 0.69,
+        "peso_radar": 0.82,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
           "tormenta_electrica": false,
-          "viento_medido_kmh": 21.0,
+          "viento_medido_kmh": 27.0,
           "lluvia_medida_1h_mm": 0.0
         }
       },
@@ -486,15 +519,15 @@
           "a_15km_10min": 0,
           "a_30km_10min": 0,
           "tasa_30km_por_min": 0.0,
-          "distancia_rayo_km": 91.6,
-          "edad_min": 0.4,
+          "distancia_rayo_km": 111.6,
+          "edad_min": 0.8,
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": 9.2,
-          "tope_min_c_15km": 8.5,
+          "tope_p10_c_15km": 9.9,
+          "tope_min_c_15km": 9.3,
           "enfriamiento_c_10min": -0.7,
-          "edad_min": 7.9,
+          "edad_min": 10.3,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         }
       },
@@ -510,7 +543,7 @@
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 0.69,
+        "peso_radar": 0.82,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
@@ -562,18 +595,18 @@
       "nombre": "Médanos",
       "relleno_tiempo_real": {
         "rayos": {
-          "a_15km_10min": 1,
-          "a_30km_10min": 1,
-          "tasa_30km_por_min": 0.1,
-          "distancia_rayo_km": 3.3,
-          "edad_min": 0.4,
+          "a_15km_10min": 0,
+          "a_30km_10min": 0,
+          "tasa_30km_por_min": 0.0,
+          "distancia_rayo_km": 85.1,
+          "edad_min": 0.8,
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": 9.3,
-          "tope_min_c_15km": 9.0,
-          "enfriamiento_c_10min": -0.7,
-          "edad_min": 7.9,
+          "tope_p10_c_15km": 10.1,
+          "tope_min_c_15km": 9.7,
+          "enfriamiento_c_10min": -0.8,
+          "edad_min": 10.3,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         }
       },
@@ -589,13 +622,11 @@
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 0.69,
-        "evidencias": [
-          "1 rayos a menos de 15 km en 10 min"
-        ],
+        "peso_radar": 0.82,
+        "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
-          "tormenta_electrica": true,
+          "tormenta_electrica": false,
           "viento_medido_kmh": null,
           "lluvia_medida_1h_mm": null
         }
@@ -632,7 +663,7 @@
           }
         }
       },
-      "tormenta_electrica_ahora": true,
+      "tormenta_electrica_ahora": false,
       "suelo": {
         "firmas_estaciones": [],
         "conveccion_elevada": true
@@ -646,26 +677,26 @@
           "a_15km_10min": 0,
           "a_30km_10min": 0,
           "tasa_30km_por_min": 0.0,
-          "distancia_rayo_km": 109.6,
-          "edad_min": 0.4,
+          "distancia_rayo_km": 147.5,
+          "edad_min": 0.8,
           "fuente": "GOES-19 GLM"
         },
         "satelite": {
-          "tope_p10_c_15km": 8.6,
-          "tope_min_c_15km": 8.0,
-          "enfriamiento_c_10min": -0.7,
-          "edad_min": 7.9,
+          "tope_p10_c_15km": 9.2,
+          "tope_min_c_15km": 8.5,
+          "enfriamiento_c_10min": -0.6,
+          "edad_min": 10.3,
           "fuente": "GOES-19 canal 13 (imagen más reciente)"
         },
         "estaciones": {
           "cantidad": 1,
           "lluvia_1h_mm": 0.0,
-          "rafaga_max_kmh": 16.0,
+          "rafaga_max_kmh": 11.0,
           "frente_de_rafagas": false,
           "nombres": [
             "VILLA VENTANA"
           ],
-          "edad_min": 0.4,
+          "edad_min": 0.7,
           "fuente": "estaciones BCP / SMN / CWOP"
         }
       },
@@ -681,12 +712,12 @@
         "categoria": "sin_eco",
         "manda": "radar_movido",
         "categoria_radar_movido": "sin_eco",
-        "peso_radar": 0.69,
+        "peso_radar": 0.82,
         "evidencias": [],
         "fenomenos": {
           "precipitacion": "sin_eco",
           "tormenta_electrica": false,
-          "viento_medido_kmh": 16.0,
+          "viento_medido_kmh": 11.0,
           "lluvia_medida_1h_mm": 0.0
         }
       },
