@@ -427,14 +427,36 @@ def imagen_noche(resumen: dict, pron: dict, ahora: datetime) -> bytes:
 # ----------------------------------------------------------------------------
 # Tormentas
 # ----------------------------------------------------------------------------
+VIENTO_SOLO_NIVEL_MINIMO = 3
+
+
+def es_tormenta(l: dict) -> bool:
+    """Hay tormenta (no solo viento): lluvia, granizo o rayos, o viento que
+    sale de una tormenta del radar (no de las estaciones ni del modelo)."""
+    f = l.get("fenomenos") or {}
+    if any((num((f.get(k) or {}).get("grado")) or 0) >= 1 for k in ("lluvia", "granizo", "electrica")):
+        return True
+    v = f.get("viento") or {}
+    return (num(v.get("grado")) or 0) >= 1 and v.get("fuente") not in (None, "estaciones", "modelo")
+
+
 def situacion(resumen: dict) -> dict | None:
-    """Localidades con nivel >= 2 y lo que se publica de cada una."""
+    """Localidades con nivel >= 2 y lo que se publica de cada una.
+
+    25/11/2026: salió "Tormentas moderadas" en Sierra de la Ventana por un nivel
+    2 de viento solo (sin lluvia ni tormenta). Ahora: con tormenta, desde el
+    nivel 2; viento solo (estaciones o modelo), recién desde el nivel 3 y como
+    advertencia de VIENTO."""
     locs = []
     for l in (resumen or {}).get("localidades") or []:
         n = int(num(l.get("nivel")) or 0)
         if n < NIVEL_MINIMO:
             continue
+        tormenta = es_tormenta(l)
+        if not tormenta and n < VIENTO_SOLO_NIVEL_MINIMO:
+            continue
         locs.append({
+            "tormenta": tormenta,
             "id": l.get("id"),
             "nombre": l.get("nombre"),
             "nivel": n,
@@ -448,6 +470,7 @@ def situacion(resumen: dict) -> dict | None:
     locs.sort(key=lambda x: (-x["nivel"], x["minutos"] if x["minutos"] is not None else 999))
     return {
         "nivel": max(x["nivel"] for x in locs),
+        "solo_viento": not any(x["tormenta"] for x in locs),
         "localidades": locs,
         "firma": {x["id"]: [x["nivel"], x["minutos"] is not None or x["encima"]] for x in locs},
     }
@@ -534,7 +557,9 @@ def imagen_con_tormentas(resumen: dict, ahora: datetime) -> bytes | None:
     return imagen_tormenta(sit, resumen, radar, ahora)
 
 
-def _que(n: int) -> str:
+def _que(n: int, solo_viento: bool = False) -> str:
+    if solo_viento:
+        return "Viento fuerte en la zona" if n == 3 else "Viento posiblemente severo en la zona"
     return {2: "Tormentas moderadas en la zona", 3: "Tormenta fuerte en la zona"}.get(
         n, "Tormenta posiblemente severa en la zona")
 
@@ -543,7 +568,7 @@ def texto_tormenta(sit: dict, resumen: dict, ahora: datetime) -> str:
     n = sit["nivel"]
     frame = resumen.get("frame_actual_utc")
     hora_radar = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
-    titulo = f"⚠️ ADVERTENCIA · {_que(n)}"
+    titulo = f"⚠️ ADVERTENCIA · {_que(n, sit.get('solo_viento', False))}"
     lineas = [titulo, ""]
     for l in sit["localidades"][:5]:
         nivel = f"nivel {l['nivel']} ({'posible ' if l['posible'] and l['nivel'] == 4 else ''}{NIVEL_TXT[l['nivel']]})"
@@ -559,7 +584,7 @@ def texto_tormenta(sit: dict, resumen: dict, ahora: datetime) -> str:
     lineas += [""]
     if hora_radar:
         lineas.append(f"Radar de las {hora_radar}.")
-    lineas += ["", SEGUIR, "", HASHTAGS + " #Tormenta"]
+    lineas += ["", SEGUIR, "", HASHTAGS + (" #Viento" if sit.get("solo_viento") else " #Tormenta")]
     return "\n".join(lineas)
 
 
@@ -675,7 +700,7 @@ def imagen_tormenta(sit: dict, resumen: dict, radar_png: bytes | None, ahora: da
     d = ImageDraw.Draw(im)
     n = sit["nivel"]
     titulo = "SE ALEJARON LAS TORMENTAS" if fin else "ADVERTENCIA"
-    que = "Sin tormentas en las localidades" if fin else _que(n).replace(" en la zona", "")
+    que = "Sin tormentas en las localidades" if fin else _que(n, sit.get("solo_viento", False)).replace(" en la zona", "")
     frame = resumen.get("frame_actual_utc")
     hora = hora_txt(datetime.fromisoformat(frame.replace("Z", "+00:00"))) if frame else None
     local = ahora_ar(ahora)

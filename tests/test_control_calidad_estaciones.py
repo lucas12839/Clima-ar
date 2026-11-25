@@ -67,8 +67,9 @@ def test_tiempo_ahora_temperatura_propia_y_viento_de_la_zona(tmp_path):
     assert (pa["temperatura"]["valor"], pa["temperatura"]["estacion"]) == (18.9, "PUNTA ALTA")
     assert (pa["viento"]["valor"], pa["viento"]["rafaga"], pa["viento"]["estacion"]) == (16.0, 25.0, "GRUMBEIN")
     # Sierras Grandes (10,5 km, sobre las sierras) no da la temperatura del pueblo.
-    sv = t["sierra_de_la_ventana"]
-    assert "temperatura" not in sv and sv["viento"]["estacion"] == "SIERRAS GRANDES"
+    sv = t.get("sierra_de_la_ventana", {})
+    # Ni la temperatura ni el viento: está sobre las sierras (25/11/2026).
+    assert "temperatura" not in sv and "viento" not in sv
 
 
 def test_rumbo_en_palabras():

@@ -100,3 +100,16 @@ def test_anemometro_trabado_en_cero():
     # Pocas mediciones o alguna distinta de cero: no.
     assert ss.vientos_trabados({"PUNTA ALTA": serie([0.0] * 8), "X": serie([25.0] * 8)}, ahora) == []
     assert ss.vientos_trabados({"PUNTA ALTA": serie([0.0] * 19 + [4.0]), "X": serie([25.0] * 20)}, ahora) == []
+
+
+def test_sierras_grandes_no_representa_a_sierra_de_la_ventana(tmp_path):
+    import json as js
+    locs = tmp_path / "loc.json"
+    locs.write_text(js.dumps({"localidades": [{"id": "sierra_de_la_ventana", "lat": -38.1378, "lon": -61.7936}]}))
+    base = {"lluvia_1h_mm": 0, "lluvia_3h_mm": 0, "frente_de_rafagas": False, "red": "bcp",
+            "utc": "2026-11-25T12:21:00+00:00"}
+    es = [dict(base, nombre="SIERRAS GRANDES", lat=-38.1564, lon=-61.9118, viento_kmh=35.0, rafaga_kmh=52.0),
+          dict(base, nombre="VILLA VENTANA", lat=-38.0820, lon=-61.9300, viento_kmh=27.0, rafaga_kmh=40.0)]
+    z = ss.por_localidad(es, locs)["sierra_de_la_ventana"]
+    assert (z["rafaga_max_kmh"], z["rafaga_estacion"], z["nombres"]) == (40.0, "VILLA VENTANA", ["VILLA VENTANA"])
+    assert ss.tiempo_ahora(es, locs)["sierra_de_la_ventana"]["viento"]["estacion"] == "VILLA VENTANA"
