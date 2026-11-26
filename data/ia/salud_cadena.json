@@ -1,13 +1,15 @@
 {
   "version": "1.0.0",
   "en_paralelo": true,
-  "generado_utc": "2026-11-26T20:18:23.708192+00:00",
+  "generado_utc": "2026-11-26T20:23:10.403816+00:00",
   "alertas_desde": {
-    "Estaciones sin datos hace más de un día: PUAN.": "2026-11-25T16:13:30.245934+00:00"
+    "Estaciones sin datos hace más de un día: PUAN.": "2026-11-25T16:13:30.245934+00:00",
+    "Datos de estaciones que no pasan el control de calidad (no se usan): PUNTA ALTA viento: an": "2026-11-26T20:23:10.403816+00:00"
   },
   "estado": "con_alertas",
   "alertas": [
-    "Estaciones sin datos hace más de un día: PUAN."
+    "Estaciones sin datos hace más de un día: PUAN.",
+    "Datos de estaciones que no pasan el control de calidad (no se usan): PUNTA ALTA viento: anemómetro trabado: 0 km/h durante 4 h con viento en la región."
   ],
   "estaciones": {
     "validas": 7,
@@ -24,8 +26,8 @@
       "PUAN"
     ]
   },
-  "cwop_edad_min": 8.4,
-  "latido_detector_edad_min": 2.0,
+  "cwop_edad_min": 3.2,
+  "latido_detector_edad_min": 2.7,
   "detector": {
     "utc": "2026-11-26T15:24:43.314840+00:00",
     "commit": "5aafac6c6074",
@@ -37,8 +39,8 @@
       "commit": "5aafac6c6074"
     }
   },
-  "sazb_edad_min": 18.4,
-  "radar_edad_min": 18.4,
+  "sazb_edad_min": 23.2,
+  "radar_edad_min": 23.2,
   "siguiente_numero_tormenta": 778,
   "modo_seguimiento": "CONTINUIDAD_ESTADO_PREVIO",
   "frame_revisado": "2026-11-26T20:00:00Z",
@@ -67,16 +69,23 @@
     "disponible": true,
     "hora_satelite_utc": "2026-11-26T19:59:51.400000Z"
   },
-  "ecmwf_edad_min": 26.6,
-  "datos_descartados": [],
-  "modelo_localidades_edad_min": 26.6,
-  "calibracion_smn_edad_h": 1.0,
+  "ecmwf_edad_min": 0.7,
+  "datos_descartados": [
+    {
+      "estacion": "PUNTA ALTA",
+      "dato": "viento_kmh",
+      "valor": 0.0,
+      "motivo": "anemómetro trabado: 0 km/h durante 4 h con viento en la región"
+    }
+  ],
+  "modelo_localidades_edad_min": 0.7,
+  "calibracion_smn_edad_h": 1.1,
   "sin_actualizar_en_el_ciclo": [],
   "tamano_kb": {
-    "ia/resultado_final.json": 272.7,
-    "ia/inteligencia_tormenta.json": 42.9,
+    "ia/resultado_final.json": 272.3,
+    "ia/inteligencia_tormenta.json": 42.5,
     "ia/estado_meteorologico.json": 185.7,
-    "ia/goes19_intelligence.json": 33.9,
-    "radar/radar_nowcast.json": 6.7
+    "ia/goes19_intelligence.json": 33.6,
+    "radar/radar_nowcast.json": 8.4
   }
 }
