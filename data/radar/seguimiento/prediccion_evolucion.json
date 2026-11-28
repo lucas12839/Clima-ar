@@ -1,23 +1,103 @@
 {
   "schema_version": 4,
-  "radar_timestamp": "2026-11-28T01:40:00Z",
+  "radar_timestamp": "2026-11-28T01:50:00Z",
   "intervalo_minutos": 10.0,
   "tipo": "PREDICCION_MOVIMIENTO_CON_HUECOS",
   "fuente_tracks": "data/radar/seguimiento/estado.json",
-  "prediccion_global_disponible": false,
+  "prediccion_global_disponible": true,
   "nucleos": [
     {
       "track_id": "855",
-      "pronostico_disponible": false,
-      "motivo": "SIN_MOVIMIENTO_VALIDO"
+      "activo": true,
+      "pronostico_disponible": true,
+      "posicion_actual": {
+        "x": 233.95,
+        "y": 235.6
+      },
+      "velocidad_actual_pixeles_min": 0.3298,
+      "rumbo_actual_grados": 231.6,
+      "direccion_actual": "SO",
+      "aceleracion_pixeles_min2": 0.0,
+      "tendencia_area_porcentaje": -52.38,
+      "tendencia_intensidad": 0.0,
+      "probabilidad_intensificacion": 25.0,
+      "probabilidad_debilitamiento": 75.0,
+      "confianza_prediccion": 72.7,
+      "max_gap_temporal_minutos": 10.0,
+      "estabilidad_direccion": 100.0,
+      "estabilidad_velocidad": 100.0,
+      "error_regresion_pixeles": null,
+      "backtest": {
+        "muestras": 0,
+        "error_mediano_pixeles": null,
+        "error_p75_pixeles": null,
+        "error_medio_pixeles": null
+      },
+      "puntos_historial_utilizados": 2,
+      "horizontes": [
+        {
+          "horizonte_minutos": 5,
+          "x_estimado": 232.66,
+          "y_estimado": 236.62,
+          "velocidad_estimada_pixeles_min": 0.3298,
+          "rumbo_estimado_grados": 231.6,
+          "direccion_estimada": "SO",
+          "incertidumbre_pixeles": 3.5,
+          "calibracion_muestras": 0,
+          "correccion_bias_x_pixeles": 0.0,
+          "correccion_bias_y_pixeles": 0.0,
+          "confianza_prediccion": 72.7
+        },
+        {
+          "horizonte_minutos": 10,
+          "x_estimado": 231.43,
+          "y_estimado": 237.61,
+          "velocidad_estimada_pixeles_min": 0.3298,
+          "rumbo_estimado_grados": 231.6,
+          "direccion_estimada": "SO",
+          "incertidumbre_pixeles": 4.0,
+          "calibracion_muestras": 174,
+          "correccion_bias_x_pixeles": 0.06,
+          "correccion_bias_y_pixeles": -0.04,
+          "confianza_prediccion": 69.9
+        },
+        {
+          "horizonte_minutos": 20,
+          "x_estimado": 229.3,
+          "y_estimado": 239.74,
+          "velocidad_estimada_pixeles_min": 0.3298,
+          "rumbo_estimado_grados": 231.6,
+          "direccion_estimada": "SO",
+          "incertidumbre_pixeles": 5.0,
+          "calibracion_muestras": 284,
+          "correccion_bias_x_pixeles": 0.52,
+          "correccion_bias_y_pixeles": 0.04,
+          "confianza_prediccion": 64.4
+        },
+        {
+          "horizonte_minutos": 30,
+          "x_estimado": 226.84,
+          "y_estimado": 241.03,
+          "velocidad_estimada_pixeles_min": 0.3298,
+          "rumbo_estimado_grados": 231.6,
+          "direccion_estimada": "SO",
+          "incertidumbre_pixeles": 6.0,
+          "calibracion_muestras": 542,
+          "correccion_bias_x_pixeles": 0.64,
+          "correccion_bias_y_pixeles": -0.72,
+          "confianza_prediccion": 58.9
+        }
+      ],
+      "huecos_detectados": 0,
+      "estimaciones_hueco": []
     }
   ],
   "resumen": {
-    "nucleos_con_prediccion": 0,
-    "nucleos_sin_prediccion": 1,
-    "promedio_intensificacion": null,
-    "promedio_debilitamiento": null,
-    "promedio_confianza": null,
+    "nucleos_con_prediccion": 1,
+    "nucleos_sin_prediccion": 0,
+    "promedio_intensificacion": 25.0,
+    "promedio_debilitamiento": 75.0,
+    "promedio_confianza": 72.7,
     "huecos_estimados": 0,
     "predicciones_validadas_en_este_frame": 0,
     "predicciones_validadas_normales": 0,
